@@ -17,7 +17,7 @@
  * along with JBDD.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package de.tum.in.jdd;
+package de.tum.in.jbdd;
 
 import com.google.common.math.IntMath;
 

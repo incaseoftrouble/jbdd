@@ -7,6 +7,16 @@ The design goals are simplicity, reasonable performance and light dependencies (
 This also implies that some more fancy BDD features and variants (like variable reordering or z-BDDs) are missing here, too.
 They might get added over time, but if you require such features, consider using optimized implementations like [CUDD](http://vlsi.colorado.edu/~fabio/), [BuDDy](http://buddy.sourceforge.net/manual/main.html) or [Sylvan](http://fmt.cs.utwente.nl/tools/sylvan/) instead.
 
+## Usage
+
+You can either build the jar using gradle (see below) or fetch it from maven central:
+
+    <dependency>
+      <groupId>de.tum.in</groupId>
+      <artifactId>jbdd</artifactId>
+      <version>0.1.1</version>
+    </dependency>
+
 ## Building
 
 Build the project using gradle.

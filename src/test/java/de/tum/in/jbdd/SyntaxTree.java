@@ -17,10 +17,10 @@
  * along with JBDD.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package de.tum.in.jdd;
+package de.tum.in.jbdd;
 
-import de.tum.in.jdd.SyntaxTree.SyntaxTreeBinaryOperation.BinaryType;
-import de.tum.in.jdd.SyntaxTree.SyntaxTreeTernaryOperation.TernaryType;
+import de.tum.in.jbdd.SyntaxTree.SyntaxTreeBinaryOperation.BinaryType;
+import de.tum.in.jbdd.SyntaxTree.SyntaxTreeTernaryOperation.TernaryType;
 import java.util.BitSet;
 import java.util.HashSet;
 import java.util.Map;

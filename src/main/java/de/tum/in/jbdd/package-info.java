@@ -17,17 +17,5 @@
  * along with JBDD.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package de.tum.in.jdd;
-
-public final class BddFactory {
-  private BddFactory() {
-  }
-
-  public static Bdd buildBdd(int nodeSize) {
-    return new BddImpl(nodeSize);
-  }
-
-  public static Bdd buildBdd(int nodeSize, BddConfiguration configuration) {
-    return new BddImpl(nodeSize, configuration);
-  }
-}
+@EverythingIsNonnullByDefault
+package de.tum.in.jbdd;

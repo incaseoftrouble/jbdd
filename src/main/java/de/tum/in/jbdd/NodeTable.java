@@ -17,10 +17,10 @@
  * along with JBDD.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package de.tum.in.jdd;
+package de.tum.in.jbdd;
 
 import static com.google.common.base.Preconditions.checkState;
-import static de.tum.in.jdd.BitUtil.fits;
+import static de.tum.in.jbdd.BitUtil.fits;
 
 import java.util.Arrays;
 import java.util.logging.Level;
