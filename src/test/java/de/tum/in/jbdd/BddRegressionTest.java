@@ -17,19 +17,27 @@
  * along with JBDD.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package de.tum.in.jdd;
+package de.tum.in.jbdd;
 
-import java.lang.annotation.Documented;
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import javax.annotation.Nonnull;
-import javax.annotation.meta.TypeQualifierDefault;
+import org.junit.Test;
 
-@Documented
-@Nonnull
-@TypeQualifierDefault({ElementType.FIELD, ElementType.METHOD, ElementType.PARAMETER})
-@Retention(RetentionPolicy.RUNTIME)
-@interface EverythingIsNonnullByDefault {
+/**
+ * A collection of tests motivated by regressions.
+ */
+public class BddRegressionTest {
+  @Test
+  public void testReferenceOverflow() {
+    BddImpl bdd = new BddImpl(2);
+    int v1 = bdd.createVariable();
+    int v2 = bdd.createVariable();
+    int and = bdd.and(v1, v2);
 
+    for (int i = 0; i < Integer.MAX_VALUE; i++) {
+      bdd.reference(and);
+    }
+
+    for (int i = 0; i < Integer.MAX_VALUE; i++) {
+      bdd.dereference(and);
+    }
+  }
 }

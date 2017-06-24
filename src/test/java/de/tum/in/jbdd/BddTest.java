@@ -17,7 +17,7 @@
  * along with JBDD.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-package de.tum.in.jdd;
+package de.tum.in.jbdd;
 
 import static org.hamcrest.core.Is.is;
 import static org.junit.Assert.assertThat;

@@ -17,5 +17,19 @@
  * along with JBDD.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-@EverythingIsNonnullByDefault
-package de.tum.in.jdd;
+package de.tum.in.jbdd;
+
+import java.lang.annotation.Documented;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import javax.annotation.Nonnull;
+import javax.annotation.meta.TypeQualifierDefault;
+
+@Documented
+@Nonnull
+@TypeQualifierDefault({ElementType.FIELD, ElementType.METHOD, ElementType.PARAMETER})
+@Retention(RetentionPolicy.RUNTIME)
+@interface EverythingIsNonnullByDefault {
+
+}
