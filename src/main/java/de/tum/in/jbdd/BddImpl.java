@@ -23,9 +23,9 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Iterators;
 import java.util.Arrays;
 import java.util.BitSet;
-import java.util.Collections;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
+import java.util.function.Consumer;
 
 /* Implementation notes:
  * - Many of the methods are practically copy-paste of each other except for a few variables and
@@ -515,6 +515,22 @@ class BddImpl extends NodeTable implements Bdd {
     return resultNode;
   }
 
+  @Override
+  public void forEachMinimalSolution(int node, Consumer<BitSet> action) {
+    assert isNodeValidOrRoot(node);
+
+    if (node == FALSE_NODE) {
+      return;
+    }
+    if (numberOfVariables() == 0) {
+      // This implies that node == TRUE_NODE, as there only exist FALSE and TRUE in that case
+      action.accept(new BitSet(0));
+      return;
+    }
+    // TODO This can be optimized
+    new MinimalSolutionIterator(this, node).forEachRemaining(action);
+  }
+
   String getCacheStatistics() {
     return cache.getStatistics();
   }
@@ -522,20 +538,6 @@ class BddImpl extends NodeTable implements Bdd {
   @Override
   public int getFalseNode() {
     return FALSE_NODE;
-  }
-
-  @Override
-  public Iterator<BitSet> getMinimalSolutions(int node) {
-    assert isNodeValidOrRoot(node);
-
-    if (node == FALSE_NODE) {
-      return Collections.emptyIterator();
-    }
-    if (numberOfVariables() == 0) {
-      // This implies that node == TRUE_NODE, as there only exist FALSE and TRUE in that case
-      return Iterators.singletonIterator(new BitSet());
-    }
-    return new MinimalSolutionIterator(this, node);
   }
 
   @Override

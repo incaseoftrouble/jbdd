@@ -60,7 +60,7 @@ public class BddTest {
    */
   @Test
   public void internalTest() {
-    BddImpl bdd = new BddImpl(2); // Want much garbage collections
+    BddImpl bdd = new BddImpl(2);
     int v1 = bdd.createVariable();
     int v2 = bdd.createVariable();
     int v3 = bdd.createVariable();
@@ -205,14 +205,17 @@ public class BddTest {
     assertThat(bdd.evaluate(p4, valuation), is(false));
   }
 
+  @SuppressWarnings("UseOfClone")
   @Test
   public void testMinimalSolutionsForConstants() {
     Bdd bdd = new BddImpl(20);
 
-    List<BitSet> falseSolutions = Lists.newArrayList(bdd.getMinimalSolutions(bdd.getFalseNode()));
+    List<BitSet> falseSolutions = Lists.newArrayList();
+    bdd.forEachMinimalSolution(bdd.getFalseNode(), set -> falseSolutions.add((BitSet) set.clone()));
     assertThat(falseSolutions, is(Collections.emptyList()));
 
-    List<BitSet> trueSolutions = Lists.newArrayList(bdd.getMinimalSolutions(bdd.getTrueNode()));
+    List<BitSet> trueSolutions = Lists.newArrayList();
+    bdd.forEachMinimalSolution(bdd.getTrueNode(), set -> falseSolutions.add((BitSet) set.clone()));
     assertThat(trueSolutions, is(Collections.singletonList(new BitSet())));
   }
 

@@ -20,7 +20,7 @@
 package de.tum.in.jbdd;
 
 import java.util.BitSet;
-import java.util.Iterator;
+import java.util.function.Consumer;
 import javax.annotation.Nonnegative;
 
 /**
@@ -156,6 +156,22 @@ public interface Bdd {
   int exists(int node, BitSet quantifiedVariables);
 
   /**
+   * Iteratively computes all (minimal) solutions of the function represented by {@code node} and
+   * executes the given {@code action} with it. The returned solutions are all bit sets representing
+   * a path from node to <tt>true</tt> in the graph induced by the BDD structure. Furthermore, the
+   * solutions are generated in lexicographic ascending order.
+   *
+   * <p><b>Note:</b> The passed bit set is modified in place. If all solutions should be gathered
+   * into a set or similar, they have to be cloned after each call to the consumer.</p>
+   *
+   * @param node
+   *     The node whose solutions should be computed.
+   * @param action
+   *     The action to be performed on these solutions.
+   */
+  void forEachMinimalSolution(int node, Consumer<BitSet> action);
+
+  /**
    * Returns the node representing <tt>false</tt>.
    */
   int getFalseNode();
@@ -163,23 +179,6 @@ public interface Bdd {
   int getHigh(int node);
 
   int getLow(int node);
-
-  /**
-   * Iteratively computes all (minimal) solutions of the function represented by {@code node}. The
-   * returned solutions are all bit sets representing a path from node to <tt>true</tt> in the graph
-   * induced by the BDD structure. Furthermore, the solutions are generated in lexicographic
-   * ascending order.
-   *
-   * <p><b>Note:</b> The returned iterator modifies the bit set in place. If all solutions should
-   * be gathered into a set or similar, they have to be cloned after each call to
-   * {@link Iterator#next()}.</p>
-   *
-   * @param node
-   *     The node whose solutions should be computed.
-   *
-   * @return An iterator returning all minimal solutions in ascending order.
-   */
-  Iterator<BitSet> getMinimalSolutions(int node);
 
   /**
    * Returns the node representing <tt>true</tt>.
