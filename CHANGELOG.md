@@ -2,9 +2,14 @@
 
 ## 0.1.x
 
+### 0.1.3 (2017-09-27)
+
+ * Fixed a synchronization issue, added some more convenience methods
+
 ### 0.1.2 (2017-07-26)
 
  * Add a simple synchronization wrapper for the Bdd interface.
+ * Removed the minimal solution iterator, since it can't be synchronized.
 
 ### 0.1.1 (2017-06-24)
 

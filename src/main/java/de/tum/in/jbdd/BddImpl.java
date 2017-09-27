@@ -20,7 +20,6 @@
 package de.tum.in.jbdd;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.Iterators;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Iterator;

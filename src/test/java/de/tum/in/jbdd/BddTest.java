@@ -215,8 +215,8 @@ public class BddTest {
     assertThat(falseSolutions, is(Collections.emptyList()));
 
     List<BitSet> trueSolutions = Lists.newArrayList();
-    bdd.forEachMinimalSolution(bdd.getTrueNode(), set -> falseSolutions.add((BitSet) set.clone()));
-    assertThat(trueSolutions, is(Collections.singletonList(new BitSet())));
+    bdd.forEachMinimalSolution(bdd.getTrueNode(), set -> trueSolutions.add((BitSet) set.clone()));
+    assertThat(trueSolutions, is(Collections.singletonList(new BitSet(0))));
   }
 
   @Test

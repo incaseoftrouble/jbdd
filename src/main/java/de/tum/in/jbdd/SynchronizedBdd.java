@@ -1,6 +1,7 @@
 package de.tum.in.jbdd;
 
 import java.util.BitSet;
+import java.util.concurrent.Callable;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -9,15 +10,13 @@ import java.util.function.Consumer;
 /**
  * Synchronizes a given Bdd using a {@link java.util.concurrent.locks.ReadWriteLock}.
  */
-public class SynchronizedBdd implements Bdd {
+public final class SynchronizedBdd implements Bdd {
   private final Bdd delegate;
-  private final ReadWriteLock lock;
   private final Lock readLock;
   private final Lock writeLock;
 
   private SynchronizedBdd(Bdd delegate, ReadWriteLock lock) {
     this.delegate = delegate;
-    this.lock = lock;
     writeLock = lock.writeLock();
     readLock = lock.readLock();
   }
@@ -177,9 +176,9 @@ public class SynchronizedBdd implements Bdd {
 
   @Override
   public boolean implies(int node1, int node2) {
-    readLock.lock();
+    writeLock.lock();
     boolean result = delegate.implies(node1, node2);
-    readLock.unlock();
+    writeLock.unlock();
     return result;
   }
 
@@ -248,6 +247,25 @@ public class SynchronizedBdd implements Bdd {
     readLock.lock();
   }
 
+  @SuppressWarnings("ProhibitedExceptionDeclared")
+  public <V> V readLocked(Callable<V> action) throws Exception { // NOPMD
+    readLock.lock();
+    try {
+      return action.call();
+    } finally {
+      readLock.unlock();
+    }
+  }
+
+  public void readLocked(Runnable action) {
+    readLock.lock();
+    try {
+      action.run();
+    } finally {
+      readLock.unlock();
+    }
+  }
+
   public void readUnlock() {
     readLock.unlock();
   }
@@ -271,32 +289,32 @@ public class SynchronizedBdd implements Bdd {
 
   @Override
   public BitSet support(int node) {
-    readLock.lock();
+    writeLock.lock();
     BitSet result = delegate.support(node);
-    readLock.unlock();
+    writeLock.unlock();
     return result;
   }
 
   @Override
   public BitSet support(int node, int highestVariable) {
-    readLock.lock();
+    writeLock.lock();
     BitSet result = delegate.support(node, highestVariable);
-    readLock.unlock();
+    writeLock.unlock();
     return result;
   }
 
   @Override
   public void support(int node, BitSet bitSet) {
-    readLock.lock();
+    writeLock.lock();
     delegate.support(node, bitSet);
-    readLock.unlock();
+    writeLock.unlock();
   }
 
   @Override
   public void support(int node, BitSet bitSet, int highestVariable) {
-    readLock.lock();
+    writeLock.lock();
     delegate.support(node, bitSet, highestVariable);
-    readLock.unlock();
+    writeLock.unlock();
   }
 
   @Override
@@ -309,6 +327,25 @@ public class SynchronizedBdd implements Bdd {
 
   public void writeLock() {
     writeLock.lock();
+  }
+
+  @SuppressWarnings("ProhibitedExceptionDeclared")
+  public <V> V writeLocked(Callable<V> action) throws Exception { // NOPMD
+    writeLock.lock();
+    try {
+      return action.call();
+    } finally {
+      writeLock.unlock();
+    }
+  }
+
+  public void writeLocked(Runnable action) {
+    writeLock.lock();
+    try {
+      action.run();
+    } finally {
+      writeLock.unlock();
+    }
   }
 
   public void writeUnlock() {

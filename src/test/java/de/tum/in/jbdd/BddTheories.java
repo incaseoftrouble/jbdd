@@ -622,7 +622,10 @@ public class BddTheories {
 
     Set<BitSet> solutionBitSets = new HashSet<>();
     BitSet supportFromSolutions = new BitSet(bdd.numberOfVariables());
-    Iterator<BitSet> solutionIterator = bdd.getMinimalSolutions(node);
+
+    List<BitSet> minimalSolutions = new ArrayList<>();
+    bdd.forEachMinimalSolution(node, solution -> minimalSolutions.add(copyBitSet(solution)));
+    Iterator<BitSet> solutionIterator = minimalSolutions.iterator();
     BitSet previous = null;
     while (solutionIterator.hasNext()) {
       BitSet bitSet = solutionIterator.next();
@@ -639,7 +642,7 @@ public class BddTheories {
           }
         }
       }
-      previous = copyBitSet(bitSet);
+      previous = bitSet;
       // No solution is generated twice
       assertTrue(solutionBitSets.add(previous));
       supportFromSolutions.or(previous);
