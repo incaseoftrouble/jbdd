@@ -2,7 +2,7 @@
 
 JBDD (Java Binary Decision Diagrams) is (yet another) native implementation of BDDs in Java.
 It is inspired by [JDD](https://bitbucket.org/vahidi/jdd/wiki/Home), but more or less rewritten from scratch, since JDD contained some bugs and was missing features like, for example, substitution.
-The design goals are simplicity, reasonable performance and light dependencies (as of now, only [Guava](https://github.com/google/guava) is required during runtime).
+The design goals are simplicity, reasonable performance and no dependencies.
 
 This also implies that some more fancy BDD features and variants (like variable reordering or z-BDDs) are missing here, too.
 They might get added over time, but if you require such features, consider using optimized implementations like [CUDD](http://vlsi.colorado.edu/~fabio/), [BuDDy](http://buddy.sourceforge.net/manual/main.html) or [Sylvan](http://fmt.cs.utwente.nl/tools/sylvan/) instead.
@@ -14,7 +14,7 @@ You can either build the jar using gradle (see below) or fetch it from maven cen
     <dependency>
       <groupId>de.tum.in</groupId>
       <artifactId>jbdd</artifactId>
-      <version>0.1.2</version>
+      <version>0.2.0</version>
     </dependency>
 
 ## Building

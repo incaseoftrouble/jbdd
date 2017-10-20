@@ -19,12 +19,11 @@
 
 package de.tum.in.jbdd;
 
-import com.google.common.math.IntMath;
-
 final class MathUtil {
   private static final int BYTE_MASK = BitUtil.intMaskLength(Byte.SIZE);
   private static final int FNV_OFFSET = 0x811c9dc5;
   private static final int FNV_PRIME = 0x1000193;
+
 
   private MathUtil() {
   }
@@ -32,9 +31,9 @@ final class MathUtil {
   @SuppressWarnings("MagicNumber")
   private static int fnv1aRound(int hash, int number) {
     return (hash ^ ((number >>> 24) & BYTE_MASK)
-      ^ ((number >>> 16) & BYTE_MASK)
-      ^ ((number >>> 8) & BYTE_MASK)
-      ^ (number & BYTE_MASK)) * FNV_PRIME;
+        ^ ((number >>> 16) & BYTE_MASK)
+        ^ ((number >>> 8) & BYTE_MASK)
+        ^ (number & BYTE_MASK)) * FNV_PRIME;
   }
 
   private static int fnv1aRound(int hash, long number) {
@@ -69,7 +68,7 @@ final class MathUtil {
   public static int nextPrime(int prime) {
     int nextPrime = Math.max(3, prime | 1);
 
-    while (!IntMath.isPrime(nextPrime)) {
+    while (!PrimeTest.isPrime((long) nextPrime)) {
       nextPrime += 2;
     }
 

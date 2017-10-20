@@ -1,15 +1,19 @@
 package de.tum.in.jbdd;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.BitSet;
 import java.util.concurrent.Callable;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
  * Synchronizes a given Bdd using a {@link java.util.concurrent.locks.ReadWriteLock}.
  */
+@SuppressFBWarnings(value = "UL_UNRELEASED_LOCK_EXCEPTION_PATH",
+                    justification = "If the delegate throws some exception, all hope is lost")
 public final class SynchronizedBdd implements Bdd {
   private final Bdd delegate;
   private final Lock readLock;
@@ -113,6 +117,21 @@ public final class SynchronizedBdd implements Bdd {
   public void forEachMinimalSolution(int node, Consumer<BitSet> action) {
     readLock.lock();
     delegate.forEachMinimalSolution(node, action);
+    readLock.unlock();
+  }
+
+  @Override
+  public void forEachMinimalSolution(int node, BiConsumer<BitSet, BitSet> action) {
+    readLock.lock();
+    delegate.forEachMinimalSolution(node, action);
+    readLock.unlock();
+  }
+
+  @Override
+  public void forEachNonEmptyPath(int node, int highestVariable,
+      BiConsumer<BitSet, BitSet> action) {
+    readLock.lock();
+    delegate.forEachNonEmptyPath(node, highestVariable, action);
     readLock.unlock();
   }
 

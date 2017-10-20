@@ -90,7 +90,7 @@ public class BddTheories {
 
     logger.log(Level.INFO, "Building base BDD structure");
     // Have a lot of GC sweeps
-    BddConfiguration config = ImmutableBddConfiguration.builder()
+    BddConfiguration config = de.tum.in.jbdd.ImmutableBddConfiguration.builder()
         .logStatisticsOnShutdown(false)
         .maximumNodeTableGrowth(100)
         .minimumNodeTableGrowth(100)
@@ -239,10 +239,8 @@ public class BddTheories {
         + " data points", new Object[] {initialNodeCount, initialReferencedNodeCount,
         unaryDataPointSet.size(), binaryDataPointSet.size(), ternaryDataPointSet.size()});
 
-    BitSet alphabet = new BitSet();
-    for (int i = 0; i < variableList.size(); i++) {
-      alphabet.set(i);
-    }
+    BitSet alphabet = new BitSet(bdd.numberOfVariables());
+    alphabet.set(0, bdd.numberOfVariables());
     valuations = () -> new PowerBitSetIterator(alphabet);
   }
 
@@ -593,27 +591,7 @@ public class BddTheories {
   }
 
   @Theory(nullsAccepted = false)
-  public void testGetLowAndHigh(UnaryDataPoint dataPoint) {
-    int node = dataPoint.getNode();
-    assumeTrue(bdd.isNodeValid(node));
-    int low = bdd.getLow(node);
-    int high = bdd.getHigh(node);
-    if (bdd.isVariableOrNegated(node)) {
-      if (bdd.isVariable(node)) {
-        assertThat(low, is(bdd.getFalseNode()));
-        assertThat(high, is(bdd.getTrueNode()));
-      } else {
-        assertThat(low, is(bdd.getTrueNode()));
-        assertThat(high, is(bdd.getFalseNode()));
-      }
-    } else {
-      Collection<Integer> rootNodes = ImmutableSet.of(bdd.getFalseNode(), bdd.getTrueNode());
-      assumeThat(rootNodes.contains(low) && rootNodes.contains(high), is(false));
-    }
-  }
-
-  @Theory
-  public void testGetMinimalSolutions(UnaryDataPoint dataPoint) {
+  public void testForEachMinimalSolutions(UnaryDataPoint dataPoint) {
     int node = dataPoint.getNode();
     assumeTrue(bdd.isNodeValidOrRoot(node));
 
@@ -655,6 +633,76 @@ public class BddTheories {
     // Build up all minimal solutions using a naive algorithm
     Set<BitSet> assignments = new BddPathExplorer(bdd, node).getAssignments();
     assertThat(solutionBitSets, is(assignments));
+  }
+
+  @Theory(nullsAccepted = false)
+  public void testForEachMinimalSolutionsWithRelevantSet(UnaryDataPoint dataPoint) {
+    int node = dataPoint.getNode();
+    assumeTrue(bdd.isNodeValidOrRoot(node));
+
+    BitSet support = bdd.support(node);
+    assumeThat(support.cardinality(), lessThanOrEqualTo(7));
+
+    List<BitSet> minimalSolutions = new ArrayList<>();
+    long[] solutionCount = {0L};
+    int variableCount = bdd.numberOfVariables();
+    bdd.forEachMinimalSolution(node, (solution, solutionSupport) -> {
+      minimalSolutions.add(copyBitSet(solution));
+      BitSet nonRelevantVariables = copyBitSet(solutionSupport);
+      nonRelevantVariables.flip(0, variableCount);
+      assertThat(nonRelevantVariables.intersects(solution), is(false));
+      assertThat(bdd.evaluate(node, solution), is(true));
+
+      Iterator<BitSet> iterator = new PowerBitSetIterator(nonRelevantVariables);
+      while (iterator.hasNext()) {
+        BitSet next = copyBitSet(iterator.next());
+        next.or(solution);
+        assertThat(bdd.evaluate(node, next), is(true));
+      }
+      solutionCount[0] += (1L << nonRelevantVariables.cardinality());
+    });
+    assertThat(solutionCount[0], is((long) bdd.countSatisfyingAssignments(node)));
+
+    List<BitSet> otherMinimalSolutions = new ArrayList<>();
+    bdd.forEachMinimalSolution(node, solution -> otherMinimalSolutions.add(copyBitSet(solution)));
+    assertThat(minimalSolutions, is(otherMinimalSolutions));
+  }
+
+  @Theory(nullsAccepted = false)
+  public void testForEachNonEmptyPath(UnaryDataPoint dataPoint) {
+    int node = dataPoint.getNode();
+    assumeTrue(bdd.isNodeValidOrRoot(node));
+
+    BitSet support = bdd.support(node);
+    assumeThat(support.cardinality(), lessThanOrEqualTo(7));
+
+    int highestVariable = variableCount / 2;
+    bdd.forEachNonEmptyPath(node, highestVariable, (path, pathSupport) -> {
+      assertThat(path.length(), lessThanOrEqualTo(highestVariable + 1));
+      assertThat(pathSupport.length(), lessThanOrEqualTo(highestVariable + 1));
+
+      assertThat(bdd.restrict(node, pathSupport, path), not(is(bdd.getFalseNode())));
+    });
+  }
+
+  @Theory(nullsAccepted = false)
+  public void testGetLowAndHigh(UnaryDataPoint dataPoint) {
+    int node = dataPoint.getNode();
+    assumeTrue(bdd.isNodeValid(node));
+    int low = bdd.getLow(node);
+    int high = bdd.getHigh(node);
+    if (bdd.isVariableOrNegated(node)) {
+      if (bdd.isVariable(node)) {
+        assertThat(low, is(bdd.getFalseNode()));
+        assertThat(high, is(bdd.getTrueNode()));
+      } else {
+        assertThat(low, is(bdd.getTrueNode()));
+        assertThat(high, is(bdd.getFalseNode()));
+      }
+    } else {
+      Collection<Integer> rootNodes = ImmutableSet.of(bdd.getFalseNode(), bdd.getTrueNode());
+      assumeThat(rootNodes.contains(low) && rootNodes.contains(high), is(false));
+    }
   }
 
   @Theory(nullsAccepted = false)

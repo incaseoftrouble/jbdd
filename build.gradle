@@ -1,15 +1,20 @@
 plugins {
     id 'io.codearte.nexus-staging' version '0.9.0'
+    id 'com.github.spotbugs' version '1.4'
 }
 
 group 'de.tum.in'
-version '0.1.3'
+version '0.2.0'
 
 apply plugin: 'java'
 
-apply plugin: 'findbugs'
+spotbugs {
+    toolVersion = '3.1.0-RC6'
+}
 apply plugin: 'pmd'
 apply plugin: 'checkstyle'
+
+apply plugin: 'idea'
 
 def defaultEncoding = 'UTF-8'
 tasks.withType(JavaCompile) { options.encoding = defaultEncoding }
@@ -23,25 +28,26 @@ repositories {
 }
 
 dependencies {
-    compileOnly 'com.google.code.findbugs:annotations:3.0.1'
+    compileOnly 'com.github.spotbugs:spotbugs-annotations:3.1.0-RC6'
+    compileOnly 'javax.annotation:javax.annotation-api:1.3.1'
     compileOnly 'org.immutables:value:2.5.3'
-
-    compile 'com.google.guava:guava:22.0'
 
     testCompile group: 'junit', name: 'junit', version: '4.12'
     testCompile group: 'org.hamcrest', name: 'hamcrest-all', version: '1.3'
+    testCompile 'com.google.guava:guava:23.0'
 }
 
-// Findbugs
+// Spotbugs
+// https://plugins.gradle.org/plugin/com.github.spotbugs
 // https://docs.gradle.org/current/dsl/org.gradle.api.plugins.quality.FindBugs.html
-findbugs {
-    reportsDir = file("$project.buildDir/reports/findbugs")
+spotbugs {
+    reportsDir = file("$project.buildDir/reports/spotbugs")
     effort = "max"
     reportLevel = "low"
-    excludeFilter = file("$project.projectDir/config/findbugs-exclude.xml")
+    excludeFilter = file("$project.projectDir/config/spotbugs-exclude.xml")
     ignoreFailures = false
 }
-tasks.withType(FindBugs) {
+tasks.withType(com.github.spotbugs.SpotBugsTask) {
     reports {
         xml.enabled = false
         html.enabled = true
@@ -51,6 +57,7 @@ tasks.withType(FindBugs) {
 // PMD
 // https://docs.gradle.org/current/dsl/org.gradle.api.plugins.quality.Pmd.html
 pmd {
+    toolVersion = "5.8.1"
     reportsDir = file("$project.buildDir/reports/pmd")
     ruleSetFiles = files("$project.rootDir/config/pmd-rules.xml")
     ruleSets = [] // We specify all rules in rules.xml
@@ -67,9 +74,10 @@ tasks.withType(Pmd) {
 // Checkstyle
 // https://docs.gradle.org/current/dsl/org.gradle.api.plugins.quality.Checkstyle.html
 checkstyle {
-    toolVersion = "7.8.1"
+    toolVersion = "8.2"
     configFile = file("$project.rootDir/config/checkstyle.xml")
     ignoreFailures = false
+    maxWarnings = 0
     showViolations = false // Don't litter console
     checkstyleMain {
         configProperties = ['suppression-file':
@@ -80,21 +88,9 @@ checkstyle {
                                     "$project.rootDir/config/checkstyle-test-suppression.xml"]
     }
 }
-// See https://github.com/gradle/gradle/issues/881
-tasks.withType(Checkstyle).each { checkstyleTask ->
-    checkstyleTask.doLast {
-        reports.all { report ->
-            def outputFile = report.destination
-            if (outputFile.exists() && outputFile.text.contains("<error ")) {
-                throw new GradleException("There were checkstyle warnings! See $outputFile")
-            }
-        }
-    }
-}
 
 // Deployment - run with -Prelease clean uploadArchives closeAndReleaseRepository
 if (project.hasProperty('release')) {
-
     apply plugin: 'maven'
     apply plugin: 'signing'
     apply plugin: 'io.codearte.nexus-staging'
@@ -162,5 +158,94 @@ if (project.hasProperty('release')) {
         username = ossrhUsername
         password = ossrhPassword
         delayBetweenRetriesInMillis = 4000
+    }
+}
+
+// If a user file is present, include it.
+if (file('../user.gradle').exists()) {
+    apply from: '../user.gradle'
+}
+
+// Gradle IDEA project configuration stuff
+
+idea {
+    project {
+        vcs = 'Git'
+
+        ipr {
+            withXml { xmlProvider ->
+                def projectXml = xmlProvider.asNode()
+                customizeCompiler(projectXml)
+                customizeCodeStyle(projectXml, file("config/idea-codestyle.xml").getText("UTF-8"))
+                customizeEncoding(projectXml)
+            }
+        }
+    }
+
+    module {
+        def annotSrcFolder = file("build/generated-src/annot/main")
+        def annotTestFolder = file("build/generated-src/annot/test")
+
+        sourceDirs += annotSrcFolder
+        generatedSourceDirs += annotSrcFolder
+        sourceDirs += annotTestFolder
+        generatedSourceDirs += annotTestFolder
+
+        name = 'jbdd'
+
+        downloadJavadoc = true
+        downloadSources = true
+    }
+}
+
+// Helpers
+
+static findComponent(node, name) {
+    node.component.find { it.@name == name }
+}
+
+static customizeCompiler(project) {
+    def compilerConfiguration = findComponent(project, 'CompilerConfiguration')
+
+    compilerConfiguration.annotationProcessing.replaceNode {
+        annotationProcessing {
+            profile(name: 'Default', default: true, enabled: true) {
+                processorPath(useClasspath: true)
+                sourceOutputDir(name: "build/generated-src/annot/main")
+                sourceTestOutputDir(name: "build/generated-src/annot/test")
+                outputRelativeToContentRoot(value: true)
+            }
+        }
+    }
+}
+
+static customizeCodeStyle(project, codeStyle) {
+    project.appendNode('component', [name: 'ProjectCodeStyleSettingsManager'])
+    def codeStyleNode = findComponent(project, 'ProjectCodeStyleSettingsManager')
+
+    codeStyleNode.appendNode('option', [name: 'USE_PER_PROJECT_SETTINGS', value: 'true'])
+    def projectSettingsNode = codeStyleNode.appendNode('option', [name: 'PER_PROJECT_SETTINGS'])
+            .appendNode('value')
+
+    def codeStyleXml = new XmlParser().parseText(codeStyle)
+    codeStyleXml.children().each { option ->
+        projectSettingsNode.append(option)
+    }
+}
+
+static customizeEncoding(project) {
+    def encoding = findComponent(project, 'Encoding')
+
+    if (encoding) {
+        // Change existing node.
+        encoding.@useUTFGuessing = true
+        encoding.@native2AsciiForPropertiesFiles = true
+        encoding.@defaultCharsetForPropertiesFiles = 'UTF-8'
+    } else {
+        // Create new node with default values.
+        project.appendNode 'Encoding',
+                [useUTFGuessing                  : true,
+                 native2AsciiForPropertiesFiles  : true,
+                 defaultCharsetForPropertiesFiles: 'UTF-8']
     }
 }

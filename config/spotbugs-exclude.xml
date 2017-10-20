@@ -1,0 +1,15 @@
+<FindBugsFilter>
+    <!-- Match all things to be excluded here! -->
+    <Match>
+        <!-- Restrict to test folder ... -->
+        <Folder name="~test\..*"/>
+        <!-- ... and classes named ...Test -->
+        <Or>
+            <Class name="~.*Test$" />
+            <!-- Include inner classes -->
+            <Class name="~.*Test\$[0-9]*" />
+        </Or>
+        <!-- Test classes often use @SetUp to initialize their values -->
+        <Bug code="UwF"/>
+    </Match>
+</FindBugsFilter>

@@ -2,9 +2,17 @@
 
 ## 0.1.x
 
+### 0.2.0 (2017-10-10)
+
+ * Improved `forEachMinimalSolution` (don't use a complex iterator, but rather a simple recursion).
+ * Added an adaption of `forEachMinimalSolution` where additionally the relevant variables of the solution are passed.
+ * Added `forEachNonEmptyPath`, which is a partial version of the above `forEachMinimalSolution`.
+ * Upgrade Gradle and the static analysis tools.
+ * Removed Guava dependency (now only JRE is needed).
+
 ### 0.1.3 (2017-09-27)
 
- * Fixed a synchronization issue, added some more convenience methods
+ * Fixed a synchronization issue, added some more convenience methods.
 
 ### 0.1.2 (2017-07-26)
 

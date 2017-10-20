@@ -20,6 +20,7 @@
 package de.tum.in.jbdd;
 
 import java.util.BitSet;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import javax.annotation.Nonnegative;
 
@@ -38,17 +39,15 @@ public interface Bdd {
   int and(int node1, int node2);
 
   /**
-   * Constructs the node representing the <i>composition</i> of the function represented by
-   * {@code node} with the functions represented by the entries of {@code variableNodes}. More
-   * formally, if <tt>f(x_1, x_2, ..., x_n)</tt> is the function represented by {@code node},
-   * this method returns <tt>f(f_1(x_1, ..., x_n), ..., f_n(x_1, ..., x_n))</tt>, where
-   * <tt>f_i = {@code variableNodes[i]}</tt>
-   * <p>
-   * The {@code variableNodes} array can contain less than <tt>n</tt> entries, then only the first
-   * variables are replaced. Furthermore, -1 can be used as an entry to denote "don't replace this
-   * variable" (which semantically is the same as saying "replace this variable by itself"). Note
-   * that after the call the -1 entries will be replaced by the actual corresponding variable nodes.
-   * </p>
+   * Constructs the node representing the <i>composition</i> of the function represented by {@code
+   * node} with the functions represented by the entries of {@code variableNodes}. More formally, if
+   * <tt>f(x_1, x_2, ..., x_n)</tt> is the function represented by {@code node}, this method returns
+   * <tt>f(f_1(x_1, ..., x_n), ..., f_n(x_1, ..., x_n))</tt>, where <tt>f_i = {@code
+   * variableNodes[i]}</tt> <p> The {@code variableNodes} array can contain less than <tt>n</tt>
+   * entries, then only the first variables are replaced. Furthermore, -1 can be used as an entry to
+   * denote "don't replace this variable" (which semantically is the same as saying "replace this
+   * variable by itself"). Note that after the call the -1 entries will be replaced by the actual
+   * corresponding variable nodes. </p>
    *
    * @param node
    *     The node to be composed.
@@ -61,10 +60,10 @@ public interface Bdd {
 
   /**
    * Auxiliary function useful for updating node variables. It dereferences the inputs and
-   * references {@code result}. This is useful for assignments like {@code node = f(in1, in2)}
-   * where <tt>f</tt> is some operation on this BDD and both <tt>in1</tt> and <tt>in2</tt> are
-   * temporary nodes or not used anymore. In this case, calling
-   * {@code node = consume(bdd, node(in1, in2), in1, in2)} updates the references as needed.
+   * references {@code result}. This is useful for assignments like {@code node = f(in1, in2)} where
+   * <tt>f</tt> is some operation on this BDD and both <tt>in1</tt> and <tt>in2</tt> are temporary
+   * nodes or not used anymore. In this case, calling {@code node = consume(bdd, node(in1, in2),
+   * in1, in2)} updates the references as needed.
    *
    * <p>This would be more concise when implemented using method references, but these are
    * comparatively heavyweight.</p>
@@ -94,8 +93,8 @@ public interface Bdd {
 
   /**
    * Creates a new variable and returns the node representing it. The implementation guarantees that
-   * variables are always allocated sequentially starting from 0, i.e.
-   * {@code getVariable(createVariable()) == numberOfVariables() - 1}.
+   * variables are always allocated sequentially starting from 0, i.e. {@code
+   * getVariable(createVariable()) == numberOfVariables() - 1}.
    *
    * @return The node representing the new variable.
    */
@@ -140,11 +139,11 @@ public interface Bdd {
   boolean evaluate(int node, BitSet assignment);
 
   /**
-   * Constructs the node representing the function obtained by existential quantification of
-   * {@code node} with all variables specified by {@code quantifiedVariables}. Formally, let
-   * <tt>f(x_1, ..., x_m)</tt> be the function specified by {@code node} and <tt>x_1, ..., x_m</tt>
-   * all variables for which {@code quantifiedVariables} is set. This method then constructs
-   * <tt>E x_1 E x_2 ... E x_n f(x_1, ..., x_m)</tt>.
+   * Constructs the node representing the function obtained by existential quantification of {@code
+   * node} with all variables specified by {@code quantifiedVariables}. Formally, let <tt>f(x_1,
+   * ..., x_m)</tt> be the function specified by {@code node} and <tt>x_1, ..., x_m</tt> all
+   * variables for which {@code quantifiedVariables} is set. This method then constructs <tt>E x_1 E
+   * x_2 ... E x_n f(x_1, ..., x_m)</tt>.
    *
    * @param node
    *     The node representing the basis of the quantification.
@@ -161,7 +160,7 @@ public interface Bdd {
    * a path from node to <tt>true</tt> in the graph induced by the BDD structure. Furthermore, the
    * solutions are generated in lexicographic ascending order.
    *
-   * <p><b>Note:</b> The passed bit set is modified in place. If all solutions should be gathered
+   * <p><b>Note:</b> The passed bit set is modified in-place. If all solutions should be gathered
    * into a set or similar, they have to be cloned after each call to the consumer.</p>
    *
    * @param node
@@ -169,7 +168,36 @@ public interface Bdd {
    * @param action
    *     The action to be performed on these solutions.
    */
-  void forEachMinimalSolution(int node, Consumer<BitSet> action);
+  default void forEachMinimalSolution(int node, Consumer<BitSet> action) {
+    forEachMinimalSolution(node, (path, pathSupport) -> action.accept(path));
+  }
+
+  /**
+   * Iteratively computes all (minimal) solutions of the function represented by {@code node} and
+   * executes the given {@code action} with it as in {@link #forEachMinimalSolution(int, Consumer)}.
+   * Additionally, the action will be provided the set of relevant variables for each solution.
+   *
+   * <p><b>Note:</b> The passed bit sets are modified in-place. If all solutions should be gathered
+   * into a set or similar, they have to be cloned after each call to the consumer.</p>
+   *
+   * @param node
+   *     The node whose solutions should be computed.
+   * @param action
+   *     The action to be performed on these solutions.
+   */
+  default void forEachMinimalSolution(int node, BiConsumer<BitSet, BitSet> action) {
+    forEachNonEmptyPath(node, numberOfVariables(), action);
+  }
+
+  /**
+   * Iteratively computes all partial assignments (up to the {@code highestVariable}) such that the
+   * node reached after inserting this partial assignment is not <tt>false</tt>. Additionally, the
+   * action will be provided the set of relevant variables for each partial solution.
+   *
+   * <p><b>Note:</b> The passed bit sets are modified in-place. If all solutions should be gathered
+   * into a set or similar, they have to be cloned after each call to the consumer.</p>
+   */
+  void forEachNonEmptyPath(int node, int highestVariable, BiConsumer<BitSet, BitSet> action);
 
   /**
    * Returns the node representing <tt>false</tt>.
@@ -202,8 +230,8 @@ public interface Bdd {
   int getVariableNode(@Nonnegative int variableNumber);
 
   /**
-   * Constructs the node representing <tt>IF {@code ifNode} THEN {@code thenNode} ELSE
-   * {@code elseNode}</tt>.
+   * Constructs the node representing <tt>IF {@code ifNode} THEN {@code thenNode} ELSE {@code
+   * elseNode}</tt>.
    */
   int ifThenElse(int ifNode, int thenNode, int elseNode);
 
@@ -215,14 +243,14 @@ public interface Bdd {
   /**
    * Checks whether the given {@code node1} implies {@code node2}, i.e. if every valuation under
    * which the function represented by {@code node1} evaluates to true also evaluates to true on
-   * {@code node2}. This is equivalent to checking if {@link #implication(int, int)} with
-   * {@code node1} and {@code node2} as parameters is equal to {@link #getTrueNode()} and equal to
-   * checking whether {@code node1} equals <tt>{@code node1} OR {@code node2}</tt>, but faster.
+   * {@code node2}. This is equivalent to checking if {@link #implication(int, int)} with {@code
+   * node1} and {@code node2} as parameters is equal to {@link #getTrueNode()} and equal to checking
+   * whether {@code node1} equals <tt>{@code node1} OR {@code node2}</tt>, but faster.
    *
    * <p><b>Note:</b> As many operations are cached, it may be even faster to use an alternative
    * logical representation of implication depending on how the BDD is used before this invocation.
-   * E.g. if <tt>{@code node1} OR {@code 2}</tt> has been computed already, checking if
-   * <tt>{@code node1} == {@code node1} OR {@code node2}</tt> is a constant time operation.</p>
+   * E.g. if <tt>{@code node1} OR {@code 2}</tt> has been computed already, checking if <tt>{@code
+   * node1} == {@code node1} OR {@code node2}</tt> is a constant time operation.</p>
    *
    * @param node1
    *     The node representing the assumption.
@@ -311,12 +339,11 @@ public interface Bdd {
   int reference(int node);
 
   /**
-   * Computes the restriction of the given {@code node}, where all variables specified by
-   * {@code restrictedVariables} are replaced by the value given in
-   * {@code restrictedVariableValues}. Formally, if {@code node} represents
-   * <tt>f(x_1, ..., x_n)</tt>, this method computes the node representing
-   * <tt>f(x_1, ..., x_{i_1-1}, c_1, x_{i_1+1}, ..., x_{i_2-1}, c_2, x_{i_2+1}, ..., x_n</tt>, where
-   * <tt>i_k</tt> are the elements of the {@code restrictedVariables} set and
+   * Computes the restriction of the given {@code node}, where all variables specified by {@code
+   * restrictedVariables} are replaced by the value given in {@code restrictedVariableValues}.
+   * Formally, if {@code node} represents <tt>f(x_1, ..., x_n)</tt>, this method computes the node
+   * representing <tt>f(x_1, ..., x_{i_1-1}, c_1, x_{i_1+1}, ..., x_{i_2-1}, c_2, x_{i_2+1}, ...,
+   * x_n</tt>, where <tt>i_k</tt> are the elements of the {@code restrictedVariables} set and
    * <tt>c_k := restrictedVariableValues.get(i_k)</tt>. This is semantically equivalent to calling
    * compose where all specified variables are replaced by <tt>true</tt> or <tt>false</tt>, but
    * slightly faster.
@@ -332,23 +359,7 @@ public interface Bdd {
    *
    * @see #compose(int, int[])
    */
-  default int restrict(int node, BitSet restrictedVariables, BitSet restrictedVariableValues) {
-    int[] compose = new int[numberOfVariables()];
-
-    for (int i = 0; i < compose.length; i++) {
-      if (restrictedVariables.get(i)) {
-        if (restrictedVariableValues.get(i)) {
-          compose[i] = getTrueNode();
-        } else {
-          compose[i] = getFalseNode();
-        }
-      } else {
-        compose[i] = -1;
-      }
-    }
-
-    return compose(node, compose);
-  }
+  int restrict(int node, BitSet restrictedVariables, BitSet restrictedVariableValues);
 
   /**
    * Computes the <b>support</b> of the function represented by the given {@code node}. The support
@@ -357,8 +368,7 @@ public interface Bdd {
    * @param node
    *     The node whose support should be computed.
    *
-   * @return A bit set where a bit at position {@code i} is set iff the {@code i}-th variable is in
-   * the support of {@code node}.
+   * @return A bit set with bit {@code i} is set iff the {@code i}-th variable is in the support.
    */
   default BitSet support(int node) {
     return support(node, numberOfVariables());
@@ -371,8 +381,7 @@ public interface Bdd {
    * @param node
    *     The node whose support should be computed.
    *
-   * @return A bit set where a bit at position {@code i} is set iff the {@code i}-th variable is in
-   * the support of {@code node}.
+   * @return A bit set with bit {@code i} is set iff the {@code i}-th variable is in the support.
    */
   default BitSet support(int node, int highestVariable) {
     BitSet bitSet = new BitSet(highestVariable);

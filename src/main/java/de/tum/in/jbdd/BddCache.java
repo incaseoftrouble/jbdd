@@ -19,6 +19,7 @@
 
 package de.tum.in.jbdd;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.ConcurrentLinkedDeque;
@@ -31,6 +32,7 @@ import javax.annotation.Nullable;
  *  - Not regrow every time but do partial invalidate
  */
 @SuppressWarnings("PMD.UseUtilityClass")
+@SuppressFBWarnings(value = "NP_NONNULL_FIELD_NOT_INITIALIZED_IN_CONSTRUCTOR")
 final class BddCache {
   private static final int BINARY_CACHE_OPERATION_ID_OFFSET = 61;
   private static final int BINARY_OPERATION_AND = 0;

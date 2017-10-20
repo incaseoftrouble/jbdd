@@ -19,12 +19,9 @@
 
 package de.tum.in.jbdd;
 
-import com.google.common.annotations.VisibleForTesting;
 import java.util.Arrays;
 import java.util.BitSet;
-import java.util.Iterator;
-import java.util.NoSuchElementException;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 /* Implementation notes:
  * - Many of the methods are practically copy-paste of each other except for a few variables and
@@ -40,7 +37,7 @@ class BddImpl extends NodeTable implements Bdd {
   private int[] variableNodes;
 
   BddImpl(int nodeSize) {
-    this(nodeSize, ImmutableBddConfiguration.builder().build());
+    this(nodeSize, de.tum.in.jbdd.ImmutableBddConfiguration.builder().build());
   }
 
   BddImpl(int nodeSize, BddConfiguration configuration) {
@@ -224,13 +221,13 @@ class BddImpl extends NodeTable implements Bdd {
       return 0.0d;
     }
     if (node == TRUE_NODE) {
-      //noinspection NonReproducibleMathCall,MagicNumber
-      return Math.pow(2.0d, (double) numberOfVariables);
+      //noinspection MagicNumber
+      return StrictMath.pow(2.0d, (double) numberOfVariables);
     }
     long nodeStore = getNodeStore(node);
     double variable = (double) getVariableFromStore(nodeStore);
-    //noinspection NonReproducibleMathCall,MagicNumber
-    return Math.pow(2.0d, variable) * countSatisfyingAssignmentsRecursive(node);
+    //noinspection MagicNumber
+    return StrictMath.pow(2.0d, variable) * countSatisfyingAssignmentsRecursive(node);
   }
 
   private double countSatisfyingAssignmentsRecursive(int node) {
@@ -251,7 +248,6 @@ class BddImpl extends NodeTable implements Bdd {
     int nodeVar = (int) getVariableFromStore(nodeStore);
 
     double lowCount = doCountSatisfyingAssignments((int) getLowFromStore(nodeStore), nodeVar);
-
     double highCount = doCountSatisfyingAssignments((int) getHighFromStore(nodeStore), nodeVar);
 
     double result = lowCount + highCount;
@@ -299,13 +295,13 @@ class BddImpl extends NodeTable implements Bdd {
     if (subNode == FALSE_NODE) {
       return 0.0d;
     } else if (subNode == TRUE_NODE) {
-      //noinspection NonReproducibleMathCall,MagicNumber
-      return Math.pow(2.0d, (double) (numberOfVariables - currentVar - 1));
+      //noinspection MagicNumber
+      return StrictMath.pow(2.0d, (double) (numberOfVariables - currentVar - 1));
     } else {
       long subStore = getNodeStore(subNode);
       int subVar = (int) getVariableFromStore(subStore);
-      //noinspection NonReproducibleMathCall,MagicNumber
-      double multiplier = Math.pow(2.0d, (double) (subVar - currentVar - 1));
+      //noinspection MagicNumber
+      double multiplier = StrictMath.pow(2.0d, (double) (subVar - currentVar - 1));
       return multiplier * countSatisfyingAssignmentsRecursive(subNode);
     }
   }
@@ -403,7 +399,7 @@ class BddImpl extends NodeTable implements Bdd {
     return existsSelfSubstitution(node, quantifiedVariables);
   }
 
-  @VisibleForTesting
+  // VisibleForTesting
   int existsSelfSubstitution(int node, BitSet quantifiedVariables) {
     assert quantifiedVariables.previousSetBit(quantifiedVariables.length()) <= numberOfVariables;
     if (quantifiedVariables.cardinality() == numberOfVariables) {
@@ -444,7 +440,7 @@ class BddImpl extends NodeTable implements Bdd {
     return quantifiedNode;
   }
 
-  @VisibleForTesting
+  // VisibleForTesting
   int existsShannon(int node, BitSet quantifiedVariables) {
     assert quantifiedVariables.previousSetBit(quantifiedVariables.length()) <= numberOfVariables;
     if (quantifiedVariables.cardinality() == numberOfVariables) {
@@ -514,20 +510,67 @@ class BddImpl extends NodeTable implements Bdd {
     return resultNode;
   }
 
+  @SuppressWarnings("AssignmentToMethodParameter")
   @Override
-  public void forEachMinimalSolution(int node, Consumer<BitSet> action) {
-    assert isNodeValidOrRoot(node);
-
+  public void forEachNonEmptyPath(int node, int highestVariable,
+      BiConsumer<BitSet, BitSet> action) {
+    assert isNodeValidOrRoot(node) && highestVariable >= 0;
     if (node == FALSE_NODE) {
       return;
     }
-    if (numberOfVariables() == 0) {
-      // This implies that node == TRUE_NODE, as there only exist FALSE and TRUE in that case
-      action.accept(new BitSet(0));
+    if (node == TRUE_NODE) {
+      action.accept(new BitSet(0), new BitSet(0));
       return;
     }
-    // TODO This can be optimized
-    new MinimalSolutionIterator(this, node).forEachRemaining(action);
+
+    int numberOfVariables = numberOfVariables();
+    int bitSetSize;
+    int highestRecursive;
+    if (highestVariable >= numberOfVariables) {
+      bitSetSize = numberOfVariables;
+      highestRecursive = Integer.MAX_VALUE;
+    } else {
+      bitSetSize = highestVariable;
+      highestRecursive = highestVariable;
+    }
+
+    BitSet path = new BitSet(bitSetSize);
+    BitSet pathSupport = new BitSet(bitSetSize);
+    forEachNonEmptyPathRecursive(node, highestRecursive, path, pathSupport, action);
+  }
+
+
+  private void forEachNonEmptyPathRecursive(int node, int highestVariable,
+      BitSet path, BitSet pathSupport, BiConsumer<BitSet, BitSet> action) {
+    assert isNodeValid(node) || node == TRUE_NODE;
+
+    if (node == TRUE_NODE) {
+      action.accept(path, pathSupport);
+      return;
+    }
+
+    long store = getNodeStore(node);
+    int variable = (int) getVariableFromStore(store);
+    if (variable > highestVariable) {
+      action.accept(path, pathSupport);
+      return;
+    }
+    pathSupport.set(variable);
+
+    int lowNode = (int) getLowFromStore(store);
+    if (lowNode != FALSE_NODE) {
+      forEachNonEmptyPathRecursive(lowNode, highestVariable, path, pathSupport, action);
+    }
+
+    int highNode = (int) getHighFromStore(store);
+    if (highNode != FALSE_NODE) {
+      path.set(variable);
+      forEachNonEmptyPathRecursive(highNode, highestVariable, path, pathSupport, action);
+      path.clear(variable);
+    }
+
+    assert pathSupport.get(variable);
+    pathSupport.clear(variable);
   }
 
   String getCacheStatistics() {
@@ -740,10 +783,10 @@ class BddImpl extends NodeTable implements Bdd {
     int node2var = (int) getVariableFromStore(node2store);
 
     if (node1var == node2var) {
-      return
-          impliesRecursive((int) getLowFromStore(node1store), (int) getLowFromStore(node2store))
-              && impliesRecursive((int) getHighFromStore(node1store),
-              (int) getHighFromStore(node2store));
+      return impliesRecursive((int) getLowFromStore(node1store),
+          (int) getLowFromStore(node2store))
+          && impliesRecursive((int) getHighFromStore(node1store),
+          (int) getHighFromStore(node2store));
     } else if (node1var < node2var) {
       return impliesRecursive((int) getLowFromStore(node1store), node2)
           && impliesRecursive((int) getHighFromStore(node1store), node2);
@@ -1098,104 +1141,5 @@ class BddImpl extends NodeTable implements Bdd {
     popWorkStack(2);
     cache.putXor(hash, node1, node2, resultNode);
     return resultNode;
-  }
-
-  private static final class MinimalSolutionIterator implements Iterator<BitSet> {
-    private final BddImpl bdd;
-    private final BitSet bitSet;
-    private final int[] path;
-    private boolean firstRun = true;
-    private int highestLowVariableWithNonFalseHighBranch = 0;
-    private int leafPosition;
-    private boolean next;
-
-    MinimalSolutionIterator(BddImpl bdd, int node) {
-      // Require at least one possible solution to exist.
-      assert bdd.isNodeValid(node) || node == TRUE_NODE;
-      // Assignments don't make much sense otherwise
-      assert bdd.numberOfVariables() > 0;
-
-      this.bdd = bdd;
-      this.path = new int[bdd.numberOfVariables()];
-      this.bitSet = new BitSet(bdd.numberOfVariables());
-
-      path[0] = node;
-      Arrays.fill(path, 1, path.length, -1);
-      leafPosition = 0;
-      next = true;
-    }
-
-    @Override
-    public boolean hasNext() {
-      return next;
-    }
-
-    @Override
-    public BitSet next() throws NoSuchElementException {
-      int currentNode;
-      if (firstRun) {
-        firstRun = false;
-        currentNode = path[0];
-      } else {
-        // Backtrack on the current path until we find a node set to low and non-false high branch
-        currentNode = path[leafPosition];
-        int branchPosition = leafPosition;
-        while (bitSet.get(branchPosition) || bdd.getHigh(currentNode) == FALSE_NODE) {
-          do {
-            branchPosition -= 1;
-          }
-          while (path[branchPosition] == -1);
-          if (branchPosition == -1) {
-            throw new NoSuchElementException("No next element");
-          }
-          currentNode = path[branchPosition];
-        }
-        assert !bitSet.get(branchPosition) && bdd.getHigh(currentNode) != FALSE_NODE;
-        assert bdd.getVariable(currentNode) == branchPosition;
-
-        // currentNode is the lowest node we can switch to high.
-        bitSet.clear(branchPosition + 1, leafPosition + 1);
-        Arrays.fill(path, branchPosition + 1, leafPosition + 1, -1);
-
-        // currentNode gets switched to high and we descend that tree below.
-        bitSet.set(branchPosition);
-        assert path[branchPosition] == currentNode;
-        currentNode = bdd.getHigh(path[branchPosition]);
-        assert currentNode != FALSE_NODE;
-        leafPosition = branchPosition;
-      }
-
-      // Descend the tree, searching for a new true node and determine if there is a next
-      // assignment.
-
-      // If there is a possible path higher up, there definitely are more solutions
-      next = highestLowVariableWithNonFalseHighBranch < leafPosition;
-
-      while (currentNode != TRUE_NODE) {
-        assert currentNode != FALSE_NODE;
-        long currentNodeStore = bdd.getNodeStore(currentNode);
-        leafPosition = (int) getVariableFromStore(currentNodeStore);
-        path[leafPosition] = currentNode;
-
-        int low = (int) getLowFromStore(currentNodeStore);
-        if (low == FALSE_NODE) {
-          // Descend high path
-          bitSet.set(leafPosition);
-          currentNode = (int) getHighFromStore(currentNodeStore);
-        } else {
-          // If there is a non-false high node, we will be able to swap this node later on so we
-          // definitely have a next assignment. On the other hand, if there is no such node, the
-          // last possible assignment has been reached, as there are no more possible switches
-          // higher up in the tree.
-          if (!next && (int) getHighFromStore(currentNodeStore) != FALSE_NODE) {
-            next = true;
-            highestLowVariableWithNonFalseHighBranch = leafPosition;
-          }
-          currentNode = low;
-        }
-      }
-      assert bdd.evaluate(path[0], bitSet);
-      return bitSet;
-    }
   }
 }
