@@ -1,6 +1,20 @@
 # 0.x
 
-## 0.1.x
+## 0.3.x
+
+### 0.3.1 (2018-02-15)
+
+ * Re-add non-null annotations
+
+### 0.3.0 (2018-02-15)
+
+ * Added utility methods to `Bdd` (`createVariables(int)` and `getSatisfyingAssignment(int)`).
+ * A synchronized BDD can now only be obtained via the `BddFactory`.
+ * `Bdd#support` does not clear the passed BitSet anymore.
+ * Reordered some code.
+ * Update build infrastructure, drop `javax.annotations` and SpotBugs (waiting for the checker framework gradle plugin to mature).
+
+## 0.2.x
 
 ### 0.2.0 (2017-10-10)
 
@@ -9,6 +23,8 @@
  * Added `forEachNonEmptyPath`, which is a partial version of the above `forEachMinimalSolution`.
  * Upgrade Gradle and the static analysis tools.
  * Removed Guava dependency (now only JRE is needed).
+
+## 0.1.x
 
 ### 0.1.3 (2017-09-27)
 

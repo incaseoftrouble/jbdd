@@ -14,7 +14,7 @@ You can either build the jar using gradle (see below) or fetch it from maven cen
     <dependency>
       <groupId>de.tum.in</groupId>
       <artifactId>jbdd</artifactId>
-      <version>0.2.0</version>
+      <version>0.3.1</version>
     </dependency>
 
 ## Building

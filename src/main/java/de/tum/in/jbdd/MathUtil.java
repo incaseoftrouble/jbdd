@@ -24,7 +24,6 @@ final class MathUtil {
   private static final int FNV_OFFSET = 0x811c9dc5;
   private static final int FNV_PRIME = 0x1000193;
 
-
   private MathUtil() {
   }
 

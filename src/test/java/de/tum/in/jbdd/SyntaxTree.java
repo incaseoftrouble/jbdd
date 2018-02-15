@@ -170,7 +170,6 @@ final class SyntaxTree {
 
     SyntaxTreeBinaryOperation(SyntaxTreeNode left, SyntaxTreeNode right,
         BinaryType type) {
-      super();
       this.left = left;
       this.right = right;
       this.type = type;
@@ -255,7 +254,6 @@ final class SyntaxTree {
     private final boolean value;
 
     SyntaxTreeConstant(boolean value) {
-      super();
       this.value = value;
     }
 
@@ -306,7 +304,6 @@ final class SyntaxTree {
     private final int variableNumber;
 
     SyntaxTreeLiteral(int variableNumber) {
-      super();
       this.variableNumber = variableNumber;
     }
 
@@ -368,10 +365,9 @@ final class SyntaxTree {
   }
 
   static final class SyntaxTreeNot extends SyntaxTreeNode {
-    private final SyntaxTreeNode child;
+    final SyntaxTreeNode child;
 
     SyntaxTreeNot(SyntaxTreeNode child) {
-      super();
       this.child = child;
     }
 
@@ -432,7 +428,6 @@ final class SyntaxTree {
 
     SyntaxTreeTernaryOperation(SyntaxTreeNode first, SyntaxTreeNode second,
         SyntaxTreeNode third, TernaryType type) {
-      super();
       this.first = first;
       this.second = second;
       this.third = third;

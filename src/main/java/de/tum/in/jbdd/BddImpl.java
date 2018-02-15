@@ -37,7 +37,7 @@ class BddImpl extends NodeTable implements Bdd {
   private int[] variableNodes;
 
   BddImpl(int nodeSize) {
-    this(nodeSize, de.tum.in.jbdd.ImmutableBddConfiguration.builder().build());
+    this(nodeSize, ImmutableBddConfiguration.builder().build());
   }
 
   BddImpl(int nodeSize, BddConfiguration configuration) {
@@ -50,9 +50,326 @@ class BddImpl extends NodeTable implements Bdd {
   private static boolean isVariableOrNegatedStore(long nodeStore) {
     int low = (int) getLowFromStore(nodeStore);
     int high = (int) getHighFromStore(nodeStore);
-    return low == FALSE_NODE && high == TRUE_NODE
-        || low == TRUE_NODE && high == FALSE_NODE;
+    return (low == FALSE_NODE && high == TRUE_NODE)
+        || (low == TRUE_NODE && high == FALSE_NODE);
   }
+
+  @Override
+  public int getTrueNode() {
+    return TRUE_NODE;
+  }
+
+  @Override
+  public int getFalseNode() {
+    return FALSE_NODE;
+  }
+
+  @Override
+  public int numberOfVariables() {
+    return numberOfVariables;
+  }
+
+
+  @Override
+  public int getVariableNode(int variableNumber) {
+    assert 0 <= variableNumber && variableNumber < numberOfVariables;
+    return variableNodes[variableNumber];
+  }
+
+  @Override
+  public int createVariable() {
+    int variableNode = saturateNode(makeNode(numberOfVariables, 0, 1));
+    int notVariableNode = saturateNode(makeNode(numberOfVariables, 1, 0));
+
+    if (numberOfVariables == variableNodes.length) {
+      variableNodes = Arrays.copyOf(variableNodes, variableNodes.length * 2);
+    }
+    variableNodes[numberOfVariables] = variableNode;
+    numberOfVariables++;
+
+    cache.putNot(variableNode, notVariableNode);
+    cache.putNot(notVariableNode, variableNode);
+    growTree(numberOfVariables);
+    cache.invalidateSatisfaction();
+    cache.invalidateCompose();
+    cache.reallocateVolatile();
+
+    return variableNode;
+  }
+
+  @Override
+  public int[] createVariables(int count) {
+    int newSize = numberOfVariables + count;
+    if (newSize >= variableNodes.length) {
+      variableNodes = Arrays.copyOf(variableNodes, Math.min(variableNodes.length * 2, newSize));
+    }
+
+    int[] variablesNodes = new int[count];
+
+    for (int i = 0; i < count; i++) {
+      int variable = numberOfVariables + i;
+
+      int variableNode = saturateNode(makeNode(variable, 0, 1));
+      int notVariableNode = saturateNode(makeNode(variable, 1, 0));
+      variablesNodes[i] = variableNode;
+      variablesNodes[variable] = variableNode;
+
+      cache.putNot(variableNode, notVariableNode);
+      cache.putNot(notVariableNode, variableNode);
+    }
+    numberOfVariables += count;
+
+    growTree(numberOfVariables);
+    cache.invalidateSatisfaction();
+    cache.invalidateCompose();
+    cache.reallocateVolatile();
+
+    return variablesNodes;
+  }
+
+
+  @Override
+  public boolean isVariable(int node) {
+    if (isNodeRoot(node)) {
+      return false;
+    }
+    long nodeStore = getNodeStore(node);
+    return (int) getLowFromStore(nodeStore) == FALSE_NODE
+        && (int) getHighFromStore(nodeStore) == TRUE_NODE;
+  }
+
+  @Override
+  public boolean isVariableNegated(int node) {
+    if (isNodeRoot(node)) {
+      return false;
+    }
+    long nodeStore = getNodeStore(node);
+    return (int) getLowFromStore(nodeStore) == TRUE_NODE
+        && (int) getHighFromStore(nodeStore) == FALSE_NODE;
+  }
+
+  @Override
+  public boolean isVariableOrNegated(int node) {
+    assert isNodeValidOrRoot(node);
+    if (isNodeRoot(node)) {
+      return false;
+    }
+    long nodeStore = getNodeStore(node);
+    return isVariableOrNegatedStore(nodeStore);
+  }
+
+
+  @Override
+  public boolean evaluate(int node, BitSet assignment) {
+    int currentBdd = node;
+    while (currentBdd >= 2) {
+      long currentBddStore = getNodeStore(currentBdd);
+      int currentBddVariable = (int) getVariableFromStore(currentBddStore);
+      if (assignment.get(currentBddVariable)) {
+        currentBdd = (int) getHighFromStore(currentBddStore);
+      } else {
+        currentBdd = (int) getLowFromStore(currentBddStore);
+      }
+    }
+    return currentBdd == TRUE_NODE;
+  }
+
+  @Override
+  public BitSet getSatisfyingAssignment(int node) {
+    assert isNodeValidOrRoot(node);
+
+    if (node == TRUE_NODE) {
+      return new BitSet(0);
+    }
+    if (node == FALSE_NODE) {
+      throw new IllegalArgumentException("False has no solution");
+    }
+
+    BitSet path = new BitSet(numberOfVariables);
+    getSatisfyingAssignmentRecursive(node, path);
+    return path;
+  }
+
+  private void getSatisfyingAssignmentRecursive(int node, BitSet path) {
+    if (node == TRUE_NODE) {
+      return;
+    }
+
+    long store = getNodeStore(node);
+
+    int lowNode = (int) getLowFromStore(store);
+    if (lowNode == FALSE_NODE) {
+      int highNode = (int) getHighFromStore(store);
+      int variable = (int) getVariableFromStore(store);
+
+      path.set(variable);
+      getSatisfyingAssignmentRecursive(highNode, path);
+    } else {
+      getSatisfyingAssignmentRecursive(lowNode, path);
+    }
+  }
+
+  @SuppressWarnings("AssignmentToMethodParameter")
+  @Override
+  public void forEachNonEmptyPath(int node, int highestVariable,
+      BiConsumer<BitSet, BitSet> action) {
+    assert isNodeValidOrRoot(node) && highestVariable >= 0;
+    if (node == FALSE_NODE) {
+      return;
+    }
+    if (node == TRUE_NODE) {
+      action.accept(new BitSet(0), new BitSet(0));
+      return;
+    }
+
+    int numberOfVariables = numberOfVariables();
+    int bitSetSize;
+    int highestRecursive;
+    if (highestVariable >= numberOfVariables) {
+      bitSetSize = numberOfVariables;
+      highestRecursive = Integer.MAX_VALUE;
+    } else {
+      bitSetSize = highestVariable;
+      highestRecursive = highestVariable;
+    }
+
+    BitSet path = new BitSet(bitSetSize);
+    BitSet pathSupport = new BitSet(bitSetSize);
+    forEachNonEmptyPathRecursive(node, highestRecursive, path, pathSupport, action);
+  }
+
+  private void forEachNonEmptyPathRecursive(int node, int highestVariable,
+      BitSet path, BitSet pathSupport, BiConsumer<BitSet, BitSet> action) {
+    assert isNodeValid(node) || node == TRUE_NODE;
+
+    if (node == TRUE_NODE) {
+      action.accept(path, pathSupport);
+      return;
+    }
+
+    long store = getNodeStore(node);
+    int variable = (int) getVariableFromStore(store);
+    if (variable > highestVariable) {
+      action.accept(path, pathSupport);
+      return;
+    }
+    pathSupport.set(variable);
+
+    int lowNode = (int) getLowFromStore(store);
+    if (lowNode != FALSE_NODE) {
+      forEachNonEmptyPathRecursive(lowNode, highestVariable, path, pathSupport, action);
+    }
+
+    int highNode = (int) getHighFromStore(store);
+    if (highNode != FALSE_NODE) {
+      path.set(variable);
+      forEachNonEmptyPathRecursive(highNode, highestVariable, path, pathSupport, action);
+      path.clear(variable);
+    }
+
+    assert pathSupport.get(variable);
+    pathSupport.clear(variable);
+  }
+
+  @Override
+  public void support(int node, BitSet bitSet, int highestVariable) {
+    assert isNodeValidOrRoot(node);
+    assert 0 <= highestVariable && highestVariable <= numberOfVariables;
+    supportRecursive(node, bitSet, highestVariable);
+    unMarkTree(node);
+  }
+
+  private void supportRecursive(int node, BitSet bitSet, int highestVariable) {
+    if (isNodeRoot(node)) {
+      return;
+    }
+
+    long nodeStore = getNodeStore(node);
+
+    if (isNodeStoreMarked(nodeStore)) {
+      return;
+    }
+
+    int variable = (int) getVariableFromStore(nodeStore);
+
+    if (variable < highestVariable) {
+      bitSet.set(variable);
+      markNode(node);
+      supportRecursive((int) getLowFromStore(nodeStore), bitSet, highestVariable);
+      supportRecursive((int) getHighFromStore(nodeStore), bitSet, highestVariable);
+    }
+  }
+
+  @Override
+  public double countSatisfyingAssignments(int node) {
+    // TODO Add overflow checks, an int version and a BigInteger version
+    if (node == FALSE_NODE) {
+      return 0.0d;
+    }
+    if (node == TRUE_NODE) {
+      //noinspection MagicNumber
+      return StrictMath.pow(2.0d, (double) numberOfVariables);
+    }
+    long nodeStore = getNodeStore(node);
+    double variable = (double) getVariableFromStore(nodeStore);
+    //noinspection MagicNumber
+    return StrictMath.pow(2.0d, variable) * countSatisfyingAssignmentsRecursive(node);
+  }
+
+  private double countSatisfyingAssignmentsRecursive(int node) {
+    if (node == FALSE_NODE) {
+      return 0.0d;
+    }
+    if (node == TRUE_NODE) {
+      return 1.0d;
+    }
+
+    double cacheLookup = cache.lookupSatisfaction(node);
+    if (cacheLookup >= 0.0d) {
+      return cacheLookup;
+    }
+    int hash = cache.getLookupHash();
+
+    long nodeStore = getNodeStore(node);
+    int nodeVar = (int) getVariableFromStore(nodeStore);
+
+    double lowCount = doCountSatisfyingAssignments((int) getLowFromStore(nodeStore), nodeVar);
+    double highCount = doCountSatisfyingAssignments((int) getHighFromStore(nodeStore), nodeVar);
+
+    double result = lowCount + highCount;
+    cache.putSatisfaction(hash, node, result);
+    return result;
+  }
+
+  private double doCountSatisfyingAssignments(int subNode, int currentVar) {
+    if (subNode == FALSE_NODE) {
+      return 0.0d;
+    } else if (subNode == TRUE_NODE) {
+      //noinspection MagicNumber
+      return StrictMath.pow(2.0d, (double) (numberOfVariables - currentVar - 1));
+    } else {
+      long subStore = getNodeStore(subNode);
+      int subVar = (int) getVariableFromStore(subStore);
+      //noinspection MagicNumber
+      double multiplier = StrictMath.pow(2.0d, (double) (subVar - currentVar - 1));
+      return multiplier * countSatisfyingAssignmentsRecursive(subNode);
+    }
+  }
+
+
+  @Override
+  public int cube(BitSet cubeVariables) {
+    int node = TRUE_NODE;
+    for (int currentVariableNumber = cubeVariables.nextSetBit(0); currentVariableNumber != -1;
+         currentVariableNumber = cubeVariables.nextSetBit(currentVariableNumber + 1)) {
+      // Variable nodes are saturated, no need to guard them
+      pushToWorkStack(node);
+      node = andRecursive(node, variableNodes[currentVariableNumber]);
+      popWorkStack();
+    }
+    return node;
+  }
+
 
   @Override
   public int and(int node1, int node2) {
@@ -118,6 +435,7 @@ class BddImpl extends NodeTable implements Bdd {
     cache.putAnd(hash, node1, node2, resultNode);
     return resultNode;
   }
+
 
   @Override
   public int compose(int node, int[] variableNodes) {
@@ -214,97 +532,6 @@ class BddImpl extends NodeTable implements Bdd {
     return resultNode;
   }
 
-  @Override
-  public double countSatisfyingAssignments(int node) {
-    // TODO Add overflow checks, an int version and a BigInteger version
-    if (node == FALSE_NODE) {
-      return 0.0d;
-    }
-    if (node == TRUE_NODE) {
-      //noinspection MagicNumber
-      return StrictMath.pow(2.0d, (double) numberOfVariables);
-    }
-    long nodeStore = getNodeStore(node);
-    double variable = (double) getVariableFromStore(nodeStore);
-    //noinspection MagicNumber
-    return StrictMath.pow(2.0d, variable) * countSatisfyingAssignmentsRecursive(node);
-  }
-
-  private double countSatisfyingAssignmentsRecursive(int node) {
-    if (node == FALSE_NODE) {
-      return 0.0d;
-    }
-    if (node == TRUE_NODE) {
-      return 1.0d;
-    }
-
-    double cacheLookup = cache.lookupSatisfaction(node);
-    if (cacheLookup >= 0.0d) {
-      return cacheLookup;
-    }
-    int hash = cache.getLookupHash();
-
-    long nodeStore = getNodeStore(node);
-    int nodeVar = (int) getVariableFromStore(nodeStore);
-
-    double lowCount = doCountSatisfyingAssignments((int) getLowFromStore(nodeStore), nodeVar);
-    double highCount = doCountSatisfyingAssignments((int) getHighFromStore(nodeStore), nodeVar);
-
-    double result = lowCount + highCount;
-    cache.putSatisfaction(hash, node, result);
-    return result;
-  }
-
-  @Override
-  public int createVariable() {
-    int variableNode = makeNode(numberOfVariables, 0, 1);
-    saturateNode(variableNode);
-    int notVariableNode = makeNode(numberOfVariables, 1, 0);
-    saturateNode(notVariableNode);
-
-    if (numberOfVariables == variableNodes.length) {
-      variableNodes = Arrays.copyOf(variableNodes, variableNodes.length * 2);
-    }
-    variableNodes[numberOfVariables] = variableNode;
-    numberOfVariables++;
-
-    cache.putNot(variableNode, notVariableNode);
-    cache.putNot(notVariableNode, variableNode);
-    growTree(numberOfVariables);
-    cache.invalidateSatisfaction();
-    cache.invalidateCompose();
-    cache.reallocateVolatile();
-
-    return variableNode;
-  }
-
-  @Override
-  public int cube(BitSet cubeVariables) {
-    int node = TRUE_NODE;
-    for (int currentVariableNumber = cubeVariables.nextSetBit(0); currentVariableNumber != -1;
-         currentVariableNumber = cubeVariables.nextSetBit(currentVariableNumber + 1)) {
-      // Variable nodes are saturated, no need to guard them
-      pushToWorkStack(node);
-      node = andRecursive(node, variableNodes[currentVariableNumber]);
-      popWorkStack();
-    }
-    return node;
-  }
-
-  private double doCountSatisfyingAssignments(int subNode, int currentVar) {
-    if (subNode == FALSE_NODE) {
-      return 0.0d;
-    } else if (subNode == TRUE_NODE) {
-      //noinspection MagicNumber
-      return StrictMath.pow(2.0d, (double) (numberOfVariables - currentVar - 1));
-    } else {
-      long subStore = getNodeStore(subNode);
-      int subVar = (int) getVariableFromStore(subStore);
-      //noinspection MagicNumber
-      double multiplier = StrictMath.pow(2.0d, (double) (subVar - currentVar - 1));
-      return multiplier * countSatisfyingAssignmentsRecursive(subNode);
-    }
-  }
 
   @Override
   public int equivalence(int node1, int node2) {
@@ -376,20 +603,6 @@ class BddImpl extends NodeTable implements Bdd {
     return resultNode;
   }
 
-  @Override
-  public boolean evaluate(int node, BitSet assignment) {
-    int currentBdd = node;
-    while (currentBdd >= 2) {
-      long currentBddStore = getNodeStore(currentBdd);
-      int currentBddVariable = (int) getVariableFromStore(currentBddStore);
-      if (assignment.get(currentBddVariable)) {
-        currentBdd = (int) getHighFromStore(currentBddStore);
-      } else {
-        currentBdd = (int) getLowFromStore(currentBddStore);
-      }
-    }
-    return currentBdd == TRUE_NODE;
-  }
 
   @Override
   public int exists(int node, BitSet quantifiedVariables) {
@@ -510,88 +723,6 @@ class BddImpl extends NodeTable implements Bdd {
     return resultNode;
   }
 
-  @SuppressWarnings("AssignmentToMethodParameter")
-  @Override
-  public void forEachNonEmptyPath(int node, int highestVariable,
-      BiConsumer<BitSet, BitSet> action) {
-    assert isNodeValidOrRoot(node) && highestVariable >= 0;
-    if (node == FALSE_NODE) {
-      return;
-    }
-    if (node == TRUE_NODE) {
-      action.accept(new BitSet(0), new BitSet(0));
-      return;
-    }
-
-    int numberOfVariables = numberOfVariables();
-    int bitSetSize;
-    int highestRecursive;
-    if (highestVariable >= numberOfVariables) {
-      bitSetSize = numberOfVariables;
-      highestRecursive = Integer.MAX_VALUE;
-    } else {
-      bitSetSize = highestVariable;
-      highestRecursive = highestVariable;
-    }
-
-    BitSet path = new BitSet(bitSetSize);
-    BitSet pathSupport = new BitSet(bitSetSize);
-    forEachNonEmptyPathRecursive(node, highestRecursive, path, pathSupport, action);
-  }
-
-
-  private void forEachNonEmptyPathRecursive(int node, int highestVariable,
-      BitSet path, BitSet pathSupport, BiConsumer<BitSet, BitSet> action) {
-    assert isNodeValid(node) || node == TRUE_NODE;
-
-    if (node == TRUE_NODE) {
-      action.accept(path, pathSupport);
-      return;
-    }
-
-    long store = getNodeStore(node);
-    int variable = (int) getVariableFromStore(store);
-    if (variable > highestVariable) {
-      action.accept(path, pathSupport);
-      return;
-    }
-    pathSupport.set(variable);
-
-    int lowNode = (int) getLowFromStore(store);
-    if (lowNode != FALSE_NODE) {
-      forEachNonEmptyPathRecursive(lowNode, highestVariable, path, pathSupport, action);
-    }
-
-    int highNode = (int) getHighFromStore(store);
-    if (highNode != FALSE_NODE) {
-      path.set(variable);
-      forEachNonEmptyPathRecursive(highNode, highestVariable, path, pathSupport, action);
-      path.clear(variable);
-    }
-
-    assert pathSupport.get(variable);
-    pathSupport.clear(variable);
-  }
-
-  String getCacheStatistics() {
-    return cache.getStatistics();
-  }
-
-  @Override
-  public int getFalseNode() {
-    return FALSE_NODE;
-  }
-
-  @Override
-  public int getTrueNode() {
-    return TRUE_NODE;
-  }
-
-  @Override
-  public int getVariableNode(int variableNumber) {
-    assert 0 <= variableNumber && variableNumber < numberOfVariables;
-    return variableNodes[variableNumber];
-  }
 
   @Override
   public int ifThenElse(int ifNode, int thenNode, int elseNode) {
@@ -690,6 +821,7 @@ class BddImpl extends NodeTable implements Bdd {
     cache.putIfThenElse(hash, ifNode, thenNode, elseNode, result);
     return result;
   }
+
 
   @Override
   public int implication(int node1, int node2) {
@@ -796,35 +928,6 @@ class BddImpl extends NodeTable implements Bdd {
     }
   }
 
-  @Override
-  public boolean isVariable(int node) {
-    if (isNodeRoot(node)) {
-      return false;
-    }
-    long nodeStore = getNodeStore(node);
-    return (int) getLowFromStore(nodeStore) == FALSE_NODE
-        && (int) getHighFromStore(nodeStore) == TRUE_NODE;
-  }
-
-  @Override
-  public boolean isVariableNegated(int node) {
-    if (isNodeRoot(node)) {
-      return false;
-    }
-    long nodeStore = getNodeStore(node);
-    return (int) getLowFromStore(nodeStore) == TRUE_NODE
-        && (int) getHighFromStore(nodeStore) == FALSE_NODE;
-  }
-
-  @Override
-  public boolean isVariableOrNegated(int node) {
-    assert isNodeValidOrRoot(node);
-    if (isNodeRoot(node)) {
-      return false;
-    }
-    long nodeStore = getNodeStore(node);
-    return isVariableOrNegatedStore(nodeStore);
-  }
 
   @Override
   public int not(int node) {
@@ -834,6 +937,29 @@ class BddImpl extends NodeTable implements Bdd {
     popWorkStack();
     return ret;
   }
+
+  private int notRecursive(int node) {
+    if (node == FALSE_NODE) {
+      return TRUE_NODE;
+    }
+    if (node == TRUE_NODE) {
+      return FALSE_NODE;
+    }
+
+    if (cache.lookupNot(node)) {
+      return cache.getLookupResult();
+    }
+    int hash = cache.getLookupHash();
+    long nodeStore = getNodeStore(node);
+
+    int lowNode = pushToWorkStack(notRecursive((int) getLowFromStore(nodeStore)));
+    int highNode = pushToWorkStack(notRecursive((int) getHighFromStore(nodeStore)));
+    int resultNode = makeNode((int) getVariableFromStore(nodeStore), lowNode, highNode);
+    popWorkStack(2);
+    cache.putNot(hash, node, resultNode);
+    return resultNode;
+  }
+
 
   @Override
   public int notAnd(int node1, int node2) {
@@ -898,44 +1024,6 @@ class BddImpl extends NodeTable implements Bdd {
     return resultNode;
   }
 
-  private int notRecursive(int node) {
-    if (node == FALSE_NODE) {
-      return TRUE_NODE;
-    }
-    if (node == TRUE_NODE) {
-      return FALSE_NODE;
-    }
-
-    if (cache.lookupNot(node)) {
-      return cache.getLookupResult();
-    }
-    int hash = cache.getLookupHash();
-    long nodeStore = getNodeStore(node);
-
-    int lowNode = pushToWorkStack(notRecursive((int) getLowFromStore(nodeStore)));
-    int highNode = pushToWorkStack(notRecursive((int) getHighFromStore(nodeStore)));
-    int resultNode = makeNode((int) getVariableFromStore(nodeStore), lowNode, highNode);
-    popWorkStack(2);
-    cache.putNot(hash, node, resultNode);
-    return resultNode;
-  }
-
-  @Override
-  void notifyGcRun() {
-    // TODO partial invalidate - don't need to re-compute hashes, only throw out all invalidated
-    // nodes
-    cache.invalidate();
-  }
-
-  @Override
-  void notifyTableSizeChanged() {
-    cache.invalidate();
-  }
-
-  @Override
-  public int numberOfVariables() {
-    return numberOfVariables;
-  }
 
   @Override
   public int or(int node1, int node2) {
@@ -997,6 +1085,7 @@ class BddImpl extends NodeTable implements Bdd {
     return resultNode;
   }
 
+
   @Override
   public int restrict(int node, BitSet restrictedVariables,
       BitSet restrictedVariableValues) {
@@ -1048,35 +1137,6 @@ class BddImpl extends NodeTable implements Bdd {
     return resultNode;
   }
 
-  @Override
-  public void support(int node, BitSet bitSet, int highestVariable) {
-    assert isNodeValidOrRoot(node);
-    assert 0 <= highestVariable && highestVariable <= numberOfVariables;
-    bitSet.clear();
-    supportRecursive(node, bitSet, highestVariable);
-    unMarkTree(node);
-  }
-
-  private void supportRecursive(int node, BitSet bitSet, int highestVariable) {
-    if (isNodeRoot(node)) {
-      return;
-    }
-
-    long nodeStore = getNodeStore(node);
-
-    if (isNodeStoreMarked(nodeStore)) {
-      return;
-    }
-
-    int variable = (int) getVariableFromStore(nodeStore);
-
-    if (variable < highestVariable) {
-      bitSet.set(variable);
-      markNode(node);
-      supportRecursive((int) getLowFromStore(nodeStore), bitSet, highestVariable);
-      supportRecursive((int) getHighFromStore(nodeStore), bitSet, highestVariable);
-    }
-  }
 
   @Override
   public int xor(int node1, int node2) {
@@ -1141,5 +1201,22 @@ class BddImpl extends NodeTable implements Bdd {
     popWorkStack(2);
     cache.putXor(hash, node1, node2, resultNode);
     return resultNode;
+  }
+
+
+  @Override
+  void notifyGcRun() {
+    // TODO partial invalidate - don't need to re-compute hashes, only throw out all invalidated
+    // nodes
+    cache.invalidate();
+  }
+
+  @Override
+  void notifyTableSizeChanged() {
+    cache.invalidate();
+  }
+
+  String getCacheStatistics() {
+    return cache.getStatistics();
   }
 }

@@ -1,0 +1,68 @@
+//noinspection GroovyAssignabilityCheck
+task javadocJar(type: Jar) {
+    classifier = 'javadoc'
+    from javadoc
+}
+
+//noinspection GroovyAssignabilityCheck
+task sourcesJar(type: Jar) {
+    classifier = 'sources'
+    //noinspection GrUnresolvedAccess
+    from sourceSets.main.allSource
+}
+
+artifacts {
+    archives javadocJar, sourcesJar
+}
+
+signing {
+    sign configurations.archives
+}
+
+uploadArchives {
+    repositories {
+        mavenDeployer {
+            beforeDeployment { MavenDeployment deployment -> signing.signPom(deployment) }
+
+            repository(url: "https://oss.sonatype.org/service/local/staging/deploy/maven2/") {
+                //noinspection GroovyAssignabilityCheck
+                authentication(userName: ossrhUsername, password: ossrhPassword)
+            }
+
+            pom.project {
+                name 'JBDD'
+                packaging 'jar'
+                description 'Pure Java implementation of (Binary) Decision Diagrams'
+                url 'https://github.com/incaseoftrouble/jbdd'
+
+                scm {
+                    connection 'scm:git:https://github.com/incaseoftrouble/jbdd.git'
+                    developerConnection 'scm:git:git@github.com:incaseoftrouble/jbdd.git'
+                    url 'https://github.com/incaseoftrouble/jbdd'
+                }
+
+                licenses {
+                    license {
+                        name 'The GNU General Public License, Version 3'
+                        url 'https://www.gnu.org/licenses/gpl.txt'
+                        distribution 'repo'
+                    }
+                }
+
+                developers {
+                    developer {
+                        id 'incaseoftrouble'
+                        name 'Tobias Meggendorfer'
+                        email 'tobias@meggendorfer.de'
+                    }
+                }
+            }
+        }
+    }
+}
+
+nexusStaging {
+    username = ossrhUsername
+    password = ossrhPassword
+    delayBetweenRetriesInMillis = 4000
+}

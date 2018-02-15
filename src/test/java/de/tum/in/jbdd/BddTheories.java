@@ -41,7 +41,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -115,7 +114,7 @@ public class BddTheories {
     // Although a set would be more suitable, a list is needed so that the data is always generated
     // in the same order.
     Map<SyntaxTree, Integer> treeToNodeMap = new HashMap<>();
-    List<SyntaxTree> previousDepthNodes = new LinkedList<>();
+    List<SyntaxTree> previousDepthNodes = new ArrayList<>();
 
     // Syntax tree map is a linked map, hence entry set is sorted.
     for (Map.Entry<Integer, SyntaxTree> treeEntry : syntaxTreeMap.entrySet()) {
@@ -257,7 +256,7 @@ public class BddTheories {
   }
 
   @SuppressWarnings("UseOfClone")
-  private static BitSet copyBitSet(BitSet bitSet) {
+  static BitSet copyBitSet(BitSet bitSet) {
     return (BitSet) bitSet.clone();
   }
 

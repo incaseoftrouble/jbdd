@@ -1,164 +1,53 @@
 plugins {
-    id 'io.codearte.nexus-staging' version '0.9.0'
-    id 'com.github.spotbugs' version '1.4'
+    id 'io.codearte.nexus-staging' version '0.11.0'
+    id 'net.ltgt.errorprone' version '0.0.13'
+    id 'net.ltgt.apt-idea' version '0.14'
 }
 
 group 'de.tum.in'
-version '0.2.0'
+version '0.3.1'
 
 apply plugin: 'java'
 
-spotbugs {
-    toolVersion = '3.1.0-RC6'
-}
 apply plugin: 'pmd'
 apply plugin: 'checkstyle'
 
 apply plugin: 'idea'
 
-def defaultEncoding = 'UTF-8'
-tasks.withType(JavaCompile) { options.encoding = defaultEncoding }
-tasks.withType(Javadoc) { options.encoding = defaultEncoding }
+sourceCompatibility = JavaVersion.VERSION_1_8
+targetCompatibility = JavaVersion.VERSION_1_8
 
-sourceCompatibility = 1.8
-targetCompatibility = 1.8
+def defaultEncoding = 'UTF-8'
+//noinspection GroovyAssignabilityCheck
+tasks.withType(JavaCompile) { options.encoding = defaultEncoding }
+//noinspection GroovyAssignabilityCheck
+tasks.withType(Javadoc) { options.encoding = defaultEncoding }
 
 repositories {
     mavenCentral()
 }
 
 dependencies {
-    compileOnly 'com.github.spotbugs:spotbugs-annotations:3.1.0-RC6'
-    compileOnly 'javax.annotation:javax.annotation-api:1.3.1'
-    compileOnly 'org.immutables:value:2.5.3'
+    compileOnly 'com.google.code.findbugs:jsr305:3.0.2'
+
+    compileOnly 'org.immutables:value:2.5.5:annotations'
+    annotationProcessor 'org.immutables:value:2.5.5'
+
+    compileOnly 'com.google.errorprone:error_prone_annotations:2.2.0'
 
     testCompile group: 'junit', name: 'junit', version: '4.12'
     testCompile group: 'org.hamcrest', name: 'hamcrest-all', version: '1.3'
-    testCompile 'com.google.guava:guava:23.0'
+    testCompile 'com.google.guava:guava:24.0-jre'
 }
 
-// Spotbugs
-// https://plugins.gradle.org/plugin/com.github.spotbugs
-// https://docs.gradle.org/current/dsl/org.gradle.api.plugins.quality.FindBugs.html
-spotbugs {
-    reportsDir = file("$project.buildDir/reports/spotbugs")
-    effort = "max"
-    reportLevel = "low"
-    excludeFilter = file("$project.projectDir/config/spotbugs-exclude.xml")
-    ignoreFailures = false
-}
-tasks.withType(com.github.spotbugs.SpotBugsTask) {
-    reports {
-        xml.enabled = false
-        html.enabled = true
-    }
-}
-
-// PMD
-// https://docs.gradle.org/current/dsl/org.gradle.api.plugins.quality.Pmd.html
-pmd {
-    toolVersion = "5.8.1"
-    reportsDir = file("$project.buildDir/reports/pmd")
-    ruleSetFiles = files("$project.rootDir/config/pmd-rules.xml")
-    ruleSets = [] // We specify all rules in rules.xml
-    consoleOutput = false
-    ignoreFailures = false
-}
-tasks.withType(Pmd) {
-    reports {
-        xml.enabled = false
-        html.enabled = true
-    }
-}
-
-// Checkstyle
-// https://docs.gradle.org/current/dsl/org.gradle.api.plugins.quality.Checkstyle.html
-checkstyle {
-    toolVersion = "8.2"
-    configFile = file("$project.rootDir/config/checkstyle.xml")
-    ignoreFailures = false
-    maxWarnings = 0
-    showViolations = false // Don't litter console
-    checkstyleMain {
-        configProperties = ['suppression-file':
-                                    "$project.rootDir/config/checkstyle-main-suppression.xml"]
-    }
-    checkstyleTest {
-        configProperties = ['suppression-file':
-                                    "$project.rootDir/config/checkstyle-test-suppression.xml"]
-    }
-}
+apply from: 'gradle/analysis.gradle'
 
 // Deployment - run with -Prelease clean uploadArchives closeAndReleaseRepository
 if (project.hasProperty('release')) {
     apply plugin: 'maven'
     apply plugin: 'signing'
     apply plugin: 'io.codearte.nexus-staging'
-
-    task javadocJar(type: Jar) {
-        classifier = 'javadoc'
-        from javadoc
-    }
-
-    task sourcesJar(type: Jar) {
-        classifier = 'sources'
-        from sourceSets.main.allSource
-    }
-
-    artifacts {
-        archives javadocJar, sourcesJar
-    }
-
-    signing {
-        sign configurations.archives
-    }
-
-    uploadArchives {
-        repositories {
-            mavenDeployer {
-                beforeDeployment { MavenDeployment deployment -> signing.signPom(deployment) }
-
-                repository(url: "https://oss.sonatype.org/service/local/staging/deploy/maven2/") {
-                    authentication(userName: ossrhUsername, password: ossrhPassword)
-                }
-
-                pom.project {
-                    name 'JBDD'
-                    packaging 'jar'
-                    description 'Pure Java implementation of (Binary) Decision Diagrams'
-                    url 'https://github.com/incaseoftrouble/jbdd'
-
-                    scm {
-                        connection 'scm:git:https://github.com/incaseoftrouble/jbdd.git'
-                        developerConnection 'scm:git:git@github.com:incaseoftrouble/jbdd.git'
-                        url 'https://github.com/incaseoftrouble/jbdd'
-                    }
-
-                    licenses {
-                        license {
-                            name 'The GNU General Public License, Version 3'
-                            url 'https://www.gnu.org/licenses/gpl.txt'
-                            distribution 'repo'
-                        }
-                    }
-
-                    developers {
-                        developer {
-                            id 'incaseoftrouble'
-                            name 'Tobias Meggendorfer'
-                            email 'tobias@meggendorfer.de'
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    nexusStaging {
-        username = ossrhUsername
-        password = ossrhPassword
-        delayBetweenRetriesInMillis = 4000
-    }
+    apply from: 'gradle/publish.gradle'
 }
 
 // If a user file is present, include it.
@@ -166,86 +55,4 @@ if (file('../user.gradle').exists()) {
     apply from: '../user.gradle'
 }
 
-// Gradle IDEA project configuration stuff
-
-idea {
-    project {
-        vcs = 'Git'
-
-        ipr {
-            withXml { xmlProvider ->
-                def projectXml = xmlProvider.asNode()
-                customizeCompiler(projectXml)
-                customizeCodeStyle(projectXml, file("config/idea-codestyle.xml").getText("UTF-8"))
-                customizeEncoding(projectXml)
-            }
-        }
-    }
-
-    module {
-        def annotSrcFolder = file("build/generated-src/annot/main")
-        def annotTestFolder = file("build/generated-src/annot/test")
-
-        sourceDirs += annotSrcFolder
-        generatedSourceDirs += annotSrcFolder
-        sourceDirs += annotTestFolder
-        generatedSourceDirs += annotTestFolder
-
-        name = 'jbdd'
-
-        downloadJavadoc = true
-        downloadSources = true
-    }
-}
-
-// Helpers
-
-static findComponent(node, name) {
-    node.component.find { it.@name == name }
-}
-
-static customizeCompiler(project) {
-    def compilerConfiguration = findComponent(project, 'CompilerConfiguration')
-
-    compilerConfiguration.annotationProcessing.replaceNode {
-        annotationProcessing {
-            profile(name: 'Default', default: true, enabled: true) {
-                processorPath(useClasspath: true)
-                sourceOutputDir(name: "build/generated-src/annot/main")
-                sourceTestOutputDir(name: "build/generated-src/annot/test")
-                outputRelativeToContentRoot(value: true)
-            }
-        }
-    }
-}
-
-static customizeCodeStyle(project, codeStyle) {
-    project.appendNode('component', [name: 'ProjectCodeStyleSettingsManager'])
-    def codeStyleNode = findComponent(project, 'ProjectCodeStyleSettingsManager')
-
-    codeStyleNode.appendNode('option', [name: 'USE_PER_PROJECT_SETTINGS', value: 'true'])
-    def projectSettingsNode = codeStyleNode.appendNode('option', [name: 'PER_PROJECT_SETTINGS'])
-            .appendNode('value')
-
-    def codeStyleXml = new XmlParser().parseText(codeStyle)
-    codeStyleXml.children().each { option ->
-        projectSettingsNode.append(option)
-    }
-}
-
-static customizeEncoding(project) {
-    def encoding = findComponent(project, 'Encoding')
-
-    if (encoding) {
-        // Change existing node.
-        encoding.@useUTFGuessing = true
-        encoding.@native2AsciiForPropertiesFiles = true
-        encoding.@defaultCharsetForPropertiesFiles = 'UTF-8'
-    } else {
-        // Create new node with default values.
-        project.appendNode 'Encoding',
-                [useUTFGuessing                  : true,
-                 native2AsciiForPropertiesFiles  : true,
-                 defaultCharsetForPropertiesFiles: 'UTF-8']
-    }
-}
+apply from: 'gradle/idea.gradle'

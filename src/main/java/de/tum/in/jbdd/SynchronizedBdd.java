@@ -1,36 +1,24 @@
 package de.tum.in.jbdd;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.BitSet;
 import java.util.concurrent.Callable;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
  * Synchronizes a given Bdd using a {@link java.util.concurrent.locks.ReadWriteLock}.
  */
-@SuppressFBWarnings(value = "UL_UNRELEASED_LOCK_EXCEPTION_PATH",
-                    justification = "If the delegate throws some exception, all hope is lost")
 public final class SynchronizedBdd implements Bdd {
-  private final Bdd delegate;
+  private final BddImpl delegate;
   private final Lock readLock;
   private final Lock writeLock;
 
-  private SynchronizedBdd(Bdd delegate, ReadWriteLock lock) {
+  SynchronizedBdd(BddImpl delegate, ReadWriteLock lock) {
     this.delegate = delegate;
     writeLock = lock.writeLock();
     readLock = lock.readLock();
-  }
-
-  public static SynchronizedBdd create(Bdd bdd) {
-    if (bdd instanceof SynchronizedBdd) {
-      return (SynchronizedBdd) bdd;
-    }
-    ReadWriteLock lock = new ReentrantReadWriteLock();
-    return new SynchronizedBdd(bdd, lock);
   }
 
   @Override
@@ -69,6 +57,14 @@ public final class SynchronizedBdd implements Bdd {
   public int createVariable() {
     writeLock.lock();
     int result = delegate.createVariable();
+    writeLock.unlock();
+    return result;
+  }
+
+  @Override
+  public int[] createVariables(int count) {
+    writeLock.lock();
+    int[] result = delegate.createVariables(count);
     writeLock.unlock();
     return result;
   }
@@ -154,6 +150,14 @@ public final class SynchronizedBdd implements Bdd {
     int result = delegate.getLow(node);
     readLock.unlock();
     return result;
+  }
+
+  @Override
+  public BitSet getSatisfyingAssignment(int node) {
+    readLock.lock();
+    BitSet satisfyingAssignment = delegate.getSatisfyingAssignment(node);
+    readLock.unlock();
+    return satisfyingAssignment;
   }
 
   @Override
@@ -295,6 +299,14 @@ public final class SynchronizedBdd implements Bdd {
     int result = delegate.reference(node);
     writeLock.unlock();
     return result;
+  }
+
+  @Override
+  public int getReferenceCount(int node) {
+    readLock.lock();
+    int referenceCount = delegate.getReferenceCount(node);
+    readLock.unlock();
+    return referenceCount;
   }
 
   @Override

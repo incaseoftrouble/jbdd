@@ -48,7 +48,7 @@ class NodeTable {
   private static final int LOW_OFFSET = 1;
   /* Bits allocated for the reference counter */
   private static final int REFERENCE_COUNT_BIT_SIZE = 13;
-  private static final long MAXIMAL_REFERENCE_COUNT = 1L << REFERENCE_COUNT_BIT_SIZE - 1;
+  private static final long MAXIMAL_REFERENCE_COUNT = (1L << REFERENCE_COUNT_BIT_SIZE) - 1L;
   private static final long REFERENCE_COUNT_MASK = BitUtil.maskLength(REFERENCE_COUNT_BIT_SIZE);
   private static final int REFERENCE_COUNT_OFFSET = 1;
   private static final int CHAIN_NEXT_OFFSET = REFERENCE_COUNT_BIT_SIZE + REFERENCE_COUNT_OFFSET;
@@ -752,17 +752,10 @@ class NodeTable {
     return hash;
   }
 
-  // I really feel like not simplifying here improves readability.
-  @SuppressWarnings({"RedundantIfStatement", "PMD.SimplifyBooleanReturns"})
   private boolean isEnoughFreeNodesAfterGc(int freeNodesCount, int nodeCount) {
-    if (freeNodesCount > configuration.minimumFreeNodeCountAfterGc()) {
-      return true;
-    }
-    if (freeNodesCount > (int) ((float) nodeCount * configuration
-        .minimumFreeNodePercentageAfterGc())) {
-      return true;
-    }
-    return false;
+    return freeNodesCount > configuration.minimumFreeNodeCountAfterGc()
+        || freeNodesCount > (int)
+        ((float) nodeCount * configuration.minimumFreeNodePercentageAfterGc());
   }
 
   /**
@@ -1101,12 +1094,13 @@ class NodeTable {
     return count;
   }
 
-  final void saturateNode(int node) {
+  final int saturateNode(int node) {
     assert isNodeValidOrRoot(node);
     if (node > biggestReferencedNode) {
       biggestReferencedNode = node;
     }
     referenceStorage[node] = saturateStore(referenceStorage[node]);
+    return node;
   }
 
   /**

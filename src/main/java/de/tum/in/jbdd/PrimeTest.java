@@ -36,11 +36,11 @@ final class PrimeTest {
 
   private PrimeTest() {}
 
-  private static int compare(long a, long b) {
+  static int compare(long a, long b) {
     return Long.compare(flip(a), flip(b));
   }
 
-  private static long flip(long a) {
+  static long flip(long a) {
     return a ^ Long.MIN_VALUE;
   }
 
@@ -76,7 +76,7 @@ final class PrimeTest {
     throw new AssertionError();
   }
 
-  private static long remainder(long dividend, long divisor) {
+  static long remainder(long dividend, long divisor) {
     if (divisor < 0L) { // i.e., divisor >= 2^63:
       if (compare(dividend, divisor) < 0) {
         return dividend; // dividend < divisor
