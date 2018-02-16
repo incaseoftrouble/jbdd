@@ -2,6 +2,10 @@
 
 ## 0.3.x
 
+### 0.3.2 (2018-02-16)
+
+ * Fixed a stupid bug in `createVariables(int)`
+
 ### 0.3.1 (2018-02-15)
 
  * Re-add non-null annotations

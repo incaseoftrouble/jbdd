@@ -78,8 +78,8 @@ class BddImpl extends NodeTable implements Bdd {
 
   @Override
   public int createVariable() {
-    int variableNode = saturateNode(makeNode(numberOfVariables, 0, 1));
-    int notVariableNode = saturateNode(makeNode(numberOfVariables, 1, 0));
+    int variableNode = saturateNode(makeNode(numberOfVariables, FALSE_NODE, TRUE_NODE));
+    int notVariableNode = saturateNode(makeNode(numberOfVariables, TRUE_NODE, FALSE_NODE));
 
     if (numberOfVariables == variableNodes.length) {
       variableNodes = Arrays.copyOf(variableNodes, variableNodes.length * 2);
@@ -101,18 +101,18 @@ class BddImpl extends NodeTable implements Bdd {
   public int[] createVariables(int count) {
     int newSize = numberOfVariables + count;
     if (newSize >= variableNodes.length) {
-      variableNodes = Arrays.copyOf(variableNodes, Math.min(variableNodes.length * 2, newSize));
+      variableNodes = Arrays.copyOf(variableNodes, Math.max(variableNodes.length * 2, newSize));
     }
 
-    int[] variablesNodes = new int[count];
+    int[] variableNodes = new int[count];
 
     for (int i = 0; i < count; i++) {
       int variable = numberOfVariables + i;
 
-      int variableNode = saturateNode(makeNode(variable, 0, 1));
-      int notVariableNode = saturateNode(makeNode(variable, 1, 0));
-      variablesNodes[i] = variableNode;
-      variablesNodes[variable] = variableNode;
+      int variableNode = saturateNode(makeNode(variable, FALSE_NODE, TRUE_NODE));
+      int notVariableNode = saturateNode(makeNode(variable, TRUE_NODE, FALSE_NODE));
+      variableNodes[i] = variableNode;
+      this.variableNodes[variable] = variableNode;
 
       cache.putNot(variableNode, notVariableNode);
       cache.putNot(notVariableNode, variableNode);
@@ -124,7 +124,7 @@ class BddImpl extends NodeTable implements Bdd {
     cache.invalidateCompose();
     cache.reallocateVolatile();
 
-    return variablesNodes;
+    return variableNodes;
   }
 
 
