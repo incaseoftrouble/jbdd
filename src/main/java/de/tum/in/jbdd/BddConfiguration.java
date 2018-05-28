@@ -31,8 +31,8 @@ public class BddConfiguration {
   private static final int DEFAULT_CACHE_SATISFACTION_DIVIDER = 32;
   private static final int DEFAULT_CACHE_TERNARY_BINS_PER_HASH = 3;
   private static final int DEFAULT_CACHE_TERNARY_DIVIDER = 64;
-  private static final int DEFAULT_CACHE_UNARY_BINS_PER_HASH = 3;
-  private static final int DEFAULT_CACHE_UNARY_DIVIDER = 32;
+  private static final int DEFAULT_CACHE_NEGATION_BINS_PER_HASH = 3;
+  private static final int DEFAULT_CACHE_NEGATION_DIVIDER = 32;
   private static final int DEFAULT_CACHE_VOLATILE_BINS_PER_HASH = 2;
   private static final int DEFAULT_CACHE_VOLATILE_MULTIPLIER = 2;
   private static final int DEFAULT_INITIAL_VARIABLE_NODES = 32;
@@ -87,13 +87,13 @@ public class BddConfiguration {
   }
 
   @Value.Default
-  public int cacheUnaryBinsPerHash() {
-    return DEFAULT_CACHE_UNARY_BINS_PER_HASH;
+  public int cacheNegationBinsPerHash() {
+    return DEFAULT_CACHE_NEGATION_BINS_PER_HASH;
   }
 
   @Value.Default
-  public int cacheUnaryDivider() {
-    return DEFAULT_CACHE_UNARY_DIVIDER;
+  public int cacheNegationDivider() {
+    return DEFAULT_CACHE_NEGATION_DIVIDER;
   }
 
   @Value.Default

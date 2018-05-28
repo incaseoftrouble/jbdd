@@ -19,9 +19,6 @@
 
 package de.tum.in.jbdd;
 
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
-
 public final class BddFactory {
   private BddFactory() {
   }
@@ -32,18 +29,5 @@ public final class BddFactory {
 
   public static Bdd buildBdd(int nodeSize, BddConfiguration configuration) {
     return new BddImpl(nodeSize, configuration);
-  }
-
-  public static SynchronizedBdd buildSynchronizedBdd(int nodeSize) {
-    return synchronize(new BddImpl(nodeSize));
-  }
-
-  public static SynchronizedBdd buildSynchronizedBdd(int nodeSize, BddConfiguration configuration) {
-    return synchronize(new BddImpl(nodeSize, configuration));
-  }
-
-  private static SynchronizedBdd synchronize(BddImpl bdd) {
-    ReadWriteLock lock = new ReentrantReadWriteLock();
-    return new SynchronizedBdd(bdd, lock);
   }
 }

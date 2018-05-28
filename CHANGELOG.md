@@ -1,5 +1,12 @@
 # 0.x
 
+## 0.4.x
+
+### 0.4.0 (2018-05-28)
+
+ * Removed synchronization - access should be synchronized on a higher level
+ * Added a solution iterator
+
 ## 0.3.x
 
 ### 0.3.2 (2018-02-16)

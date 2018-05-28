@@ -21,7 +21,11 @@ package de.tum.in.jbdd;
 
 import java.util.Arrays;
 import java.util.BitSet;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.NoSuchElementException;
 import java.util.function.BiConsumer;
+import java.util.stream.IntStream;
 
 /* Implementation notes:
  * - Many of the methods are practically copy-paste of each other except for a few variables and
@@ -209,7 +213,19 @@ class BddImpl extends NodeTable implements Bdd {
     }
   }
 
-  @SuppressWarnings("AssignmentToMethodParameter")
+
+  @Override
+  public Iterator<BitSet> solutionIterator(int node) {
+    if (node == FALSE_NODE) {
+      return Collections.emptyIterator();
+    }
+    if (node == TRUE_NODE) {
+      return new PowerIterator(numberOfVariables);
+    }
+
+    return new NodeSolutionIterator(this, node);
+  }
+
   @Override
   public void forEachNonEmptyPath(int node, int highestVariable,
       BiConsumer<BitSet, BitSet> action) {
@@ -270,6 +286,7 @@ class BddImpl extends NodeTable implements Bdd {
     assert pathSupport.get(variable);
     pathSupport.clear(variable);
   }
+
 
   @Override
   public void support(int node, BitSet bitSet, int highestVariable) {
@@ -447,7 +464,7 @@ class BddImpl extends NodeTable implements Bdd {
 
     // Guard the elements and replace -1 by actual variable reference
     pushToWorkStack(node);
-    int elements = 1;
+    int workStackCount = 1;
     for (int i = 0; i < variableNodes.length; i++) {
       if (variableNodes[i] == -1) {
         variableNodes[i] = this.variableNodes[i];
@@ -455,7 +472,7 @@ class BddImpl extends NodeTable implements Bdd {
         assert isNodeValidOrRoot(variableNodes[i]);
         if (!isNodeSaturated(variableNodes[i])) {
           pushToWorkStack(variableNodes[i]);
-          elements++;
+          workStackCount++;
         }
       }
     }
@@ -463,8 +480,7 @@ class BddImpl extends NodeTable implements Bdd {
     int highestReplacedVariable = variableNodes.length - 1;
     // Optimise the replacement array
     for (int i = variableNodes.length - 1; i >= 0; i--) {
-      int value = variableNodes[i];
-      if (value != this.variableNodes[i]) {
+      if (variableNodes[i] != this.variableNodes[i]) {
         highestReplacedVariable = i;
         break;
       }
@@ -485,15 +501,14 @@ class BddImpl extends NodeTable implements Bdd {
 
     cache.clearVolatileCache();
     int result = composeRecursive(node, variableNodes, highestReplacedVariable);
-    popWorkStack(elements);
+    popWorkStack(workStackCount);
     if (getConfiguration().useGlobalComposeCache()) {
       cache.putCompose(hash, node, variableNodes, result);
     }
     return result;
   }
 
-  private int composeRecursive(int node, int[] variableNodes,
-      int highestReplacedVariable) {
+  private int composeRecursive(int node, int[] variableNodes, int highestReplacedVariable) {
     if (node == TRUE_NODE || node == FALSE_NODE) {
       return node;
     }
@@ -606,10 +621,9 @@ class BddImpl extends NodeTable implements Bdd {
 
   @Override
   public int exists(int node, BitSet quantifiedVariables) {
-    if (getConfiguration().useShannonExists()) {
-      return existsShannon(node, quantifiedVariables);
-    }
-    return existsSelfSubstitution(node, quantifiedVariables);
+    return getConfiguration().useShannonExists()
+        ? existsShannon(node, quantifiedVariables)
+        : existsSelfSubstitution(node, quantifiedVariables);
   }
 
   // VisibleForTesting
@@ -736,23 +750,23 @@ class BddImpl extends NodeTable implements Bdd {
   }
 
   private int ifThenElseRecursive(int ifNode, int thenNode, int elseNode) {
-    if (ifNode == 1) {
+    if (ifNode == TRUE_NODE) {
       return thenNode;
     }
-    if (ifNode == 0) {
+    if (ifNode == FALSE_NODE) {
       return elseNode;
     }
     if (thenNode == elseNode) {
       return thenNode;
     }
-    if (thenNode == 1) {
-      if (elseNode == 0) {
+    if (thenNode == TRUE_NODE) {
+      if (elseNode == FALSE_NODE) {
         return ifNode;
       }
       return orRecursive(ifNode, elseNode);
     }
-    if (thenNode == 0) {
-      if (elseNode == 1) {
+    if (thenNode == FALSE_NODE) {
+      if (elseNode == TRUE_NODE) {
         return notRecursive(ifNode);
       }
       int result = andRecursive(pushToWorkStack(notRecursive(ifNode)), elseNode);
@@ -760,10 +774,10 @@ class BddImpl extends NodeTable implements Bdd {
       return result;
     }
 
-    if (elseNode == 0) {
+    if (elseNode == FALSE_NODE) {
       return andRecursive(ifNode, thenNode);
     }
-    if (elseNode == 1) {
+    if (elseNode == TRUE_NODE) {
       int result = notAndRecursive(ifNode, pushToWorkStack(notRecursive(thenNode)));
       popWorkStack();
       return result;
@@ -971,13 +985,13 @@ class BddImpl extends NodeTable implements Bdd {
   }
 
   private int notAndRecursive(int node1, int node2) {
-    if (node1 == 0 || node2 == 0) {
-      return 1;
+    if (node1 == FALSE_NODE || node2 == FALSE_NODE) {
+      return TRUE_NODE;
     }
-    if (node1 == 1 || node1 == node2) {
+    if (node1 == TRUE_NODE || node1 == node2) {
       return notRecursive(node2);
     }
-    if (node2 == 1) {
+    if (node2 == TRUE_NODE) {
       return notRecursive(node1);
     }
 
@@ -1037,7 +1051,7 @@ class BddImpl extends NodeTable implements Bdd {
 
   private int orRecursive(int node1, int node2) {
     if (node1 == TRUE_NODE || node2 == TRUE_NODE) {
-      return 1;
+      return TRUE_NODE;
     }
     if (node1 == FALSE_NODE || node1 == node2) {
       return node2;
@@ -1149,7 +1163,7 @@ class BddImpl extends NodeTable implements Bdd {
 
   private int xorRecursive(int node1, int node2) {
     if (node1 == node2) {
-      return 0;
+      return FALSE_NODE;
     }
     if (node1 == FALSE_NODE) {
       return node2;
@@ -1218,5 +1232,196 @@ class BddImpl extends NodeTable implements Bdd {
 
   String getCacheStatistics() {
     return cache.getStatistics();
+  }
+
+
+  private static final class NodeSolutionIterator implements Iterator<BitSet> {
+    private static final int NON_PATH_NODE = -1;
+
+    private final BddImpl bdd;
+    private final BitSet assignment;
+    private final int variableCount;
+    private final int[] path;
+    private boolean firstRun = true;
+    private int highestLowVariableWithNonFalseHighBranch = 0;
+    private int leafNodeIndex;
+    private boolean hasNextPath;
+    private boolean hasNextAssignment;
+    private final int rootVariable;
+
+    NodeSolutionIterator(BddImpl bdd, int node) {
+      // Require at least one possible solution to exist.
+      assert bdd.isNodeValid(node) || node == TRUE_NODE;
+      variableCount = bdd.numberOfVariables();
+
+      // Assignments don't make much sense otherwise
+      assert variableCount > 0;
+
+      this.bdd = bdd;
+
+      this.path = new int[variableCount];
+      this.assignment = new BitSet(variableCount);
+      rootVariable = bdd.getVariable(node);
+
+      Arrays.fill(path, NON_PATH_NODE);
+      path[rootVariable] = node;
+
+      leafNodeIndex = 0;
+      hasNextPath = true;
+      hasNextAssignment = true;
+    }
+
+    @Override
+    public boolean hasNext() {
+      return hasNextAssignment;
+    }
+
+    @Override
+    public BitSet next() throws NoSuchElementException {
+      int currentNode;
+      if (firstRun) {
+        firstRun = false;
+        currentNode = path[rootVariable];
+      } else {
+        // Check if we can flip any non-path variable
+        boolean clearedAny = false;
+        for (int index = 0; index < variableCount; index++) {
+          // Strategy: Perform binary addition on the NON_PATH_NODEs
+          // The tricky bit is to determine whether there is a "next element": Either there is
+          // another real path in the BDD or there is some variable which we still can flip to 1
+          // TODO This should be constant time to determine?
+
+          if (path[index] == NON_PATH_NODE) {
+            if (assignment.get(index)) {
+              assignment.clear(index);
+              clearedAny = true;
+            } else {
+              assignment.set(index);
+              if (hasNextPath || clearedAny) {
+                hasNextAssignment = true;
+              } else {
+                hasNextAssignment = false;
+                for (int i = index + 1; i < variableCount; i++) {
+                  if (path[i] == NON_PATH_NODE && !assignment.get(i)) {
+                    hasNextAssignment = true;
+                    break;
+                  }
+                }
+              }
+              assert bdd.evaluate(path[rootVariable], assignment);
+              return assignment;
+            }
+          }
+        }
+
+        // Situation: All non-path variables are set to zero and we need to find a new path
+        assert hasNextPath;
+        assert IntStream.range(0, variableCount).allMatch(index ->
+            path[index] != NON_PATH_NODE || !assignment.get(index));
+
+        // Backtrack on the current path until we find a node set to low and non-false high branch
+        // to find a new path in the BDD
+        currentNode = path[leafNodeIndex];
+        int branchIndex = leafNodeIndex;
+        while (assignment.get(branchIndex) || bdd.getHigh(currentNode) == FALSE_NODE) {
+          // This node does not give us another branch, backtrack over the path until we get to
+          // the next element of the path
+          // TODO Could track the previous path element in int[]
+          do {
+            branchIndex -= 1;
+            if (branchIndex == -1) {
+              throw new NoSuchElementException("No next element");
+            }
+          } while (path[branchIndex] == NON_PATH_NODE);
+          currentNode = path[branchIndex];
+        }
+        assert !assignment.get(branchIndex) && bdd.getHigh(currentNode) != FALSE_NODE;
+        assert bdd.getVariable(currentNode) == branchIndex;
+
+        // currentNode is the lowest node we can switch to high; set the value and descend the tree
+        // below
+        assignment.clear(branchIndex + 1, leafNodeIndex + 1);
+        Arrays.fill(path, branchIndex + 1, leafNodeIndex + 1, NON_PATH_NODE);
+
+        assignment.set(branchIndex);
+        assert path[branchIndex] == currentNode;
+        currentNode = bdd.getHigh(path[branchIndex]);
+        assert currentNode != FALSE_NODE;
+        leafNodeIndex = branchIndex;
+      }
+
+      // Situation: The currentNode valuation was just flipped to 1 or we are in initial state.
+      // Descend the tree, searching for a solution and determine if there is a next assignment.
+
+      // If there is a possible path higher up, there definitely are more solutions
+      hasNextPath = highestLowVariableWithNonFalseHighBranch < leafNodeIndex;
+
+      while (currentNode != TRUE_NODE) {
+        assert currentNode != FALSE_NODE;
+        long currentNodeStore = bdd.getNodeStore(currentNode);
+        leafNodeIndex = (int) getVariableFromStore(currentNodeStore);
+        path[leafNodeIndex] = currentNode;
+
+        int low = (int) getLowFromStore(currentNodeStore);
+        if (low == FALSE_NODE) {
+          // Descend high path
+          assignment.set(leafNodeIndex);
+          currentNode = (int) getHighFromStore(currentNodeStore);
+        } else {
+          // If there is a non-false high node, we will be able to swap this node later on so we
+          // definitely have a next assignment. On the other hand, if there is no such node, the
+          // last possible assignment has been reached, as there are no more possible switches
+          // higher up in the tree.
+          if (!hasNextPath && (int) getHighFromStore(currentNodeStore) != FALSE_NODE) {
+            hasNextPath = true;
+            highestLowVariableWithNonFalseHighBranch = leafNodeIndex;
+          }
+          currentNode = low;
+        }
+      }
+      assert bdd.evaluate(path[rootVariable], assignment);
+      return assignment;
+    }
+  }
+
+  static final class PowerIterator implements Iterator<BitSet> {
+    private final BitSet iteration;
+    private final int size;
+    private int numSetBits = -1;
+
+    PowerIterator(int size) {
+      this.size = size;
+      this.iteration = new BitSet(size);
+    }
+
+    @Override
+    public boolean hasNext() {
+      return numSetBits < size;
+    }
+
+    @Override
+    public BitSet next() {
+      if (numSetBits == -1) {
+        numSetBits = 0;
+        return iteration;
+      }
+
+      if (numSetBits == size) {
+        throw new NoSuchElementException("No next element");
+      }
+
+      for (int index = 0; index < size; index++) {
+        if (iteration.get(index)) {
+          iteration.clear(index);
+          numSetBits -= 1;
+        } else {
+          iteration.set(index);
+          numSetBits += 1;
+          break;
+        }
+      }
+
+      return iteration;
+    }
   }
 }

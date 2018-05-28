@@ -20,6 +20,7 @@
 package de.tum.in.jbdd;
 
 import java.util.BitSet;
+import java.util.Iterator;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
@@ -193,6 +194,26 @@ public interface Bdd {
    */
   double countSatisfyingAssignments(int node);
 
+
+  /**
+   * Returns an iterator over {@code all} satisfying assignments of the given node. In other words,
+   * this call is equivalent to
+   * <tt>
+   *   Set<BitSet> solutions = new HashSet<>();
+   *   for (BitSet valuation : powerSet) {
+   *     if (bdd.evaluate(node, valuation)) {
+   *       solutions.add(valuation);
+   *     }
+   *   }
+   *   return solutions.iterator();
+   * </tt>
+   * where {@code powerSet} is the power set over all variables, i.e. all possible valuations.
+   *
+   * <p><b>Note:</b> The passed bit sets are modified in-place. If all solutions should be gathered
+   * into a set or similar, they have to be cloned after each call to {@link Iterator#next()}.</p>
+   */
+  Iterator<BitSet> solutionIterator(int node);
+
   /**
    * Iteratively computes all (minimal) solutions of the function represented by {@code node} and
    * executes the given {@code action} with it. The returned solutions are all bit sets representing
@@ -237,6 +258,7 @@ public interface Bdd {
    * into a set or similar, they have to be cloned after each call to the consumer.</p>
    */
   void forEachNonEmptyPath(int node, int highestVariable, BiConsumer<BitSet, BitSet> action);
+
 
   /**
    * Computes the <b>support</b> of the function represented by the given {@code node}. The support

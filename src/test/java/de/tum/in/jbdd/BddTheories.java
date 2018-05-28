@@ -22,7 +22,9 @@ package de.tum.in.jbdd;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.Matchers.closeTo;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.number.OrderingComparison.lessThanOrEqualTo;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
@@ -313,8 +315,8 @@ public class BddTheories {
 
   @Theory(nullsAccepted = false)
   public void testAnd(BinaryDataPoint dataPoint) {
-    int node1 = dataPoint.getLeft();
-    int node2 = dataPoint.getRight();
+    int node1 = dataPoint.left;
+    int node2 = dataPoint.right;
     assumeTrue(bdd.isNodeValidOrRoot(node1) && bdd.isNodeValidOrRoot(node2));
 
     int and = bdd.and(node1, node2);
@@ -343,10 +345,10 @@ public class BddTheories {
 
   @Theory(nullsAccepted = false)
   public void testComposeTree(UnaryDataPoint dataPoint) {
-    int node = dataPoint.getNode();
+    int node = dataPoint.node;
     assumeTrue(bdd.isNodeValidOrRoot(node));
 
-    SyntaxTree syntaxTree = dataPoint.getTree();
+    SyntaxTree syntaxTree = dataPoint.tree;
     Set<Integer> containedVariables = syntaxTree.containedVariables();
     assumeTrue(containedVariables.size() <= 5);
 
@@ -393,7 +395,7 @@ public class BddTheories {
     while (bitSetIterator.hasNext()) {
       BitSet bitSet = bitSetIterator.next();
       assert bitSet != null;
-      assertTrue(bdd.evaluate(composeNode, bitSet) == composeTree.evaluate(bitSet));
+      assertEquals(bdd.evaluate(composeNode, bitSet), composeTree.evaluate(bitSet));
     }
 
     int composeNegativeNode = bdd.compose(node, composeNegativeArray);
@@ -408,8 +410,8 @@ public class BddTheories {
     // This test simply tests if the semantics of consume are as specified, i.e.
     // consume(result, input1, input2) reduces the reference count of the inputs and increases that
     // of result
-    int node1 = dataPoint.getLeft();
-    int node2 = dataPoint.getRight();
+    int node1 = dataPoint.left;
+    int node2 = dataPoint.right;
     assumeThat(node1, is(not(node2)));
     assumeTrue(bdd.isNodeValidOrRoot(node1) && bdd.isNodeValidOrRoot(node2));
     assumeThat(bdd.isNodeSaturated(node1) || bdd.isNodeSaturated(node2), is(false));
@@ -452,7 +454,7 @@ public class BddTheories {
 
   @Theory(nullsAccepted = false)
   public void testCountSatisfyingAssignments(UnaryDataPoint dataPoint) {
-    int node = dataPoint.getNode();
+    int node = dataPoint.node;
     assumeTrue(bdd.isNodeValidOrRoot(node));
 
     long satisfyingAssignments = 0L;
@@ -468,8 +470,8 @@ public class BddTheories {
 
   @Theory(nullsAccepted = false)
   public void testEquivalence(BinaryDataPoint dataPoint) {
-    int node1 = dataPoint.getLeft();
-    int node2 = dataPoint.getRight();
+    int node1 = dataPoint.left;
+    int node2 = dataPoint.right;
     assumeTrue(bdd.isNodeValidOrRoot(node1) && bdd.isNodeValidOrRoot(node2));
 
     int equivalence = bdd.equivalence(node1, node2);
@@ -506,18 +508,18 @@ public class BddTheories {
 
   @Theory(nullsAccepted = false)
   public void testEvaluateTree(UnaryDataPoint dataPoint) {
-    int node = dataPoint.getNode();
+    int node = dataPoint.node;
     assumeTrue(bdd.isNodeValidOrRoot(node));
-    assumeTrue(dataPoint.getTree().depth() <= 5);
+    assumeTrue(dataPoint.tree.depth() <= 5);
 
     for (BitSet valuation : valuations) {
-      assertThat(bdd.evaluate(node, valuation), is(dataPoint.getTree().evaluate(valuation)));
+      assertThat(bdd.evaluate(node, valuation), is(dataPoint.tree.evaluate(valuation)));
     }
   }
 
   @Theory(nullsAccepted = false)
   public void testExistsSelfSubstitution(UnaryDataPoint dataPoint) {
-    int node = dataPoint.getNode();
+    int node = dataPoint.node;
     assumeTrue(bdd.isNodeValidOrRoot(node));
 
     BitSet quantificationBitSet = new BitSet(bdd.numberOfVariables());
@@ -554,7 +556,7 @@ public class BddTheories {
 
   @Theory(nullsAccepted = false)
   public void testExistsShannon(UnaryDataPoint dataPoint) {
-    int node = dataPoint.getNode();
+    int node = dataPoint.node;
     assumeTrue(bdd.isNodeValidOrRoot(node));
 
     BitSet quantificationBitSet = new BitSet(bdd.numberOfVariables());
@@ -591,7 +593,7 @@ public class BddTheories {
 
   @Theory(nullsAccepted = false)
   public void testForEachMinimalSolutions(UnaryDataPoint dataPoint) {
-    int node = dataPoint.getNode();
+    int node = dataPoint.node;
     assumeTrue(bdd.isNodeValidOrRoot(node));
 
     BitSet support = bdd.support(node);
@@ -636,7 +638,7 @@ public class BddTheories {
 
   @Theory(nullsAccepted = false)
   public void testForEachMinimalSolutionsWithRelevantSet(UnaryDataPoint dataPoint) {
-    int node = dataPoint.getNode();
+    int node = dataPoint.node;
     assumeTrue(bdd.isNodeValidOrRoot(node));
 
     BitSet support = bdd.support(node);
@@ -669,7 +671,7 @@ public class BddTheories {
 
   @Theory(nullsAccepted = false)
   public void testForEachNonEmptyPath(UnaryDataPoint dataPoint) {
-    int node = dataPoint.getNode();
+    int node = dataPoint.node;
     assumeTrue(bdd.isNodeValidOrRoot(node));
 
     BitSet support = bdd.support(node);
@@ -686,7 +688,7 @@ public class BddTheories {
 
   @Theory(nullsAccepted = false)
   public void testGetLowAndHigh(UnaryDataPoint dataPoint) {
-    int node = dataPoint.getNode();
+    int node = dataPoint.node;
     assumeTrue(bdd.isNodeValid(node));
     int low = bdd.getLow(node);
     int high = bdd.getHigh(node);
@@ -706,9 +708,9 @@ public class BddTheories {
 
   @Theory(nullsAccepted = false)
   public void testIfThenElse(TernaryDataPoint dataPoint) {
-    int ifNode = dataPoint.getFirst();
-    int thenNode = dataPoint.getSecond();
-    int elseNode = dataPoint.getThird();
+    int ifNode = dataPoint.first;
+    int thenNode = dataPoint.second;
+    int elseNode = dataPoint.third;
     assumeThat(bdd.isNodeValidOrRoot(ifNode)
         && bdd.isNodeValidOrRoot(thenNode)
         && bdd.isNodeValidOrRoot(elseNode), is(true));
@@ -735,8 +737,8 @@ public class BddTheories {
 
   @Theory(nullsAccepted = false)
   public void testImplication(BinaryDataPoint dataPoint) {
-    int node1 = dataPoint.getLeft();
-    int node2 = dataPoint.getRight();
+    int node1 = dataPoint.left;
+    int node2 = dataPoint.right;
     assumeTrue(bdd.isNodeValidOrRoot(node1) && bdd.isNodeValidOrRoot(node2));
 
     int implication = bdd.implication(node1, node2);
@@ -754,8 +756,8 @@ public class BddTheories {
 
   @Theory(nullsAccepted = false)
   public void testImplies(BinaryDataPoint dataPoint) {
-    int node1 = dataPoint.getLeft();
-    int node2 = dataPoint.getRight();
+    int node1 = dataPoint.left;
+    int node2 = dataPoint.right;
     assumeTrue(bdd.isNodeValidOrRoot(node1) && bdd.isNodeValidOrRoot(node2));
     int implication = bdd.implication(node1, node2);
 
@@ -771,24 +773,48 @@ public class BddTheories {
 
   @Theory(nullsAccepted = false)
   public void testIsVariable(UnaryDataPoint dataPoint) {
-    SyntaxTree.SyntaxTreeNode rootNode = dataPoint.getTree().getRootNode();
+    SyntaxTree.SyntaxTreeNode rootNode = dataPoint.tree.getRootNode();
     if (rootNode instanceof SyntaxTree.SyntaxTreeLiteral) {
-      assertTrue(bdd.isVariable(dataPoint.getNode()));
-      assertTrue(bdd.isVariableOrNegated(dataPoint.getNode()));
+      assertTrue(bdd.isVariable(dataPoint.node));
+      assertTrue(bdd.isVariableOrNegated(dataPoint.node));
     } else if (rootNode instanceof SyntaxTree.SyntaxTreeNot) {
       SyntaxTree.SyntaxTreeNode child = ((SyntaxTree.SyntaxTreeNot) rootNode).getChild();
       if (child instanceof SyntaxTree.SyntaxTreeLiteral) {
-        assertThat(bdd.isVariable(dataPoint.getNode()), is(false));
-        assertTrue(bdd.isVariableOrNegated(dataPoint.getNode()));
+        assertThat(bdd.isVariable(dataPoint.node), is(false));
+        assertTrue(bdd.isVariableOrNegated(dataPoint.node));
       }
     }
-    BitSet support = bdd.support(dataPoint.getNode());
-    assertThat(bdd.isVariableOrNegated(dataPoint.getNode()), is(support.cardinality() == 1));
+    BitSet support = bdd.support(dataPoint.node);
+    assertThat(bdd.isVariableOrNegated(dataPoint.node), is(support.cardinality() == 1));
+  }
+
+  @Theory(nullsAccepted = false)
+  public void testIterator(UnaryDataPoint dataPoint) {
+    int node = dataPoint.node;
+    assumeTrue(bdd.isNodeValidOrRoot(node));
+
+    Set<BitSet> satisfyingAssignments = new HashSet<>();
+    BitSet base = new BitSet(bdd.numberOfVariables());
+    base.set(0, bdd.numberOfVariables());
+    Iterator<BitSet> iterator = new PowerBitSetIterator(base);
+    while (iterator.hasNext()) {
+      BitSet next = iterator.next();
+      if (bdd.evaluate(node, next)) {
+        satisfyingAssignments.add(copyBitSet(next));
+      }
+    }
+
+    Iterator<BitSet> bddIterator = bdd.solutionIterator(node);
+    while (bddIterator.hasNext()) {
+      BitSet next = bddIterator.next();
+      assertThat("Invalid or duplicate assignment", satisfyingAssignments.remove(next), is(true));
+    }
+    assertThat("Unmatched assignments", satisfyingAssignments, empty());
   }
 
   @Theory(nullsAccepted = false)
   public void testNot(UnaryDataPoint dataPoint) {
-    int node = dataPoint.getNode();
+    int node = dataPoint.node;
     assumeTrue(bdd.isNodeValidOrRoot(node));
 
     int not = bdd.not(node);
@@ -809,8 +835,8 @@ public class BddTheories {
 
   @Theory(nullsAccepted = false)
   public void testNotAnd(BinaryDataPoint dataPoint) {
-    int node1 = dataPoint.getLeft();
-    int node2 = dataPoint.getRight();
+    int node1 = dataPoint.left;
+    int node2 = dataPoint.right;
     assumeTrue(bdd.isNodeValidOrRoot(node1) && bdd.isNodeValidOrRoot(node2));
     int notAnd = bdd.notAnd(node1, node2);
 
@@ -837,8 +863,8 @@ public class BddTheories {
 
   @Theory(nullsAccepted = false)
   public void testOr(BinaryDataPoint dataPoint) {
-    int node1 = dataPoint.getLeft();
-    int node2 = dataPoint.getRight();
+    int node1 = dataPoint.left;
+    int node2 = dataPoint.right;
     assumeTrue(bdd.isNodeValidOrRoot(node1) && bdd.isNodeValidOrRoot(node2));
 
     int or = bdd.or(node1, node2);
@@ -867,7 +893,7 @@ public class BddTheories {
 
   @Theory(nullsAccepted = false)
   public void testReferenceAndDereference(UnaryDataPoint dataPoint) {
-    int node = dataPoint.getNode();
+    int node = dataPoint.node;
     assumeTrue(bdd.isNodeValidOrRoot(node));
     assumeThat(bdd.isNodeSaturated(node), is(false));
 
@@ -886,7 +912,7 @@ public class BddTheories {
   @Theory
   @SuppressWarnings("PMD.ExceptionAsFlowControl")
   public void testReferenceGuard(UnaryDataPoint dataPoint) {
-    int node = dataPoint.getNode();
+    int node = dataPoint.node;
     assumeTrue(bdd.isNodeValidOrRoot(node));
     assumeThat(bdd.isNodeSaturated(node), is(false));
 
@@ -906,7 +932,7 @@ public class BddTheories {
 
   @Theory
   public void testRestrict(UnaryDataPoint dataPoint) {
-    int node = dataPoint.getNode();
+    int node = dataPoint.node;
     assumeTrue(bdd.isNodeValidOrRoot(node));
 
     Random restrictRandom = new Random((long) node);
@@ -946,9 +972,9 @@ public class BddTheories {
 
   @Theory(nullsAccepted = false)
   public void testSupportTree(UnaryDataPoint dataPoint) {
-    int node = dataPoint.getNode();
+    int node = dataPoint.node;
     assumeTrue(bdd.isNodeValidOrRoot(node));
-    Set<Integer> containedVariables = dataPoint.getTree().containedVariables();
+    Set<Integer> containedVariables = dataPoint.tree.containedVariables();
     assumeTrue(containedVariables.size() <= 5);
 
     // For each variable, we iterate through all possible valuations and check if there ever is any
@@ -992,8 +1018,8 @@ public class BddTheories {
 
   @Theory(nullsAccepted = false)
   public void testSupportUnion(BinaryDataPoint dataPoint) {
-    int node1 = dataPoint.getLeft();
-    int node2 = dataPoint.getRight();
+    int node1 = dataPoint.left;
+    int node2 = dataPoint.right;
     assumeTrue(bdd.isNodeValidOrRoot(node1) && bdd.isNodeValidOrRoot(node2));
 
     BitSet node1Support = bdd.support(node1);
@@ -1012,8 +1038,8 @@ public class BddTheories {
     // This test simply tests if the semantics of updateWith are as specified, i.e.
     // updateWith(result, input) reduces the reference count of the input and increases that of
     // result
-    int node1 = dataPoint.getLeft();
-    int node2 = dataPoint.getRight();
+    int node1 = dataPoint.left;
+    int node2 = dataPoint.right;
     assumeThat(node1, is(not(node2)));
     assumeTrue(bdd.isNodeValidOrRoot(node1) && bdd.isNodeValidOrRoot(node2));
     assumeFalse(bdd.isNodeSaturated(node1) || bdd.isNodeSaturated(node2));
@@ -1056,8 +1082,8 @@ public class BddTheories {
 
   @Theory(nullsAccepted = false)
   public void testXor(BinaryDataPoint dataPoint) {
-    int node1 = dataPoint.getLeft();
-    int node2 = dataPoint.getRight();
+    int node1 = dataPoint.left;
+    int node2 = dataPoint.right;
     assumeTrue(bdd.isNodeValidOrRoot(node1) && bdd.isNodeValidOrRoot(node2));
 
     int xor = bdd.xor(node1, node2);
@@ -1124,55 +1150,6 @@ public class BddTheories {
           recurse(recursePath, assignment);
         }
       }
-    }
-  }
-
-  @SuppressWarnings("unused")
-  private static final class BinaryDataPoint {
-    private final int left;
-    private final SyntaxTree leftTree;
-    private final int right;
-    private final SyntaxTree rightTree;
-
-    BinaryDataPoint(int left, int right, SyntaxTree leftTree,
-        SyntaxTree rightTree) {
-      this.left = left;
-      this.right = right;
-      this.leftTree = leftTree;
-      this.rightTree = rightTree;
-    }
-
-    @Override
-    public boolean equals(Object object) {
-      if (this == object) {
-        return true;
-      }
-      if (!(object instanceof BinaryDataPoint)) {
-        return false;
-      }
-      BinaryDataPoint other = (BinaryDataPoint) object;
-      return left == other.left && right == other.right;
-    }
-
-    int getLeft() {
-      return left;
-    }
-
-    SyntaxTree getLeftTree() {
-      return leftTree;
-    }
-
-    int getRight() {
-      return right;
-    }
-
-    SyntaxTree getRightTree() {
-      return rightTree;
-    }
-
-    @Override
-    public int hashCode() {
-      return Objects.hash(left, right);
     }
   }
 
@@ -1262,14 +1239,81 @@ public class BddTheories {
     }
   }
 
-  @SuppressWarnings("unused")
+  private static final class UnaryDataPoint {
+    final int node;
+    final SyntaxTree tree;
+
+    UnaryDataPoint(int node, SyntaxTree tree) {
+      this.node = node;
+      this.tree = tree;
+    }
+
+    @Override
+    public boolean equals(Object object) {
+      if (this == object) {
+        return true;
+      }
+      if (!(object instanceof UnaryDataPoint)) {
+        return false;
+      }
+      UnaryDataPoint other = (UnaryDataPoint) object;
+      return node == other.node;
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(node);
+    }
+
+    @Override
+    public String toString() {
+      return tree.toString();
+    }
+  }
+
+  private static final class BinaryDataPoint {
+    final int left;
+    final SyntaxTree leftTree;
+    final int right;
+    final SyntaxTree rightTree;
+
+    BinaryDataPoint(int left, int right, SyntaxTree leftTree, SyntaxTree rightTree) {
+      this.left = left;
+      this.right = right;
+      this.leftTree = leftTree;
+      this.rightTree = rightTree;
+    }
+
+    @Override
+    public boolean equals(Object object) {
+      if (this == object) {
+        return true;
+      }
+      if (!(object instanceof BinaryDataPoint)) {
+        return false;
+      }
+      BinaryDataPoint other = (BinaryDataPoint) object;
+      return left == other.left && right == other.right;
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(left, right);
+    }
+
+    @Override
+    public String toString() {
+      return leftTree + " ### " + rightTree;
+    }
+  }
+
   private static final class TernaryDataPoint {
-    private final int first;
-    private final SyntaxTree firstTree;
-    private final int second;
-    private final SyntaxTree secondTree;
-    private final int third;
-    private final SyntaxTree thirdTree;
+    final int first;
+    final SyntaxTree firstTree;
+    final int second;
+    final SyntaxTree secondTree;
+    final int third;
+    final SyntaxTree thirdTree;
 
     TernaryDataPoint(int first, int second, int third,
         SyntaxTree firstTree, SyntaxTree secondTree, SyntaxTree thirdTree) {
@@ -1293,68 +1337,14 @@ public class BddTheories {
       return first == other.first && second == other.second && third == other.third;
     }
 
-    int getFirst() {
-      return first;
-    }
-
-    SyntaxTree getFirstTree() {
-      return firstTree;
-    }
-
-    int getSecond() {
-      return second;
-    }
-
-    SyntaxTree getSecondTree() {
-      return secondTree;
-    }
-
-    int getThird() {
-      return third;
-    }
-
-    SyntaxTree getThirdTree() {
-      return thirdTree;
-    }
-
     @Override
     public int hashCode() {
       return Objects.hash(first, second, third);
     }
-  }
-
-  private static final class UnaryDataPoint {
-    private final int node;
-    private final SyntaxTree tree;
-
-    UnaryDataPoint(int node, SyntaxTree tree) {
-      this.node = node;
-      this.tree = tree;
-    }
 
     @Override
-    public boolean equals(Object object) {
-      if (this == object) {
-        return true;
-      }
-      if (!(object instanceof UnaryDataPoint)) {
-        return false;
-      }
-      UnaryDataPoint other = (UnaryDataPoint) object;
-      return node == other.node;
-    }
-
-    int getNode() {
-      return node;
-    }
-
-    SyntaxTree getTree() {
-      return tree;
-    }
-
-    @Override
-    public int hashCode() {
-      return Objects.hash(node);
+    public String toString() {
+      return firstTree + " ### " + secondTree + " ### " + thirdTree;
     }
   }
 }

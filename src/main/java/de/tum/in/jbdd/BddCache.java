@@ -44,10 +44,7 @@ final class BddCache {
   private static final long CACHE_VALUE_MASK = BitUtil.maskLength(CACHE_VALUE_BIT_SIZE);
   private static final int TERNARY_CACHE_OPERATION_ID_OFFSET = 63;
   private static final int TERNARY_OPERATION_ITE = 0;
-  private static final int UNARY_CACHE_KEY_OFFSET = 25;
-  private static final int UNARY_CACHE_OPERATION_ID_OFFSET = 63;
-  private static final int UNARY_CACHE_TYPE_LENGTH = 1;
-  private static final int UNARY_OPERATION_NOT = 0;
+  private static final int NEGATION_CACHE_KEY_OFFSET = 32;
 
   static final Logger logger = Logger.getLogger(BddCache.class.getName());
   static final Collection<BddCache> cacheShutdownHook = new ConcurrentLinkedDeque<>();
@@ -61,8 +58,8 @@ final class BddCache {
   private final int satisfactionBinsPerHash;
   private final CacheAccessStatistics ternaryAccessStatistics = new CacheAccessStatistics();
   private final int ternaryBinsPerHash;
-  private final CacheAccessStatistics unaryAccessStatistics = new CacheAccessStatistics();
-  private final int unaryBinsPerHash;
+  private final CacheAccessStatistics negationAccessStatistics = new CacheAccessStatistics();
+  private final int negationBinsPerHash;
   private final CacheAccessStatistics volatileAccessStatistics = new CacheAccessStatistics();
   private final int volatileBinsPerHash;
   @SuppressWarnings("NullableProblems")
@@ -80,7 +77,7 @@ final class BddCache {
   @SuppressWarnings("NullableProblems")
   private long[] ternaryStorage;
   @SuppressWarnings("NullableProblems")
-  private long[] unaryStorage;
+  private long[] negationStorage;
   @SuppressWarnings("NullableProblems")
   private int[] volatileKeyStorage;
   @SuppressWarnings("NullableProblems")
@@ -89,13 +86,13 @@ final class BddCache {
   BddCache(BddImpl associatedBdd) {
     this.associatedBdd = associatedBdd;
     BddConfiguration configuration = associatedBdd.getConfiguration();
-    unaryBinsPerHash = configuration.cacheUnaryBinsPerHash();
+    negationBinsPerHash = configuration.cacheNegationBinsPerHash();
     binaryBinsPerHash = configuration.cacheBinaryBinsPerHash();
     ternaryBinsPerHash = configuration.cacheTernaryBinsPerHash();
     satisfactionBinsPerHash = configuration.cacheSatisfactionBinsPerHash();
     composeBinsPerHash = configuration.cacheComposeBinsPerHash();
     volatileBinsPerHash = configuration.cacheVolatileBinsPerHash();
-    reallocateUnary();
+    reallocateNegation();
     reallocateBinary();
     reallocateTernary();
     reallocateSatisfaction();
@@ -115,8 +112,8 @@ final class BddCache {
 
   private static long buildBinaryKeyStore(long operationId, long inputNode1,
     long inputNode2) {
-    assert BitUtil.fits(inputNode1, CACHE_VALUE_BIT_SIZE) && BitUtil
-      .fits(inputNode2, CACHE_VALUE_BIT_SIZE);
+    assert BitUtil.fits(inputNode1, CACHE_VALUE_BIT_SIZE)
+        && BitUtil.fits(inputNode2, CACHE_VALUE_BIT_SIZE);
     long store = inputNode1;
     store |= inputNode2 << CACHE_VALUE_BIT_SIZE;
     store |= operationId << BINARY_CACHE_OPERATION_ID_OFFSET;
@@ -125,31 +122,26 @@ final class BddCache {
 
   private static long buildTernaryFirstStore(long operationId, long inputNode1,
     long inputNode2) {
-    assert BitUtil.fits(inputNode1, CACHE_VALUE_BIT_SIZE) && BitUtil
-      .fits(inputNode2, CACHE_VALUE_BIT_SIZE);
+    assert BitUtil.fits(inputNode1, CACHE_VALUE_BIT_SIZE)
+        && BitUtil.fits(inputNode2, CACHE_VALUE_BIT_SIZE);
     return inputNode1 | inputNode2 << CACHE_VALUE_BIT_SIZE
       | operationId << TERNARY_CACHE_OPERATION_ID_OFFSET;
   }
 
   private static long buildTernarySecondStore(long inputNode3, long resultNode) {
-    assert BitUtil.fits(inputNode3, CACHE_VALUE_BIT_SIZE) && BitUtil
-      .fits(resultNode, CACHE_VALUE_BIT_SIZE);
+    assert BitUtil.fits(inputNode3, CACHE_VALUE_BIT_SIZE)
+        && BitUtil.fits(resultNode, CACHE_VALUE_BIT_SIZE);
     return resultNode | inputNode3 << CACHE_VALUE_BIT_SIZE;
   }
 
-  private static long buildUnaryFullKey(long operationId, long inputNode) {
-    assert BitUtil.fits(operationId, UNARY_CACHE_TYPE_LENGTH) && BitUtil
-      .fits(operationId, CACHE_VALUE_BIT_SIZE);
-    return (operationId << UNARY_CACHE_OPERATION_ID_OFFSET) | (inputNode << UNARY_CACHE_KEY_OFFSET);
+  private static long buildNegationFullKey(long inputNode) {
+    return inputNode;
   }
 
-  private static long buildUnaryStore(long operationId, long inputNode,
-    long resultNode) {
+  private static long buildNegationStore(long inputNode, long resultNode) {
     assert BitUtil.fits(inputNode, CACHE_VALUE_BIT_SIZE)
-      && BitUtil.fits(resultNode, CACHE_VALUE_BIT_SIZE);
-    return resultNode
-      | inputNode << UNARY_CACHE_KEY_OFFSET
-      | operationId << UNARY_CACHE_OPERATION_ID_OFFSET;
+        && BitUtil.fits(resultNode, CACHE_VALUE_BIT_SIZE);
+    return resultNode | inputNode << NEGATION_CACHE_KEY_OFFSET;
   }
 
   private static long getInputNodeFromTernarySecondStore(long ternarySecondStore) {
@@ -160,29 +152,27 @@ final class BddCache {
     return ternarySecondStore & CACHE_VALUE_MASK;
   }
 
-  private static long getResultNodeFromUnaryStore(long unaryStore) {
-    return unaryStore & CACHE_VALUE_MASK;
+  private static long getResultNodeFromNegationStore(long negationStore) {
+    return negationStore & CACHE_VALUE_MASK;
   }
 
-  private static long getUnaryFullKeyFromUnaryStore(long unaryStore) {
-    return unaryStore & ~BitUtil.maskLength(UNARY_CACHE_KEY_OFFSET);
+  private static long getNegationFullKeyFromNegationStore(long negationStore) {
+    return negationStore & ~BitUtil.maskLength(NEGATION_CACHE_KEY_OFFSET);
   }
 
-  private static void insertInLru(long[] array, int first, int offset,
-    long newValue) {
+  private static void insertInLru(long[] array, int first, int offset, long newValue) {
     System.arraycopy(array, first, array, first + 1, offset - 1);
     array[first] = newValue;
   }
 
-  private static void insertInLru(int[] array, int first, int offset,
-    int newValue) {
+  private static void insertInLru(int[] array, int first, int offset, int newValue) {
     // Copy each element between first and last to its next position
     System.arraycopy(array, first, array, first + 1, offset - 1);
     array[first] = newValue;
   }
 
-  private static void insertInTernaryLru(long[] array, int first, int offset,
-    long newFirstValue, long newSecondValue) {
+  private static void insertInTernaryLru(long[] array, int first, int offset, long newFirstValue,
+      long newSecondValue) {
     System.arraycopy(array, first, array, first + 2, offset - 2);
     array[first] = newFirstValue;
     array[first + 1] = newSecondValue;
@@ -197,10 +187,6 @@ final class BddCache {
 
   private static boolean isTernaryOperation(int operationId) {
     return operationId == TERNARY_OPERATION_ITE;
-  }
-
-  private static boolean isUnaryOperation(int operationId) {
-    return operationId == UNARY_OPERATION_NOT;
   }
 
   private static void updateLru(long[] array, int first, int offset) {
@@ -218,17 +204,14 @@ final class BddCache {
   private int binaryHash(long binaryKey) {
     int binaryHashSize = getBinaryCacheKeyCount();
     int hash = MathUtil.hash(binaryKey) % binaryHashSize;
-    if (hash < 0) {
-      return hash + binaryHashSize;
-    }
-    return hash;
+    return hash < 0 ? hash + binaryHashSize : hash;
   }
 
   private boolean binaryLookup(int operationId, int inputNode1, int inputNode2) {
     assert associatedBdd.isNodeValid(inputNode1) && associatedBdd.isNodeValid(inputNode2);
     assert isBinaryOperation(operationId);
-    long binaryKey = buildBinaryKeyStore((long) operationId, (long) inputNode1,
-      (long) inputNode2);
+
+    long binaryKey = buildBinaryKeyStore((long) operationId, (long) inputNode1, (long) inputNode2);
     lookupHash = binaryHash(binaryKey);
     int cachePosition = getBinaryCachePosition(lookupHash);
 
@@ -262,8 +245,9 @@ final class BddCache {
 
   private void binaryPut(int operationId, int hash, int inputNode1,
     int inputNode2, int resultNode) {
-    assert isBinaryOperation(operationId) && associatedBdd.isNodeValid(inputNode1) && associatedBdd
-      .isNodeValid(inputNode2) && associatedBdd.isNodeValidOrRoot(resultNode);
+    assert isBinaryOperation(operationId) && associatedBdd.isNodeValid(inputNode1)
+        && associatedBdd.isNodeValid(inputNode2) && associatedBdd.isNodeValidOrRoot(resultNode);
+
     int cachePosition = getBinaryCachePosition(hash);
     binaryAccessStatistics.put();
 
@@ -286,10 +270,7 @@ final class BddCache {
   private int composeHash(int inputNode, int[] replacementArray) {
     int composeHashSize = getComposeKeyCount();
     int hash = MathUtil.hash(inputNode, replacementArray) % composeHashSize;
-    if (hash < 0) {
-      return hash + composeHashSize;
-    }
-    return hash;
+    return hash < 0 ? hash + composeHashSize : hash;
   }
 
   private float computeBinaryLoadFactor() {
@@ -322,14 +303,14 @@ final class BddCache {
     return (float) loadedTernaryBins / (float) getTernaryKeyCount();
   }
 
-  private float computeUnaryLoadFactor() {
-    int loadedUnaryBins = 0;
-    for (int i = 0; i < getUnaryCacheKeyCount(); i++) {
-      if (unaryStorage[i] != 0L) {
-        loadedUnaryBins++;
+  private float computeNegationLoadFactor() {
+    int loadedNegationBins = 0;
+    for (int i = 0; i < getNegationCacheKeyCount(); i++) {
+      if (negationStorage[i] != 0L) {
+        loadedNegationBins++;
       }
     }
-    return (float) loadedUnaryBins / (float) getUnaryCacheKeyCount();
+    return (float) loadedNegationBins / (float) getNegationCacheKeyCount();
   }
 
   private float computeVolatileLoadFactor() {
@@ -385,9 +366,9 @@ final class BddCache {
   String getStatistics() {
     @SuppressWarnings("MagicNumber")
     StringBuilder builder = new StringBuilder(512);
-    builder.append("Unary: size: ").append(getUnaryCacheKeyCount()) //
-      .append(", load: ").append(computeUnaryLoadFactor()) //
-      .append("\n ").append(unaryAccessStatistics) //
+    builder.append("Negation: size: ").append(getNegationCacheKeyCount()) //
+      .append(", load: ").append(computeNegationLoadFactor()) //
+      .append("\n ").append(negationAccessStatistics) //
       .append("\nBinary: size: ").append(getBinaryCacheKeyCount()) //
       .append(", load: ").append(computeBinaryLoadFactor()) //
       .append("\n ").append(binaryAccessStatistics) //
@@ -419,12 +400,12 @@ final class BddCache {
     return ternaryStorage.length / ternaryBinsPerHash / 2;
   }
 
-  private int getUnaryCacheKeyCount() {
-    return unaryStorage.length / unaryBinsPerHash;
+  private int getNegationCacheKeyCount() {
+    return negationStorage.length / negationBinsPerHash;
   }
 
-  private int getUnaryCachePosition(int hash) {
-    return hash * unaryBinsPerHash;
+  private int getNegationCachePosition(int hash) {
+    return hash * negationBinsPerHash;
   }
 
   private int getVolatileCachePosition(int hash) {
@@ -438,14 +419,11 @@ final class BddCache {
   private int hashSatisfaction(int node) {
     int satisfactionHashSize = getSatisfactionKeyCount();
     int hash = MathUtil.hash(node) % satisfactionHashSize;
-    if (hash < 0) {
-      return hash + satisfactionHashSize;
-    }
-    return hash;
+    return hash < 0 ? hash + satisfactionHashSize : hash;
   }
 
   void invalidate() {
-    invalidateUnary();
+    invalidateNegation();
     invalidateBinary();
     invalidateTernary();
     invalidateSatisfaction();
@@ -476,9 +454,9 @@ final class BddCache {
   }
 
   @SuppressWarnings("WeakerAccess")
-  void invalidateUnary() {
-    unaryAccessStatistics.invalidation();
-    reallocateUnary();
+  void invalidateNegation() {
+    negationAccessStatistics.invalidation();
+    reallocateNegation();
   }
 
   boolean lookupAnd(int inputNode1, int inputNode2) {
@@ -532,7 +510,7 @@ final class BddCache {
   }
 
   boolean lookupNot(int node) {
-    return unaryLookup(UNARY_OPERATION_NOT, node);
+    return negationLookup(node);
   }
 
   boolean lookupOr(int inputNode1, int inputNode2) {
@@ -597,8 +575,7 @@ final class BddCache {
     binaryPut(BINARY_OPERATION_AND, hash, inputNode1, inputNode2, resultNode);
   }
 
-  void putCompose(int hash, int inputNode, int[] replacement,
-    int resultNode) {
+  void putCompose(int hash, int inputNode, int[] replacement, int resultNode) {
     assert composeStorage != null;
     assert associatedBdd.isNodeValidOrRoot(inputNode)
       && associatedBdd.isNodeValidOrRoot(resultNode);
@@ -615,23 +592,19 @@ final class BddCache {
     }
   }
 
-  void putEquivalence(int hash, int inputNode1, int inputNode2,
-    int resultNode) {
+  void putEquivalence(int hash, int inputNode1, int inputNode2, int resultNode) {
     binaryPut(BINARY_OPERATION_EQUIVALENCE, hash, inputNode1, inputNode2, resultNode);
   }
 
-  void putExists(int hash, int inputNode, int variableCube,
-    int resultNode) {
+  void putExists(int hash, int inputNode, int variableCube, int resultNode) {
     binaryPut(BINARY_OPERATION_EXISTS, hash, inputNode, variableCube, resultNode);
   }
 
-  void putIfThenElse(int hash, int inputNode1, int inputNode2,
-    int inputNode3, int resultNode) {
+  void putIfThenElse(int hash, int inputNode1, int inputNode2, int inputNode3, int resultNode) {
     ternaryPut(TERNARY_OPERATION_ITE, hash, inputNode1, inputNode2, inputNode3, resultNode);
   }
 
-  void putImplication(int hash, int inputNode1, int inputNode2,
-    int resultNode) {
+  void putImplication(int hash, int inputNode1, int inputNode2, int resultNode) {
     binaryPut(BINARY_OPERATION_IMPLIES, hash, inputNode1, inputNode2, resultNode);
   }
 
@@ -640,13 +613,12 @@ final class BddCache {
   }
 
   void putNot(int inputNode, int resultNode) {
-    unaryPut(UNARY_OPERATION_NOT, unaryHash(buildUnaryFullKey((long) UNARY_OPERATION_NOT,
-      (long) inputNode)), inputNode, resultNode);
+    negationPut(negationHash(buildNegationFullKey((long) inputNode)), inputNode, resultNode);
   }
 
   void putNot(int hash, int inputNode, int resultNode) {
     assert associatedBdd.isNodeValid(inputNode) && associatedBdd.isNodeValidOrRoot(resultNode);
-    unaryPut(UNARY_OPERATION_NOT, hash, inputNode, resultNode);
+    negationPut(hash, inputNode, resultNode);
   }
 
   void putOr(int hash, int inputNode1, int inputNode2, int resultNode) {
@@ -716,11 +688,11 @@ final class BddCache {
     ternaryStorage = new long[actualSize];
   }
 
-  private void reallocateUnary() {
+  private void reallocateNegation() {
     int keyCount = associatedBdd.getTableSize()
-      / associatedBdd.getConfiguration().cacheUnaryDivider();
-    int actualSize = ensureMinimumCacheKeyCount(keyCount) * unaryBinsPerHash;
-    unaryStorage = new long[actualSize];
+      / associatedBdd.getConfiguration().cacheNegationDivider();
+    int actualSize = ensureMinimumCacheKeyCount(keyCount) * negationBinsPerHash;
+    negationStorage = new long[actualSize];
   }
 
   void reallocateVolatile() {
@@ -736,20 +708,16 @@ final class BddCache {
   private int ternaryHash(long ternaryFirstStore, int inputNode3) {
     int ternaryHashSize = getTernaryKeyCount();
     int hash = MathUtil.hash(ternaryFirstStore, inputNode3) % ternaryHashSize;
-    if (hash < 0) {
-      return hash + ternaryHashSize;
-    }
-    return hash;
+    return hash < 0 ? hash + ternaryHashSize : hash;
   }
 
-  private boolean ternaryLookup(int operationId, int inputNode1, int inputNode2,
-    int inputNode3) {
-    assert isTernaryOperation(operationId) && associatedBdd.isNodeValid(inputNode1) && associatedBdd
-      .isNodeValid(inputNode2) && associatedBdd.isNodeValid(inputNode3);
+  private boolean ternaryLookup(int operationId, int inputNode1, int inputNode2, int inputNode3) {
+    assert isTernaryOperation(operationId) && associatedBdd.isNodeValid(inputNode1)
+        && associatedBdd.isNodeValid(inputNode2) && associatedBdd.isNodeValid(inputNode3);
     assert isTernaryOperation(operationId);
 
-    long constructedTernaryFirstStore = buildTernaryFirstStore((long) operationId,
-      (long) inputNode1, (long) inputNode2);
+    long constructedTernaryFirstStore =
+        buildTernaryFirstStore((long) operationId, (long) inputNode1, (long) inputNode2);
     lookupHash = ternaryHash(constructedTernaryFirstStore, inputNode3);
     int cachePosition = getTernaryCachePosition(lookupHash);
 
@@ -791,11 +759,12 @@ final class BddCache {
     return true;
   }
 
-  private void ternaryPut(int operationId, int hash, int inputNode1,
-    int inputNode2, int inputNode3, int resultNode) {
+  private void ternaryPut(int operationId, int hash, int inputNode1, int inputNode2, int inputNode3,
+      int resultNode) {
     assert associatedBdd.isNodeValid(inputNode1) && associatedBdd.isNodeValid(inputNode2)
       && associatedBdd.isNodeValid(inputNode3) && associatedBdd.isNodeValidOrRoot(resultNode);
     assert isTernaryOperation(operationId);
+
     int cachePosition = getTernaryCachePosition(hash);
     ternaryAccessStatistics.put();
 
@@ -811,39 +780,36 @@ final class BddCache {
     }
   }
 
-  private int unaryHash(long unaryKey) {
-    int unaryHashSize = getUnaryCacheKeyCount();
-    int hash = MathUtil.hash(unaryKey) % unaryHashSize;
-    if (hash < 0) {
-      return hash + unaryHashSize;
-    }
-    return hash;
+  private int negationHash(long negationKey) {
+    int negationHashSize = getNegationCacheKeyCount();
+    int hash = MathUtil.hash(negationKey) % negationHashSize;
+    return hash < 0 ? hash + negationHashSize : hash;
   }
 
-  private boolean unaryLookup(int operationId, int inputNode) {
+  private boolean negationLookup(int inputNode) {
     assert associatedBdd.isNodeValid(inputNode);
-    assert isUnaryOperation(operationId);
-    long unaryFullKey = buildUnaryFullKey((long) operationId, (long) inputNode);
-    lookupHash = unaryHash(unaryFullKey);
-    int cachePosition = getUnaryCachePosition(lookupHash);
 
-    if (unaryBinsPerHash == 1) {
-      long unaryStore = unaryStorage[cachePosition];
-      long unaryStoreFullKey = getUnaryFullKeyFromUnaryStore(unaryStore);
-      if (unaryFullKey != unaryStoreFullKey) {
+    long negationFullKey = buildNegationFullKey((long) inputNode);
+    lookupHash = negationHash(negationFullKey);
+    int cachePosition = getNegationCachePosition(lookupHash);
+
+    if (negationBinsPerHash == 1) {
+      long negationStore = negationStorage[cachePosition];
+      long negationStoreFullKey = getNegationFullKeyFromNegationStore(negationStore);
+      if (negationFullKey != negationStoreFullKey) {
         return false;
       }
       //noinspection NumericCastThatLosesPrecision
-      lookupResult = (int) getResultNodeFromUnaryStore(unaryStore);
+      lookupResult = (int) getResultNodeFromNegationStore(negationStore);
     } else {
       int offset = -1;
-      for (int i = 0; i < unaryBinsPerHash; i++) {
-        long unaryStore = unaryStorage[cachePosition + i];
-        long unaryStoreFullKey = getUnaryFullKeyFromUnaryStore(unaryStore);
-        if (unaryFullKey == unaryStoreFullKey) {
+      for (int i = 0; i < negationBinsPerHash; i++) {
+        long negationStore = negationStorage[cachePosition + i];
+        long negationStoreFullKey = getNegationFullKeyFromNegationStore(negationStore);
+        if (negationFullKey == negationStoreFullKey) {
           offset = i;
           //noinspection NumericCastThatLosesPrecision
-          lookupResult = (int) getResultNodeFromUnaryStore(unaryStore);
+          lookupResult = (int) getResultNodeFromNegationStore(negationStore);
           break;
         }
       }
@@ -851,37 +817,33 @@ final class BddCache {
         return false;
       }
       if (offset != 0) {
-        updateLru(unaryStorage, cachePosition, offset);
+        updateLru(negationStorage, cachePosition, offset);
       }
     }
 
     assert associatedBdd.isNodeValidOrRoot(lookupResult);
-    unaryAccessStatistics.cacheHit();
+    negationAccessStatistics.cacheHit();
     return true;
   }
 
-  private void unaryPut(int operationId, int hash, int inputNode,
-    int resultNode) {
+  private void negationPut(int hash, int inputNode, int resultNode) {
     assert associatedBdd.isNodeValid(inputNode) && associatedBdd.isNodeValidOrRoot(resultNode);
-    int cachePosition = getUnaryCachePosition(hash);
-    unaryAccessStatistics.put();
 
-    long unaryStore = buildUnaryStore((long) operationId, (long) inputNode,
-      (long) resultNode);
-    if (unaryBinsPerHash == 1) {
-      unaryStorage[cachePosition] = unaryStore;
+    int cachePosition = getNegationCachePosition(hash);
+    negationAccessStatistics.put();
+
+    long negationStore = buildNegationStore((long) inputNode, (long) resultNode);
+    if (negationBinsPerHash == 1) {
+      negationStorage[cachePosition] = negationStore;
     } else {
-      insertInLru(unaryStorage, cachePosition, unaryBinsPerHash, unaryStore);
+      insertInLru(negationStorage, cachePosition, negationBinsPerHash, negationStore);
     }
   }
 
   private int volatileHash(int inputNode) {
     int volatileHashSize = getVolatileKeyCount();
     int hash = MathUtil.hash(inputNode) % volatileHashSize;
-    if (hash < 0) {
-      return hash + volatileHashSize;
-    }
-    return hash;
+    return hash < 0 ? hash + volatileHashSize : hash;
   }
 
   private static final class CacheAccessStatistics {
@@ -932,7 +894,6 @@ final class BddCache {
   private static final class ShutdownHookPrinter implements Runnable {
     @Override
     public void run() {
-      Logger logger = Logger.getLogger(BddCache.class.getName() + ".Statistics");
       if (!logger.isLoggable(Level.FINE)) {
         return;
       }
