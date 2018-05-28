@@ -199,7 +199,7 @@ public interface Bdd {
    * Returns an iterator over {@code all} satisfying assignments of the given node. In other words,
    * this call is equivalent to
    * <tt>
-   *   Set<BitSet> solutions = new HashSet<>();
+   *   Set&lt;BitSet&gt; solutions = new HashSet&lt;&gt;();
    *   for (BitSet valuation : powerSet) {
    *     if (bdd.evaluate(node, valuation)) {
    *       solutions.add(valuation);
