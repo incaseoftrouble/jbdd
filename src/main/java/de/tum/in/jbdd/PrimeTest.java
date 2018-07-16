@@ -4,10 +4,12 @@ package de.tum.in.jbdd;
 @SuppressWarnings({"StandardVariableNames", "MagicNumber", "PMD.AvoidReassigningParameters",
                       "PMD.PrematureDeclaration", "PMD.AssignmentInOperand"})
 final class PrimeTest {
+  @SuppressWarnings("PMD.UseUnderscoresInNumericLiterals")
   static final long FLOOR_SQRT_MAX_LONG = 3037000499L;
   private static final int SIEVE_30 = ~((1 << 1) | (1 << 7) | (1 << 11) | (1 << 13)
       | (1 << 17) | (1 << 19) | (1 << 23) | (1 << 29));
   // CSOFF: Indentation
+  @SuppressWarnings("PMD.UseUnderscoresInNumericLiterals")
   private static final long[][] millerRabinBaseSets = {
       {291830L, 126401071349994536L},
       {885594168L, 725270293939359937L, 3569819667048198375L},
@@ -34,7 +36,9 @@ final class PrimeTest {
   };
   // CSON: Indentation
 
-  private PrimeTest() {}
+  private PrimeTest() {
+    // empty
+  }
 
   static int compare(long a, long b) {
     return Long.compare(flip(a), flip(b));

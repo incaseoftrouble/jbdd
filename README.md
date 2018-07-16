@@ -1,5 +1,7 @@
 # JBDD
 
+[![Build Status](https://travis-ci.org/incaseoftrouble/jbdd.svg?branch=master)](https://travis-ci.org/incaseoftrouble/jbdd)
+
 JBDD (Java Binary Decision Diagrams) is (yet another) native implementation of BDDs in Java.
 It is inspired by [JDD](https://bitbucket.org/vahidi/jdd/wiki/Home), but more or less rewritten from scratch, since JDD contained some bugs and was missing features like, for example, substitution.
 The design goals are simplicity, reasonable performance and no dependencies.

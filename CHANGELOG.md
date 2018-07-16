@@ -1,5 +1,16 @@
 # 0.x
 
+## 0.5
+
+### 0.5.0 (2019-08-06)
+
+* Added an (mostly) iterative implementation of bdds to alleviate stack overflow problems for deep structures
+* Added set views on bdd nodes
+* Bump gradle and dependency versions
+* Small improvements
+* Improve performance in some cases by fixing the hash function
+* Renamed some of the public methods
+
 ## 0.4.x
 
 ### 0.4.0 (2018-05-28)

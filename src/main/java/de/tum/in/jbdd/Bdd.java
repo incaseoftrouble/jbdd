@@ -19,6 +19,7 @@
 
 package de.tum.in.jbdd;
 
+import java.math.BigInteger;
 import java.util.BitSet;
 import java.util.Iterator;
 import java.util.function.BiConsumer;
@@ -37,12 +38,12 @@ public interface Bdd {
   /**
    * Returns the node representing <tt>true</tt>.
    */
-  int getTrueNode();
+  int trueNode();
 
   /**
    * Returns the node representing <tt>false</tt>.
    */
-  int getFalseNode();
+  int falseNode();
 
   /**
    * Returns the number of variables in this BDD.
@@ -52,14 +53,14 @@ public interface Bdd {
   int numberOfVariables();
 
 
-  int getHigh(int node);
+  int high(int node);
 
-  int getLow(int node);
+  int low(int node);
 
   /**
    * Gets the variable of the given {@code node}.
    */
-  int getVariable(int node);
+  int variable(int node);
 
 
   /**
@@ -71,7 +72,7 @@ public interface Bdd {
    *
    * @return The corresponding node.
    */
-  int getVariableNode(int variableNumber);
+  int variableNode(int variableNumber);
 
   /**
    * Creates a new variable and returns the node representing it. The implementation guarantees that
@@ -154,11 +155,23 @@ public interface Bdd {
    * Decreases the reference count of the specified {@code node}.
    *
    * @param node
-   *     The to be referenced node
+   *     The to be de-referenced node
    *
    * @return The given node, to be used for chaining.
    */
   int dereference(int node);
+
+  /**
+   * Decreases the reference count of the specified {@code nodes}.
+   *
+   * @param nodes
+   *     The to be de-referenced nodes
+   */
+  default void dereference(int... nodes) {
+    for (int node : nodes) {
+      dereference(node);
+    }
+  }
 
   /**
    * Returns the reference count of the given node or {@literal -1} if this number can't be
@@ -166,6 +179,20 @@ public interface Bdd {
    */
   int getReferenceCount(int node);
 
+
+  /**
+   * Checks whether the given {@code node} evaluates to <tt>true</tt> under the given variable
+   * assignment specified by {@code assignment}. This method is significantly faster than its
+   * {@link BitSet} counterpart {@link #evaluate(int, BitSet)}.
+   *
+   * @param node
+   *     The node to evaluate.
+   * @param assignment
+   *     The variable assignment.
+   *
+   * @return The truth value of the node under the given assignment.
+   */
+  boolean evaluate(int node, boolean[] assignment);
 
   /**
    * Checks whether the given {@code node} evaluates to <tt>true</tt> under the given variable
@@ -183,16 +210,15 @@ public interface Bdd {
   /**
    * Returns any satisfying assignment.
    *
-   * @throws IllegalArgumentException if the given {@code node} is {@literal false}.
+   * @throws java.util.NoSuchElementException
+   *     if there is no satisfying assignment, i.e. the given {@code node} is {@literal false}.
    */
   BitSet getSatisfyingAssignment(int node);
 
   /**
    * Counts the number of satisfying assignments for the function represented by this node.
-   *
-   * <p><b>Warning:</b> Floating-point overflow easily possible for complex functions!</p>
    */
-  double countSatisfyingAssignments(int node);
+  BigInteger countSatisfyingAssignments(int node);
 
 
   /**
@@ -215,10 +241,23 @@ public interface Bdd {
   Iterator<BitSet> solutionIterator(int node);
 
   /**
+   * Executes the given action for each satisfying assignment of the function represented by
+   * {@code node}.
+   *
+   * @param node
+   *     The node whose solutions should be computed.
+   * @param action
+   *     The action to be performed on these solutions.
+   */
+  default void forEachSolution(int node, Consumer<? super BitSet> action) {
+    solutionIterator(node).forEachRemaining(action);
+  }
+
+  /**
    * Iteratively computes all (minimal) solutions of the function represented by {@code node} and
-   * executes the given {@code action} with it. The returned solutions are all bit sets representing
-   * a path from node to <tt>true</tt> in the graph induced by the BDD structure. Furthermore, the
-   * solutions are generated in lexicographic ascending order.
+   * executes the given {@code action} with it. The returned solutions are all assignments
+   * representing a path from node to <tt>true</tt> in the graph induced by the BDD structure.
+   * The solutions are generated in lexicographic ascending order.
    *
    * <p><b>Note:</b> The passed bit set is modified in-place. If all solutions should be gathered
    * into a set or similar, they have to be cloned after each call to the consumer.</p>
@@ -228,14 +267,16 @@ public interface Bdd {
    * @param action
    *     The action to be performed on these solutions.
    */
-  default void forEachMinimalSolution(int node, Consumer<BitSet> action) {
-    forEachMinimalSolution(node, (path, pathSupport) -> action.accept(path));
+  default void forEachPath(int node, Consumer<? super BitSet> action) {
+    forEachPath(node, (path, pathSupport) -> action.accept(path));
   }
 
   /**
    * Iteratively computes all (minimal) solutions of the function represented by {@code node} and
-   * executes the given {@code action} with it as in {@link #forEachMinimalSolution(int, Consumer)}.
-   * Additionally, the action will be provided the set of relevant variables for each solution.
+   * executes the given {@code action} with it. The returned solutions are all assignments
+   * representing a path from node to <tt>true</tt> in the graph induced by the BDD structure.
+   * The solutions are generated in lexicographic ascending order. Additionally, the action will be
+   * provided the set of relevant variables for each solution.
    *
    * <p><b>Note:</b> The passed bit sets are modified in-place. If all solutions should be gathered
    * into a set or similar, they have to be cloned after each call to the consumer.</p>
@@ -245,19 +286,20 @@ public interface Bdd {
    * @param action
    *     The action to be performed on these solutions.
    */
-  default void forEachMinimalSolution(int node, BiConsumer<BitSet, BitSet> action) {
-    forEachNonEmptyPath(node, numberOfVariables(), action);
+  default void forEachPath(int node, BiConsumer<BitSet, BitSet> action) {
+    forEachPath(node, numberOfVariables(), action);
   }
 
   /**
-   * Iteratively computes all partial assignments (up to the {@code highestVariable}) such that the
-   * node reached after inserting this partial assignment is not <tt>false</tt>. Additionally, the
-   * action will be provided the set of relevant variables for each partial solution.
+   * Iteratively computes all (minimal) assignments (up to the {@code highestVariable}) such that
+   * the node reached after inserting this partial assignment is not <tt>false</tt>. The solutions
+   * are generated in lexicographic ascending order. Additionally, the action will be provided the
+   * set of relevant variables for each partial solution.
    *
    * <p><b>Note:</b> The passed bit sets are modified in-place. If all solutions should be gathered
    * into a set or similar, they have to be cloned after each call to the consumer.</p>
    */
-  void forEachNonEmptyPath(int node, int highestVariable, BiConsumer<BitSet, BitSet> action);
+  void forEachPath(int node, int highestVariable, BiConsumer<BitSet, BitSet> action);
 
 
   /**
@@ -282,9 +324,9 @@ public interface Bdd {
    *
    * @return A bit set with bit {@code i} is set iff the {@code i}-th variable is in the support.
    */
-  default BitSet support(int node, int highestVariable) {
-    BitSet bitSet = new BitSet(highestVariable);
-    support(node, bitSet, highestVariable);
+  default BitSet support(int node, int variableCutoff) {
+    BitSet bitSet = new BitSet(variableCutoff);
+    support(node, bitSet, variableCutoff);
     return bitSet;
   }
 
@@ -314,18 +356,66 @@ public interface Bdd {
    *
    * @see #support(int)
    */
-  void support(int node, BitSet bitSet, int highestVariable);
+  void support(int node, BitSet bitSet, int variableCutoff);
 
 
   /**
-   * Creates the conjunction of all variables specified by {@code cubeVariables}.
+   * Creates the conjunction of all {@code variables}.
    *
-   * @param cubeVariables
-   *     The variables to build the cube.
+   * @param variables
+   *     The variables to build the conjunction.
    *
    * @return The conjunction of specified variables.
    */
-  int cube(BitSet cubeVariables);
+  default int conjunction(int... variables) {
+    if (variables.length == 0) {
+      return trueNode();
+    }
+    BitSet variableSet = new BitSet(numberOfVariables());
+    for (int variable : variables) {
+      variableSet.set(variable);
+    }
+    return conjunction(variableSet);
+  }
+
+  /**
+   * Creates the conjunction of all {@code variables}.
+   *
+   * @param variables
+   *     The variables to build the conjunction.
+   *
+   * @return The conjunction of specified variables.
+   */
+  int conjunction(BitSet variables);
+
+  /**
+   * Creates the disjunction of all {@code variables}.
+   *
+   * @param variables
+   *     The variables to build the disjunction.
+   *
+   * @return The disjunction of specified variables.
+   */
+  default int disjunction(int... variables) {
+    if (variables.length == 0) {
+      return falseNode();
+    }
+    BitSet variableSet = new BitSet(numberOfVariables());
+    for (int variable : variables) {
+      variableSet.set(variable);
+    }
+    return disjunction(variableSet);
+  }
+
+  /**
+   * Creates the disjunction of all {@code variables}.
+   *
+   * @param variables
+   *     The variables to build the disjunction.
+   *
+   * @return The disjunction of specified variables.
+   */
+  int disjunction(BitSet variables);
 
 
   /**
@@ -439,7 +529,7 @@ public interface Bdd {
    * Checks whether the given {@code node1} implies {@code node2}, i.e. if every valuation under
    * which the function represented by {@code node1} evaluates to true also evaluates to true on
    * {@code node2}. This is equivalent to checking if {@link #implication(int, int)} with {@code
-   * node1} and {@code node2} as parameters is equal to {@link #getTrueNode()} and equal to checking
+   * node1} and {@code node2} as parameters is equal to {@link #trueNode()} and equal to checking
    * whether {@code node1} equals <tt>{@code node1} OR {@code node2}</tt>, but faster.
    *
    * <p><b>Note:</b> As many operations are cached, it may be even faster to use an alternative
@@ -503,6 +593,12 @@ public interface Bdd {
    * Constructs the node representing <tt>{@code node1} XOR {@code node2}</tt>.
    */
   int xor(int node1, int node2);
+
+  /**
+   * Returns a string containing some statistics about the Bdd. The content and formatting of this
+   * string may change drastically and are only intended as human readable output.
+   */
+  String statistics();
 
 
   /**

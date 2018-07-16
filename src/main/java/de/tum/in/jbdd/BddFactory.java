@@ -24,10 +24,20 @@ public final class BddFactory {
   }
 
   public static Bdd buildBdd(int nodeSize) {
-    return new BddImpl(nodeSize);
+    return new BddIterative(nodeSize, ImmutableBddConfiguration.builder().build());
   }
 
-  public static Bdd buildBdd(int nodeSize, BddConfiguration configuration) {
-    return new BddImpl(nodeSize, configuration);
+  public static Bdd buildBddRecursive(int nodeSize, BddConfiguration configuration) {
+    BddRecursive bdd = new BddRecursive(nodeSize, configuration);
+    return configuration.threadSafetyCheck()
+        ? new CheckedBdd(bdd)
+        : bdd;
+  }
+
+  public static Bdd buildBddIterative(int nodeSize, BddConfiguration configuration) {
+    BddIterative bdd = new BddIterative(nodeSize, configuration);
+    return configuration.threadSafetyCheck()
+        ? new CheckedBdd(bdd)
+        : bdd;
   }
 }

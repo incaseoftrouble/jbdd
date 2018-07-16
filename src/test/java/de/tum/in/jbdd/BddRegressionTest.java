@@ -27,7 +27,7 @@ import org.junit.Test;
 public class BddRegressionTest {
   @Test
   public void testReferenceOverflow() {
-    BddImpl bdd = new BddImpl(2);
+    BddRecursive bdd = new BddRecursive(2);
     int v1 = bdd.createVariable();
     int v2 = bdd.createVariable();
     int and = bdd.and(v1, v2);
@@ -39,5 +39,16 @@ public class BddRegressionTest {
     for (int i = 0; i < Integer.MAX_VALUE; i++) {
       bdd.dereference(and);
     }
+  }
+
+  @Test
+  public void testIteratorUniquePath() {
+    BddRecursive bdd = new BddRecursive(2);
+    int v1 = bdd.createVariable();
+    int v2 = bdd.createVariable();
+    int and = bdd.and(v1, v2);
+
+    bdd.solutionIterator(and).forEachRemaining(bitSet -> {
+    });
   }
 }

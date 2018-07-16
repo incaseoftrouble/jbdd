@@ -27,13 +27,16 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 import org.junit.Test;
 
 /**
  * A collection of simple tests for the BDD class.
  */
+@SuppressWarnings("UseOfClone")
 public class BddTest {
   private static BitSet buildBitSet(String values) {
     BitSet bitSet = new BitSet(values.length());
@@ -60,7 +63,7 @@ public class BddTest {
    */
   @Test
   public void internalTest() {
-    BddImpl bdd = new BddImpl(2);
+    BddRecursive bdd = new BddRecursive(2);
     int v1 = bdd.createVariable();
     int v2 = bdd.createVariable();
     int v3 = bdd.createVariable();
@@ -73,7 +76,7 @@ public class BddTest {
     assertThat(1, is(bdd.getApproximateDeadNodeCount()));
 
     // test garbage collection:
-    bdd.grow(); // make sure there is room for it
+    bdd.ensureCapacity(); // make sure there is room for it
     int g1 = bdd.and(v3, v2);
     int g2 = bdd.reference(bdd.or(g1, v1));
     assertThat(bdd.forceGc(), is(0));
@@ -137,17 +140,17 @@ public class BddTest {
     bdd.dereference(qs3);
 
     // satcount
-    assertThat(bdd.countSatisfyingAssignments(0), is(0.0d));
-    assertThat(bdd.countSatisfyingAssignments(1), is(16.0d));
-    assertThat(bdd.countSatisfyingAssignments(v1), is(8.0d));
-    assertThat(bdd.countSatisfyingAssignments(n1), is(4.0d));
-    assertThat(bdd.countSatisfyingAssignments(b1), is(8.0d));
+    assertThat(bdd.countSatisfyingAssignments(0).longValueExact(), is(0L));
+    assertThat(bdd.countSatisfyingAssignments(1).longValueExact(), is(16L));
+    assertThat(bdd.countSatisfyingAssignments(v1).longValueExact(), is(8L));
+    assertThat(bdd.countSatisfyingAssignments(n1).longValueExact(), is(4L));
+    assertThat(bdd.countSatisfyingAssignments(b1).longValueExact(), is(8L));
   }
 
   @SuppressWarnings("ReuseOfLocalVariable")
   @Test
   public void testCompose() {
-    BddImpl bdd = new BddImpl(10);
+    BddRecursive bdd = new BddRecursive(10);
     int v1 = bdd.createVariable();
     int nv1 = bdd.not(v1);
     int v2 = bdd.createVariable();
@@ -172,7 +175,7 @@ public class BddTest {
 
   @Test
   public void testIfThenElse() {
-    Bdd bdd = new BddImpl(10);
+    Bdd bdd = new BddRecursive(10);
     int v1 = bdd.createVariable();
     int v2 = bdd.createVariable();
     int v1andv2 = bdd.and(v1, v2);
@@ -188,7 +191,7 @@ public class BddTest {
 
   @Test
   public void testMember() {
-    BddImpl bdd = new BddImpl(20);
+    BddRecursive bdd = new BddRecursive(20);
     int v1 = bdd.createVariable();
     int v2 = bdd.createVariable();
 
@@ -208,20 +211,20 @@ public class BddTest {
   @SuppressWarnings("UseOfClone")
   @Test
   public void testMinimalSolutionsForConstants() {
-    Bdd bdd = new BddImpl(20);
+    Bdd bdd = new BddRecursive(20);
 
     List<BitSet> falseSolutions = Lists.newArrayList();
-    bdd.forEachMinimalSolution(bdd.getFalseNode(), set -> falseSolutions.add((BitSet) set.clone()));
+    bdd.forEachPath(bdd.falseNode(), set -> falseSolutions.add((BitSet) set.clone()));
     assertThat(falseSolutions, is(Collections.emptyList()));
 
     List<BitSet> trueSolutions = Lists.newArrayList();
-    bdd.forEachMinimalSolution(bdd.getTrueNode(), set -> trueSolutions.add((BitSet) set.clone()));
+    bdd.forEachPath(bdd.trueNode(), set -> trueSolutions.add((BitSet) set.clone()));
     assertThat(trueSolutions, is(Collections.singletonList(new BitSet(0))));
   }
 
   @Test
   public void testSupport() {
-    Bdd bdd = new BddImpl(10);
+    Bdd bdd = new BddRecursive(10);
     int v1 = bdd.createVariable();
     int v2 = bdd.createVariable();
     int v3 = bdd.createVariable();
@@ -268,7 +271,7 @@ public class BddTest {
 
   @Test
   public void testWorkStack() {
-    BddImpl bdd = new BddImpl(20);
+    BddRecursive bdd = new BddRecursive(20);
     int v1 = bdd.createVariable();
     int v2 = bdd.createVariable();
     int temporaryNode = bdd.pushToWorkStack(bdd.and(v1, v2));
@@ -277,5 +280,36 @@ public class BddTest {
     bdd.popWorkStack();
     bdd.forceGc();
     assertThat(bdd.isNodeValidOrRoot(temporaryNode), is(false));
+  }
+
+  @Test
+  public void testUniverseIterator() {
+    Bdd bdd = new BddRecursive(100);
+    bdd.createVariables(5);
+    Set<BitSet> solutions = new HashSet<>();
+    bdd.solutionIterator(bdd.trueNode())
+        .forEachRemaining(val -> solutions.add((BitSet) val.clone()));
+    assertThat(solutions.size(), is(1 << 5));
+  }
+
+  @Test
+  public void testConjunctionIterator() {
+    Bdd bdd = new BddRecursive(100);
+    bdd.createVariables(5);
+    BitSet conjunction = new BitSet(5);
+    conjunction.set(0, 5);
+    bdd.solutionIterator(bdd.conjunction(conjunction));
+    Set<BitSet> solutions = new HashSet<>();
+    bdd.solutionIterator(bdd.trueNode())
+        .forEachRemaining(val -> solutions.add((BitSet) val.clone()));
+    assertThat(solutions.size(), is(1 << 5));
+  }
+
+  @Test(expected = IllegalStateException.class)
+  public void testConcurrentAccessChecked() {
+    Bdd bdd = new CheckedBdd(new BddRecursive(100));
+    bdd.createVariables(2);
+    int node = bdd.reference(bdd.disjunction(0, 1));
+    bdd.forEachSolution(node, solution -> bdd.implies(bdd.trueNode(), bdd.falseNode()));
   }
 }

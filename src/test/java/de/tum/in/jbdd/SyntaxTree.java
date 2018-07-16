@@ -148,6 +148,10 @@ final class SyntaxTree {
     return rootNode.evaluate(valuation);
   }
 
+  boolean evaluate(boolean[] valuation) {
+    return rootNode.evaluate(valuation);
+  }
+
   SyntaxTreeNode getRootNode() {
     return rootNode;
   }
@@ -196,6 +200,24 @@ final class SyntaxTree {
 
     @Override
     boolean evaluate(BitSet valuation) {
+      switch (type) {
+        case AND:
+          return left.evaluate(valuation) && right.evaluate(valuation);
+        case OR:
+          return left.evaluate(valuation) || right.evaluate(valuation);
+        case XOR:
+          return left.evaluate(valuation) ^ right.evaluate(valuation);
+        case IMPLICATION:
+          return !left.evaluate(valuation) || right.evaluate(valuation);
+        case EQUIVALENCE:
+          return left.evaluate(valuation) == right.evaluate(valuation);
+        default:
+          throw new IllegalStateException("Unknown type");
+      }
+    }
+
+    @Override
+    boolean evaluate(boolean[] valuation) {
       switch (type) {
         case AND:
           return left.evaluate(valuation) && right.evaluate(valuation);
@@ -280,6 +302,11 @@ final class SyntaxTree {
     }
 
     @Override
+    boolean evaluate(boolean[] valuation) {
+      return value;
+    }
+
+    @Override
     public void gatherVariables(Set<Integer> set) {
       // No variables in this leaf
     }
@@ -330,6 +357,11 @@ final class SyntaxTree {
     }
 
     @Override
+    boolean evaluate(boolean[] valuation) {
+      return valuation[variableNumber];
+    }
+
+    @Override
     public void gatherVariables(Set<Integer> set) {
       set.add(variableNumber);
     }
@@ -358,6 +390,8 @@ final class SyntaxTree {
     public abstract int depth();
 
     abstract boolean evaluate(BitSet valuation);
+
+    abstract boolean evaluate(boolean[] valuation);
 
     public abstract void gatherVariables(Set<Integer> set);
 
@@ -391,6 +425,11 @@ final class SyntaxTree {
 
     @Override
     boolean evaluate(BitSet valuation) {
+      return !child.evaluate(valuation);
+    }
+
+    @Override
+    boolean evaluate(boolean[] valuation) {
       return !child.evaluate(valuation);
     }
 
@@ -455,6 +494,18 @@ final class SyntaxTree {
 
     @Override
     boolean evaluate(BitSet valuation) {
+      if (type == TernaryType.ITE) {
+        if (first.evaluate(valuation)) {
+          return second.evaluate(valuation);
+        } else {
+          return third.evaluate(valuation);
+        }
+      }
+      throw new IllegalStateException("Unknown type");
+    }
+
+    @Override
+    boolean evaluate(boolean[] valuation) {
       if (type == TernaryType.ITE) {
         if (first.evaluate(valuation)) {
           return second.evaluate(valuation);

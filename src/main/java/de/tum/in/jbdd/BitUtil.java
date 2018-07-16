@@ -40,11 +40,11 @@ public final class BitUtil {
   }
 
   public static long clear(long store, @Nonnegative int length, @Nonnegative int at) {
-    return store & ~(maskLength(length, at));
+    return store & ~maskLength(length, at);
   }
 
   public static long clear(long store, @Nonnegative int length) {
-    return store & ~(maskLength(length));
+    return store & ~maskLength(length);
   }
 
   public static boolean fits(int value, @Nonnegative int bitSize) {
@@ -120,10 +120,12 @@ public final class BitUtil {
     return clear(store, length) | value;
   }
 
+  @SuppressWarnings("PMD.LinguisticNaming")
   public static long setBit(long store, @Nonnegative int at) {
     return store | (1L << at);
   }
 
+  @SuppressWarnings("PMD.LinguisticNaming")
   public static long setFirstBit(long store) {
     return store | 1L;
   }
