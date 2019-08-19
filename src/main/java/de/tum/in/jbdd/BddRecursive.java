@@ -636,13 +636,19 @@ class BddRecursive extends AbstractBdd {
       return result;
     }
 
-    if (elseNode == FALSE_NODE) {
-      return andRecursive(ifNode, thenNode);
-    }
     if (elseNode == TRUE_NODE) {
       int result = notAndRecursive(ifNode, pushToWorkStack(notRecursive(thenNode)));
       popWorkStack();
       return result;
+    }
+    if (elseNode == FALSE_NODE) {
+      return andRecursive(ifNode, thenNode);
+    }
+    if (ifNode == thenNode) {
+      return orRecursive(ifNode, elseNode);
+    }
+    if (ifNode == elseNode) {
+      return andRecursive(ifNode, thenNode);
     }
 
     if (cache.lookupIfThenElse(ifNode, thenNode, elseNode)) {

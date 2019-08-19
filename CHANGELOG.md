@@ -2,6 +2,10 @@
 
 ## 0.5
 
+### 0.5.1 (2019-08-19)
+
+* Small fixes and improvements
+
 ### 0.5.0 (2019-08-06)
 
 * Added an (mostly) iterative implementation of bdds to alleviate stack overflow problems for deep structures

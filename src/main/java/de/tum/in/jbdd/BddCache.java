@@ -224,7 +224,7 @@ final class BddCache {
   }
 
 
-  String getStatistics() {
+  public String getStatistics() {
     @SuppressWarnings("MagicNumber")
     StringBuilder builder = new StringBuilder(512);
     builder.append("Negation: size: ").append(getNegationCacheKeyCount()) //
@@ -301,14 +301,6 @@ final class BddCache {
       }
     }
     return (float) loadedVolatileBins / (float) getVolatileKeyCount();
-  }
-
-
-  private int ensureMinimumCacheKeyCount(int cacheSize) {
-    if (cacheSize < associatedBdd.getConfiguration().minimumNodeTableSize()) {
-      return MathUtil.nextPrime(associatedBdd.getConfiguration().minimumNodeTableSize());
-    }
-    return MathUtil.nextPrime(cacheSize);
   }
 
 
@@ -618,7 +610,7 @@ final class BddCache {
   private void reallocateBinary() {
     int keyCount = associatedBdd.getTableSize()
       / associatedBdd.getConfiguration().cacheBinaryDivider();
-    int actualSize = ensureMinimumCacheKeyCount(keyCount) * binaryBinsPerHash;
+    int actualSize = MathUtil.nextPrime(keyCount) * binaryBinsPerHash;
     binaryKeyStorage = new long[actualSize];
     binaryResultStorage = new int[actualSize];
   }
@@ -630,7 +622,7 @@ final class BddCache {
     }
     int keyCount = associatedBdd.getTableSize()
       / associatedBdd.getConfiguration().cacheComposeDivider();
-    int actualSize = ensureMinimumCacheKeyCount(keyCount)
+    int actualSize = MathUtil.nextPrime(keyCount)
       * (2 + associatedBdd.numberOfVariables());
     composeStorage = new int[actualSize];
   }
@@ -638,7 +630,7 @@ final class BddCache {
   private void reallocateSatisfaction() {
     int keyCount = associatedBdd.getTableSize()
       / associatedBdd.getConfiguration().cacheSatisfactionDivider();
-    int actualSize = ensureMinimumCacheKeyCount(keyCount) * satisfactionBinsPerHash;
+    int actualSize = MathUtil.nextPrime(keyCount) * satisfactionBinsPerHash;
     satisfactionKeyStorage = new int[actualSize];
     satisfactionResultStorage = new BigInteger[actualSize];
   }
@@ -646,14 +638,14 @@ final class BddCache {
   private void reallocateTernary() {
     int keyCount = associatedBdd.getTableSize()
       / associatedBdd.getConfiguration().cacheTernaryDivider();
-    int actualSize = ensureMinimumCacheKeyCount(keyCount) * ternaryBinsPerHash * 2;
+    int actualSize = MathUtil.nextPrime(keyCount) * ternaryBinsPerHash * 2;
     ternaryStorage = new long[actualSize];
   }
 
   private void reallocateNegation() {
     int keyCount = associatedBdd.getTableSize()
       / associatedBdd.getConfiguration().cacheNegationDivider();
-    int actualSize = ensureMinimumCacheKeyCount(keyCount) * negationBinsPerHash;
+    int actualSize = MathUtil.nextPrime(keyCount) * negationBinsPerHash;
     negationStorage = new long[actualSize];
   }
 
@@ -906,7 +898,7 @@ final class BddCache {
     public void run() {
       if (!logger.isLoggable(Level.FINER)) {
         if (!cacheShutdownHook.isEmpty()) {
-          System.err.println("Not printing statistics since FINER level disabled");
+          logger.log(Level.INFO, "Not printing statistics since FINER level disabled");
         }
         return;
       }

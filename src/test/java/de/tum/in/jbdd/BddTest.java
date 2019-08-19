@@ -312,4 +312,27 @@ public class BddTest {
     int node = bdd.reference(bdd.disjunction(0, 1));
     bdd.forEachSolution(node, solution -> bdd.implies(bdd.trueNode(), bdd.falseNode()));
   }
+
+  @Test
+  public void testDeadNodeApproximation() {
+    BddRecursive bdd = new BddRecursive(20);
+    int v1 = bdd.createVariable();
+    int v2 = bdd.createVariable();
+    int v3 = bdd.createVariable();
+    int or = bdd.reference(bdd.implication(bdd.and(v1, v2), v3));
+    int ite = bdd.reference(bdd.ifThenElse(v2, v3, bdd.trueNode()));
+
+    bdd.forceGc();
+    bdd.dereference(ite);
+    assertThat(bdd.getApproximateDeadNodeCount(), is(1));
+    assertThat(bdd.isNodeValidOrRoot(ite), is(true));
+    int freed = bdd.forceGc();
+    assertThat(freed, is(0));
+    assertThat(bdd.getApproximateDeadNodeCount(), is(0));
+    bdd.dereference(or);
+    assertThat(bdd.getApproximateDeadNodeCount(), is(1));
+    bdd.forceGc();
+    assertThat(bdd.isNodeValidOrRoot(ite), is(false));
+    assertThat(bdd.referencedNodeCount(), is(6));
+  }
 }

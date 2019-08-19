@@ -914,12 +914,16 @@ public class BddIterative extends AbstractBdd {
             result = andIterative(pushToWorkStack(not), currentElse, stackIndex);
             popWorkStack();
           }
-        } else if (currentElse == FALSE_NODE) {
-          result = andIterative(currentIf, currentThen, stackIndex);
         } else if (currentElse == TRUE_NODE) {
           int not = notIterative(currentThen, stackIndex);
           result = notAndIterative(currentIf, pushToWorkStack(not), stackIndex);
           popWorkStack();
+        } else if (currentElse == FALSE_NODE) {
+          result = andIterative(currentIf, currentThen, stackIndex);
+        } else if (currentIf == currentThen) {
+          result = orIterative(currentIf, currentElse, stackIndex);
+        } else if (currentIf == currentElse) {
+          result = andIterative(currentIf, currentThen, stackIndex);
         } else if (cache.lookupIfThenElse(currentIf, currentThen, currentElse)) {
           result = cache.getLookupResult();
         } else {

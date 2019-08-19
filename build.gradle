@@ -1,5 +1,5 @@
 group 'de.tum.in'
-version '0.5.0'
+version '0.5.1'
 
 apply plugin: 'java'
 
@@ -34,7 +34,7 @@ dependencies {
 
 apply from: 'gradle/analysis.gradle'
 
-// Deployment - run with -Prelease clean uploadArchives closeAndReleaseRepository
+// Deployment - run with -Prelease clean publish
 if (project.hasProperty('release')) {
     apply plugin: 'maven-publish'
     apply plugin: 'signing'

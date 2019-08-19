@@ -99,7 +99,7 @@ public class CanonicalGcManager<V extends CanonicalGcManager.BddWrapper> {
   }
 
   @SuppressWarnings("InterfaceMayBeAnnotatedFunctional")
-  interface BddWrapper {
+  public interface BddWrapper {
     int node();
   }
 

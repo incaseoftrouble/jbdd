@@ -38,13 +38,8 @@ public class BddConfiguration {
   public static final int DEFAULT_INITIAL_VARIABLE_NODES = 32;
   public static final int DEFAULT_MINIMUM_CACHE_SIZE = 32;
   public static final int DEFAULT_MINIMUM_NODE_TABLE_SIZE = 100;
-  public static final float DEFAULT_NODE_TABLE_FREE_NODE_PERCENTAGE = 0.05f;
-  public static final int DEFAULT_NODE_TABLE_GC_DEAD_NODE_COUNT = 2_000;
-  public static final int DEFAULT_NODE_TABLE_IS_BIG_THRESHOLD = 40_000;
-  public static final int DEFAULT_NODE_TABLE_IS_SMALL_THRESHOLD = 2_000;
-  public static final int DEFAULT_NODE_TABLE_MAXIMUM_GROWTH = 50_000;
-  public static final int DEFAULT_NODE_TABLE_MINIMUM_FREE_NODE_COUNT = 1_000;
-  public static final int DEFAULT_NODE_TABLE_MINIMUM_GROWTH = 5_000;
+  public static final double DEFAULT_NODE_TABLE_FREE_NODE_PERCENTAGE = 0.05d;
+  public static final double DEFAULT_NODE_TABLE_GROWTH_FACTOR = 1.5d;
 
   @Value.Default
   public int cacheBinaryBinsPerHash() {
@@ -117,48 +112,18 @@ public class BddConfiguration {
   }
 
   @Value.Default
-  public int maximumNodeTableGrowth() {
-    return DEFAULT_NODE_TABLE_MAXIMUM_GROWTH;
-  }
-
-  @Value.Default
   public int minimumCacheSize() {
     return DEFAULT_MINIMUM_CACHE_SIZE;
   }
 
   @Value.Default
-  public int minimumDeadNodesCountForGcInGrow() {
-    return DEFAULT_NODE_TABLE_GC_DEAD_NODE_COUNT;
-  }
-
-  @Value.Default
-  public int minimumFreeNodeCountAfterGc() {
-    return DEFAULT_NODE_TABLE_MINIMUM_FREE_NODE_COUNT;
-  }
-
-  @Value.Default
-  public float minimumFreeNodePercentageAfterGc() {
+  public double minimumFreeNodePercentageAfterGc() {
     return DEFAULT_NODE_TABLE_FREE_NODE_PERCENTAGE;
   }
 
   @Value.Default
-  public int minimumNodeTableGrowth() {
-    return DEFAULT_NODE_TABLE_MINIMUM_GROWTH;
-  }
-
-  @Value.Default
-  public int minimumNodeTableSize() {
-    return DEFAULT_MINIMUM_NODE_TABLE_SIZE;
-  }
-
-  @Value.Default
-  public int nodeTableBigThreshold() {
-    return DEFAULT_NODE_TABLE_IS_BIG_THRESHOLD;
-  }
-
-  @Value.Default
-  public int nodeTableSmallThreshold() {
-    return DEFAULT_NODE_TABLE_IS_SMALL_THRESHOLD;
+  public double growthFactor() {
+    return DEFAULT_NODE_TABLE_GROWTH_FACTOR;
   }
 
   @Value.Default
