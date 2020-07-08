@@ -30,8 +30,7 @@ import java.util.Set;
 /**
  * Utility class used to represent propositional formulas.
  */
-@SuppressWarnings({"AccessingNonPublicFieldOfAnotherObject", "unused",
-                      "WeakerAccess", "PMD.GodClass", "checkstyle:javadoc"})
+@SuppressWarnings({"unused", "WeakerAccess", "PMD.GodClass", "checkstyle:javadoc"})
 // TODO Add a "toBddNode(BDD bdd)" method
 final class SyntaxTree {
   private final SyntaxTreeNode rootNode;
@@ -264,7 +263,7 @@ final class SyntaxTree {
 
     @Override
     public String toString() {
-      return type + "[" + left + "," + right + "]";
+      return String.format("%s[%s,%s]", type, left, right);
     }
 
     enum BinaryType {
@@ -454,7 +453,7 @@ final class SyntaxTree {
 
     @Override
     public String toString() {
-      return "NOT[" + child + "]";
+      return String.format("NOT[%s]", child);
     }
   }
 
@@ -551,7 +550,7 @@ final class SyntaxTree {
 
     @Override
     public String toString() {
-      return type + "[" + first + "," + second + "," + third + "]";
+      return String.format("%s[%s,%s,%s]", type, first, second, third);
     }
 
     enum TernaryType {

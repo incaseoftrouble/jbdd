@@ -2,6 +2,10 @@
 
 ## 0.5
 
+### 0.5.2 (2020-07-08)
+
+* Maintenance and version bumps
+
 ### 0.5.1 (2019-08-19)
 
 * Small fixes and improvements

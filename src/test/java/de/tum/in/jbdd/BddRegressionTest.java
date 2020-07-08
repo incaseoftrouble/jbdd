@@ -19,7 +19,7 @@
 
 package de.tum.in.jbdd;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 /**
  * A collection of tests motivated by regressions.
