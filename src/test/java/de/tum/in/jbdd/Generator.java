@@ -1,7 +1,8 @@
 package de.tum.in.jbdd;
 
+import static de.tum.in.jbdd.HashUtil.fnv1aHash;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertThat;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -235,12 +236,12 @@ public final class Generator {
 
     @Override
     public int hashCode() {
-      return node * bdd.hashCode();
+      return fnv1aHash(node) * bdd.hashCode();
     }
 
     @Override
     public String toString() {
-      return bdd + ": " + tree;
+      return String.format("%s: %s", bdd.getClass().getSimpleName(), tree);
     }
   }
 
@@ -273,12 +274,12 @@ public final class Generator {
 
     @Override
     public int hashCode() {
-      return (left ^ ~right) * bdd.hashCode();
+      return fnv1aHash(left) * fnv1aHash(right) * bdd.hashCode();
     }
 
     @Override
     public String toString() {
-      return bdd + ": " + leftTree + " ### " + rightTree;
+      return String.format("%s: %s ### %s", bdd.getClass().getSimpleName(), leftTree, rightTree);
     }
   }
 
@@ -317,12 +318,13 @@ public final class Generator {
 
     @Override
     public int hashCode() {
-      return ((first + second * 31) * 31 + third) * bdd.hashCode();
+      return fnv1aHash(first) * fnv1aHash(second) * fnv1aHash(third) * bdd.hashCode();
     }
 
     @Override
     public String toString() {
-      return bdd + ": " + firstTree + " ### " + secondTree + " ### " + thirdTree;
+      return String.format("%s: %s ### %s ### %s", bdd.getClass().getSimpleName(),
+          firstTree, secondTree, thirdTree);
     }
   }
 }

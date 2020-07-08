@@ -19,14 +19,13 @@
 
 package de.tum.in.jbdd;
 
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.number.OrderingComparison.lessThanOrEqualTo;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assume.assumeFalse;
-import static org.junit.Assume.assumeThat;
-import static org.junit.Assume.assumeTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterators;
@@ -49,23 +48,21 @@ import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import javax.annotation.Nullable;
-import org.junit.After;
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Rule;
-import org.junit.experimental.theories.DataPoints;
-import org.junit.experimental.theories.Theories;
-import org.junit.experimental.theories.Theory;
-import org.junit.rules.ExpectedException;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Tests various logical functions of BDDs and checks invariants.
  */
-@RunWith(Theories.class)
 @SuppressWarnings({"checkstyle:javadoc", "AssignmentOrReturnOfFieldWithMutableType",
                       "AccessingNonPublicFieldOfAnotherObject"})
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class BddTheories {
   private static final Comparator<BitSet> LEXICOGRAPHIC = new BitSetComparator();
   private static final Logger logger = Logger.getLogger(BddTheories.class.getName());
@@ -84,8 +81,6 @@ public class BddTheories {
   private static final Collection<Generator.BinaryDataPoint<AbstractBdd>> binary;
   private static final Collection<Generator.TernaryDataPoint<AbstractBdd>> ternary;
   private final Random skipCheckRandom = new Random(0L);
-  @Rule
-  public final ExpectedException thrown = ExpectedException.none();
 
   static {
     /* The @DataPoints annotated methods are called multiple times - which would create
@@ -171,45 +166,41 @@ public class BddTheories {
     return set;
   }
 
-  @DataPoints
-  public static Collection<Generator.BinaryDataPoint<AbstractBdd>> binaryDataPoints() {
-    return binary;
+  public static Stream<Generator.BinaryDataPoint<AbstractBdd>> binary() {
+    return binary.stream();
   }
 
-  @DataPoints
-  public static Collection<Generator.TernaryDataPoint<AbstractBdd>> ternaryDataPoints() {
-    return ternary;
+  public static Stream<Generator.TernaryDataPoint<AbstractBdd>> ternary() {
+    return ternary.stream();
   }
 
-  @DataPoints
-  public static Collection<Generator.UnaryDataPoint<AbstractBdd>> unaryDataPoints() {
-    return unary;
+  public static Stream<Generator.UnaryDataPoint<AbstractBdd>> unary() {
+    return unary.stream();
   }
 
-  @DataPoints
   public static Collection<AbstractBdd> bdds() {
     return infoMap.keySet();
   }
 
-  @BeforeClass
+  @BeforeAll
   public static void dummy() {
     // Dummy method to separate static initialization from actual test running times
     logger.log(Level.FINE, "Before class");
   }
 
-  @AfterClass
+  @AfterAll
   public static void check() {
     doCheckInvariants();
   }
 
-  @AfterClass
+  @AfterAll
   public static void statistics() {
     for (AbstractBdd bdd : infoMap.keySet()) {
       logger.log(Level.INFO, bdd.statistics());
     }
   }
 
-  @After
+  @AfterEach
   public void clearCaches() {
     for (AbstractBdd bdd : infoMap.keySet()) {
       if (skipCheckRandom.nextInt(100) == 0) {
@@ -218,7 +209,7 @@ public class BddTheories {
     }
   }
 
-  @After
+  @AfterEach
   public void checkInvariants() {
     if (skipCheckRandom.nextInt(SKIP_CHECK_RANDOM_BOUND) == 0) {
       doCheckInvariants();
@@ -232,12 +223,14 @@ public class BddTheories {
     }); */
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("binary")
   public void testAnd(Generator.BinaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node1 = dataPoint.left;
     int node2 = dataPoint.right;
-    assumeTrue(bdd.isNodeValidOrRoot(node1) && bdd.isNodeValidOrRoot(node2));
+    assumeTrue(bdd.isNodeValidOrRoot(node1));
+    assumeTrue(bdd.isNodeValidOrRoot(node2));
 
     int and = bdd.reference(bdd.and(node1, node2));
 
@@ -263,7 +256,8 @@ public class BddTheories {
     bdd.dereference(and);
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("unary")
   public void testComposeTree(Generator.UnaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     Generator.Info<AbstractBdd> bddInfo = infoMap.get(bdd).bddInfo;
@@ -327,7 +321,8 @@ public class BddTheories {
     bdd.dereference(composeNode);
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("unary")
   public void testComposeSimple(Generator.UnaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node = dataPoint.node;
@@ -356,7 +351,8 @@ public class BddTheories {
     });
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("binary")
   public void testConsume(Generator.BinaryDataPoint<AbstractBdd> dataPoint) {
     // This test simply tests if the semantics of consume are as specified, i.e.
     // consume(result, input1, input2) reduces the reference count of the inputs and increases that
@@ -364,9 +360,11 @@ public class BddTheories {
     AbstractBdd bdd = dataPoint.bdd;
     int node1 = dataPoint.left;
     int node2 = dataPoint.right;
-    assumeThat(node1, is(not(node2)));
-    assumeTrue(bdd.isNodeValidOrRoot(node1) && bdd.isNodeValidOrRoot(node2));
-    assumeThat(bdd.isNodeSaturated(node1) || bdd.isNodeSaturated(node2), is(false));
+    assumeFalse(node1 == node2);
+    assumeTrue(bdd.isNodeValidOrRoot(node1));
+    assumeTrue(bdd.isNodeValidOrRoot(node2));
+    assumeFalse(bdd.isNodeSaturated(node1));
+    assumeFalse(bdd.isNodeSaturated(node2));
 
     bdd.reference(node1);
     bdd.reference(node2);
@@ -404,7 +402,8 @@ public class BddTheories {
     bdd.dereference(node2);
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("unary")
   public void testCountSatisfyingAssignments(Generator.UnaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node = dataPoint.node;
@@ -421,12 +420,14 @@ public class BddTheories {
     assertThat(bdd.countSatisfyingAssignments(node).longValueExact(), is(satisfyingAssignments));
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("binary")
   public void testEquivalence(Generator.BinaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node1 = dataPoint.left;
     int node2 = dataPoint.right;
-    assumeTrue(bdd.isNodeValidOrRoot(node1) && bdd.isNodeValidOrRoot(node2));
+    assumeTrue(bdd.isNodeValidOrRoot(node1));
+    assumeTrue(bdd.isNodeValidOrRoot(node2));
 
     int equivalence = bdd.reference(bdd.equivalence(node1, node2));
 
@@ -458,7 +459,8 @@ public class BddTheories {
     bdd.dereference(equivalence);
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("unary")
   public void testEvaluateTree(Generator.UnaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node = dataPoint.node;
@@ -470,7 +472,8 @@ public class BddTheories {
     }
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("unary")
   public void testExistsSelfSubstitution(Generator.UnaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node = dataPoint.node;
@@ -483,7 +486,7 @@ public class BddTheories {
         quantificationBitSet.set(i);
       }
     }
-    assumeThat(quantificationBitSet.cardinality(), lessThanOrEqualTo(5));
+    assumeTrue(quantificationBitSet.cardinality() <= 5);
 
     int existsNode = bdd.existsSelfSubstitution(node, quantificationBitSet);
     BitSet supportIntersection = bdd.support(existsNode);
@@ -504,7 +507,8 @@ public class BddTheories {
     }), is(true));
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("unary")
   public void testExistsShannon(Generator.UnaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node = dataPoint.node;
@@ -517,7 +521,7 @@ public class BddTheories {
         quantificationBitSet.set(i);
       }
     }
-    assumeThat(quantificationBitSet.cardinality(), lessThanOrEqualTo(5));
+    assumeTrue(quantificationBitSet.cardinality() <= 5);
 
     int existsNode = bdd.existsShannon(node, quantificationBitSet);
     BitSet supportIntersection = bdd.support(existsNode);
@@ -538,14 +542,15 @@ public class BddTheories {
     }), is(true));
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("unary")
   public void testForEachPathSimple(Generator.UnaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node = dataPoint.node;
     assumeTrue(bdd.isNodeValidOrRoot(node));
 
     BitSet support = bdd.support(node);
-    assumeThat(support.cardinality(), lessThanOrEqualTo(7));
+    assumeTrue(support.cardinality() <= 7);
 
     BitSet supportFromSolutions = new BitSet(bdd.numberOfVariables());
 
@@ -575,14 +580,15 @@ public class BddTheories {
     assertThat(solutionBitSets, is(assignments));
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("unary")
   public void testForEachPathWithRelevantSet(Generator.UnaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node = dataPoint.node;
     assumeTrue(bdd.isNodeValidOrRoot(node));
 
     BitSet support = bdd.support(node);
-    assumeThat(support.cardinality(), lessThanOrEqualTo(7));
+    assumeTrue(support.cardinality() <= 7);
 
     List<BitSet> minimalSolutions = new ArrayList<>();
     long[] solutionCount = {0L};
@@ -609,14 +615,15 @@ public class BddTheories {
     assertThat(minimalSolutions, is(otherMinimalSolutions));
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("unary")
   public void testForEachPathWithHighestVariable(Generator.UnaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node = dataPoint.node;
     assumeTrue(bdd.isNodeValidOrRoot(node));
 
     BitSet support = bdd.support(node);
-    assumeThat(support.cardinality(), lessThanOrEqualTo(7));
+    assumeTrue(support.cardinality() <= 7);
 
     int highestVariable = variableCount / 2;
     Set<BitSet[]> paths = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -630,7 +637,8 @@ public class BddTheories {
     }
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("unary")
   public void testForEach(Generator.UnaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node = dataPoint.node;
@@ -650,7 +658,8 @@ public class BddTheories {
     assertThat("Missing solution", satisfyingAssignments, empty());
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("unary")
   public void testGetLowAndHigh(Generator.UnaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node = dataPoint.node;
@@ -668,19 +677,20 @@ public class BddTheories {
       }
     } else {
       Collection<Integer> rootNodes = ImmutableSet.of(bdd.falseNode(), bdd.trueNode());
-      assumeThat(rootNodes.contains(low) && rootNodes.contains(high), is(false));
+      assumeFalse(rootNodes.contains(low) && rootNodes.contains(high));
     }
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("ternary")
   public void testIfThenElse(Generator.TernaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int ifNode = dataPoint.first;
     int thenNode = dataPoint.second;
     int elseNode = dataPoint.third;
-    assumeThat(bdd.isNodeValidOrRoot(ifNode)
-        && bdd.isNodeValidOrRoot(thenNode)
-        && bdd.isNodeValidOrRoot(elseNode), is(true));
+    assumeTrue(bdd.isNodeValidOrRoot(ifNode));
+    assumeTrue(bdd.isNodeValidOrRoot(thenNode));
+    assumeTrue(bdd.isNodeValidOrRoot(elseNode));
 
     int ifThenElse = bdd.reference(bdd.ifThenElse(ifNode, thenNode, elseNode));
 
@@ -696,19 +706,21 @@ public class BddTheories {
     int ifImpliesThen = bdd.reference(bdd.implication(ifNode, thenNode));
     int notIfImpliesThen = bdd.reference(bdd.implication(notIf, elseNode));
     int ifThenElseImplicationConstruction = bdd.and(ifImpliesThen, notIfImpliesThen);
-    assertThat("ITE construction failed for " + ifNode + "," + thenNode + "," + elseNode,
+    assertThat(String.format("ITE construction failed for %d,%d,%d", ifNode, thenNode, elseNode),
         ifThenElse, is(ifThenElseImplicationConstruction));
     bdd.dereference(notIf, ifImpliesThen, notIfImpliesThen);
 
     bdd.dereference(ifThenElse);
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("binary")
   public void testImplication(Generator.BinaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node1 = dataPoint.left;
     int node2 = dataPoint.right;
-    assumeTrue(bdd.isNodeValidOrRoot(node1) && bdd.isNodeValidOrRoot(node2));
+    assumeTrue(bdd.isNodeValidOrRoot(node1));
+    assumeTrue(bdd.isNodeValidOrRoot(node2));
 
     int implication = bdd.reference(bdd.implication(node1, node2));
 
@@ -725,12 +737,14 @@ public class BddTheories {
     bdd.dereference(implication);
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("binary")
   public void testImplies(Generator.BinaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node1 = dataPoint.left;
     int node2 = dataPoint.right;
-    assumeTrue(bdd.isNodeValidOrRoot(node1) && bdd.isNodeValidOrRoot(node2));
+    assumeTrue(bdd.isNodeValidOrRoot(node1));
+    assumeTrue(bdd.isNodeValidOrRoot(node2));
 
     boolean implies = bdd.implies(node1, node2);
     int implication = bdd.implication(node1, node2);
@@ -747,7 +761,8 @@ public class BddTheories {
     }
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("unary")
   public void testIsVariable(Generator.UnaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     SyntaxTree.SyntaxTreeNode rootNode = dataPoint.tree.getRootNode();
@@ -767,7 +782,8 @@ public class BddTheories {
     assertThat(bdd.isVariableOrNegated(node), is(support.cardinality() == 1));
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("unary")
   public void testIterator(Generator.UnaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node = dataPoint.node;
@@ -787,7 +803,8 @@ public class BddTheories {
     assertThat("Missing solution", satisfyingAssignments, empty());
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("unary")
   public void testNot(Generator.UnaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node = dataPoint.node;
@@ -807,12 +824,14 @@ public class BddTheories {
     bdd.dereference(not);
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("binary")
   public void testNotAnd(Generator.BinaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node1 = dataPoint.left;
     int node2 = dataPoint.right;
-    assumeTrue(bdd.isNodeValidOrRoot(node1) && bdd.isNodeValidOrRoot(node2));
+    assumeTrue(bdd.isNodeValidOrRoot(node1));
+    assumeTrue(bdd.isNodeValidOrRoot(node2));
 
     int notAnd = bdd.reference(bdd.notAnd(node1, node2));
 
@@ -837,12 +856,14 @@ public class BddTheories {
     bdd.dereference(notAnd);
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("binary")
   public void testOr(Generator.BinaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node1 = dataPoint.left;
     int node2 = dataPoint.right;
-    assumeTrue(bdd.isNodeValidOrRoot(node1) && bdd.isNodeValidOrRoot(node2));
+    assumeTrue(bdd.isNodeValidOrRoot(node1));
+    assumeTrue(bdd.isNodeValidOrRoot(node2));
 
     int or = bdd.reference(bdd.or(node1, node2));
 
@@ -867,12 +888,13 @@ public class BddTheories {
     bdd.dereference(or);
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("unary")
   public void testReferenceAndDereference(Generator.UnaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node = dataPoint.node;
     assumeTrue(bdd.isNodeValidOrRoot(node));
-    assumeThat(bdd.isNodeSaturated(node), is(false));
+    assumeFalse(bdd.isNodeSaturated(node));
 
     int referenceCount = bdd.getReferenceCount(node);
     for (int i = referenceCount; i > 0; i--) {
@@ -886,16 +908,18 @@ public class BddTheories {
     assertThat(bdd.getReferenceCount(node), is(referenceCount));
   }
 
-  @Theory
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("unary")
   @SuppressWarnings("PMD.ExceptionAsFlowControl")
   public void testReferenceGuard(Generator.UnaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node = dataPoint.node;
     assumeTrue(bdd.isNodeValidOrRoot(node));
-    assumeThat(bdd.isNodeSaturated(node), is(false));
+    assumeFalse(bdd.isNodeSaturated(node));
 
     int referenceCount = bdd.getReferenceCount(node);
     try {
+      //noinspection NestedTryStatement
       try (Bdd.ReferenceGuard guard = new Bdd.ReferenceGuard(node, bdd)) {
         assertThat(bdd.getReferenceCount(node), is(referenceCount + 1));
         assertThat(guard.getBdd(), is(bdd));
@@ -908,7 +932,8 @@ public class BddTheories {
     }
   }
 
-  @Theory
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("unary")
   public void testRestrict(Generator.UnaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node = dataPoint.node;
@@ -949,7 +974,8 @@ public class BddTheories {
 
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("unary")
   public void testSupportTree(Generator.UnaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node = dataPoint.node;
@@ -996,12 +1022,14 @@ public class BddTheories {
     }
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("binary")
   public void testSupportUnion(Generator.BinaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node1 = dataPoint.left;
     int node2 = dataPoint.right;
-    assumeTrue(bdd.isNodeValidOrRoot(node1) && bdd.isNodeValidOrRoot(node2));
+    assumeTrue(bdd.isNodeValidOrRoot(node1));
+    assumeTrue(bdd.isNodeValidOrRoot(node2));
 
     BitSet node1Support = bdd.support(node1);
     BitSet node2Support = bdd.support(node2);
@@ -1014,7 +1042,8 @@ public class BddTheories {
     }
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("unary")
   public void testSupportCutoff(Generator.UnaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node = dataPoint.node;
@@ -1026,7 +1055,8 @@ public class BddTheories {
     assertThat(cutoffSupport, is(support));
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("binary")
   public void testUpdateWith(Generator.BinaryDataPoint<AbstractBdd> dataPoint) {
     // This test simply tests if the semantics of updateWith are as specified, i.e.
     // updateWith(result, input) reduces the reference count of the input and increases that of
@@ -1034,9 +1064,11 @@ public class BddTheories {
     AbstractBdd bdd = dataPoint.bdd;
     int node1 = dataPoint.left;
     int node2 = dataPoint.right;
-    assumeThat(node1, is(not(node2)));
-    assumeTrue(bdd.isNodeValidOrRoot(node1) && bdd.isNodeValidOrRoot(node2));
-    assumeFalse(bdd.isNodeSaturated(node1) || bdd.isNodeSaturated(node2));
+    assumeFalse(node1 == node2);
+    assumeTrue(bdd.isNodeValidOrRoot(node1));
+    assumeTrue(bdd.isNodeValidOrRoot(node2));
+    assumeFalse(bdd.isNodeSaturated(node1));
+    assumeFalse(bdd.isNodeSaturated(node2));
 
     bdd.reference(node1);
     bdd.reference(node2);
@@ -1075,12 +1107,14 @@ public class BddTheories {
     bdd.dereference(node2);
   }
 
-  @Theory(nullsAccepted = false)
+  @ParameterizedTest(name = "{index}")
+  @MethodSource("binary")
   public void testXor(Generator.BinaryDataPoint<AbstractBdd> dataPoint) {
     AbstractBdd bdd = dataPoint.bdd;
     int node1 = dataPoint.left;
     int node2 = dataPoint.right;
-    assumeTrue(bdd.isNodeValidOrRoot(node1) && bdd.isNodeValidOrRoot(node2));
+    assumeTrue(bdd.isNodeValidOrRoot(node1));
+    assumeTrue(bdd.isNodeValidOrRoot(node2));
 
     int xor = bdd.reference(bdd.xor(node1, node2));
 

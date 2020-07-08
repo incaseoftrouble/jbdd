@@ -19,8 +19,9 @@
 
 package de.tum.in.jbdd;
 
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.Is.is;
-import static org.junit.Assert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.google.common.collect.Lists;
 import java.util.ArrayList;
@@ -31,7 +32,8 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 
 /**
  * A collection of simple tests for the BDD class.
@@ -305,12 +307,13 @@ public class BddTest {
     assertThat(solutions.size(), is(1 << 5));
   }
 
-  @Test(expected = IllegalStateException.class)
+  @Test
   public void testConcurrentAccessChecked() {
     Bdd bdd = new CheckedBdd(new BddRecursive(100));
     bdd.createVariables(2);
     int node = bdd.reference(bdd.disjunction(0, 1));
-    bdd.forEachSolution(node, solution -> bdd.implies(bdd.trueNode(), bdd.falseNode()));
+    assertThrows(IllegalStateException.class, () ->
+        bdd.forEachSolution(node, solution -> bdd.implies(bdd.trueNode(), bdd.falseNode())));
   }
 
   @Test
