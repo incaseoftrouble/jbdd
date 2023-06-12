@@ -1,5 +1,18 @@
 # 0.x
 
+## 0.6 (2023-06-12)
+
+* Major rewrite and simplification of the internal structure, overall ~1.5-2x runtime improvements
+* Switched to a dumber, much simpler hash function, which seems to be much faster in practice (another ~2x improvement on several benchmarks)
+* Breaking change: True and False node are now negative (in preparation for MTBDDs, where all leafs will be negative)
+* Breaking change: Changed some method names (removed `get...` prefix)
+* Added several benchmarks and optimized some default values based on that
+* Deleted several caches which were close to useless
+* Fixed a performance bug in the iterative implementation of `support()`
+* Removed a runtime dependency that accidentally slipped in
+* Add an implementation of `BddSet` and automatic reference management
+* Add spotless for formatting
+
 ## 0.5
 
 ### 0.5.2 (2020-07-08)
@@ -12,7 +25,7 @@
 
 ### 0.5.0 (2019-08-06)
 
-* Added an (mostly) iterative implementation of bdds to alleviate stack overflow problems for deep structures
+* Added a (mostly) iterative implementation of bdds to alleviate stack overflow problems for deep structures
 * Added set views on bdd nodes
 * Bump gradle and dependency versions
 * Small improvements

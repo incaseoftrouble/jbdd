@@ -20,24 +20,26 @@
 package de.tum.in.jbdd;
 
 public final class BddFactory {
-  private BddFactory() {
-  }
+    private BddFactory() {}
 
-  public static Bdd buildBdd(int nodeSize) {
-    return new BddIterative(nodeSize, ImmutableBddConfiguration.builder().build());
-  }
+    public static Bdd buildBdd() {
+        return buildBdd(ImmutableBddConfiguration.builder().build());
+    }
 
-  public static Bdd buildBddRecursive(int nodeSize, BddConfiguration configuration) {
-    BddRecursive bdd = new BddRecursive(nodeSize, configuration);
-    return configuration.threadSafetyCheck()
-        ? new CheckedBdd(bdd)
-        : bdd;
-  }
+    public static Bdd buildBdd(BddConfiguration configuration) {
+        return buildBddRecursive(configuration);
+    }
 
-  public static Bdd buildBddIterative(int nodeSize, BddConfiguration configuration) {
-    BddIterative bdd = new BddIterative(nodeSize, configuration);
-    return configuration.threadSafetyCheck()
-        ? new CheckedBdd(bdd)
-        : bdd;
-  }
+    public static Bdd buildBddRecursive(BddConfiguration configuration) {
+        return buildBdd(false, configuration);
+    }
+
+    public static Bdd buildBddIterative(BddConfiguration configuration) {
+        return buildBdd(true, configuration);
+    }
+
+    public static Bdd buildBdd(boolean iterative, BddConfiguration configuration) {
+        BddImpl bdd = new BddImpl(iterative, configuration);
+        return configuration.threadSafetyCheck() ? new CheckedBdd(bdd) : bdd;
+    }
 }

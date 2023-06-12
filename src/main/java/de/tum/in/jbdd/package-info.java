@@ -19,4 +19,3 @@
 
 @EverythingIsNonnullByDefault
 package de.tum.in.jbdd;
-
