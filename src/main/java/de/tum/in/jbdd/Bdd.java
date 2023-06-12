@@ -265,6 +265,22 @@ public interface Bdd extends DecisionDiagram {
     int exists(int node, BitSet quantifiedVariables);
 
     /**
+     * Constructs the node representing the function obtained by forall quantification of {@code
+     * node} with all variables specified by {@code quantifiedVariables}. Formally, let {@code f(x_1,
+     * ..., x_m)} be the function specified by {@code node} and {@code x_1, ..., x_m} all
+     * variables for which {@code quantifiedVariables} is set. This method then constructs {@code A x_1 A
+     * x_2 ... A x_n f(x_1, ..., x_m)}.
+     *
+     * @param node
+     *     The node representing the basis of the quantification.
+     * @param quantifiedVariables
+     *     The variables which should be quantified over.
+     *
+     * @return The node representing the quantification.
+     */
+    int forall(int node, BitSet quantifiedVariables);
+
+    /**
      * Constructs the node representing {@code IF {@code ifNode} THEN {@code thenNode} ELSE {@code
      * elseNode}}.
      */

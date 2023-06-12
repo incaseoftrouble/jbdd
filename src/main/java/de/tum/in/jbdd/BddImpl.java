@@ -845,8 +845,8 @@ final class BddImpl implements Bdd {
 
     @Override
     public int variable(int node) {
-        assert isNodeValid(node);
-        return dataGetVariable(nodeData[node]);
+        assert isNodeValidOrLeaf(node);
+        return isLeaf(node) ? -1 : dataGetVariable(nodeData[node]);
     }
 
     @Override
@@ -932,7 +932,8 @@ final class BddImpl implements Bdd {
 
         int newSize = numberOfVariables + count;
         if (newSize >= variableNodes.length) {
-            variableNodes = Arrays.copyOf(variableNodes, Math.max(variableNodes.length * 2, newSize));
+            int growth = Math.max(variableNodes.length * 2, newSize);
+            variableNodes = Arrays.copyOf(variableNodes, growth);
         }
 
         int[] newVariableNodes = new int[count];
@@ -1673,7 +1674,7 @@ final class BddImpl implements Bdd {
         return result;
     }
 
-    private int composeIterative(int node, int[] variableNodes, int highestReplacedVariable) {
+    private int composeIterative(int node, int[] replacement, int highestReplacedVariable) {
         int[] cacheStackHash = this.cacheStackHash;
         int[] cacheArgStack = this.cacheStackFirstArg;
         int[] branchStackParentVar = this.branchStackParentVar;
@@ -1696,7 +1697,7 @@ final class BddImpl implements Bdd {
                     if (nodeVariable > highestReplacedVariable) {
                         result = current;
                     } else {
-                        int replacementNode = variableNodes[nodeVariable];
+                        int replacementNode = replacement[nodeVariable];
 
                         if (replacementNode == TRUE_NODE) {
                             current = high(current);
@@ -1724,12 +1725,11 @@ final class BddImpl implements Bdd {
             int parentVar;
             while ((parentVar = branchStackParentVar[--stackIndex]) < 0) {
                 int variable = -parentVar - 1;
-                int replacementNode = variableNodes[variable];
+                int replacementNode = replacement[variable];
                 int currentHash = cacheStackHash[stackIndex];
                 int currentNode = cacheArgStack[stackIndex];
-
-                // TODO Shortcut if replacement is a variable?
                 int lowResult = peekWorkStack();
+
                 pushToWorkStack(result);
                 result = ifThenElseIterative(replacementNode, result, lowResult, stackIndex);
                 popWorkStack(2);
@@ -1748,7 +1748,7 @@ final class BddImpl implements Bdd {
         }
     }
 
-    private int composeRecursive(int node, int[] variableNodes, int highestReplacedVariable) {
+    private int composeRecursive(int node, int[] replacement, int highestReplacedVariable) {
         if (node == TRUE_NODE || node == FALSE_NODE) {
             return node;
         }
@@ -1763,16 +1763,16 @@ final class BddImpl implements Bdd {
         }
         int hash = cache.lookupHash();
 
-        int variableReplacementNode = variableNodes[nodeVariable];
+        int variableReplacementNode = replacement[nodeVariable];
         int resultNode;
         // Short-circuit constant replacements.
         if (variableReplacementNode == TRUE_NODE) {
-            resultNode = composeRecursive(high(node), variableNodes, highestReplacedVariable);
+            resultNode = composeRecursive(high(node), replacement, highestReplacedVariable);
         } else if (variableReplacementNode == FALSE_NODE) {
-            resultNode = composeRecursive(low(node), variableNodes, highestReplacedVariable);
+            resultNode = composeRecursive(low(node), replacement, highestReplacedVariable);
         } else {
-            int lowCompose = pushToWorkStack(composeRecursive(low(node), variableNodes, highestReplacedVariable));
-            int highCompose = pushToWorkStack(composeRecursive(high(node), variableNodes, highestReplacedVariable));
+            int lowCompose = pushToWorkStack(composeRecursive(low(node), replacement, highestReplacedVariable));
+            int highCompose = pushToWorkStack(composeRecursive(high(node), replacement, highestReplacedVariable));
             resultNode = ifThenElseRecursive(variableReplacementNode, highCompose, lowCompose);
             popWorkStack(2);
         }
@@ -1933,35 +1933,39 @@ final class BddImpl implements Bdd {
     @Override
     public int exists(int node, BitSet quantifiedVariables) {
         assert isWorkStackEmpty();
-        assert quantifiedVariables.previousSetBit(quantifiedVariables.length()) <= numberOfVariables;
-        if (quantifiedVariables.cardinality() == numberOfVariables) {
+        assert quantifiedVariables.length() <= numberOfVariables;
+        if (isLeaf(node) || quantifiedVariables.isEmpty()) {
+            return node;
+        }
+        if (isVariable(node)) {
+            return quantifiedVariables.get(variable(node)) ? TRUE_NODE : node;
+        }
+        int cardinality = quantifiedVariables.cardinality();
+        if (cardinality == numberOfVariables) {
             return TRUE_NODE;
         }
 
-        // Shannon exists
+        cache.initExists(quantifiedVariables);
+        int[] quantifiedVariableArray = BitSets.toArray(quantifiedVariables);
         pushToWorkStack(node);
-        int quantifiedVariablesConjunction = conjunction(quantifiedVariables);
-        pushToWorkStack(quantifiedVariablesConjunction);
         int result = iterative
-                ? existsIterative(node, quantifiedVariablesConjunction, 0)
-                : existsRecursive(node, quantifiedVariablesConjunction);
-        popWorkStack(2);
+                ? existsIterative(node, quantifiedVariableArray, 0)
+                : existsRecursive(node, 0, quantifiedVariableArray);
+        popWorkStack(1);
         assert isWorkStackEmpty();
         return result;
     }
 
-    private int existsIterative(int node, int quantifiedVariableCube, int baseStackIndex) {
-        // N.B.: The "root" of the cube is guarded in the main invocation - no need to guard it
-
+    private int existsIterative(int node, int[] quantifiedVariables, int baseStackIndex) {
         int[] cacheStackHash = this.cacheStackHash;
         int[] cacheStackArg = this.cacheStackFirstArg;
         int[] branchStackParentVar = this.branchStackParentVar;
         int[] branchStackArg = this.branchStackFirstArg;
-        int[] branchStackCubeNode = this.branchStackSecondArg;
+        int[] branchStackVariableIndex = this.branchStackSecondArg;
 
+        int currentIndex = 0;
         int stackIndex = baseStackIndex;
         int current = node;
-        int currentCubeNode = quantifiedVariableCube;
         while (true) {
             assert stackIndex >= baseStackIndex;
 
@@ -1971,29 +1975,23 @@ final class BddImpl implements Bdd {
             do {
                 if (current == TRUE_NODE || current == FALSE_NODE) {
                     result = current;
-                } else if (quantifiedVariableCube == TRUE_NODE) {
-                    result = current;
                 } else {
                     int nodeVariable = variable(current);
-                    int currentCubeNodeVariable = variable(currentCubeNode);
-                    while (currentCubeNodeVariable < nodeVariable) {
-                        currentCubeNode = high(currentCubeNode);
-                        if (currentCubeNode == TRUE_NODE) {
+                    int currentVariable = quantifiedVariables[currentIndex];
+                    while (currentVariable < nodeVariable) {
+                        currentIndex += 1;
+                        if (currentIndex == quantifiedVariables.length) {
                             // No more variables to project
                             result = current;
                             //noinspection BreakStatementWithLabel
                             break loop;
                         }
-                        currentCubeNodeVariable = variable(currentCubeNode);
+                        currentVariable = quantifiedVariables[currentIndex];
                     }
 
                     if (isVariableOrNegated(current)) {
-                        if (nodeVariable == currentCubeNodeVariable) {
-                            result = TRUE_NODE;
-                        } else {
-                            result = current;
-                        }
-                    } else if (cache.lookupExists(current, currentCubeNode)) {
+                        result = nodeVariable == currentVariable ? TRUE_NODE : current;
+                    } else if (cache.lookupExists(current)) {
                         result = cache.lookupResult();
                     } else {
                         cacheStackHash[stackIndex] = cache.lookupHash();
@@ -2001,7 +1999,7 @@ final class BddImpl implements Bdd {
 
                         branchStackParentVar[stackIndex] = nodeVariable;
                         branchStackArg[stackIndex] = high(current);
-                        branchStackCubeNode[stackIndex] = currentCubeNode;
+                        branchStackVariableIndex[stackIndex] = currentIndex;
 
                         current = low(current);
                         stackIndex += 1;
@@ -2019,8 +2017,8 @@ final class BddImpl implements Bdd {
                 int currentNode = cacheStackArg[stackIndex];
                 int currentHash = cacheStackHash[stackIndex];
 
-                currentCubeNode = branchStackCubeNode[stackIndex];
-                if (variable(currentCubeNode) > variable) {
+                int quantifiedVariable = quantifiedVariables[branchStackVariableIndex[stackIndex]];
+                if (quantifiedVariable > variable) {
                     // The variable of this node is smaller than the variable looked for - only propagate the
                     // quantification downward
                     result = makeNode(variable, peekWorkStack(), pushToWorkStack(result));
@@ -2029,7 +2027,7 @@ final class BddImpl implements Bdd {
                     // nodeVariable == nextVariable, i.e. "quantify out" the current node.
                     result = orIterative(peekAndPopWorkStack(), result, stackIndex);
                 }
-                cache.putExists(currentHash, currentNode, currentCubeNode, result);
+                cache.putExists(currentHash, currentNode, result);
 
                 if (stackIndex == baseStackIndex) {
                     return result;
@@ -2038,50 +2036,44 @@ final class BddImpl implements Bdd {
             branchStackParentVar[stackIndex] = -(parentVar + 1);
             pushToWorkStack(result);
 
-            currentCubeNode = branchStackCubeNode[stackIndex];
+            currentIndex = branchStackVariableIndex[stackIndex];
             current = branchStackArg[stackIndex];
             stackIndex += 1;
         }
     }
 
-    private int existsRecursive(int node, int quantifiedVariableCube) {
+    private int existsRecursive(int node, int currentIndex, int[] quantifiedVariables) {
         if (node == TRUE_NODE || node == FALSE_NODE) {
             return node;
         }
-        if (quantifiedVariableCube == TRUE_NODE) {
+        if (currentIndex == quantifiedVariables.length) {
             return node;
         }
 
         int nodeVariable = variable(node);
+        int quantifiedVariable = quantifiedVariables[currentIndex];
 
-        int currentCubeNode = quantifiedVariableCube;
-        int currentCubeNodeVariable = variable(currentCubeNode);
-        while (currentCubeNodeVariable < nodeVariable) {
-            currentCubeNode = high(currentCubeNode);
-            if (currentCubeNode == TRUE_NODE) {
-                // No more variables to project
+        while (quantifiedVariable < nodeVariable) {
+            currentIndex += 1;
+            if (currentIndex == quantifiedVariables.length) {
                 return node;
             }
-            currentCubeNodeVariable = variable(currentCubeNode);
+            quantifiedVariable = quantifiedVariables[currentIndex];
         }
 
         if (isVariableOrNegated(node)) {
-            if (nodeVariable == currentCubeNodeVariable) {
-                return TRUE_NODE;
-            }
-            return node;
+            return nodeVariable == quantifiedVariable ? TRUE_NODE : node;
         }
 
-        if (cache.lookupExists(node, currentCubeNode)) {
+        if (cache.lookupExists(node)) {
             return cache.lookupResult();
         }
         int hash = cache.lookupHash();
 
-        // The "root" of the cube is guarded in the main invocation - no need to guard its descendants
-        int lowExists = pushToWorkStack(existsRecursive(low(node), currentCubeNode));
-        int highExists = pushToWorkStack(existsRecursive(high(node), currentCubeNode));
+        int lowExists = pushToWorkStack(existsRecursive(low(node), currentIndex, quantifiedVariables));
+        int highExists = pushToWorkStack(existsRecursive(high(node), currentIndex, quantifiedVariables));
         int resultNode;
-        if (currentCubeNodeVariable > nodeVariable) {
+        if (quantifiedVariable > nodeVariable) {
             // The variable of this node is smaller than the variable looked for - only propagate the
             // quantification downward
             resultNode = makeNode(nodeVariable, lowExists, highExists);
@@ -2090,7 +2082,164 @@ final class BddImpl implements Bdd {
             resultNode = orRecursive(lowExists, highExists);
         }
         popWorkStack(2);
-        cache.putExists(hash, node, currentCubeNode, resultNode);
+        cache.putExists(hash, node, resultNode);
+        return resultNode;
+    }
+
+    @Override
+    public int forall(int node, BitSet quantifiedVariables) {
+        assert isWorkStackEmpty();
+        assert quantifiedVariables.length() <= numberOfVariables;
+        if (isLeaf(node) || quantifiedVariables.isEmpty()) {
+            return node;
+        }
+        if (isVariable(node)) {
+            return quantifiedVariables.get(variable(node)) ? FALSE_NODE : node;
+        }
+        int cardinality = quantifiedVariables.cardinality();
+        if (cardinality == numberOfVariables) {
+            assert node != TRUE_NODE;
+            return FALSE_NODE;
+        }
+
+        cache.initForall(quantifiedVariables);
+        int[] quantifiedVariableArray = BitSets.toArray(quantifiedVariables);
+        pushToWorkStack(node);
+        int result = iterative
+                ? forallIterative(node, quantifiedVariableArray, 0)
+                : forallRecursive(node, 0, quantifiedVariableArray);
+        popWorkStack(1);
+        assert isWorkStackEmpty();
+        return result;
+    }
+
+    private int forallIterative(int node, int[] quantifiedVariables, int baseStackIndex) {
+        int[] cacheStackHash = this.cacheStackHash;
+        int[] cacheStackArg = this.cacheStackFirstArg;
+        int[] branchStackParentVar = this.branchStackParentVar;
+        int[] branchStackArg = this.branchStackFirstArg;
+        int[] branchStackVariableIndex = this.branchStackSecondArg;
+
+        int currentIndex = 0;
+        int stackIndex = baseStackIndex;
+        int current = node;
+        while (true) {
+            assert stackIndex >= baseStackIndex;
+
+            int result = NOT_A_NODE;
+            //noinspection LabeledStatement
+            loop:
+            do {
+                if (current == TRUE_NODE || current == FALSE_NODE) {
+                    result = current;
+                } else {
+                    int nodeVariable = variable(current);
+                    int currentVariable = quantifiedVariables[currentIndex];
+                    while (currentVariable < nodeVariable) {
+                        currentIndex += 1;
+                        if (currentIndex == quantifiedVariables.length) {
+                            // No more variables to project
+                            result = current;
+                            //noinspection BreakStatementWithLabel
+                            break loop;
+                        }
+                        currentVariable = quantifiedVariables[currentIndex];
+                    }
+
+                    if (isVariableOrNegated(current)) {
+                        result = nodeVariable == currentVariable ? FALSE_NODE : current;
+                    } else if (cache.lookupForall(current)) {
+                        result = cache.lookupResult();
+                    } else {
+                        cacheStackHash[stackIndex] = cache.lookupHash();
+                        cacheStackArg[stackIndex] = current;
+
+                        branchStackParentVar[stackIndex] = nodeVariable;
+                        branchStackArg[stackIndex] = high(current);
+                        branchStackVariableIndex[stackIndex] = currentIndex;
+
+                        current = low(current);
+                        stackIndex += 1;
+                    }
+                }
+            } while (result == NOT_A_NODE);
+
+            if (stackIndex == baseStackIndex) {
+                return result;
+            }
+
+            int parentVar;
+            while ((parentVar = branchStackParentVar[--stackIndex]) < 0) {
+                int variable = -parentVar - 1;
+                int currentNode = cacheStackArg[stackIndex];
+                int currentHash = cacheStackHash[stackIndex];
+
+                int quantifiedVariable = quantifiedVariables[branchStackVariableIndex[stackIndex]];
+                if (quantifiedVariable > variable) {
+                    // The variable of this node is smaller than the variable looked for - only propagate the
+                    // quantification downward
+                    result = makeNode(variable, peekWorkStack(), pushToWorkStack(result));
+                    popWorkStack(2);
+                } else {
+                    // nodeVariable == nextVariable, i.e. "quantify out" the current node.
+                    result = andIterative(peekAndPopWorkStack(), result, stackIndex);
+                }
+                cache.putForall(currentHash, currentNode, result);
+
+                if (stackIndex == baseStackIndex) {
+                    return result;
+                }
+            }
+            branchStackParentVar[stackIndex] = -(parentVar + 1);
+            pushToWorkStack(result);
+
+            currentIndex = branchStackVariableIndex[stackIndex];
+            current = branchStackArg[stackIndex];
+            stackIndex += 1;
+        }
+    }
+
+    private int forallRecursive(int node, int currentIndex, int[] quantifiedVariables) {
+        if (node == TRUE_NODE || node == FALSE_NODE) {
+            return node;
+        }
+        if (currentIndex == quantifiedVariables.length) {
+            return node;
+        }
+
+        int nodeVariable = variable(node);
+        int quantifiedVariable = quantifiedVariables[currentIndex];
+
+        while (quantifiedVariable < nodeVariable) {
+            currentIndex += 1;
+            if (currentIndex == quantifiedVariables.length) {
+                return node;
+            }
+            quantifiedVariable = quantifiedVariables[currentIndex];
+        }
+
+        if (isVariableOrNegated(node)) {
+            return nodeVariable == quantifiedVariable ? FALSE_NODE : node;
+        }
+
+        if (cache.lookupForall(node)) {
+            return cache.lookupResult();
+        }
+        int hash = cache.lookupHash();
+
+        int lowForall = pushToWorkStack(forallRecursive(low(node), currentIndex, quantifiedVariables));
+        int highForall = pushToWorkStack(forallRecursive(high(node), currentIndex, quantifiedVariables));
+        int resultNode;
+        if (quantifiedVariable > nodeVariable) {
+            // The variable of this node is smaller than the variable looked for - only propagate the
+            // quantification downward
+            resultNode = makeNode(nodeVariable, lowForall, highForall);
+        } else {
+            // nodeVariable == nextVariable, i.e. "quantify out" the current node.
+            resultNode = andRecursive(lowForall, highForall);
+        }
+        popWorkStack(2);
+        cache.putForall(hash, node, resultNode);
         return resultNode;
     }
 

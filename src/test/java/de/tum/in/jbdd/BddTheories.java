@@ -611,6 +611,65 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
+    public void testForall(Generator.UnaryDataPoint<BddImpl> dataPoint) {
+        BddImpl bdd = dataPoint.bdd;
+        int node = dataPoint.node;
+        assumeTrue(bdd.isNodeValidOrLeaf(node));
+
+        BitSet quantificationBitSet = new BitSet(bdd.numberOfVariables());
+        Random quantificationRandom = new Random(node);
+        for (int i = 0; i < bdd.numberOfVariables(); i++) {
+            if (quantificationRandom.nextInt(bdd.numberOfVariables()) < 5) {
+                quantificationBitSet.set(i);
+            }
+        }
+        assumeTrue(quantificationBitSet.cardinality() <= 5);
+
+        int forallNode = bdd.forall(node, quantificationBitSet);
+        BitSet supportIntersection = bdd.support(forallNode);
+        supportIntersection.and(quantificationBitSet);
+        assertThat(supportIntersection.isEmpty(), is(true));
+
+        BitSet unquantifiedVariables = copyBitSet(quantificationBitSet);
+        unquantifiedVariables.flip(0, bdd.numberOfVariables());
+
+        assertThat(
+                Iterators.all(getBitSetIterator(unquantifiedVariables), unquantifiedAssignment -> {
+                    boolean bddEvaluation = bdd.evaluate(forallNode, unquantifiedAssignment);
+                    boolean setEvaluation = Iterators.all(getBitSetIterator(quantificationBitSet), bitSet -> {
+                        BitSet actualBitSet = copyBitSet(bitSet);
+                        actualBitSet.or(unquantifiedAssignment);
+                        return bdd.evaluate(node, actualBitSet);
+                    });
+                    return bddEvaluation == setEvaluation;
+                }),
+                is(true));
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("unary")
+    public void testExistsForallDuality(Generator.UnaryDataPoint<BddImpl> dataPoint) {
+        BddImpl bdd = dataPoint.bdd;
+        int node = dataPoint.node;
+        assumeTrue(bdd.isNodeValidOrLeaf(node));
+
+        BitSet quantificationBitSet = new BitSet(bdd.numberOfVariables());
+        Random quantificationRandom = new Random(node);
+        for (int i = 0; i < bdd.numberOfVariables(); i++) {
+            if (quantificationRandom.nextInt(bdd.numberOfVariables()) < 5) {
+                quantificationBitSet.set(i);
+            }
+        }
+        assumeTrue(quantificationBitSet.cardinality() <= 5);
+
+        int forallNode = bdd.reference(bdd.forall(node, quantificationBitSet));
+        int forallByExistsNode = bdd.not(bdd.exists(bdd.not(node), quantificationBitSet));
+
+        assertThat(forallNode, is(forallByExistsNode));
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("unary")
     public void testForEachPathSimple(Generator.UnaryDataPoint<BddImpl> dataPoint) {
         BddImpl bdd = dataPoint.bdd;
         int node = dataPoint.node;

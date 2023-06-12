@@ -32,7 +32,7 @@ public interface DecisionDiagram {
     int low(int node);
 
     /**
-     * Gets the variable of the given {@code node}.
+     * Gets the variable of the given {@code node} or {@code -1} for a leaf.
      */
     int variable(int node);
 

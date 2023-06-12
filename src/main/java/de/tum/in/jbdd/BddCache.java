@@ -18,7 +18,9 @@ package de.tum.in.jbdd;
 
 import java.math.BigInteger;
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.Collection;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -30,10 +32,14 @@ import javax.annotation.Nullable;
  */
 @SuppressWarnings({"PMD.UseUtilityClass", "PMD.TooManyFields"})
 final class BddCache {
+    private enum QuantificationType {
+        EXISTS,
+        FORALL
+    }
+
     private static final byte NOT_AN_OPERATION = 0;
     private static final byte BINARY_OPERATION_AND = 1;
     private static final byte BINARY_OPERATION_EQUIVALENCE = 4;
-    private static final byte BINARY_OPERATION_EXISTS = 6;
     private static final byte BINARY_OPERATION_IMPLIES = 3;
     private static final byte BINARY_OPERATION_N_AND = 7;
     private static final byte BINARY_OPERATION_OR = 2;
@@ -50,11 +56,12 @@ final class BddCache {
 
     private final BddImpl associatedBdd;
     private final int placeholder;
-    private final CacheAccessStatistics binaryAccessStatistics = new CacheAccessStatistics();
-    private final CacheAccessStatistics satisfactionAccessStatistics = new CacheAccessStatistics();
-    private final CacheAccessStatistics ternaryAccessStatistics = new CacheAccessStatistics();
-    private final CacheAccessStatistics negationAccessStatistics = new CacheAccessStatistics();
-    private final CacheAccessStatistics composeAccessStatistics = new CacheAccessStatistics();
+    private final CacheStatistics binaryStatistics = new CacheStatistics();
+    private final CacheStatistics satisfactionStatistics = new CacheStatistics();
+    private final CacheStatistics ternaryStatistics = new CacheStatistics();
+    private final CacheStatistics negationStatistics = new CacheStatistics();
+    private final CacheStatistics composeStatistics = new CacheStatistics();
+    private final CacheStatistics quantificationStatistics = new CacheStatistics();
 
     private int negationKeyCount = 0;
     private int[] negationCache = EMPTY_INT_ARRAY;
@@ -70,6 +77,11 @@ final class BddCache {
     private int composeHighestReplacement = -1;
     private int composeKeyCount = 0;
     private int[] composeCache = EMPTY_INT_ARRAY;
+
+    private BitSet quantificationSet = new BitSet();
+    private QuantificationType quantificationType = QuantificationType.EXISTS;
+    private int quantificationKeyCount = 0;
+    private int[] quantificationCache = EMPTY_INT_ARRAY;
 
     private int satisfactionKeyCount = 0;
     private int[] satisfactionKey = EMPTY_INT_ARRAY;
@@ -90,6 +102,7 @@ final class BddCache {
         reallocateTernary();
         reallocateSatisfaction();
         reallocateCompose();
+        reallocateQuantification();
 
         if (logger.isLoggable(Level.INFO) && configuration.logStatisticsOnShutdown()) {
             logger.log(Level.FINER, "Adding {0} to shutdown hook", this);
@@ -108,8 +121,7 @@ final class BddCache {
                 || operationId == BINARY_OPERATION_IMPLIES
                 || operationId == BINARY_OPERATION_N_AND
                 || operationId == BINARY_OPERATION_OR
-                || operationId == BINARY_OPERATION_XOR
-                || operationId == BINARY_OPERATION_EXISTS;
+                || operationId == BINARY_OPERATION_XOR;
     }
 
     private static boolean isTernaryOperation(byte operationId) {
@@ -136,9 +148,16 @@ final class BddCache {
     }
 
     void clearComposeCache() {
-        composeAccessStatistics.invalidation();
+        composeStatistics.invalidation();
         for (int i = 0; i < composeCache.length; i += 2) {
             composeCache[i] = placeholder;
+        }
+    }
+
+    void clearQuantificationCache() {
+        quantificationStatistics.invalidation();
+        for (int i = 0; i < quantificationCache.length; i += 2) {
+            quantificationCache[i] = placeholder;
         }
     }
 
@@ -194,6 +213,16 @@ final class BddCache {
         return (float) loadedComposeBins / (float) composeKeyCount();
     }
 
+    private float quantificationLoadFactor() {
+        int loadedQuantificationBins = 0;
+        for (int i = 0; i < quantificationKeyCount(); i++) {
+            if (quantificationCache[2 * i] != placeholder) {
+                loadedQuantificationBins++;
+            }
+        }
+        return (float) loadedQuantificationBins / (float) quantificationKeyCount();
+    }
+
     private int negationCachePosition(int hash) {
         return mod(hash, negationCacheKeyCount());
     }
@@ -239,23 +268,34 @@ final class BddCache {
         return composeKeyCount;
     }
 
+    private int quantificationCachePosition(int hash) {
+        return mod(hash, quantificationKeyCount());
+    }
+
+    private int quantificationKeyCount() {
+        assert quantificationKeyCount == quantificationCache.length / 2;
+        return quantificationKeyCount;
+    }
+
     void invalidate() {
         logger.log(Level.FINER, "Invalidating caches");
-        negationAccessStatistics.invalidation();
+        negationStatistics.invalidation();
         reallocateNegation();
-        binaryAccessStatistics.invalidation();
+        binaryStatistics.invalidation();
         reallocateBinary();
-        ternaryAccessStatistics.invalidation();
+        ternaryStatistics.invalidation();
         reallocateTernary();
-        satisfactionAccessStatistics.invalidation();
+        satisfactionStatistics.invalidation();
         reallocateSatisfaction();
         reallocateCompose();
+        reallocateQuantification();
     }
 
     public void variablesChanged() {
-        satisfactionAccessStatistics.invalidation();
+        satisfactionStatistics.invalidation();
         reallocateSatisfaction();
         reallocateCompose();
+        reallocateQuantification();
     }
 
     boolean lookupAnd(int inputNode1, int inputNode2) {
@@ -266,10 +306,6 @@ final class BddCache {
     boolean lookupEquivalence(int inputNode1, int inputNode2) {
         assert binarySymmetricWellOrdered(inputNode1, inputNode2);
         return binaryLookup(BINARY_OPERATION_EQUIVALENCE, inputNode1, inputNode2);
-    }
-
-    boolean lookupExists(int inputNode, int variableCube) {
-        return binaryLookup(BINARY_OPERATION_EXISTS, inputNode, variableCube);
     }
 
     boolean lookupIfThenElse(int inputNode1, int inputNode2, int inputNode3) {
@@ -307,7 +343,7 @@ final class BddCache {
         int binStart = cachePosition;
         if (satisfactionKey[binStart] == node) {
             BigInteger result = satisfactionResult[binStart];
-            satisfactionAccessStatistics.cacheHit();
+            satisfactionStatistics.cacheHit();
             return result;
         }
         return null;
@@ -339,7 +375,57 @@ final class BddCache {
             int result = composeCache[binStart + 1];
             lookupResult = result;
             assert associatedBdd.isNodeValidOrLeaf(result);
-            composeAccessStatistics.cacheHit();
+            composeStatistics.cacheHit();
+            return true;
+        }
+        return false;
+    }
+
+    void initExists(BitSet quantificationSet) {
+        if (quantificationType == QuantificationType.EXISTS
+                && Objects.equals(this.quantificationSet, quantificationSet)) {
+            return;
+        }
+        quantificationType = QuantificationType.EXISTS;
+        this.quantificationSet = quantificationSet;
+        clearQuantificationCache();
+    }
+
+    public void initForall(BitSet quantificationSet) {
+        if (quantificationType == QuantificationType.FORALL
+                && Objects.equals(this.quantificationSet, quantificationSet)) {
+            return;
+        }
+        quantificationType = QuantificationType.FORALL;
+        this.quantificationSet = quantificationSet;
+        clearQuantificationCache();
+    }
+
+    boolean lookupExists(int inputNode) {
+        assert quantificationType == QuantificationType.EXISTS;
+        return lookupQuantification(inputNode);
+    }
+
+    boolean lookupForall(int inputNode) {
+        assert quantificationType == QuantificationType.FORALL;
+        return lookupQuantification(inputNode);
+    }
+
+    private boolean lookupQuantification(int inputNode) {
+        assert associatedBdd.isNodeValid(inputNode);
+
+        int hash = HashUtil.hash(inputNode);
+        lookupHash = hash;
+
+        int cachePosition = quantificationCachePosition(hash);
+        int[] quantificationCache = this.quantificationCache;
+
+        int binStart = 2 * cachePosition;
+        if (quantificationCache[binStart] == inputNode) {
+            int result = quantificationCache[binStart + 1];
+            lookupResult = result;
+            assert associatedBdd.isNodeValidOrLeaf(result);
+            quantificationStatistics.cacheHit();
             return true;
         }
         return false;
@@ -358,10 +444,6 @@ final class BddCache {
     void putEquivalence(int hash, int inputNode1, int inputNode2, int resultNode) {
         assert binarySymmetricWellOrdered(inputNode1, inputNode2);
         binaryPut(BINARY_OPERATION_EQUIVALENCE, hash, inputNode1, inputNode2, resultNode);
-    }
-
-    void putExists(int hash, int inputNode, int variableCube, int resultNode) {
-        binaryPut(BINARY_OPERATION_EXISTS, hash, inputNode, variableCube, resultNode);
     }
 
     void putIfThenElse(int hash, int inputNode1, int inputNode2, int inputNode3, int resultNode) {
@@ -391,7 +473,7 @@ final class BddCache {
         assert associatedBdd.isNodeValid(node);
         assert hash == HashUtil.hash(node);
 
-        satisfactionAccessStatistics.put();
+        satisfactionStatistics.put();
         int cachePosition = satisfactionCachePosition(hash);
         int[] satisfactionKey = this.satisfactionKey;
         BigInteger[] satisfactionResult = this.satisfactionResult;
@@ -404,13 +486,36 @@ final class BddCache {
         assert associatedBdd.isNodeValid(inputNode) && associatedBdd.isNodeValidOrLeaf(resultNode);
         assert hash == HashUtil.hash(inputNode);
 
-        composeAccessStatistics.put();
+        composeStatistics.put();
         int cachePosition = composeCachePosition(hash);
         int[] composeCache = this.composeCache;
 
         int binStart = 2 * cachePosition;
         composeCache[binStart] = inputNode;
         composeCache[binStart + 1] = resultNode;
+    }
+
+    void putExists(int hash, int inputNode, int resultNode) {
+        assert quantificationType == QuantificationType.EXISTS;
+        putQuantification(hash, inputNode, resultNode);
+    }
+
+    void putForall(int hash, int inputNode, int resultNode) {
+        assert quantificationType == QuantificationType.FORALL;
+        putQuantification(hash, inputNode, resultNode);
+    }
+
+    private void putQuantification(int hash, int inputNode, int resultNode) {
+        assert associatedBdd.isNodeValid(inputNode) && associatedBdd.isNodeValidOrLeaf(resultNode);
+        assert hash == HashUtil.hash(inputNode);
+
+        quantificationStatistics.put();
+        int cachePosition = quantificationCachePosition(hash);
+        int[] quantificationCache = this.quantificationCache;
+
+        int binStart = 2 * cachePosition;
+        quantificationCache[binStart] = inputNode;
+        quantificationCache[binStart + 1] = resultNode;
     }
 
     void putXor(int hash, int inputNode1, int inputNode2, int resultNode) {
@@ -488,8 +593,7 @@ final class BddCache {
     }
 
     private void reallocateCompose() {
-        int size = associatedBdd.numberOfVariables()
-                * associatedBdd.getConfiguration().cacheComposeDivider();
+        int size = associatedBdd.tableSize() / associatedBdd.getConfiguration().cacheComposeDivider();
         if (size < 2 * composeKeyCount) {
             clearComposeCache();
         } else {
@@ -497,6 +601,18 @@ final class BddCache {
             composeCache = new int[keyCount * 2];
             composeKeyCount = keyCount;
             assert composeKeyCount() == keyCount;
+        }
+    }
+
+    private void reallocateQuantification() {
+        int size = associatedBdd.tableSize() / associatedBdd.getConfiguration().cacheQuantificationDivider();
+        if (size < 2 * quantificationKeyCount) {
+            clearQuantificationCache();
+        } else {
+            int keyCount = Primes.nextPrime(size);
+            quantificationCache = new int[keyCount * 2];
+            quantificationKeyCount = keyCount;
+            assert quantificationKeyCount() == keyCount;
         }
     }
 
@@ -513,7 +629,7 @@ final class BddCache {
             int result = negationCache[binStart + 1];
             lookupResult = result;
             assert associatedBdd.isNodeValidOrLeaf(result);
-            negationAccessStatistics.cacheHit();
+            negationStatistics.cacheHit();
             return true;
         }
         return false;
@@ -523,7 +639,7 @@ final class BddCache {
         assert associatedBdd.isNodeValid(inputNode) && associatedBdd.isNodeValidOrLeaf(resultNode);
         assert hash == HashUtil.hash(inputNode);
 
-        negationAccessStatistics.put();
+        negationStatistics.put();
         int cachePosition = negationCachePosition(hash);
         int[] negationCache = this.negationCache;
 
@@ -550,7 +666,7 @@ final class BddCache {
             lookupResult = result;
 
             assert associatedBdd.isNodeValidOrLeaf(result);
-            binaryAccessStatistics.cacheHit();
+            binaryStatistics.cacheHit();
             return true;
         }
         return false;
@@ -564,7 +680,7 @@ final class BddCache {
         assert hash == HashUtil.hash(operationId, inputNode1, inputNode2);
 
         int cachePosition = binaryCachePosition(hash);
-        binaryAccessStatistics.put();
+        binaryStatistics.put();
         int[] binaryCache = this.binaryCache;
         byte[] binaryOp = this.binaryOp;
 
@@ -594,7 +710,7 @@ final class BddCache {
             int result = ternaryCache[binStart + 3];
             lookupResult = result;
             assert associatedBdd.isNodeValidOrLeaf(result);
-            ternaryAccessStatistics.cacheHit();
+            ternaryStatistics.cacheHit();
             return true;
         }
         return false;
@@ -609,7 +725,7 @@ final class BddCache {
         assert isTernaryOperation(operationId);
         assert hash == HashUtil.hash(inputNode1, inputNode2, inputNode3);
 
-        ternaryAccessStatistics.put();
+        ternaryStatistics.put();
         int cachePosition = ternaryCachePosition(hash);
         int[] ternaryCache = this.ternaryCache;
 
@@ -627,25 +743,29 @@ final class BddCache {
                         + " %s\nTernary: size: %d, load: %s\n"
                         + " %s\nSatisfaction: size: %d, load: %s\n"
                         + " %s\nCompose: current size: %d, load: %s\n"
+                        + " %s\nQuant: current size: %d, load %s\n"
                         + " %s",
                 negationCacheKeyCount(),
                 negationLoadFactor(),
-                negationAccessStatistics,
+                negationStatistics,
                 binaryKeyCount(),
                 binaryLoadFactor(),
-                binaryAccessStatistics,
+                binaryStatistics,
                 ternaryKeyCount(),
                 ternaryLoadFactor(),
-                ternaryAccessStatistics,
+                ternaryStatistics,
                 satisfactionKeyCount(),
                 satisfactionLoadFactor(),
-                satisfactionAccessStatistics,
+                satisfactionStatistics,
                 composeKeyCount(),
                 composeLoadFactor(),
-                composeAccessStatistics);
+                composeStatistics,
+                quantificationKeyCount(),
+                quantificationLoadFactor(),
+                quantificationStatistics);
     }
 
-    private static final class CacheAccessStatistics {
+    private static final class CacheStatistics {
         private int hitCount = 0;
         private int hitCountSinceInvalidation = 0;
         private int putCount = 0;

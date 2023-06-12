@@ -25,7 +25,8 @@ public class BddConfiguration {
     public static final int DEFAULT_CACHE_SATISFACTION_DIVIDER = 32;
     public static final int DEFAULT_CACHE_TERNARY_DIVIDER = 64;
     public static final int DEFAULT_CACHE_NEGATION_DIVIDER = 32;
-    public static final int DEFAULT_CACHE_COMPOSE_DIVIDER = 64;
+    public static final int DEFAULT_CACHE_COMPOSE_DIVIDER = 32;
+    public static final int DEFAULT_CACHE_QUANTIFICATION_DIVIDER = 64;
     public static final double DEFAULT_NODE_TABLE_FREE_NODE_PERCENTAGE = 0.10d;
     public static final double DEFAULT_NODE_TABLE_GROWTH_FACTOR = 1.5d;
 
@@ -57,6 +58,11 @@ public class BddConfiguration {
     @Value.Default
     public int cacheComposeDivider() {
         return DEFAULT_CACHE_COMPOSE_DIVIDER;
+    }
+
+    @Value.Default
+    public int cacheQuantificationDivider() {
+        return DEFAULT_CACHE_QUANTIFICATION_DIVIDER;
     }
 
     @Value.Default

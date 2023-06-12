@@ -1,6 +1,14 @@
 # 0.x
 
-## 0.6 (2023-06-12)
+## 0.6.x
+
+# 0.6.1
+
+* Made benchmarks more consistent across runs
+* Improvements to `exists` / caching for quantification queries
+* Native support for `forall` queries
+
+# 0.6.0 (2023-06-12)
 
 * Major rewrite and simplification of the internal structure, overall ~1.5-2x runtime improvements
 * Switched to a dumber, much simpler hash function, which seems to be much faster in practice (another ~2x improvement on several benchmarks)

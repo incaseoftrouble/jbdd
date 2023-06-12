@@ -23,7 +23,7 @@ import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 
 @State(Scope.Benchmark)
-public class BddState {
+public class BenchBddState {
     @Param({"1"})
     private float cacheSizeFactor;
 

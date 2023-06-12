@@ -310,6 +310,12 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
+    public int forall(int node, BitSet quantifiedVariables) {
+        onEnter("forall");
+        return onExit(delegate.forall(node, quantifiedVariables));
+    }
+
+    @Override
     public int ifThenElse(int ifNode, int thenNode, int elseNode) {
         onEnter("ifThenElse");
         return onExit(delegate.ifThenElse(ifNode, thenNode, elseNode));

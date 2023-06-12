@@ -22,7 +22,7 @@ import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 
 @State(Scope.Benchmark)
-public class BddFactoryState {
+public class BenchBddFactoryState {
     @SuppressWarnings("NotNullFieldNotInitialized")
     private BddSetFactory factory;
 

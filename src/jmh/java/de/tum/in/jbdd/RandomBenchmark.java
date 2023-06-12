@@ -20,10 +20,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
-import java.util.Set;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.Level;
 import org.openjdk.jmh.annotations.Scope;
@@ -69,6 +67,16 @@ public class RandomBenchmark extends BaseBddBenchmark {
                 }
                 n.add(n.bdd.exists(n.get(), mask));
             },
+            n -> {
+                int variables = n.bdd.numberOfVariables();
+                BitSet mask = new BitSet(variables);
+                for (int i = 0; i < Math.min(variables, 10); i++) {
+                    if (n.random.nextBoolean()) {
+                        mask.set(i);
+                    }
+                }
+                n.add(n.bdd.forall(n.get(), mask));
+            },
             n -> n.bdd.support(n.get()),
             n -> n.bdd.implies(n.get(), n.get()),
             n -> n.bdd.countSatisfyingAssignments(n.get()),
@@ -87,9 +95,7 @@ public class RandomBenchmark extends BaseBddBenchmark {
     public static class BddNodes {
         public final Bdd bdd;
         public final Random random;
-        private final Set<Integer> nodeSet = new HashSet<>();
         private final List<Integer> nodes = new ArrayList<>();
-        private int counter = 0;
 
         public BddNodes(Bdd bdd, Random random) {
             this.bdd = bdd;
@@ -105,25 +111,17 @@ public class RandomBenchmark extends BaseBddBenchmark {
         }
 
         public void add(int node) {
-            if (counter > 6) {
-                counter = 0;
-                if (nodeSet.add(node)) {
-                    bdd.reference(node);
-                    nodes.add(node);
+            if (random.nextInt(10) > 6) {
+                bdd.reference(node);
+                nodes.add(node);
 
-                    int size = nodes.size();
-                    if (size > 200) {
-                        Collections.shuffle(nodes, random);
-                        int keep = size - 10;
-                        nodes.subList(0, keep).forEach(bdd::dereference);
-                        nodeSet.clear();
-                        nodeSet.addAll(nodes.subList(keep, size));
-                        nodes.clear();
-                        nodes.addAll(nodeSet);
-                    }
+                int size = nodes.size();
+                if (size > 500) {
+                    Collections.shuffle(nodes, random);
+                    nodes.listIterator(50).forEachRemaining(bdd::dereference);
+                    nodes.subList(50, nodes.size()).clear();
                 }
             }
-            counter += 1;
         }
 
         public int get() {
@@ -140,9 +138,9 @@ public class RandomBenchmark extends BaseBddBenchmark {
     }
 
     @State(Scope.Benchmark)
-    public static class RandomState extends BddState {
+    public static class RandomState extends BenchBddState {
         private static final int SEED = 1234;
-        private static final int OPERATION_COUNT = 20_000;
+        private static final int OPERATION_COUNT = 5_000;
 
         public BddNodes nodes;
         public List<BddOperation> bddOperations;
@@ -165,6 +163,16 @@ public class RandomBenchmark extends BaseBddBenchmark {
     public static void benchmarkRandom(RandomState state) {
         for (BddOperation operation : state.bddOperations) {
             operation.run(state.nodes);
+        }
+    }
+
+    public static void main(String[] args) {
+        var bdd = BddFactory.buildBdd();
+        var nodes = new BddNodes(bdd, new Random(1234));
+        nodes.createVariables(64);
+        var bddOperations = makeOperations(5_000, new Random(1234));
+        for (BddOperation operation : bddOperations) {
+            operation.run(nodes);
         }
     }
 }

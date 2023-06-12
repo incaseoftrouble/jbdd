@@ -31,7 +31,7 @@ import org.openjdk.jmh.infra.Blackhole;
 
 public class DimacsBenchmark extends BaseBddBenchmark {
     @State(Scope.Benchmark)
-    public static class DimacsState extends BddState {
+    public static class DimacsState extends BenchBddState {
         @Param({})
         private String fileName;
 
