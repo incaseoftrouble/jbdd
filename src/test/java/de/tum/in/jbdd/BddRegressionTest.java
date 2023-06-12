@@ -25,30 +25,32 @@ import org.junit.jupiter.api.Test;
  * A collection of tests motivated by regressions.
  */
 public class BddRegressionTest {
-  @Test
-  public void testReferenceOverflow() {
-    BddRecursive bdd = new BddRecursive(2);
-    int v1 = bdd.createVariable();
-    int v2 = bdd.createVariable();
-    int and = bdd.and(v1, v2);
+    private static final BddConfiguration config =
+            ImmutableBddConfiguration.builder().build();
 
-    for (int i = 0; i < Integer.MAX_VALUE; i++) {
-      bdd.reference(and);
+    @Test
+    public void testReferenceOverflow() {
+        BddImpl bdd = new BddImpl(false, config);
+        int v1 = bdd.createVariable();
+        int v2 = bdd.createVariable();
+        int and = bdd.and(v1, v2);
+
+        for (int i = 0; i < Integer.MAX_VALUE; i++) {
+            bdd.reference(and);
+        }
+
+        for (int i = 0; i < Integer.MAX_VALUE; i++) {
+            bdd.dereference(and);
+        }
     }
 
-    for (int i = 0; i < Integer.MAX_VALUE; i++) {
-      bdd.dereference(and);
+    @Test
+    public void testIteratorUniquePath() {
+        BddImpl bdd = new BddImpl(false, config);
+        int v1 = bdd.createVariable();
+        int v2 = bdd.createVariable();
+        int and = bdd.and(v1, v2);
+
+        bdd.solutionIterator(and).forEachRemaining(bitSet -> {});
     }
-  }
-
-  @Test
-  public void testIteratorUniquePath() {
-    BddRecursive bdd = new BddRecursive(2);
-    int v1 = bdd.createVariable();
-    int v2 = bdd.createVariable();
-    int and = bdd.and(v1, v2);
-
-    bdd.solutionIterator(and).forEachRemaining(bitSet -> {
-    });
-  }
 }

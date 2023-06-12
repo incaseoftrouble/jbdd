@@ -2,22 +2,43 @@
 
 [![Build Status](https://travis-ci.org/incaseoftrouble/jbdd.svg?branch=master)](https://travis-ci.org/incaseoftrouble/jbdd)
 
-JBDD (Java Binary Decision Diagrams) is (yet another) native implementation of BDDs in Java.
-It is inspired by [JDD](https://bitbucket.org/vahidi/jdd/wiki/Home), but more or less rewritten from scratch, since JDD contained some bugs and was missing features like, for example, substitution.
-The design goals are simplicity, reasonable performance and no dependencies.
+JBDD (Java Binary Decision Diagrams) is (yet another) native implementation of (Reduced Ordered) BDDs in Java.
+It is loosely inspired by [JDD](https://bitbucket.org/vahidi/jdd/wiki/Home), but completely rewritten from scratch, since JDD contained some bugs and was missing features like, for example, substitution.
+The design goals are simplicity, performance, and no dependencies.
 
-This also implies that some more fancy BDD features and variants (like variable reordering or z-BDDs) are missing here, too.
+## Performance
+
+Internally, JBDD does not use any objects, only primitive arrays, and uses manual memory management.
+JBDD also provides an object-oriented interface with automatic reference management through weak references (instead of `finalize()`, which has a hefty performance penalty).
+The overhead incurred by the object-oriented interface largely depends on the number of referenced objects, but was hardly measurable in several synthetic benchmarks.
+
+Compared to other libraries, JBDD beats most Java implementations and even is on-par or faster than established, C-based libraries such as BuDDy.
+(Measured on several synthetic benchmarks.)
+
+## Features
+
+Some more fancy BDD features and variants are missing.
+Most notably, these are ZDDs, MTBDDs, and variable reordering.
 They might get added over time, but if you require such features, consider using optimized implementations like [CUDD](http://vlsi.colorado.edu/~fabio/), [BuDDy](http://buddy.sourceforge.net/manual/main.html) or [Sylvan](http://fmt.cs.utwente.nl/tools/sylvan/) instead.
 
 ## Usage
 
 You can either build the jar using gradle (see below) or fetch it from maven central:
 
-    <dependency>
-      <groupId>de.tum.in</groupId>
-      <artifactId>jbdd</artifactId>
-      <version>0.3.2</version>
-    </dependency>
+```xml
+<dependency>
+  <groupId>de.tum.in</groupId>
+  <artifactId>jbdd</artifactId>
+  <version>0.6.0</version>
+</dependency>
+```
+
+and for gradle:
+
+```kotlin
+// https://mvnrepository.com/artifact/de.tum.in/jbdd
+implementation("de.tum.in:jbdd:0.6.0")
+```
 
 ## Building
 
@@ -32,11 +53,13 @@ Or, if you are on windows,
 
 ## Referencing
 
-If you use JBDD for your experiments, I would appreciate a BibTeX citation akin to the following.
+If you use JBDD for your experiments, I would appreciate a citation akin to the following.
 
-    @misc{jbdd,
-        author = {Tobias Meggendorfer},
-        title = {{JBDD}: A Java {BDD} Library},
-        howpublished = "\url{https://github.com/incaseoftrouble/jbdd}",
-        year = 2017
-    }
+```
+@misc{jbdd,
+    author = {Tobias Meggendorfer},
+    title = {{JBDD}: A Java {BDD} Library},
+    howpublished = "\url{https://github.com/incaseoftrouble/jbdd}",
+    year = 2017
+}
+```
