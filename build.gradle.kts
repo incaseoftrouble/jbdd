@@ -51,7 +51,10 @@ idea {
 repositories { mavenCentral() }
 
 spotless {
-  java { palantirJavaFormat() }
+  java {
+    licenseHeaderFile("${project.rootDir}/config/LICENCE_HEADER")
+    palantirJavaFormat()
+  }
   kotlinGradle { ktfmt() }
 }
 

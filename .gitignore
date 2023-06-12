@@ -1,5 +1,6 @@
 # ==== Java files ===
 
+*.hprof
 *.class
 *.log
 

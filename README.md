@@ -1,6 +1,6 @@
 # JBDD
 
-[![Build Status](https://travis-ci.org/incaseoftrouble/jbdd.svg?branch=master)](https://travis-ci.org/incaseoftrouble/jbdd)
+![Build Status](https://github.com/incaseoftrouble/jbdd/actions/workflows/build.yml/badge.svg)
 
 JBDD (Java Binary Decision Diagrams) is (yet another) native implementation of (Reduced Ordered) BDDs in Java.
 It is loosely inspired by [JDD](https://bitbucket.org/vahidi/jdd/wiki/Home), but completely rewritten from scratch, since JDD contained some bugs and was missing features like, for example, substitution.
