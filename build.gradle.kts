@@ -16,6 +16,7 @@ plugins {
 }
 
 group = "de.tum.in"
+
 version = "0.6.0"
 
 java {
@@ -54,9 +55,7 @@ spotless {
   kotlinGradle { ktfmt() }
 }
 
-jmh {
-  includeTests.set(true)
-}
+jmh { includeTests.set(true) }
 
 dependencies {
   compileOnly("com.google.code.findbugs:jsr305:3.0.2")
