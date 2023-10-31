@@ -83,9 +83,9 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
-    public int variable(int node) {
+    public int variableOf(int node) {
         onEnter("variable");
-        return onExit(delegate.variable(node));
+        return onExit(delegate.variableOf(node));
     }
 
     @Override
@@ -150,9 +150,30 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
+    public int referencedNodeCount() {
+        return delegate.referencedNodeCount();
+    }
+
+    @Override
+    public int activeNodeCount() {
+        onEnter("activeNodeCount");
+        return onExit(delegate.activeNodeCount());
+    }
+
+    @Override
     public int referenceCount(int node) {
         onEnter("getReferenceCount");
         return onExit(delegate.referenceCount(node));
+    }
+
+    @Override
+    public int saturateNode(int node) {
+        return delegate.saturateNode(node);
+    }
+
+    @Override
+    public boolean isNodeSaturated(int node) {
+        return delegate.isNodeSaturated(node);
     }
 
     @Override

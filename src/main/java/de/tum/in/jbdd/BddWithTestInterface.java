@@ -16,17 +16,17 @@
  */
 package de.tum.in.jbdd;
 
-import java.util.concurrent.TimeUnit;
-import org.openjdk.jmh.annotations.BenchmarkMode;
-import org.openjdk.jmh.annotations.Fork;
-import org.openjdk.jmh.annotations.Measurement;
-import org.openjdk.jmh.annotations.Mode;
-import org.openjdk.jmh.annotations.OutputTimeUnit;
-import org.openjdk.jmh.annotations.Warmup;
+// An interface for methods used during testing, simplifying case distinctions
+interface BddWithTestInterface extends Bdd {
+    default boolean isNodeValidOrLeaf(int node) {
+        return isLeaf(node) || isNodeValid(node);
+    }
 
-@Warmup(iterations = 2)
-@Measurement(iterations = 5)
-@Fork(3)
-@OutputTimeUnit(TimeUnit.MILLISECONDS)
-@BenchmarkMode(Mode.SingleShotTime)
-public class BaseBddBenchmark {}
+    boolean isNodeValid(int node);
+
+    boolean check();
+
+    void invalidateCache();
+
+    String treeToString(int node);
+}

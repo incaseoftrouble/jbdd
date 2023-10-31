@@ -1,3 +1,5 @@
+import me.champeau.jmh.JMHTask
+
 plugins {
   `java-library`
 
@@ -10,9 +12,9 @@ plugins {
   // https://plugins.gradle.org/plugin/io.github.gradle-nexus.publish-plugin
   id("io.github.gradle-nexus.publish-plugin") version "1.3.0"
   // https://plugins.gradle.org/plugin/com.diffplug.spotless
-  id("com.diffplug.spotless") version "6.19.0"
+  id("com.diffplug.spotless") version "6.22.0"
   // https://plugins.gradle.org/plugin/me.champeau.jmh
-  id("me.champeau.jmh") version "0.7.1"
+  id("me.champeau.jmh") version "0.7.2"
 }
 
 group = "de.tum.in"
@@ -58,7 +60,21 @@ spotless {
   kotlinGradle { ktfmt() }
 }
 
-jmh { includeTests.set(true) }
+tasks.create("jmhRandom") {
+  doFirst {
+    jmh.includes.add("RandomBenchmark*")
+    jmh.warmupIterations = 5
+    jmh.iterations = 15
+  }
+  finalizedBy("jmh")
+}
+
+tasks.create("jmhSynthetic") {
+  doFirst { jmh.includes.add("SyntheticBenchmark*") }
+  finalizedBy("jmh")
+}
+
+tasks.withType<JMHTask> { includeTests.set(true) }
 
 dependencies {
   compileOnly("com.google.code.findbugs:jsr305:3.0.2")
@@ -90,8 +106,8 @@ tasks.test {
 
 pmd {
   toolVersion = "6.55.0" // https://pmd.github.io/
-  reportsDir = file("${project.buildDir}/reports/pmd")
-  ruleSetFiles = files("${project.rootDir}/config/pmd-rules.xml")
+  reportsDir = project.layout.buildDirectory.dir("reports/pmd").get().asFile
+  ruleSetFiles = project.layout.projectDirectory.files("config/pmd-rules.xml")
   ruleSets = listOf() // We specify all rules in rules.xml
   isConsoleOutput = false
   isIgnoreFailures = false

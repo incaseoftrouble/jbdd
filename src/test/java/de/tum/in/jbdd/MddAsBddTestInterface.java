@@ -16,17 +16,33 @@
  */
 package de.tum.in.jbdd;
 
-import java.util.concurrent.TimeUnit;
-import org.openjdk.jmh.annotations.BenchmarkMode;
-import org.openjdk.jmh.annotations.Fork;
-import org.openjdk.jmh.annotations.Measurement;
-import org.openjdk.jmh.annotations.Mode;
-import org.openjdk.jmh.annotations.OutputTimeUnit;
-import org.openjdk.jmh.annotations.Warmup;
+public class MddAsBddTestInterface extends MddAsBdd implements BddWithTestInterface {
+    public MddAsBddTestInterface(BddConfiguration configuration) {
+        super(configuration);
+    }
 
-@Warmup(iterations = 2)
-@Measurement(iterations = 5)
-@Fork(3)
-@OutputTimeUnit(TimeUnit.MILLISECONDS)
-@BenchmarkMode(Mode.SingleShotTime)
-public class BaseBddBenchmark {}
+    @Override
+    MddImpl mdd() {
+        return (MddImpl) super.mdd();
+    }
+
+    @Override
+    public boolean isNodeValid(int node) {
+        return mdd().isNodeValid(node);
+    }
+
+    @Override
+    public boolean check() {
+        return mdd().check();
+    }
+
+    @Override
+    public void invalidateCache() {
+        mdd().invalidateCache();
+    }
+
+    @Override
+    public String treeToString(int node) {
+        return mdd().treeToString(node);
+    }
+}

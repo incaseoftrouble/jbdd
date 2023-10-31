@@ -27,17 +27,8 @@ public interface DecisionDiagram {
      */
     int placeholder();
 
-    int high(int node);
-
-    int low(int node);
-
     /**
-     * Gets the variable of the given {@code node} or {@code -1} for a leaf.
-     */
-    int variable(int node);
-
-    /**
-     * Determines whether the given {@code node} represents a constant, i.e. {@code true} or {@code false}.
+     * Determines whether the given {@code node} represents a constant.
      *
      * @param node The node to be checked.
      * @return If the {@code node} represents a constant.
@@ -45,70 +36,34 @@ public interface DecisionDiagram {
     boolean isLeaf(int node);
 
     /**
-     * Determines whether the given {@code node} represents a variable.
-     *
-     * @param node The node to be checked.
-     * @return If the {@code node} represents a variable.
+     * Gets the variable of the given {@code node} or {@code -1} for a leaf.
      */
-    boolean isVariable(int node);
+    int variableOf(int node);
 
     /**
-     * Determines whether the given {@code node} represents a negated variable.
-     *
-     * @param node The node to be checked.
-     * @return If the {@code node} represents a negated variable.
-     */
-    boolean isVariableNegated(int node);
-
-    /**
-     * Determines whether the given {@code node} represents a variable or it's negation.
-     *
-     * @param node The node to be checked.
-     * @return If the {@code node} represents a variable.
-     */
-    boolean isVariableOrNegated(int node);
-
-    /**
-     * Returns the number of variables in this BDD.
+     * Returns the number of variables in this decision diagram.
      *
      * @return The number of variables.
      */
     int numberOfVariables();
 
     /**
-     * Returns the node which represents the variable with given {@code variableNumber}. The variable
-     * must already have been created.
-     *
-     * @param variableNumber The number of the requested variable.
-     * @return The corresponding node.
+     * Returns the reference count of the given node or {@literal -1} if this number can't be
+     * accurately determined (e.g., when a node is saturated).
      */
-    int variableNode(int variableNumber);
+    int referenceCount(int node);
+
+    int saturateNode(int node);
 
     /**
-     * Creates a new variable and returns the node representing it. The implementation guarantees that
-     * variables are always allocated sequentially starting from 0, i.e. {@code
-     * getVariable(createVariable()) == numberOfVariables() - 1}.
+     * Checks if the given {@code node} is saturated. This can happen if the node is explicitly marked
+     * as saturated or gets referenced too often.
      *
-     * @return The node representing the new variable.
+     * @param node The node to be checked
+     * @return Whether the node is saturated
+     * @see #saturateNode(int)
      */
-    int createVariable();
-
-    /**
-     * Creates {@code count} many variables and returns their respective nodes. The first created
-     * variable is at first position of the array.
-     *
-     * @throws IllegalArgumentException if count is not positive.
-     */
-    default int[] createVariables(int count) {
-        if (count <= 0) {
-            throw new IllegalArgumentException("Count must be positive");
-        }
-        int[] array = new int[count];
-        for (int i = 0; i < count; i++) {
-            array[i] = createVariable();
-        }
-        return array;
-    }
+    boolean isNodeSaturated(int node);
 
     /**
      * Increases the reference count of the specified {@code node}.
@@ -138,10 +93,13 @@ public interface DecisionDiagram {
     }
 
     /**
-     * Returns the reference count of the given node or {@literal -1} if this number can't be
-     * accurately determined (e.g., when a node is saturated).
+     * Counts the number of referenced or saturated nodes.
+     *
+     * @return Number of referenced nodes.
      */
-    int referenceCount(int node);
+    int referencedNodeCount();
+
+    int activeNodeCount();
 
     /**
      * Computes the <b>support</b> of the function represented by the given {@code node}. The support
@@ -186,28 +144,6 @@ public interface DecisionDiagram {
     BitSet supportFilteredTo(int node, BitSet bitSet, BitSet filter);
 
     /**
-     * Auxiliary function useful for updating node variables. It dereferences the inputs and
-     * references {@code result}. This is useful for assignments like {@code node = f(in1, in2)} where
-     * {@code f} is some operation on this BDD and both {@code in1} and {@code in2} are temporary
-     * nodes or not used anymore. In this case, calling {@code node = consume(bdd, node(in1, in2),
-     * in1, in2)} updates the references as needed.
-     *
-     * <p>This would be more concise when implemented using method references, but these are
-     * comparatively heavyweight.</p>
-     *
-     * @param result     The result of some operation on this BDD involving inputNode1 and inputNode2
-     * @param inputNode1 First input of the operation.
-     * @param inputNode2 Second input of the operation.
-     * @return The given {@code result}.
-     */
-    default int consume(int result, int inputNode1, int inputNode2) {
-        reference(result);
-        dereference(inputNode1);
-        dereference(inputNode2);
-        return result;
-    }
-
-    /**
      * Auxiliary function useful for updating node variables. It dereferences {@code inputNode} and
      * references {@code result}. This is useful for assignments like {@code node = f(node, ...)}
      * where {@code f} is some operation on the BDD. In this case, calling {@code node =
@@ -222,8 +158,10 @@ public interface DecisionDiagram {
      * @return The given {@code result}.
      */
     default int updateWith(int result, int inputNode) {
-        reference(result);
-        dereference(inputNode);
+        if (result != inputNode) {
+            reference(result);
+            dereference(inputNode);
+        }
         return result;
     }
 

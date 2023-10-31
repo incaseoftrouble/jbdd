@@ -16,17 +16,22 @@
  */
 package de.tum.in.jbdd;
 
-import java.util.concurrent.TimeUnit;
-import org.openjdk.jmh.annotations.BenchmarkMode;
-import org.openjdk.jmh.annotations.Fork;
-import org.openjdk.jmh.annotations.Measurement;
-import org.openjdk.jmh.annotations.Mode;
-import org.openjdk.jmh.annotations.OutputTimeUnit;
-import org.openjdk.jmh.annotations.Warmup;
+final class Util {
+    private Util() {}
 
-@Warmup(iterations = 2)
-@Measurement(iterations = 5)
-@Fork(3)
-@OutputTimeUnit(TimeUnit.MILLISECONDS)
-@BenchmarkMode(Mode.SingleShotTime)
-public class BaseBddBenchmark {}
+    public static int min(int a, int b, int c) {
+        return a < b ? Math.min(a, c) : Math.min(b, c);
+    }
+
+    public static void checkState(boolean state) {
+        if (!state) {
+            throw new IllegalStateException("");
+        }
+    }
+
+    public static void checkState(boolean state, String formatString, Object... format) {
+        if (!state) {
+            throw new IllegalStateException(String.format(formatString, format));
+        }
+    }
+}

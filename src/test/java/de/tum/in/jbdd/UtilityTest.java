@@ -35,7 +35,7 @@ public class UtilityTest {
                 set.set(i);
             }
         }
-        PowerIterator iterator = new PowerIterator(set);
+        PowerIteratorBitSet iterator = new PowerIteratorBitSet(set);
         AtomicLong counter = new AtomicLong();
         iterator.forEachRemaining(i -> counter.incrementAndGet());
         assertThat(counter.get(), is(1L << set.cardinality()));

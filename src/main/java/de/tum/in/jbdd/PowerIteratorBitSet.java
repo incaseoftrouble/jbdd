@@ -21,18 +21,18 @@ import java.util.BitSet;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 
-final class PowerIterator implements Iterator<BitSet> {
+final class PowerIteratorBitSet implements Iterator<BitSet> {
     private final BitSet iteration;
     private final int[] base;
     private int numSetBits = -1;
 
-    public PowerIterator(int size) {
+    public PowerIteratorBitSet(int size) {
         base = new int[size];
         Arrays.setAll(base, i -> i);
         iteration = new BitSet(size);
     }
 
-    PowerIterator(BitSet base) {
+    PowerIteratorBitSet(BitSet base) {
         this.base = BitSets.toArray(base);
         iteration = new BitSet(base.length());
     }

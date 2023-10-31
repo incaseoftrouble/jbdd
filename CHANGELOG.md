@@ -1,12 +1,17 @@
 # 0.x
 
-## 0.6.x
+## 0.7.x
 
-# 0.6.1
+# 0.7.0
 
 * Made benchmarks more consistent across runs
 * Improvements to `exists` / caching for quantification queries
 * Native support for `forall` queries
+* Separation of reference counting + hash chain management from BDD logic (<5% performance decrease, but improved maintainability)
+* Initial MVDD support (i.e. Boolean terminal nodes but integer domains for variables)
+* Rename `variable(int node)` to `variableOf(int node)` to avoid confusion
+
+## 0.6.x
 
 # 0.6.0 (2023-06-12)
 

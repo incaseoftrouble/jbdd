@@ -9,11 +9,12 @@ The design goals are simplicity, performance, and no dependencies.
 ## Performance
 
 Internally, JBDD does not use any objects, only primitive arrays, and uses manual memory management.
-JBDD also provides an object-oriented interface with automatic reference management through weak references (instead of `finalize()`, which has a hefty performance penalty).
+During standard operations, JBDD does not allocate any objects.
+JBDD also provides an object-oriented high-level interface with automatic reference management through weak references (instead of `finalize()`, which has a hefty performance penalty).
 The overhead incurred by the object-oriented interface largely depends on the number of referenced objects, but was hardly measurable in several synthetic benchmarks.
 
-Compared to other libraries, JBDD beats most Java implementations and even is on-par or faster than established, C-based libraries such as BuDDy.
-(Measured on several synthetic benchmarks.)
+Compared to other libraries, JBDD beats most Java implementations and is on-par or faster than some established, C-based libraries such as BuDDy.
+(Measured on several synthetic benchmarks such as the N-queens problem.)
 
 ## Features
 
@@ -23,17 +24,7 @@ They might get added over time, but if you require such features, consider using
 
 ## Usage
 
-You can either build the jar using gradle (see below) or fetch it from maven central:
-
-```xml
-<dependency>
-  <groupId>de.tum.in</groupId>
-  <artifactId>jbdd</artifactId>
-  <version>0.6.0</version>
-</dependency>
-```
-
-and for gradle:
+You can either build the jar using gradle (see below) or fetch the current version from maven central:
 
 ```kotlin
 // https://mvnrepository.com/artifact/de.tum.in/jbdd

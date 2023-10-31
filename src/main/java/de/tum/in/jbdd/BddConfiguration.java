@@ -31,11 +31,6 @@ public class BddConfiguration {
     public static final double DEFAULT_NODE_TABLE_GROWTH_FACTOR = 1.5d;
 
     @Value.Default
-    public int initialSize() {
-        return 1024;
-    }
-
-    @Value.Default
     public int cacheBinaryDivider() {
         return DEFAULT_CACHE_BINARY_DIVIDER;
     }
@@ -66,13 +61,8 @@ public class BddConfiguration {
     }
 
     @Value.Default
-    public boolean logStatisticsOnShutdown() {
-        return false;
-    }
-
-    @Value.Default
-    public double minimumFreeNodePercentageAfterGc() {
-        return DEFAULT_NODE_TABLE_FREE_NODE_PERCENTAGE;
+    public int initialSize() {
+        return 1024;
     }
 
     @Value.Default
@@ -81,12 +71,17 @@ public class BddConfiguration {
     }
 
     @Value.Default
+    public double minimumFreeNodePercentageAfterGc() {
+        return DEFAULT_NODE_TABLE_FREE_NODE_PERCENTAGE;
+    }
+
+    @Value.Default
     public boolean useGarbageCollection() {
         return true;
     }
 
     @Value.Default
-    public boolean threadSafetyCheck() {
+    public boolean logStatisticsOnShutdown() {
         return false;
     }
 }

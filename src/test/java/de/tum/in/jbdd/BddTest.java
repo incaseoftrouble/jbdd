@@ -78,7 +78,6 @@ public class BddTest {
         assertThat(bdd.approximateDeadNodeCount(), is(1));
 
         // test garbage collection:
-        bdd.ensureCapacity(); // make sure there is room for it
         int g1 = bdd.and(v3, v2);
         int g2 = bdd.reference(bdd.or(g1, v1));
         assertThat(bdd.forceGc(), is(0));

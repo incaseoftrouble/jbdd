@@ -16,6 +16,8 @@
  */
 package de.tum.in.jbdd;
 
+import java.util.Arrays;
+
 final class HashUtil {
     // Note: These are tremendously stupid hash functions, however this is called so often
     // that the reduction in computation time seems to be very much worth it
@@ -30,6 +32,10 @@ final class HashUtil {
 
     static int hash(int firstKey, int secondKey, int thirdKey) {
         return firstKey + secondKey + thirdKey;
+    }
+
+    static int hash(int key, int[] keys) {
+        return key + Arrays.hashCode(keys);
     }
 
     static int hash(byte firstKey, int secondKey, int thirdKey) {

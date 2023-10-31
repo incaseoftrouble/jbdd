@@ -24,27 +24,37 @@ import org.openjdk.jmh.annotations.State;
 
 @State(Scope.Benchmark)
 public class BenchBddState {
+    public enum BddType {
+        ITERATIVE,
+        RECURSIVE,
+        MDD_EMULATION
+    }
+
     @Param({"1"})
     private float cacheSizeFactor;
 
-    @Param({"true", "false"})
-    private boolean iterative;
+    @Param({"ITERATIVE", "RECURSIVE"})
+    private BddType bddType;
 
     private Bdd bdd;
 
     @SuppressWarnings("NumericCastThatLosesPrecision")
     @Setup(Level.Iteration)
     public void setUpBdd() {
-        bdd = BddFactory.buildBdd(
-                iterative,
-                ImmutableBddConfiguration.builder()
-                        .cacheNegationDivider((int) (BddConfiguration.DEFAULT_CACHE_NEGATION_DIVIDER / cacheSizeFactor))
-                        .cacheBinaryDivider((int) (BddConfiguration.DEFAULT_CACHE_BINARY_DIVIDER / cacheSizeFactor))
-                        .cacheTernaryDivider((int) (BddConfiguration.DEFAULT_CACHE_TERNARY_DIVIDER / cacheSizeFactor))
-                        .cacheSatisfactionDivider(
-                                (int) (BddConfiguration.DEFAULT_CACHE_SATISFACTION_DIVIDER / cacheSizeFactor))
-                        .cacheComposeDivider((int) (BddConfiguration.DEFAULT_CACHE_COMPOSE_DIVIDER / cacheSizeFactor))
-                        .build());
+        BddConfiguration configuration = ImmutableBddConfiguration.builder()
+                .cacheNegationDivider((int) (BddConfiguration.DEFAULT_CACHE_NEGATION_DIVIDER / cacheSizeFactor))
+                .cacheBinaryDivider((int) (BddConfiguration.DEFAULT_CACHE_BINARY_DIVIDER / cacheSizeFactor))
+                .cacheTernaryDivider((int) (BddConfiguration.DEFAULT_CACHE_TERNARY_DIVIDER / cacheSizeFactor))
+                .cacheSatisfactionDivider((int) (BddConfiguration.DEFAULT_CACHE_SATISFACTION_DIVIDER / cacheSizeFactor))
+                .cacheComposeDivider((int) (BddConfiguration.DEFAULT_CACHE_COMPOSE_DIVIDER / cacheSizeFactor))
+                .build();
+        if (bddType == BddType.ITERATIVE) {
+            bdd = BddFactory.buildBdd(true, configuration);
+        } else if (bddType == BddType.RECURSIVE) {
+            bdd = BddFactory.buildBdd(false, configuration);
+        } else {
+            bdd = new MddAsBdd(configuration);
+        }
     }
 
     public Bdd bdd() {

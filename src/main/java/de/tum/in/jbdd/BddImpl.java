@@ -16,19 +16,18 @@
  */
 package de.tum.in.jbdd;
 
+import static de.tum.in.jbdd.Util.min;
+
 import java.math.BigInteger;
-import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collections;
-import java.util.Deque;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
-import java.util.Set;
 import java.util.function.BiConsumer;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import java.util.function.IntConsumer;
+import java.util.function.IntPredicate;
+import java.util.function.IntUnaryOperator;
 import java.util.stream.IntStream;
 
 /* Implementation notes:
@@ -47,86 +46,19 @@ import java.util.stream.IntStream;
     "ValueOfIncrementOrDecrementUsed",
     "NestedAssignment"
 })
-final class BddImpl implements Bdd {
-    // Use 0 as "not a node" to make re-allocations slightly more efficient
-    private static final int NOT_A_NODE = 0;
-    private static final int FIRST_NODE = 1;
-
-    private static final Logger logger = Logger.getLogger(BddImpl.class.getName());
+final class BddImpl extends NodeTable implements BddWithTestInterface {
     private static final BigInteger TWO = BigInteger.ONE.add(BigInteger.ONE);
     private static final int[] EMPTY_INT_ARRAY = new int[0];
 
     private static final int TRUE_NODE = -1;
     private static final int FALSE_NODE = -2;
 
-    /* Bits allocated for the reference counter */
-    private static final int REFERENCE_COUNT_BIT_SIZE = 14;
-    private static final int REFERENCE_COUNT_SATURATED = (1 << REFERENCE_COUNT_BIT_SIZE) - 1;
-    private static final int REFERENCE_COUNT_MASK = (1 << REFERENCE_COUNT_BIT_SIZE) - 1;
-    private static final int REFERENCE_COUNT_OFFSET = 1;
-    /* Bits allocated for the variable number */
-    private static final int VARIABLE_BIT_SIZE = 17;
-
-    /* Mask used to indicate invalid nodes */
-    private static final int INVALID_NODE_VARIABLE = (1 << VARIABLE_BIT_SIZE) - 1;
-    private static final int VARIABLE_OFFSET = REFERENCE_COUNT_OFFSET + REFERENCE_COUNT_BIT_SIZE;
-    private static final int MINIMUM_NODE_TABLE_SIZE = Primes.nextPrime(1_000);
-    private static final int MAXIMAL_NODE_COUNT = Integer.MAX_VALUE / 2 - 8;
-
-    static {
-        assert VARIABLE_BIT_SIZE + REFERENCE_COUNT_BIT_SIZE + 1 == Integer.SIZE;
-    }
-
     private final BddCache cache;
     private int numberOfVariables;
     private int[] variableNodes;
-    private final BddConfiguration configuration;
-    /* Approximation of dead node count. */
-    private int approximateDeadNodeCount = 0;
-    /* Tracks the index of the last node which is referenced. Invariants on this variable:
-     * biggestReferencedNode <= biggestValidNode and if a node has positive reference count, its
-     * index is less than or equal to biggestReferencedNode. */
-    private int biggestReferencedNode;
-    /* Keep track of the last used node to terminate some loops early. The invariant is that if a node
-     * is valid, then the node index is less than or equal to biggestValidNode. */
-    private int biggestValidNode;
-    /* First free (invalid) node, used when a new node is created. */
-    private int firstFreeNode;
-    /* Number of free (invalid) nodes. Used to determine if the table needs to be grown when adding a
-     * node. Potentially, we could instead check if the next chain entry of firstFreeNode is 0. */
-    private int freeNodeCount;
-
-    /* The work stack is used to store intermediate nodes created by some BDD operations. While
-     * constructing a new BDD, e.g. v1 and v2, we may need to create multiple intermediate BDDs. As
-     * during each creation the node table may run out of space, GC might be called and could
-     * delete the intermediately created nodes. As increasing and decreasing the reference counter
-     * every time is more expensive than just putting the values on the stack, we use this data
-     * structure. */
-    private int[] workStack;
-    /* Current top of the work stack. */
-    private int workStackIndex = 0;
 
     /* Low and high successors of each node */
     private int[] tree;
-
-    /* Stores the meta-data for BDD nodes, namely the variable number, reference count and a mask used
-     * by various internal algorithms. These values are manipulated through static helper functions.
-     *
-     * Layout: <---VAR---><---REF---><MASK> */
-    private int[] nodeData;
-
-    /* Hash map for existing nodes and a linked list for free nodes. The semantics of the "next
-     * chain entry" change, depending on whether the node is valid or not.
-     *
-     * When a node with a certain hash is created, we add a pointer to the corresponding hash bucket
-     * obtainable by hashToChainStart. Whenever we add another node with the same value, this
-     * node gets added to the chain and one can traverse the chain by repeatedly accessing
-     * hashChain on the chain start. If however a node is invalid, the "next chain
-     * entry" points to the next free node. This saves some time when creating nodes, as we don't have
-     * to scan through our BDD to find the next node which we can update a value.
-     */
-    private int[] hashToChainStart;
-    private int[] hashChain;
 
     // Iterative stack
     private final boolean iterative;
@@ -138,696 +70,121 @@ final class BddImpl implements Bdd {
     private int[] branchStackFirstArg = EMPTY_INT_ARRAY;
     private int[] branchStackSecondArg = EMPTY_INT_ARRAY;
     private int[] branchStackThirdArg = EMPTY_INT_ARRAY;
-    private int[] markStack = EMPTY_INT_ARRAY;
+    // private int[] markStack = EMPTY_INT_ARRAY;
 
-    // Statistics
-    private long createdNodes = 0;
-    private long hashChainLookups = 0;
-    private long hashChainLookupLength = 0;
-    private long growCount = 0;
-    private long garbageCollectionCount = 0;
-    private long garbageCollectedNodeCount = 0;
-    private long garbageCollectionTime = 0;
+    private int hashLookupLow = NOT_A_NODE;
+    private int hashLookupHigh = NOT_A_NODE;
 
     BddImpl(boolean iterative, BddConfiguration configuration) {
-        this.configuration = configuration;
+        super(
+                configuration.initialSize(),
+                configuration.useGarbageCollection() ? configuration.minimumFreeNodePercentageAfterGc() : 1.0,
+                configuration.growthFactor());
         this.iterative = iterative;
 
-        int initialSize = Math.max(Primes.nextPrime(configuration.initialSize()), MINIMUM_NODE_TABLE_SIZE);
-        tree = new int[2 * initialSize];
-        nodeData = new int[initialSize];
-        hashToChainStart = new int[initialSize];
-        hashChain = new int[initialSize];
-
-        firstFreeNode = FIRST_NODE;
-        freeNodeCount = initialSize - FIRST_NODE;
-        biggestReferencedNode = NOT_A_NODE;
-        biggestValidNode = NOT_A_NODE;
-
-        Arrays.fill(nodeData, dataMakeInvalid());
-        // Arrays.fill(hashToChainStart, NOT_A_NODE);
-
-        // Just to ensure a fail-fast
-        Arrays.fill(hashChain, 0, FIRST_NODE, Integer.MIN_VALUE);
-        for (int i = FIRST_NODE; i < initialSize - 1; i++) {
-            hashChain[i] = i + 1;
-        }
-        hashChain[initialSize - 1] = FIRST_NODE;
-
-        workStack = new int[32];
-        cache = new BddCache(this);
+        tree = new int[2 * tableSize()];
+        cache = new BddCache(this, configuration);
         variableNodes = new int[32];
         numberOfVariables = 0;
     }
 
-    // Reference counting
-
-    @Override
-    public int referenceCount(int node) {
-        assert isNodeValidOrLeaf(node);
-        if (isLeaf(node)) {
-            return -1;
-        }
-        int metadata = nodeData[node];
-        if (dataIsSaturated(metadata)) {
-            return -1;
-        }
-        return dataGetReferenceCount(metadata);
-    }
-
-    @Override
-    public int reference(int node) {
-        assert isNodeValidOrLeaf(node);
-        if (isLeaf(node)) {
-            return node;
-        }
-        int metadata = nodeData[node];
-        int referenceCount = dataGetReferenceCountUnsafe(metadata);
-        if (referenceCount == REFERENCE_COUNT_SATURATED) {
-            return node;
-        }
-        assert 0 <= dataGetReferenceCount(metadata);
-
-        nodeData[node] = dataIncreaseReferenceCount(metadata);
-        // Can't decrease approximateDeadNodeCount here - we may reference a node for the first time.
-        if (node > biggestReferencedNode) {
-            biggestReferencedNode = node;
-        }
-        return node;
-    }
-
-    @Override
-    public int dereference(int node) {
-        assert isNodeValidOrLeaf(node);
-        if (isLeaf(node)) {
-            return node;
-        }
-        int metadata = nodeData[node];
-        int referenceCount = dataGetReferenceCountUnsafe(metadata);
-        if (referenceCount == REFERENCE_COUNT_SATURATED) {
-            return node;
-        }
-        assert referenceCount > 0;
-        if (referenceCount == 1) {
-            // After decrease its 0
-
-            // We are approximating the actual dead node count here - it could be the case that
-            // this node was the only one keeping its children "alive" - similarly, this node could be
-            // kept alive by other nodes "above" it.
-            approximateDeadNodeCount++;
-            if (node == biggestReferencedNode) {
-                // Update biggestReferencedNode
-                for (int i = biggestReferencedNode - 1; i >= FIRST_NODE; i--) {
-                    if (dataIsReferencedOrSaturated(nodeData[i])) {
-                        biggestReferencedNode = i;
-                        break;
-                    }
-                }
-            }
-        }
-        nodeData[node] = dataDecreaseReferenceCount(metadata);
-        return node;
-    }
-
-    /**
-     * Counts the number of referenced or saturated nodes.
-     *
-     * @return Number of referenced nodes.
-     */
-    public int referencedNodeCount() {
-        int[] nodeData = this.nodeData;
-        int count = 0;
-
-        for (int i = FIRST_NODE; i <= biggestReferencedNode; i++) {
-            int metadata = nodeData[i];
-            if (dataIsValid(metadata) && dataIsReferencedOrSaturated(metadata)) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    int saturateNode(int node) {
-        assert isNodeValidOrLeaf(node);
-        if (node > biggestReferencedNode) {
-            biggestReferencedNode = node;
-        }
-        nodeData[node] = dataSaturate(nodeData[node]);
-        return node;
-    }
-
-    /**
-     * Checks if the given {@code node} is saturated. This can happen if the node is explicitly marked
-     * as saturated or gets referenced too often.
-     *
-     * @param node The node to be checked
-     * @return Whether the node is saturated
-     * @see #saturateNode(int)
-     */
-    public boolean isNodeSaturated(int node) {
-        assert isNodeValidOrLeaf(node);
-        return isLeaf(node) || dataIsSaturated(nodeData[node]);
-    }
-
-    // Memory management
-
-    int approximateDeadNodeCount() {
-        return approximateDeadNodeCount;
-    }
-
-    /**
-     * Perform garbage collection by freeing up dead nodes.
-     *
-     * @return Number of freed nodes.
-     */
-    public int forceGc() {
-        int freedNodes = doGarbageCollection(0);
-        cache.invalidate();
-        return freedNodes;
-    }
-
-    /**
-     * Tries to free space by garbage collection and, if that does not yield enough free nodes,
-     * re-sizes the table, recreating hashes.
-     *
-     * @return Whether the table size has changed.
-     */
-    boolean ensureCapacity() {
-        assert check();
-
-        if (configuration.useGarbageCollection() && approximateDeadNodeCount > 0) {
-            logger.log(Level.FINE, "Running GC on {0} has size {1} and approximately {2} dead nodes", new Object[] {
-                this, tableSize(), approximateDeadNodeCount
-            });
-
-            @SuppressWarnings("NumericCastThatLosesPrecision")
-            int minimumFreeNodeCount = (int) (tableSize() * configuration.minimumFreeNodePercentageAfterGc());
-            int clearedNodes = doGarbageCollection(minimumFreeNodeCount);
-            if (clearedNodes == -1) {
-                logger.log(Level.FINE, "Not enough free nodes");
-            } else {
-                logger.log(Level.FINE, "Collected {0} nodes", clearedNodes);
-
-                // Force all caches to be wiped out
-                // TODO Could do partial invalidation here
-                cache.invalidate();
-                return false;
-            }
-        }
-
-        growCount += 1;
-        int oldSize = tableSize();
-        @SuppressWarnings("NumericCastThatLosesPrecision")
-        int newSize =
-                Math.min(MAXIMAL_NODE_COUNT, Primes.nextPrime((int) Math.ceil(oldSize * configuration.growthFactor())));
-        assert oldSize < newSize : "Got new size " + newSize + " with old size " + oldSize;
-
-        // Could not free enough space by GC, start growing
-        logger.log(Level.FINE, "Growing the table of {0} from {1} to {2}", new Object[] {this, oldSize, newSize});
-
-        tree = Arrays.copyOf(tree, 2 * newSize);
-        nodeData = Arrays.copyOf(this.nodeData, newSize); // NOPMD
-        hashChain = Arrays.copyOf(this.hashChain, newSize); // NOPMD
-        // We need to re-build hashToChainStart completely
-        hashToChainStart = new int[newSize];
-        if (placeholder() != 0) { // Leave this as a reminder
-            Arrays.fill(hashToChainStart, NOT_A_NODE);
-        }
-
-        // Chain start and next is used in calls to connectHashList so first enlarge and then copy to local reference
-        int[] nodeData = this.nodeData;
-        int[] hashToChainStart = this.hashToChainStart;
-        int[] hashChain = this.hashChain;
-
-        // Invalidate the new nodes
-        Arrays.fill(nodeData, oldSize, newSize, dataMakeInvalid());
-
-        int firstFreeNode = oldSize;
-        int freeNodeCount = newSize - oldSize;
-
-        // Update the hash references and free nodes chain of the old nodes
-        // Reverse direction to build the downward chain towards first free node
-
-        hashChain[newSize - 1] = FIRST_NODE;
-        for (int hash = newSize - 2; hash >= oldSize; hash--) {
-            hashChain[hash] = hash + 1;
-        }
-        for (int hash = oldSize - 1; hash >= FIRST_NODE; hash--) {
-            int data = nodeData[hash];
-            if (!dataIsValid(data)) {
-                hashChain[hash] = firstFreeNode;
-                firstFreeNode = hash;
-            }
-        }
-
-        // Need a second pass to build the existing nodes chain
-        for (int node = oldSize - 1; node >= FIRST_NODE; node--) {
-            int data = nodeData[node];
-            if (dataIsValid(data)) {
-                connectHashList(node, hashNode(node, data));
-            } else {
-                freeNodeCount++;
-            }
-        }
-
-        this.firstFreeNode = firstFreeNode;
-        this.freeNodeCount = freeNodeCount;
-        this.nodeData = nodeData;
-        this.hashToChainStart = hashToChainStart;
-        this.hashChain = hashChain;
-
-        assert check();
-
-        cache.invalidate();
-        logger.log(Level.FINE, "Finished growing the table");
-        return true;
-    }
-
-    private int doGarbageCollection(int minimumFreeNodeCount) {
-        assert check();
-        long startTimestamp = System.currentTimeMillis();
-
-        int referencedNodes = 0;
-        for (int i = 0; i < workStackIndex; i++) {
-            int node = workStack[i];
-            if (!isLeaf(node) && isNodeValid(node)) {
-                referencedNodes += markAllBelow(node);
-            }
-        }
-
-        int biggestValidNode = this.biggestValidNode;
-        int biggestReferencedNode = this.biggestReferencedNode;
-        int[] nodeData = this.nodeData;
-        int[] hashChain = this.hashChain;
-
-        for (int i = FIRST_NODE; i <= biggestValidNode; i++) {
-            int metadata = nodeData[i];
-            if (i <= biggestReferencedNode && dataIsReferencedOrSaturated(metadata)) {
-                referencedNodes += markAllBelow(i);
-            }
-        }
-
-        int freeNodeCount = (tableSize() - FIRST_NODE) - referencedNodes;
-        if (freeNodeCount < minimumFreeNodeCount) {
-            unMarkAll();
-            return -1;
-        }
-
-        // Clear chain starts (we need to rebuild them) and push referenced nodes on the mark stack.
-        // TODO Can we omit that complete invalidation / re-use the existing chains? Should be easy enough - its just
-        // open hashing
-        Arrays.fill(hashToChainStart, NOT_A_NODE);
-
-        int previousFreeNodes = this.freeNodeCount;
-        int firstFreeNode = FIRST_NODE;
-
-        // Connect all definitely invalid nodes in the free node chain
-        for (int i = tableSize() - 1; i > biggestValidNode; i--) {
-            hashChain[i] = firstFreeNode;
-            firstFreeNode = i;
-        }
-
-        // Rebuild hash chain for valid nodes, connect invalid nodes into the free chain
-        // We need to rebuild the chain for unused nodes first as a smaller, unused node might be part
-        // of a chain containing bigger nodes which are in use.
-        for (int node = biggestValidNode; node >= FIRST_NODE; node--) {
-            int metadata = nodeData[node];
-            int unmarkedData = dataClearMark(metadata);
-            if (metadata == unmarkedData) {
-                // This node is unmark and thus unused
-                nodeData[node] = dataMakeInvalid();
-                hashChain[node] = firstFreeNode;
-                firstFreeNode = node;
-                if (node == biggestValidNode) {
-                    biggestValidNode--;
-                }
-            } else {
-                // This node is used
-                nodeData[node] = unmarkedData;
-                connectHashList(node, hashNode(node, unmarkedData));
-            }
-        }
-
-        this.biggestValidNode = biggestValidNode;
-        this.firstFreeNode = firstFreeNode;
-        this.freeNodeCount = freeNodeCount;
-        approximateDeadNodeCount = 0;
-
-        assert check();
-
-        int collectedNodes = freeNodeCount - previousFreeNodes;
-        this.garbageCollectedNodeCount += collectedNodes;
-        this.garbageCollectionCount += 1;
-        this.garbageCollectionTime += System.currentTimeMillis() - startTimestamp;
-        return collectedNodes;
-    }
-
-    private int hashNode(int node, int metadata) {
-        assert dataIsValid(metadata);
-        return hash(dataGetVariable(metadata), low(node), high(node));
-    }
-
-    private int hash(int variable, int low, int high) {
-        int tableSize = tableSize();
-        int hash = HashUtil.hash(low, high, variable) % tableSize;
-        if (hash < 0) {
-            return hash + tableSize;
-        }
-        return hash;
-    }
-
-    private void connectHashList(int node, int hash) {
-        assert isNodeValid(node) && 0 <= hash && hash == hashNode(node, nodeData[node]);
-        int hashChainStart = hashToChainStart[hash];
-        int[] hashChain = this.hashChain;
-
-        // Search the hash list if this node is already in there in order to avoid loops
-        int chainLength = 1;
-        int currentChain = hashChainStart;
-        while (currentChain != NOT_A_NODE) {
-            if (currentChain == node) {
-                // The node is already contained in the hash list
-                return;
-            }
-            int next = hashChain[currentChain];
-            assert next != currentChain;
-            currentChain = next;
-            chainLength += 1;
-        }
-        this.hashChainLookupLength += chainLength;
-        this.hashChainLookups += 1;
-
-        hashChain[node] = hashChainStart;
-        hashToChainStart[hash] = node;
-    }
-
-    // Marking
-
-    private boolean isNodeMarked(int node) {
-        assert isNodeValid(node);
-        return dataIsMarked(nodeData[node]);
-    }
-
-    private boolean isNoneMarked() {
-        return findFirstMarked() == NOT_A_NODE;
-    }
-
-    private boolean isNoneMarkedBelowRecursive(int node) {
-        return isLeaf(node)
-                || !isNodeMarked(node)
-                        && isNoneMarkedBelowRecursive(low(node))
-                        && isNoneMarkedBelowRecursive(high(node));
-    }
-
-    private boolean isAllMarkedBelowRecursive(int node) {
-        return isLeaf(node)
-                || isNodeMarked(node) && isAllMarkedBelowRecursive(low(node)) && isAllMarkedBelowRecursive(high(node));
-    }
-
-    private int findFirstMarked() {
-        for (int i = FIRST_NODE; i < nodeData.length; i++) {
-            if (dataIsMarked(nodeData[i])) {
-                return i;
-            }
-        }
-        return NOT_A_NODE;
-    }
-
-    private int markAllBelow(int node) {
-        /* The algorithm does not descend into trees whose root is marked, hence at the start of the
-         * algorithm, every marked node must have all of its descendants marked to ensure correctness. */
-        assert isNodeValidOrLeaf(node);
-        return iterative ? markAllBelowIterative(node) : markAllBelowRecursive(node);
-    }
-
-    private int markAllBelowIterative(int node) {
-        int[] tree = this.tree;
-        int[] nodeData = this.nodeData;
-        int[] stack = this.markStack;
-
-        int stackIndex = 0;
-        int unmarkedCount = 0;
-        int current = node;
-        while (true) {
-            while (!isLeaf(current)) {
-                int metadata = nodeData[current];
-                int markedData = dataSetMark(metadata);
-
-                if (metadata == markedData) {
-                    // Node was marked
-                    break;
-                }
-
-                nodeData[current] = markedData;
-                unmarkedCount++;
-
-                stack[stackIndex] = tree[2 * current + 1];
-                stackIndex += 1;
-
-                current = tree[2 * current];
-            }
-
-            if (stackIndex == 0) {
-                break;
-            }
-            stackIndex -= 1;
-            current = stack[stackIndex];
-        }
-        return unmarkedCount;
-    }
-
-    private int markAllBelowRecursive(int node) {
-        assert isNodeValidOrLeaf(node);
-
-        if (isLeaf(node)) {
-            return 0;
-        }
-
-        int metadata = nodeData[node];
-        int markedData = dataSetMark(metadata);
-
-        if (metadata == markedData) {
-            return 0;
-        }
-        nodeData[node] = markedData;
-        return 1 + markAllBelowRecursive(low(node)) + markAllBelowRecursive(high(node));
-    }
-
-    private int unMarkAll() {
-        /* The algorithm does not descend into trees whose root is unmarked, hence at the start of the
-         * algorithm, all children of marked nodes must be marked to ensure correctness. */
-        int unmarkedCount = 0;
-        int[] nodeData = this.nodeData;
-
-        for (int i = FIRST_NODE; i <= biggestValidNode; i++) {
-            int metadata = nodeData[i];
-            if (dataIsValid(metadata)) {
-                int unmarkedData = dataClearMark(metadata);
-                if (metadata != unmarkedData) { // Node was marked
-                    unmarkedCount++;
-                    nodeData[i] = unmarkedData;
-                }
-            }
-        }
-
-        assert isNoneMarked();
-        return unmarkedCount;
-    }
-
-    private int unMarkAllBelow(int node) {
-        assert isNodeValidOrLeaf(node) && isAllMarkedBelowRecursive(node);
-        int unmarkedCount = iterative ? unMarkAllBelowIterative(node) : unmarkAllBelowRecursive(node);
-        assert isNoneMarkedBelowRecursive(node);
-        return unmarkedCount;
-    }
-
-    private int unMarkAllBelowIterative(int node) {
-        int[] nodeData = this.nodeData;
-        int[] tree = this.tree;
-        int[] stack = this.markStack;
-
-        int stackIndex = 0;
-        int unmarkedCount = 0;
-        int current = node;
-        while (true) {
-            while (!isLeaf(current)) {
-                int metadata = nodeData[current];
-                int unmarkedData = dataClearMark(metadata);
-
-                if (metadata == unmarkedData) {
-                    // Node was not marked
-                    break;
-                }
-
-                nodeData[current] = unmarkedData;
-                unmarkedCount++;
-
-                stack[stackIndex] = tree[2 * current + 1];
-                stackIndex += 1;
-                current = tree[2 * current];
-            }
-
-            if (stackIndex == 0) {
-                break;
-            }
-            stackIndex -= 1;
-            current = stack[stackIndex];
-        }
-        return unmarkedCount;
-    }
-
-    private int unmarkAllBelowRecursive(int node) {
-        assert isNodeValidOrLeaf(node);
-
-        if (isLeaf(node)) {
-            return 0;
-        }
-
-        int metadata = nodeData[node];
-        int unmarkedData = dataClearMark(metadata);
-
-        if (metadata == unmarkedData) {
-            return 0;
-        }
-        nodeData[node] = unmarkedData;
-        return 1 + unmarkAllBelowRecursive(low(node)) + unmarkAllBelowRecursive(high(node));
-    }
-
-    public int tableSize() {
-        return nodeData.length;
-    }
-
-    // Work stack
-
-    private void ensureWorkStackSize(int size) {
-        if (size < workStack.length) {
-            return;
-        }
-        int newSize = workStack.length * 2;
-        workStack = Arrays.copyOf(workStack, newSize);
-    }
-
-    // Visible for testing
-    boolean isWorkStackEmpty() {
-        return workStackIndex == 0;
-    }
-
-    /**
-     * Removes the topmost element from the stack.
-     *
-     * @see #pushToWorkStack(int)
-     */
-    void popWorkStack() {
-        assert !isWorkStackEmpty();
-        workStackIndex--;
-    }
-
-    /**
-     * Removes the {@code amount} topmost elements from the stack.
-     *
-     * @param amount The amount of elements to be removed.
-     * @see #pushToWorkStack(int)
-     */
-    private void popWorkStack(int amount) {
-        assert workStackIndex >= amount;
-        workStackIndex -= amount;
-    }
-
-    private int peekWorkStack() {
-        assert !isWorkStackEmpty();
-        return workStack[workStackIndex - 1];
-    }
-
-    private int peekAndPopWorkStack() {
-        assert !isWorkStackEmpty();
-        workStackIndex -= 1;
-        return workStack[workStackIndex];
-    }
-
-    /**
-     * Pushes the given node onto the stack. While a node is on the work stack, it will not be garbage
-     * collected. Hence, elements should be popped from the stack as soon as they are not used
-     * anymore.
-     *
-     * @param node The node to be pushed.
-     * @return The given {@code node}, to be used for chaining.
-     * @see #popWorkStack(int)
-     */
-    int pushToWorkStack(int node) {
-        assert isNodeValidOrLeaf(node);
-        ensureWorkStackSize(workStackIndex);
-        workStack[workStackIndex] = node;
-        workStackIndex += 1;
-        return node;
-    }
+    //
+    //    private int unMarkAllBelowIterative(int node) {
+    //        int[] nodes = this.nodes;
+    //        int[] tree = this.tree;
+    //        int[] stack = this.markStack;
+    //
+    //        int stackIndex = 0;
+    //        int unmarkedCount = 0;
+    //        int current = node;
+    //        while (true) {
+    //            while (!isLeaf(current)) {
+    //                int metadata = nodes[current];
+    //                int unmarkedData = dataClearMark(metadata);
+    //
+    //                if (metadata == unmarkedData) {
+    //                    // Node was not marked
+    //                    break;
+    //                }
+    //
+    //                nodes[current] = unmarkedData;
+    //                unmarkedCount++;
+    //
+    //                stack[stackIndex] = tree[2 * current + 1];
+    //                stackIndex += 1;
+    //                current = tree[2 * current];
+    //            }
+    //
+    //            if (stackIndex == 0) {
+    //                break;
+    //            }
+    //            stackIndex -= 1;
+    //            current = stack[stackIndex];
+    //        }
+    //        return unmarkedCount;
+    //    }
+    //
+    //
+    //    private int markAllBelowIterative(int node) {
+    //        int[] tree = this.tree;
+    //        int[] nodes = this.nodes;
+    //        int[] stack = this.markStack;
+    //
+    //        int stackIndex = 0;
+    //        int unmarkedCount = 0;
+    //        int current = node;
+    //        while (true) {
+    //            while (!isLeaf(current)) {
+    //                int metadata = nodes[current];
+    //                int markedData = dataSetMark(metadata);
+    //
+    //                if (metadata == markedData) {
+    //                    // Node was marked
+    //                    break;
+    //                }
+    //
+    //                nodes[current] = markedData;
+    //                unmarkedCount++;
+    //
+    //                stack[stackIndex] = tree[2 * current + 1];
+    //                stackIndex += 1;
+    //
+    //                current = tree[2 * current];
+    //            }
+    //
+    //            if (stackIndex == 0) {
+    //                break;
+    //            }
+    //            stackIndex -= 1;
+    //            current = stack[stackIndex];
+    //        }
+    //        return unmarkedCount;
+    //    }
 
     // Nodes
 
+    @Override
+    protected boolean checkLookupChildrenMatch(int lookup) {
+        int[] tree = this.tree;
+        return tree[lookup * 2] == hashLookupLow && tree[lookup * 2 + 1] == hashLookupHigh;
+    }
+
     private int makeNode(int variable, int low, int high) {
-        assert 0 <= variable && variable < INVALID_NODE_VARIABLE;
-        assert (isLeaf(low) || variable < variable(low));
-        assert (isLeaf(high) || variable < variable(high));
+        assert 0 <= variable;
+        assert (isLeaf(low) || variable < variableOf(low));
+        assert (isLeaf(high) || variable < variableOf(high));
 
         if (low == high) {
             return low;
         }
 
-        createdNodes += 1;
+        hashLookupLow = low;
+        hashLookupHigh = high;
+        int freeNode = findOrCreateNode(variable, hashCode(variable, low, high));
 
-        int[] tree = this.tree;
-        int[] nodeData = this.nodeData;
-        int[] hashChain = this.hashChain;
-
-        int hash = hash(variable, low, high);
-        int currentLookupNode = hashToChainStart[hash];
-        assert currentLookupNode < tableSize() : "Invalid previous entry for " + hash;
-
-        // Search for the node in the hash chain
-        int chainLookups = 1;
-        while (currentLookupNode != NOT_A_NODE) {
-            if ((nodeData[currentLookupNode] >>> VARIABLE_OFFSET) == variable
-                    && tree[currentLookupNode * 2] == low
-                    && tree[currentLookupNode * 2 + 1] == high) {
-                return currentLookupNode;
-            }
-            int next = hashChain[currentLookupNode];
-            assert next != currentLookupNode;
-            currentLookupNode = next;
-            chainLookups += 1;
-        }
-        this.hashChainLookupLength += chainLookups;
-        this.hashChainLookups += 1;
-
-        // Check we have enough space to add the node
-        assert freeNodeCount > 0;
-        if (freeNodeCount == 1) {
-            // We need a starting point for the free chain node, hence grow if only one node is remaining
-            // instead of occupying that node
-            // TODO Instead, we should try to clear / grow if freeNodes < load * total size, so that the
-            //  hash table is less pressured
-            if (ensureCapacity()) { // NOPMD
-                // Table size has changed, hence re-hash
-                hash = hash(variable, low, high);
-            }
-        }
-
-        // Here we need to use this.tree etc. since we may have GC'd in between
-
-        // Take next free node
-        int freeNode = firstFreeNode;
-        firstFreeNode = this.hashChain[firstFreeNode];
-        freeNodeCount--;
-        assert !isNodeValidOrLeaf(freeNode) : "Overwriting existing node " + freeNode;
-        assert FIRST_NODE <= firstFreeNode && firstFreeNode < tableSize() : "Invalid free node " + firstFreeNode;
-
-        // Adjust and write node
         this.tree[2 * freeNode] = low;
         this.tree[2 * freeNode + 1] = high;
-        this.nodeData[freeNode] = variable << VARIABLE_OFFSET;
-        if (biggestValidNode < freeNode) {
-            biggestValidNode = freeNode;
-        }
-        connectHashList(freeNode, hash);
+        assert hashCode(variable, low, high) == hashCode(freeNode, variable);
         return freeNode;
     }
 
@@ -844,33 +201,9 @@ final class BddImpl implements Bdd {
     }
 
     @Override
-    public int variable(int node) {
-        assert isNodeValidOrLeaf(node);
-        return isLeaf(node) ? -1 : dataGetVariable(nodeData[node]);
-    }
-
-    @Override
     public boolean isLeaf(int node) {
         assert -2 <= node && node < tableSize();
         return node < 0;
-    }
-
-    public boolean isNodeValid(int node) {
-        assert -2 <= node && node < tableSize();
-        return FIRST_NODE <= node && node <= biggestValidNode && dataIsValid(nodeData[node]);
-    }
-
-    /**
-     * Determines if the given {@code node} is either a root node or valid. For most operations it is
-     * required that this is the case.
-     *
-     * @param node The node to be checked.
-     * @return If {@code} is valid or root node.
-     * @see #isLeaf(int)
-     */
-    public boolean isNodeValidOrLeaf(int node) {
-        assert -2 <= node && node < tableSize();
-        return isLeaf(node) || isNodeValid(node);
     }
 
     // Variables and base nodes
@@ -883,11 +216,6 @@ final class BddImpl implements Bdd {
     @Override
     public int falseNode() {
         return FALSE_NODE;
-    }
-
-    @Override
-    public int placeholder() {
-        return NOT_A_NODE;
     }
 
     @Override
@@ -986,79 +314,12 @@ final class BddImpl implements Bdd {
 
     // Reading
 
-    BddConfiguration getConfiguration() {
-        return configuration;
-    }
-
-    /**
-     * Counts the number of active nodes in the BDD (i.e. the ones which are not invalid),
-     * <b>excluding</b> the leaf nodes.
-     *
-     * @return Number of active nodes.
-     */
-    public int nodeCount() {
-        // Strategy: We gather all root nodes (i.e. nodes which are referenced) on the mark stack, mark
-        // all of their children, count all marked nodes and un-mark them.
-        assert isNoneMarked();
-
-        int count = 0;
-        for (int node = FIRST_NODE; node < tableSize(); node++) {
-            int metadata = nodeData[node];
-            if (dataIsValid(metadata) && dataIsReferencedOrSaturated(metadata)) {
-                count += markAllBelow(node);
-            }
-        }
-
-        int unmarkedCount = unMarkAll();
-
-        assert count == unmarkedCount;
-
-        assert isNoneMarked();
-        return count;
-    }
-
-    /**
-     * Counts the number of nodes below the specified {@code node}.
-     *
-     * @param node The node to be counted.
-     * @return The number of non-leaf nodes below {@code node}.
-     */
-    public int nodeCount(int node) {
-        assert isNodeValidOrLeaf(node);
-        assert isNoneMarked();
-
-        int count = markAllBelow(node);
-        if (count > 0) {
-            int unmarked = unMarkAllBelow(node);
-            assert count == unmarked : "Expected " + count + " but only unmarked " + unmarked;
-        }
-
-        assert isNoneMarked();
-        return count;
-    }
-
-    /**
-     * Over-approximates the number of nodes below the specified {@code node}, possibly counting
-     * shared subtrees multiple times. Guaranteed to be bigger or equal to {@link #nodeCount(int)}.
-     *
-     * @param node The node to be counted.
-     * @return An approximate number of non-leaf nodes below {@code node}.
-     * @see #nodeCount(int)
-     */
-    public int approximateNodeCount(int node) {
-        assert isNodeValidOrLeaf(node);
-        if (isLeaf(node)) {
-            return 0;
-        }
-        return 1 + approximateNodeCount(low(node)) + approximateNodeCount(high(node));
-    }
-
     @Override
     public boolean evaluate(int node, boolean[] assignment) {
         int current = node;
         while (current >= FIRST_NODE) {
             assert isNodeValid(current);
-            current = assignment[variable(current)] ? high(current) : low(current);
+            current = assignment[variableOf(current)] ? high(current) : low(current);
         }
         assert isLeaf(current);
         return current == TRUE_NODE;
@@ -1069,7 +330,7 @@ final class BddImpl implements Bdd {
         int current = node;
         while (current >= FIRST_NODE) {
             assert isNodeValid(current);
-            current = assignment.get(variable(current)) ? high(current) : low(current);
+            current = assignment.get(variableOf(current)) ? high(current) : low(current);
         }
         assert isLeaf(current);
         return current == TRUE_NODE;
@@ -1089,7 +350,7 @@ final class BddImpl implements Bdd {
             int lowNode = low(currentNode);
             if (lowNode == FALSE_NODE) {
                 int highNode = high(currentNode);
-                int variable = variable(currentNode);
+                int variable = variableOf(currentNode);
 
                 path.set(variable);
                 currentNode = highNode;
@@ -1107,7 +368,7 @@ final class BddImpl implements Bdd {
             return Collections.emptyIterator();
         }
         if (node == TRUE_NODE) {
-            return new PowerIterator(numberOfVariables);
+            return new PowerIteratorBitSet(numberOfVariables);
         }
 
         BitSet support = new BitSet(numberOfVariables);
@@ -1122,7 +383,7 @@ final class BddImpl implements Bdd {
             return Collections.emptyIterator();
         }
         if (node == TRUE_NODE) {
-            return new PowerIterator(support);
+            return new PowerIteratorBitSet(support);
         }
 
         return new NodeSolutionIterator(this, node, support);
@@ -1161,7 +422,7 @@ final class BddImpl implements Bdd {
             assert stackIndex >= baseStackIndex;
 
             while (current != TRUE_NODE) {
-                int variable = variable(current);
+                int variable = variableOf(current);
                 int lowNode = low(current);
                 int highNode = high(current);
 
@@ -1207,7 +468,7 @@ final class BddImpl implements Bdd {
             return;
         }
 
-        int variable = variable(node);
+        int variable = variableOf(node);
         int lowNode = low(node);
         int highNode = high(node);
         pathSupport.set(variable);
@@ -1225,27 +486,8 @@ final class BddImpl implements Bdd {
         pathSupport.clear(variable);
     }
 
-    @Override
-    public BitSet supportFilteredTo(int node, BitSet bitSet, BitSet filter) {
-        assert isNodeValidOrLeaf(node);
-
-        int depthLimit = filter.length();
-        if (depthLimit == 0) {
-            return bitSet;
-        }
-
-        if (iterative) {
-            supportIterative(node, bitSet, filter, depthLimit, 0);
-            unMarkAllBelowIterative(node);
-        } else {
-            supportRecursive(node, bitSet, filter, depthLimit);
-            unmarkAllBelowRecursive(node);
-        }
-        return bitSet;
-    }
-
+    /*
     private void supportIterative(int node, BitSet bitSet, BitSet filter, int depthLimit, int baseStackIndex) {
-        int[] nodeData = this.nodeData;
         int[] branchStackNode = this.branchStackFirstArg;
 
         int stackIndex = baseStackIndex;
@@ -1254,7 +496,7 @@ final class BddImpl implements Bdd {
             assert stackIndex >= baseStackIndex;
 
             while (!isLeaf(current)) {
-                int metadata = nodeData[current];
+                int metadata = nodes[current];
                 assert dataIsValid(metadata);
                 int variable = dataGetVariable(metadata);
                 if (variable >= depthLimit) {
@@ -1264,7 +506,7 @@ final class BddImpl implements Bdd {
                 if (metadata == markedData) {
                     break;
                 }
-                nodeData[current] = markedData;
+                nodes[current] = markedData;
 
                 if (filter.get(variable)) {
                     bitSet.set(variable);
@@ -1281,33 +523,7 @@ final class BddImpl implements Bdd {
             stackIndex -= 1;
             current = branchStackNode[stackIndex];
         }
-    }
-
-    private void supportRecursive(int node, BitSet bitSet, BitSet filter, int depthLimit) {
-        if (isLeaf(node)) {
-            return;
-        }
-
-        int metadata = nodeData[node];
-        int variable = dataGetVariable(metadata);
-        if (variable >= depthLimit) {
-            return;
-        }
-        int markedData = dataSetMark(metadata);
-        if (metadata == markedData) {
-            return;
-        }
-        nodeData[node] = markedData;
-
-        int lowNode = low(node);
-        int highNode = high(node);
-
-        if (filter.get(variable)) {
-            bitSet.set(variable);
-        }
-        supportRecursive(lowNode, bitSet, filter, depthLimit);
-        supportRecursive(highNode, bitSet, filter, depthLimit);
-    }
+    } */
 
     @Override
     public BigInteger countSatisfyingAssignments(int node) {
@@ -1317,7 +533,7 @@ final class BddImpl implements Bdd {
         if (node == TRUE_NODE) {
             return TWO.pow(numberOfVariables);
         }
-        int variable = variable(node);
+        int variable = variableOf(node);
         return TWO.pow(variable)
                 .multiply(
                         iterative
@@ -1354,7 +570,7 @@ final class BddImpl implements Bdd {
                     nodeVar = numberOfVariables;
                     result = BigInteger.ONE;
                 } else {
-                    nodeVar = variable(current);
+                    nodeVar = variableOf(current);
 
                     result = cache.lookupSatisfaction(current);
                     if (result == null) {
@@ -1406,7 +622,7 @@ final class BddImpl implements Bdd {
         }
         int hash = cache.lookupHash();
 
-        int nodeVar = variable(node);
+        int nodeVar = variableOf(node);
         BigInteger lowCount = doCountSatisfyingAssignments(low(node), nodeVar);
         BigInteger highCount = doCountSatisfyingAssignments(high(node), nodeVar);
 
@@ -1422,7 +638,7 @@ final class BddImpl implements Bdd {
         if (subNode == TRUE_NODE) {
             return TWO.pow(numberOfVariables - currentVar - 1);
         }
-        BigInteger multiplier = TWO.pow(variable(subNode) - currentVar - 1);
+        BigInteger multiplier = TWO.pow(variableOf(subNode) - currentVar - 1);
         return multiplier.multiply(countSatisfyingAssignmentsRecursive(subNode));
     }
 
@@ -1520,8 +736,8 @@ final class BddImpl implements Bdd {
                 } else if (current1 == TRUE_NODE) {
                     result = current2;
                 } else {
-                    int node1var = variable(current1);
-                    int node2var = variable(current2);
+                    int node1var = variableOf(current1);
+                    int node2var = variableOf(current2);
 
                     if (node2var < node1var || (node2var == node1var && current2 < current1)) {
                         int nodeSwap = current1;
@@ -1595,8 +811,8 @@ final class BddImpl implements Bdd {
             return node2;
         }
 
-        int node1var = variable(node1);
-        int node2var = variable(node2);
+        int node1var = variableOf(node1);
+        int node2var = variableOf(node2);
 
         if (node2var < node1var || (node2var == node1var && node2 < node1)) {
             int nodeSwap = node1;
@@ -1636,7 +852,7 @@ final class BddImpl implements Bdd {
             return node;
         }
 
-        // Guard the elements and replace placeholder by actual variable reference
+        // Guard the elements and replace NOT_A_NODE by actual variable reference
         pushToWorkStack(node);
         int workStackCount = 1;
         for (int i = 0; i < variableMapping.length; i++) {
@@ -1680,19 +896,17 @@ final class BddImpl implements Bdd {
         int[] branchStackParentVar = this.branchStackParentVar;
         int[] branchTaskStack = this.branchStackFirstArg;
 
-        int initialSize = workStackIndex;
         int stackIndex = 0;
         int current = node;
         while (true) {
             assert stackIndex >= 0;
-            assert workStackIndex >= initialSize;
 
             int result = NOT_A_NODE;
             do {
                 if (current == TRUE_NODE || current == FALSE_NODE) {
                     result = current;
                 } else {
-                    int nodeVariable = variable(current);
+                    int nodeVariable = variableOf(current);
 
                     if (nodeVariable > highestReplacedVariable) {
                         result = current;
@@ -1753,7 +967,7 @@ final class BddImpl implements Bdd {
             return node;
         }
 
-        int nodeVariable = variable(node);
+        int nodeVariable = variableOf(node);
         if (nodeVariable > highestReplacedVariable) {
             return node;
         }
@@ -1819,8 +1033,8 @@ final class BddImpl implements Bdd {
                 } else if (current2 == TRUE_NODE) {
                     result = current1;
                 } else {
-                    int node1var = variable(current1);
-                    int node2var = variable(current2);
+                    int node1var = variableOf(current1);
+                    int node2var = variableOf(current2);
 
                     if (node2var < node1var || (node2var == node1var && current2 < current1)) {
                         int nodeSwap = current1;
@@ -1898,8 +1112,8 @@ final class BddImpl implements Bdd {
             return node1;
         }
 
-        int node1var = variable(node1);
-        int node2var = variable(node2);
+        int node1var = variableOf(node1);
+        int node2var = variableOf(node2);
 
         if (node2var < node1var || (node2var == node1var && node2 < node1)) {
             int nodeSwap = node1;
@@ -1937,8 +1151,8 @@ final class BddImpl implements Bdd {
         if (isLeaf(node) || quantifiedVariables.isEmpty()) {
             return node;
         }
-        if (isVariable(node)) {
-            return quantifiedVariables.get(variable(node)) ? TRUE_NODE : node;
+        if (isVariableOrNegated(node)) {
+            return quantifiedVariables.get(variableOf(node)) ? TRUE_NODE : node;
         }
         int cardinality = quantifiedVariables.cardinality();
         if (cardinality == numberOfVariables) {
@@ -1976,7 +1190,7 @@ final class BddImpl implements Bdd {
                 if (current == TRUE_NODE || current == FALSE_NODE) {
                     result = current;
                 } else {
-                    int nodeVariable = variable(current);
+                    int nodeVariable = variableOf(current);
                     int currentVariable = quantifiedVariables[currentIndex];
                     while (currentVariable < nodeVariable) {
                         currentIndex += 1;
@@ -2022,11 +1236,11 @@ final class BddImpl implements Bdd {
                     // The variable of this node is smaller than the variable looked for - only propagate the
                     // quantification downward
                     result = makeNode(variable, peekWorkStack(), pushToWorkStack(result));
-                    popWorkStack(2);
                 } else {
                     // nodeVariable == nextVariable, i.e. "quantify out" the current node.
-                    result = orIterative(peekAndPopWorkStack(), result, stackIndex);
+                    result = orIterative(peekWorkStack(), pushToWorkStack(result), stackIndex);
                 }
+                popWorkStack(2);
                 cache.putExists(currentHash, currentNode, result);
 
                 if (stackIndex == baseStackIndex) {
@@ -2050,7 +1264,7 @@ final class BddImpl implements Bdd {
             return node;
         }
 
-        int nodeVariable = variable(node);
+        int nodeVariable = variableOf(node);
         int quantifiedVariable = quantifiedVariables[currentIndex];
 
         while (quantifiedVariable < nodeVariable) {
@@ -2093,8 +1307,8 @@ final class BddImpl implements Bdd {
         if (isLeaf(node) || quantifiedVariables.isEmpty()) {
             return node;
         }
-        if (isVariable(node)) {
-            return quantifiedVariables.get(variable(node)) ? FALSE_NODE : node;
+        if (isVariableOrNegated(node)) {
+            return quantifiedVariables.get(variableOf(node)) ? FALSE_NODE : node;
         }
         int cardinality = quantifiedVariables.cardinality();
         if (cardinality == numberOfVariables) {
@@ -2133,7 +1347,7 @@ final class BddImpl implements Bdd {
                 if (current == TRUE_NODE || current == FALSE_NODE) {
                     result = current;
                 } else {
-                    int nodeVariable = variable(current);
+                    int nodeVariable = variableOf(current);
                     int currentVariable = quantifiedVariables[currentIndex];
                     while (currentVariable < nodeVariable) {
                         currentIndex += 1;
@@ -2179,11 +1393,11 @@ final class BddImpl implements Bdd {
                     // The variable of this node is smaller than the variable looked for - only propagate the
                     // quantification downward
                     result = makeNode(variable, peekWorkStack(), pushToWorkStack(result));
-                    popWorkStack(2);
                 } else {
                     // nodeVariable == nextVariable, i.e. "quantify out" the current node.
-                    result = andIterative(peekAndPopWorkStack(), result, stackIndex);
+                    result = andIterative(peekWorkStack(), pushToWorkStack(result), stackIndex);
                 }
+                popWorkStack(2);
                 cache.putForall(currentHash, currentNode, result);
 
                 if (stackIndex == baseStackIndex) {
@@ -2207,7 +1421,7 @@ final class BddImpl implements Bdd {
             return node;
         }
 
-        int nodeVariable = variable(node);
+        int nodeVariable = variableOf(node);
         int quantifiedVariable = quantifiedVariables[currentIndex];
 
         while (quantifiedVariable < nodeVariable) {
@@ -2307,9 +1521,9 @@ final class BddImpl implements Bdd {
                 } else if (cache.lookupIfThenElse(currentIf, currentThen, currentElse)) {
                     result = cache.lookupResult();
                 } else {
-                    int ifVar = variable(currentIf);
-                    int thenVar = variable(currentThen);
-                    int elseVar = variable(currentElse);
+                    int ifVar = variableOf(currentIf);
+                    int thenVar = variableOf(currentThen);
+                    int elseVar = variableOf(currentElse);
 
                     int minVar = min(ifVar, thenVar, elseVar);
                     int ifLowNode;
@@ -2434,9 +1648,9 @@ final class BddImpl implements Bdd {
             return cache.lookupResult();
         }
         int hash = cache.lookupHash();
-        int ifVar = variable(ifNode);
-        int thenVar = variable(thenNode);
-        int elseVar = variable(elseNode);
+        int ifVar = variableOf(ifNode);
+        int thenVar = variableOf(thenNode);
+        int elseVar = variableOf(elseNode);
 
         int minVar = Math.min(ifVar, Math.min(thenVar, elseVar));
         int ifLowNode;
@@ -2516,8 +1730,8 @@ final class BddImpl implements Bdd {
                 } else if (cache.lookupImplication(current1, current2)) {
                     result = cache.lookupResult();
                 } else {
-                    int node1var = variable(current1);
-                    int node2var = variable(current2);
+                    int node1var = variableOf(current1);
+                    int node2var = variableOf(current2);
 
                     cacheStackHash[stackIndex] = cache.lookupHash();
                     cacheStackLeft[stackIndex] = current1;
@@ -2590,8 +1804,8 @@ final class BddImpl implements Bdd {
         }
         int hash = cache.lookupHash();
 
-        int node1var = variable(node1);
-        int node2var = variable(node2);
+        int node1var = variableOf(node1);
+        int node2var = variableOf(node2);
 
         int lowNode;
         int highNode;
@@ -2664,8 +1878,8 @@ final class BddImpl implements Bdd {
                     return false;
                 }
 
-                int node1var = variable(current1);
-                int node2var = variable(current2);
+                int node1var = variableOf(current1);
+                int node2var = variableOf(current2);
 
                 int node1low = low(current1);
                 int node1high = high(current1);
@@ -2727,8 +1941,8 @@ final class BddImpl implements Bdd {
         if (cache.lookupImplication(node1, node2)) {
             return cache.lookupResult() == TRUE_NODE;
         }
-        int node1var = variable(node1);
-        int node2var = variable(node2);
+        int node1var = variableOf(node1);
+        int node2var = variableOf(node2);
 
         if (node1var == node2var) {
             return impliesRecursive(low(node1), low(node2)) && impliesRecursive(high(node1), high(node2));
@@ -2773,7 +1987,7 @@ final class BddImpl implements Bdd {
                 } else {
                     cacheStackHash[stackIndex] = cache.lookupHash();
                     cacheArgStack[stackIndex] = current;
-                    branchStackParentVar[stackIndex] = variable(current);
+                    branchStackParentVar[stackIndex] = variableOf(current);
                     branchTaskStack[stackIndex] = high(current);
                     stackIndex += 1;
                     current = low(current);
@@ -2819,7 +2033,7 @@ final class BddImpl implements Bdd {
 
         int lowNode = pushToWorkStack(notRecursive(low(node)));
         int highNode = pushToWorkStack(notRecursive(high(node)));
-        int resultNode = makeNode(variable(node), lowNode, highNode);
+        int resultNode = makeNode(variableOf(node), lowNode, highNode);
         popWorkStack(2);
         cache.putNot(hash, node, resultNode);
         return resultNode;
@@ -2860,8 +2074,8 @@ final class BddImpl implements Bdd {
                 } else if (current2 == TRUE_NODE) {
                     result = notIterative(current1, stackIndex);
                 } else {
-                    int node1var = variable(current1);
-                    int node2var = variable(current2);
+                    int node1var = variableOf(current1);
+                    int node2var = variableOf(current2);
 
                     if (node2var < node1var || (node2var == node1var && current2 < current1)) {
                         int nodeSwap = current1;
@@ -2929,8 +2143,8 @@ final class BddImpl implements Bdd {
             return notRecursive(node1);
         }
 
-        int node1var = variable(node1);
-        int node2var = variable(node2);
+        int node1var = variableOf(node1);
+        int node2var = variableOf(node2);
 
         if (node2var < node1var || (node2var == node1var && node2 < node1)) {
             int nodeSwap = node1;
@@ -2997,8 +2211,8 @@ final class BddImpl implements Bdd {
                 } else if (current2 == FALSE_NODE) {
                     result = current1;
                 } else {
-                    int node1var = variable(current1);
-                    int node2var = variable(current2);
+                    int node1var = variableOf(current1);
+                    int node2var = variableOf(current2);
 
                     if (node2var < node1var || (node2var == node1var && current2 < current1)) {
                         int nodeSwap = current1;
@@ -3067,8 +2281,8 @@ final class BddImpl implements Bdd {
             return node1;
         }
 
-        int node1var = variable(node1);
-        int node2var = variable(node2);
+        int node1var = variableOf(node1);
+        int node2var = variableOf(node2);
 
         if (node2var < node1var || (node2var == node1var && node2 < node1)) {
             int nodeSwap = node1;
@@ -3170,8 +2384,8 @@ final class BddImpl implements Bdd {
                 } else if (current2 == TRUE_NODE) {
                     result = notIterative(current1, stackIndex);
                 } else {
-                    int node1var = variable(current1);
-                    int node2var = variable(current2);
+                    int node1var = variableOf(current1);
+                    int node2var = variableOf(current2);
 
                     if (node2var < node1var || (node2var == node1var && current2 < current1)) {
                         int nodeSwap = current1;
@@ -3246,8 +2460,8 @@ final class BddImpl implements Bdd {
             return notRecursive(node1);
         }
 
-        int node1var = variable(node1);
-        int node2var = variable(node2);
+        int node1var = variableOf(node1);
+        int node2var = variableOf(node2);
 
         if (node2var < node1var || (node2var == node1var && node2 < node1)) {
             int nodeSwap = node1;
@@ -3296,186 +2510,16 @@ final class BddImpl implements Bdd {
         branchStackSecondArg = new int[minimumSize];
         branchStackThirdArg = new int[minimumSize];
 
-        markStack = new int[minimumSize];
+        // markStack = new int[minimumSize];
     }
 
-    // Integrity checks and utility
-
-    /**
-     * Performs some integrity / invariant checks.
-     *
-     * @return True. This way, check can easily be called by an {@code assert} statement.
-     */
-    @SuppressWarnings("PMD.AvoidDeeplyNestedIfStmts")
-    boolean check() {
-        logger.log(Level.FINER, "Running integrity check");
-        checkState(biggestReferencedNode <= biggestValidNode);
-
-        // Check the biggestValidNode variable
-        checkState(
-                dataIsValid(nodeData[biggestValidNode]),
-                "Node (%s) is not valid or leaf",
-                nodeToStringSupplier(biggestValidNode));
-        for (int i = biggestValidNode + 1; i < tableSize(); i++) {
-            checkState(!dataIsValid(nodeData[i]), "Node (%s) is valid", nodeToStringSupplier(i));
-        }
-
-        // Check biggestReferencedNode variable
-        checkState(
-                dataIsReferencedOrSaturated(nodeData[biggestReferencedNode]),
-                "Node (%s) is not referenced",
-                nodeToStringSupplier(biggestReferencedNode));
-        for (int i = biggestReferencedNode + 1; i < tableSize(); i++) {
-            checkState(!dataIsReferencedOrSaturated(nodeData[i]), "Node (%s) is referenced", nodeToStringSupplier(i));
-        }
-
-        // Check invalid nodes are not referenced
-        for (int node = FIRST_NODE; node <= biggestReferencedNode; node++) {
-            if (dataIsReferencedOrSaturated(nodeData[node])) {
-                checkState(
-                        dataIsValid(nodeData[node]), "Node (%s) is referenced but invalid", nodeToStringSupplier(node));
-            }
-        }
-
-        // Check if the number of free nodes is correct
-        int count = 0;
-        for (int node = FIRST_NODE; node <= biggestValidNode; node++) {
-            if (dataIsValid(nodeData[node])) {
-                count++;
-            }
-        }
-        checkState(
-                count == (tableSize() - freeNodeCount - FIRST_NODE),
-                "Invalid # of free nodes: #live=%d, size=%d, free=%d, expected=%d",
-                count,
-                tableSize(),
-                freeNodeCount,
-                tableSize() - freeNodeCount - FIRST_NODE);
-
-        // Check each node's children
-        for (int node = FIRST_NODE; node <= biggestValidNode; node++) {
-            int metadata = nodeData[node];
-            if (dataIsValid(metadata)) {
-                int low = low(node);
-                int high = high(node);
-                checkState(
-                        isNodeValidOrLeaf(low),
-                        "Invalid low entry (%s) -> (%s)",
-                        nodeToStringSupplier(node),
-                        nodeToStringSupplier(low));
-                checkState(
-                        isNodeValidOrLeaf(high),
-                        "Invalid high entry (%s) -> (%s)",
-                        nodeToStringSupplier(node),
-                        nodeToStringSupplier(high));
-                if (!isLeaf(low)) {
-                    checkState(
-                            dataGetVariable(metadata) < dataGetVariable(nodeData[low]),
-                            "(%s) -> (%s) does not descend tree",
-                            nodeToStringSupplier(node),
-                            nodeToStringSupplier(low));
-                }
-                if (!isLeaf(high)) {
-                    checkState(
-                            dataGetVariable(metadata) < dataGetVariable(nodeData[high]),
-                            "(%s) -> (%s) does not descend tree",
-                            nodeToStringSupplier(node),
-                            nodeToStringSupplier(high));
-                }
-            }
-        }
-
-        // Check if there are duplicate nodes
-        //noinspection MagicNumber
-        int maximalNodeCountCheckedPairs = 1000;
-        if (tableSize() < maximalNodeCountCheckedPairs) {
-            for (int node = FIRST_NODE; node <= biggestValidNode; node++) {
-                int dataI = nodeData[node];
-                if (dataIsValid(dataI)) {
-                    for (int j = node + 1; j < tableSize(); j++) {
-                        int dataJ = nodeData[j];
-                        if (dataIsValid(dataJ)) {
-                            checkState(
-                                    low(node) != low(j)
-                                            || high(node) != high(j)
-                                            || dataGetVariable(dataI) != dataGetVariable(dataJ),
-                                    "Duplicate entries (%s) and (%s)",
-                                    nodeToStringSupplier(node),
-                                    nodeToStringSupplier(j));
-                        }
-                    }
-                }
-            }
-        }
-
-        int maximalNodeCountCheckedSet = 2048;
-        if (tableSize() < maximalNodeCountCheckedSet) {
-            logger.log(Level.FINER, "Checking duplicate nodes");
-
-            Set<Node> nodes = new HashSet<>();
-            for (int node = FIRST_NODE; node <= biggestValidNode; node++) {
-                if (isNodeValid(node)) {
-                    checkState(
-                            nodes.add(new Node(variable(node), low(node), high(node))),
-                            "Duplicate entry (%s)",
-                            nodeToStringSupplier(node));
-                }
-            }
-        }
-
-        // Check the integrity of the hash chain
-        for (int node = FIRST_NODE; node < tableSize(); node++) {
-            int data = nodeData[node];
-            if (dataIsValid(data)) {
-                // Check if each element is in its own hash chain
-                int chainPosition = hashToChainStart[hashNode(node, data)];
-                boolean found = false;
-                StringBuilder hashChain = new StringBuilder(32);
-                while (chainPosition != NOT_A_NODE) {
-                    hashChain.append(' ').append(chainPosition);
-                    if (chainPosition == node) {
-                        found = true;
-                        break;
-                    }
-                    chainPosition = this.hashChain[chainPosition];
-                }
-                checkState(found, "(%s) is not contained in it's hash list: %s", nodeToStringSupplier(node), hashChain);
-            }
-        }
-
-        // Check firstFreeNode
-        for (int i = FIRST_NODE; i < firstFreeNode; i++) {
-            checkState(
-                    dataIsValid(nodeData[i]), "Invalid node (%s) smaller than firstFreeNode", nodeToStringSupplier(i));
-        }
-
-        // Check free nodes chain
-        int currentFreeNode = firstFreeNode;
-        do {
-            checkState(
-                    !dataIsValid(nodeData[currentFreeNode]),
-                    "Node (%s) in free node chain is valid",
-                    nodeToStringSupplier(currentFreeNode));
-            int nextFreeNode = hashChain[currentFreeNode];
-            // This also excludes possible loops
-            checkState(
-                    nextFreeNode == FIRST_NODE || currentFreeNode < nextFreeNode,
-                    "Free node chain is not well ordered, %s <= %s",
-                    nextFreeNode,
-                    currentFreeNode);
-            checkState(
-                    nextFreeNode < nodeData.length,
-                    "Next free node points over horizon, %s -> %s (%s)",
-                    currentFreeNode,
-                    nextFreeNode,
-                    nodeData.length);
-            currentFreeNode = nextFreeNode;
-        } while (currentFreeNode != FIRST_NODE);
-
-        return true;
+    @Override
+    public boolean check() {
+        return super.check();
     }
 
-    void invalidateCache() {
+    @Override
+    public void invalidateCache() {
         cache.invalidate();
     }
 
@@ -3491,225 +2535,44 @@ final class BddImpl implements Bdd {
         return getStatistics() + '\n' + cache.getStatistics();
     }
 
-    String nodeToString(int node) {
-        int metadata = nodeData[node];
-        if (!dataIsValid(metadata)) {
-            return String.format("%5d| == INVALID ==", node);
-        }
-        String referenceCountString;
-        if (dataIsSaturated(metadata)) {
-            referenceCountString = "SAT";
-        } else {
-            referenceCountString = String.format("%3d", dataGetReferenceCount(metadata));
-        }
-        return String.format(
-                "%5d|%3d|%5d|%5d|%s", node, dataGetVariable(metadata), low(node), high(node), referenceCountString);
+    @Override
+    protected void onGarbageCollection() {
+        cache.invalidate();
     }
 
-    NodeToStringSupplier nodeToStringSupplier(int node) {
-        return new NodeToStringSupplier(this, node);
+    @Override
+    protected void onTableResize(int newSize) {
+        tree = Arrays.copyOf(tree, newSize * 2);
     }
 
-    /**
-     * Generates a string representation of the given {@code node}.
-     *
-     * @param node The node to be printed.
-     * @return A string representing the given node.
-     */
-    public String treeToString(int node) {
-        assert isNodeValidOrLeaf(node);
-        assert isNoneMarked();
-        if (isLeaf(node)) {
-            return String.format("Node %d%n", node);
-        }
-        //noinspection MagicNumber
-        StringBuilder builder =
-                new StringBuilder(50).append("Node ").append(node).append('\n').append("  NODE|VAR| LOW | HIGH|REF\n");
-        treeToStringRecursive(node, builder);
-        unMarkAllBelow(node);
-        return builder.toString();
+    @Override
+    protected int hashCode(int node, int variable) {
+        return hashCode(variable, tree[2 * node], tree[2 * node + 1]);
     }
 
-    private void treeToStringRecursive(int node, StringBuilder builder) {
-        if (isLeaf(node)) {
-            return;
-        }
-        int metadata = nodeData[node];
-        if (dataIsMarked(metadata)) {
-            return;
-        }
-        nodeData[node] = dataSetMark(metadata);
-        builder.append(' ').append(nodeToString(node)).append('\n');
-        treeToStringRecursive(low(node), builder);
-        treeToStringRecursive(high(node), builder);
+    private static int hashCode(int variable, int low, int high) {
+        return variable + low + high;
     }
 
-    public String getStatistics() {
-        int childrenCount = 0;
-        int saturatedNodes = 0;
-        int referencedNodes = 0;
-        int validNodes = 0;
-
-        for (int node = 0; node < tableSize(); node++) {
-            int metadata = nodeData[node];
-            if (dataIsValid(metadata)) {
-                validNodes += 1;
-                if (dataIsReferencedOrSaturated(metadata)) {
-                    referencedNodes += 1;
-                    childrenCount += markAllBelow(node);
-
-                    if (dataIsSaturated(metadata)) {
-                        saturatedNodes += 1;
-                    }
-                }
-            }
-        }
-
-        unMarkAll();
-
-        int[] chainLength = new int[tableSize()];
-        Deque<Integer> path = new ArrayDeque<>();
-        int distinctChains = 0;
-
-        for (int node = FIRST_NODE; node < tableSize(); node++) {
-            int metadata = nodeData[node];
-            if (chainLength[node] > 0) {
-                continue;
-            }
-
-            if (dataIsValid(metadata)) {
-                int chainPosition = hashToChainStart[hashNode(node, metadata)];
-                int length = 0;
-                while (chainPosition != 0) {
-                    path.push(chainPosition);
-                    if (chainPosition == node) {
-                        distinctChains += 1;
-                        break;
-                    }
-                    chainPosition = hashChain[chainPosition];
-                    if (chainLength[chainPosition] > 0) {
-                        length = chainLength[chainPosition];
-                        break;
-                    }
-                }
-                while (!path.isEmpty()) {
-                    int pathNode = path.pop();
-                    length += 1;
-                    chainLength[pathNode] = length;
-                }
-            }
-        }
-
-        int sum = 0;
-        int max = 0;
-        for (int length : chainLength) {
-            if (length == 0) {
-                continue;
-            }
-            sum += 1;
-            if (max < length) {
-                max = length;
-            }
-        }
-
-        return String.format(
-                "Node table statistics:%n"
-                        + "Table Size: %1$d, (largest ref: %2$d), %3$d created nodes%n"
-                        + "%4$d valid nodes, %5$d referenced (%6$d saturated), %7$d children%n"
-                        + "Hash table: %8$d chains %9$.2f load, %10$.2f avg, %11$d max; "
-                        + "%12$d lookups, %13$.2f avg. len%n"
-                        + "%14$d GC runs (%15$.2f s), %16$d freed, %17$d grows",
-                tableSize(),
-                biggestReferencedNode,
-                createdNodes,
-                validNodes,
-                referencedNodes,
-                saturatedNodes,
-                childrenCount,
-                distinctChains,
-                sum * 1.0 / tableSize(),
-                sum * 1.0 / distinctChains,
-                max,
-                hashChainLookups,
-                hashChainLookupLength * 1.0 / hashChainLookups,
-                garbageCollectionCount,
-                garbageCollectionTime / 1000.0,
-                garbageCollectedNodeCount,
-                growCount);
+    @Override
+    protected void forEachChild(int node, IntConsumer action) {
+        action.accept(tree[2 * node]);
+        action.accept(tree[2 * node + 1]);
     }
 
-    // Static utility methods
-
-    private static int min(int a, int b, int c) {
-        return a < b ? Math.min(a, c) : Math.min(b, c);
+    @Override
+    protected int sumEachBelow(int node, IntUnaryOperator operator) {
+        return operator.applyAsInt(tree[2 * node]) + operator.applyAsInt(tree[2 * node + 1]);
     }
 
-    private static void checkState(boolean state) {
-        if (!state) {
-            throw new IllegalStateException("");
-        }
+    @Override
+    protected boolean allMatchBelow(int node, IntPredicate predicate) {
+        return predicate.test(tree[2 * node]) && predicate.test(tree[2 * node + 1]);
     }
 
-    private static void checkState(boolean state, String formatString, Object... format) {
-        if (!state) {
-            throw new IllegalStateException(String.format(formatString, format));
-        }
-    }
-
-    private static int dataGetVariable(int metadata) {
-        assert dataIsValid(metadata);
-        return metadata >>> VARIABLE_OFFSET;
-    }
-
-    private static boolean dataIsValid(int metadata) {
-        return (metadata >>> VARIABLE_OFFSET) != INVALID_NODE_VARIABLE;
-    }
-
-    private static int dataMakeInvalid() {
-        return INVALID_NODE_VARIABLE << VARIABLE_OFFSET;
-    }
-
-    private static boolean dataIsSaturated(int metadata) {
-        return ((metadata >>> REFERENCE_COUNT_OFFSET) & REFERENCE_COUNT_MASK) == REFERENCE_COUNT_SATURATED;
-    }
-
-    private static int dataSaturate(int metadata) {
-        return metadata | (REFERENCE_COUNT_SATURATED << REFERENCE_COUNT_OFFSET);
-    }
-
-    private static boolean dataIsReferencedOrSaturated(int metadata) {
-        return dataGetReferenceCountUnsafe(metadata) > 0;
-    }
-
-    private static int dataGetReferenceCount(int metadata) {
-        assert !dataIsSaturated(metadata);
-        return (metadata >>> REFERENCE_COUNT_OFFSET) & REFERENCE_COUNT_MASK;
-    }
-
-    private static int dataGetReferenceCountUnsafe(int metadata) {
-        return (metadata >>> REFERENCE_COUNT_OFFSET) & REFERENCE_COUNT_MASK;
-    }
-
-    private static int dataIncreaseReferenceCount(int metadata) {
-        assert !dataIsSaturated(metadata);
-        return metadata + 2;
-    }
-
-    private static int dataDecreaseReferenceCount(int metadata) {
-        assert !dataIsSaturated(metadata) && dataGetReferenceCount(metadata) > 0;
-        return metadata - 2;
-    }
-
-    private static int dataSetMark(int metadata) {
-        return metadata | 1;
-    }
-
-    private static int dataClearMark(int metadata) {
-        return metadata & ~1;
-    }
-
-    private static boolean dataIsMarked(int metadata) {
-        return (metadata & 1) != 0;
+    @Override
+    protected Node node(int node) {
+        return new BinaryNode(variableOf(node), tree[2 * node], tree[2 * node + 1]);
     }
 
     // Utility classes
@@ -3723,7 +2586,7 @@ final class BddImpl implements Bdd {
         private final int variableCount;
         private final int[] path;
         private boolean firstRun = true;
-        private int highestLowVariableWithNonFalseHighBranch = 0;
+        private int highestSwitchableVariable = 0;
         private int leafNodeVariable;
         private boolean hasNextPath;
         private boolean hasNextAssignment;
@@ -3742,7 +2605,7 @@ final class BddImpl implements Bdd {
             this.support = support;
             this.path = new int[variableCount];
             this.assignment = new BitSet(variableCount);
-            rootVariable = bdd.variable(node);
+            rootVariable = bdd.variableOf(node);
             assert support.get(rootVariable);
 
             Arrays.fill(path, NON_PATH_NODE);
@@ -3770,17 +2633,17 @@ final class BddImpl implements Bdd {
             } else {
                 // Check if we can flip any non-path variable in the support
                 boolean clearedAny = false;
-                for (int index = support.nextSetBit(0); index >= 0; index = support.nextSetBit(index + 1)) {
+                for (int var = support.nextSetBit(0); var >= 0; var = support.nextSetBit(var + 1)) {
                     // Strategy: Perform binary addition on the NON_PATH_NODEs over the support
                     // The tricky bit is to determine whether there is a "next element": Either there is
                     // another real path in the BDD or there is some variable which we still can flip to 1
 
-                    if (path[index] == NON_PATH_NODE) {
-                        if (assignment.get(index)) {
-                            assignment.clear(index);
+                    if (path[var] == NON_PATH_NODE) {
+                        if (assignment.get(var)) {
+                            assignment.clear(var);
                             clearedAny = true;
                         } else {
-                            assignment.set(index);
+                            assignment.set(var);
                             if (hasNextPath || clearedAny) {
                                 hasNextAssignment = true;
                             } else {
@@ -3788,7 +2651,7 @@ final class BddImpl implements Bdd {
 
                                 // TODO This should be constant time to determine?
                                 // TODO This only needs to run if we set the first non-path variable to 1
-                                for (int i = support.nextSetBit(index + 1); i >= 0; i = support.nextSetBit(i + 1)) {
+                                for (int i = support.nextSetBit(var + 1); i >= 0; i = support.nextSetBit(i + 1)) {
                                     if (path[i] == NON_PATH_NODE && !assignment.get(i)) {
                                         hasNextAssignment = true;
                                         break;
@@ -3812,49 +2675,50 @@ final class BddImpl implements Bdd {
                 // to find a new path in the BDD
                 // TODO Use highestLowVariableWithNonFalseHighBranch?
                 currentNode = path[leafNodeVariable];
-                int branchIndex = leafNodeVariable;
-                while (assignment.get(branchIndex) || bdd.high(currentNode) == FALSE_NODE) {
+                int branchVar = leafNodeVariable;
+                while (assignment.get(branchVar) || bdd.high(currentNode) == FALSE_NODE) {
+                    assert path[branchVar] != NON_PATH_NODE;
+
                     // This node does not give us another branch, backtrack over the path until we get to
                     // the next element of the path
                     // TODO Could track the previous path element in int[]
                     do {
-                        branchIndex = support.previousSetBit(branchIndex - 1);
-                        if (branchIndex == -1) {
+                        branchVar = support.previousSetBit(branchVar - 1);
+                        if (branchVar == -1) {
                             throw new NoSuchElementException("No next element");
                         }
-                    } while (path[branchIndex] == NON_PATH_NODE);
-                    currentNode = path[branchIndex];
+                    } while (path[branchVar] == NON_PATH_NODE);
+                    currentNode = path[branchVar];
                 }
-                assert !assignment.get(branchIndex) && bdd.high(currentNode) != FALSE_NODE;
-                assert leafNodeVariable >= highestLowVariableWithNonFalseHighBranch;
-                assert bdd.variable(currentNode) == branchIndex;
+                assert !assignment.get(branchVar);
+                assert leafNodeVariable >= highestSwitchableVariable;
+                assert bdd.variableOf(currentNode) == branchVar;
 
                 // currentNode is the lowest node we can switch high; set the value and descend the tree
-                assignment.clear(branchIndex + 1, leafNodeVariable + 1);
-                Arrays.fill(path, branchIndex + 1, leafNodeVariable + 1, NON_PATH_NODE);
+                assignment.clear(branchVar + 1, leafNodeVariable + 1);
+                Arrays.fill(path, branchVar + 1, leafNodeVariable + 1, NON_PATH_NODE);
+                leafNodeVariable = branchVar;
 
-                assignment.set(branchIndex);
-                assert path[branchIndex] == currentNode;
+                assignment.set(branchVar);
+                assert path[branchVar] == currentNode;
                 currentNode = bdd.high(currentNode);
                 assert currentNode != FALSE_NODE;
-                leafNodeVariable = branchIndex;
 
                 // We flipped the candidate for low->high transition, clear this information
-                if (highestLowVariableWithNonFalseHighBranch == leafNodeVariable) {
-                    highestLowVariableWithNonFalseHighBranch = -1;
+                if (highestSwitchableVariable == branchVar) {
+                    highestSwitchableVariable = -1;
                 }
             }
 
-            // Situation: The currentNode valuation was just flipped to 1 or we are in initial state.
+            // Situation: The currentNode valuation was just flipped to one or we are in initial state.
             // Descend the tree, searching for a solution and determine if there is a next assignment.
 
             // If there is a possible path higher up, there definitely are more solutions
-            hasNextPath = highestLowVariableWithNonFalseHighBranch > -1
-                    && highestLowVariableWithNonFalseHighBranch < leafNodeVariable;
+            hasNextPath = highestSwitchableVariable > -1 && highestSwitchableVariable < leafNodeVariable;
 
             while (currentNode != TRUE_NODE) {
                 assert currentNode != FALSE_NODE;
-                leafNodeVariable = bdd.variable(currentNode);
+                leafNodeVariable = bdd.variableOf(currentNode);
                 path[leafNodeVariable] = currentNode;
                 assert support.get(leafNodeVariable);
 
@@ -3870,7 +2734,7 @@ final class BddImpl implements Bdd {
                     // higher up in the tree.
                     if (!hasNextPath && bdd.high(currentNode) != FALSE_NODE) {
                         hasNextPath = true;
-                        highestLowVariableWithNonFalseHighBranch = leafNodeVariable;
+                        highestSwitchableVariable = leafNodeVariable;
                     }
                     currentNode = low;
                 }
@@ -3892,28 +2756,12 @@ final class BddImpl implements Bdd {
         }
     }
 
-    private static final class NodeToStringSupplier {
-        private final int node;
-        private final BddImpl table;
-
-        public NodeToStringSupplier(BddImpl table, int node) {
-            this.table = table;
-            this.node = node;
-        }
-
-        @Override
-        public String toString() {
-            return table.nodeToString(node);
-        }
-    }
-
-    // Utility class to check for reduced-ness
-    private static final class Node {
+    private static final class BinaryNode implements NodeTable.Node {
         final int var;
         final int low;
         final int high;
 
-        Node(int var, int low, int high) {
+        BinaryNode(int var, int low, int high) {
             this.var = var;
             this.low = low;
             this.high = high;
@@ -3924,16 +2772,21 @@ final class BddImpl implements Bdd {
             if (this == o) {
                 return true;
             }
-            if (!(o instanceof Node)) {
+            if (!(o instanceof BinaryNode)) {
                 return false;
             }
-            Node node = (Node) o;
+            BinaryNode node = (BinaryNode) o;
             return var == node.var && low == node.low && high == node.high;
         }
 
         @Override
         public int hashCode() {
             return HashUtil.hash(var, low, high);
+        }
+
+        @Override
+        public String childrenString() {
+            return String.format("%5d %5d", low, high);
         }
     }
 }

@@ -16,7 +16,6 @@
  */
 package de.tum.in.jbdd;
 
-import java.math.BigInteger;
 import java.util.BitSet;
 import java.util.Iterator;
 import java.util.function.BiConsumer;
@@ -30,16 +29,75 @@ import java.util.function.Consumer;
  * occur with invalid arguments. Especially, the BDD may appear to be in a working state for a long
  * time after an invalid call.</p>
  */
-public interface Bdd extends DecisionDiagram {
-    /**
-     * Returns the node representing {@code true}.
-     */
-    int trueNode();
+public interface Bdd extends BinaryTerminalDecisionDiagram {
+    int high(int node);
+
+    int low(int node);
 
     /**
-     * Returns the node representing {@code true}.
+     * Determines whether the given {@code node} represents a variable.
+     *
+     * @param node The node to be checked.
+     * @return If the {@code node} represents a variable.
      */
-    int falseNode();
+    default boolean isVariable(int node) {
+        return !isLeaf(node) && low(node) == falseNode() && high(node) == trueNode();
+    }
+
+    /**
+     * Determines whether the given {@code node} represents a negated variable.
+     *
+     * @param node The node to be checked.
+     * @return If the {@code node} represents a negated variable.
+     */
+    default boolean isVariableNegated(int node) {
+        return !isLeaf(node) && low(node) == trueNode() && high(node) == falseNode();
+    }
+
+    /**
+     * Determines whether the given {@code node} represents a variable or it's negation.
+     *
+     * @param node The node to be checked.
+     * @return If the {@code node} represents a variable.
+     */
+    default boolean isVariableOrNegated(int node) {
+        return isVariable(node) || isVariableNegated(node);
+    }
+
+    /**
+     * Returns the node which represents the variable with given {@code variableNumber}. The variable
+     * must already have been created.
+     *
+     * @param variableNumber The number of the requested variable.
+     * @return The corresponding node.
+     */
+    int variableNode(int variableNumber);
+
+    /**
+     * Creates a new variable and returns the node representing it. The implementation guarantees that
+     * variables are always allocated sequentially starting from 0, i.e. {@code
+     * getVariable(createVariable()) == numberOfVariables() - 1}.
+     *
+     * @return The node representing the new variable.
+     */
+    int createVariable();
+
+    /**
+     * Creates {@code count} many variables and returns their respective nodes. The first created
+     * variable is at first position of the array.
+     *
+     * @throws IllegalArgumentException if count is not positive.
+     */
+    default int[] createVariables(int count) {
+        if (count <= 0) {
+            throw new IllegalArgumentException("Count must be positive");
+        }
+        int[] array = new int[count];
+        for (int i = 0; i < count; i++) {
+            array[i] = createVariable();
+        }
+        return array;
+    }
 
     /**
      * Checks whether the given {@code node} evaluates to {@code true} under the given variable
@@ -77,15 +135,47 @@ public interface Bdd extends DecisionDiagram {
     BitSet getSatisfyingAssignment(int node);
 
     /**
-     * Counts the number of satisfying assignments for the function represented by this node.
+     * Constructs the node representing the <i>composition</i> of the function represented by {@code
+     * node} with the functions represented by the entries of {@code variableNodes}. More formally, if
+     * {@code f(x_1, x_2, ..., x_n)} is the function represented by {@code node}, this method returns
+     * {@code f(f_1(x_1, ..., x_n), ..., f_n(x_1, ..., x_n))}, where {@code f_i =
+     * variableNodes[i]}}<p> The {@code variableNodes} array can contain less than {@code n}
+     * entries, then only the first variables are replaced. Furthermore, {@code placeholder} can be
+     * used as an entry to denote "don't replace this variable" (which semantically is the same as
+     * saying "replace this variable by itself"). Note that after the call the {@code placeholder}
+     * entries will be replaced by the actual corresponding variable nodes. </p>
+     *
+     * @param node
+     *     The node to be composed.
+     * @param variableMapping
+     *     The nodes of the functions with which each variable should be replaced.
+     *
+     * @return The node representing the composed function.
      */
-    BigInteger countSatisfyingAssignments(int node);
+    int compose(int node, int[] variableMapping);
 
     /**
-     * Counts the number of satisfying assignments for the function represented by this node,
-     * only considering variables in the {@code support}.
+     * Computes the restriction of the given {@code node}, where all variables specified by {@code
+     * restrictedVariables} are replaced by the value given in {@code restrictedVariableValues}.
+     * Formally, if {@code node} represents {@code f(x_1, ..., x_n)}, this method computes the node
+     * representing {@code f(x_1, ..., x_{i_1-1}, c_1, x_{i_1+1}, ..., x_{i_2-1}, c_2, x_{i_2+1}, ...,
+     * x_n}, where {@code i_k} are the elements of the {@code restrictedVariables} set and
+     * {@code c_k := restrictedVariableValues.get(i_k)}. This is semantically equivalent to calling
+     * compose where all specified variables are replaced by {@code true} or {@code false}, but
+     * slightly faster.
+     *
+     * @param node
+     *     The node to be restricted.
+     * @param restrictedVariables
+     *     The variables used in the restriction.
+     * @param restrictedVariableValues
+     *     The values of the restricted variables.
+     *
+     * @return The restricted node.
+     *
+     * @see #compose(int, int[])
      */
-    BigInteger countSatisfyingAssignments(int node, BitSet support);
+    int restrict(int node, BitSet restrictedVariables, BitSet restrictedVariableValues);
 
     /**
      * Returns an iterator over {@code all} satisfying assignments of the given node. In other words,
@@ -217,146 +307,4 @@ public interface Bdd extends DecisionDiagram {
      * @return The disjunction of specified variables.
      */
     int disjunction(BitSet variables);
-
-    /**
-     * Constructs the node representing {@code node1 AND node2}.
-     */
-    int and(int node1, int node2);
-
-    /**
-     * Constructs the node representing the <i>composition</i> of the function represented by {@code
-     * node} with the functions represented by the entries of {@code variableNodes}. More formally, if
-     * {@code f(x_1, x_2, ..., x_n)} is the function represented by {@code node}, this method returns
-     * {@code f(f_1(x_1, ..., x_n), ..., f_n(x_1, ..., x_n))}, where {@code f_i =
-     * variableNodes[i]}}<p> The {@code variableNodes} array can contain less than {@code n}
-     * entries, then only the first variables are replaced. Furthermore, {@code placeholder} can be
-     * used as an entry to denote "don't replace this variable" (which semantically is the same as
-     * saying "replace this variable by itself"). Note that after the call the {@code placeholder}
-     * entries will be replaced by the actual corresponding variable nodes. </p>
-     *
-     * @param node
-     *     The node to be composed.
-     * @param variableMapping
-     *     The nodes of the functions with which each variable should be replaced.
-     *
-     * @return The node representing the composed function.
-     */
-    int compose(int node, int[] variableMapping);
-
-    /**
-     * Constructs the node representing {@code node1 EQUIVALENT node2}.
-     */
-    int equivalence(int node1, int node2);
-
-    /**
-     * Constructs the node representing the function obtained by existential quantification of {@code
-     * node} with all variables specified by {@code quantifiedVariables}. Formally, let {@code f(x_1,
-     * ..., x_m)} be the function specified by {@code node} and {@code x_1, ..., x_m} all
-     * variables for which {@code quantifiedVariables} is set. This method then constructs {@code E x_1 E
-     * x_2 ... E x_n f(x_1, ..., x_m)}.
-     *
-     * @param node
-     *     The node representing the basis of the quantification.
-     * @param quantifiedVariables
-     *     The variables which should be quantified over.
-     *
-     * @return The node representing the quantification.
-     */
-    int exists(int node, BitSet quantifiedVariables);
-
-    /**
-     * Constructs the node representing the function obtained by forall quantification of {@code
-     * node} with all variables specified by {@code quantifiedVariables}. Formally, let {@code f(x_1,
-     * ..., x_m)} be the function specified by {@code node} and {@code x_1, ..., x_m} all
-     * variables for which {@code quantifiedVariables} is set. This method then constructs {@code A x_1 A
-     * x_2 ... A x_n f(x_1, ..., x_m)}.
-     *
-     * @param node
-     *     The node representing the basis of the quantification.
-     * @param quantifiedVariables
-     *     The variables which should be quantified over.
-     *
-     * @return The node representing the quantification.
-     */
-    int forall(int node, BitSet quantifiedVariables);
-
-    /**
-     * Constructs the node representing {@code IF {@code ifNode} THEN {@code thenNode} ELSE {@code
-     * elseNode}}.
-     */
-    int ifThenElse(int ifNode, int thenNode, int elseNode);
-
-    /**
-     * Constructs the node representing {@code node1 IMPLIES node2}.
-     */
-    int implication(int node1, int node2);
-
-    /**
-     * Checks whether the given {@code node1} implies {@code node2}, i.e. if every valuation under
-     * which the function represented by {@code node1} evaluates to true also evaluates to true on
-     * {@code node2}. This is equivalent to checking if {@link #implication(int, int)} with {@code
-     * node1} and {@code node2} as parameters is equal to {@link #trueNode()} and equal to checking
-     * whether {@code node1} equals {@code node1 OR node2}, but faster.
-     *
-     * <p><b>Note:</b> As many operations are cached, it may be even faster to use an alternative
-     * logical representation of implication depending on how the BDD is used before this invocation.
-     * E.g. if {@code node1 OR 2} has been computed already, checking if {@code {@code
-     * node1} == {@code node1} OR {@code node2}} is a constant time operation.</p>
-     *
-     * @param node1
-     *     The node representing the assumption.
-     * @param node2
-     *     The node representing the consequence.
-     *
-     * @return Whether {@code node1 IMPLIES node2} is a tautology.
-     */
-    boolean implies(int node1, int node2);
-
-    /**
-     * Constructs the node representing {@code NOT {@code node}}.
-     *
-     * @param node
-     *     The node to be negated.
-     *
-     * @return The negation of the given BDD.
-     */
-    int not(int node);
-
-    /**
-     * Constructs the node representing {@code node1 NAND node2}.
-     */
-    int notAnd(int node1, int node2);
-
-    /**
-     * Constructs the node representing {@code node1 OR node2}.
-     */
-    int or(int node1, int node2);
-
-    /**
-     * Computes the restriction of the given {@code node}, where all variables specified by {@code
-     * restrictedVariables} are replaced by the value given in {@code restrictedVariableValues}.
-     * Formally, if {@code node} represents {@code f(x_1, ..., x_n)}, this method computes the node
-     * representing {@code f(x_1, ..., x_{i_1-1}, c_1, x_{i_1+1}, ..., x_{i_2-1}, c_2, x_{i_2+1}, ...,
-     * x_n}, where {@code i_k} are the elements of the {@code restrictedVariables} set and
-     * {@code c_k := restrictedVariableValues.get(i_k)}. This is semantically equivalent to calling
-     * compose where all specified variables are replaced by {@code true} or {@code false}, but
-     * slightly faster.
-     *
-     * @param node
-     *     The node to be restricted.
-     * @param restrictedVariables
-     *     The variables used in the restriction.
-     * @param restrictedVariableValues
-     *     The values of the restricted variables.
-     *
-     * @return The restricted node.
-     *
-     * @see #compose(int, int[])
-     */
-    int restrict(int node, BitSet restrictedVariables, BitSet restrictedVariableValues);
-
-    /**
-     * Constructs the node representing {@code node1 XOR node2}.
-     */
-    int xor(int node1, int node2);
 }

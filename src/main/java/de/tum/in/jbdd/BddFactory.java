@@ -36,7 +36,11 @@ public final class BddFactory {
     }
 
     public static Bdd buildBdd(boolean iterative, BddConfiguration configuration) {
-        BddImpl bdd = new BddImpl(iterative, configuration);
-        return configuration.threadSafetyCheck() ? new CheckedBdd(bdd) : bdd;
+        return new BddImpl(iterative, configuration);
+    }
+
+
+    public static Mdd buildMdd(BddConfiguration configuration) {
+        return new MddImpl(configuration);
     }
 }

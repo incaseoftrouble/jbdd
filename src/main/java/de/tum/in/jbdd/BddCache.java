@@ -54,8 +54,9 @@ final class BddCache {
     private static final byte[] EMPTY_BYTE_ARRAY = new byte[0];
     private static final BigInteger[] EMPTY_BIGINT_ARRAY = new BigInteger[0];
 
-    private final BddImpl associatedBdd;
+    private final NodeTable associatedBdd;
     private final int placeholder;
+    private final BddConfiguration configuration;
     private final CacheStatistics binaryStatistics = new CacheStatistics();
     private final CacheStatistics satisfactionStatistics = new CacheStatistics();
     private final CacheStatistics ternaryStatistics = new CacheStatistics();
@@ -90,13 +91,13 @@ final class BddCache {
     private int lookupHash;
     private int lookupResult;
 
-    BddCache(BddImpl associatedBdd) {
+    BddCache(NodeTable associatedBdd, BddConfiguration configuration) {
         this.associatedBdd = associatedBdd;
         this.placeholder = associatedBdd.placeholder();
+        this.configuration = configuration;
         this.lookupHash = -1;
         this.lookupResult = placeholder;
 
-        BddConfiguration configuration = associatedBdd.getConfiguration();
         reallocateNegation();
         reallocateBinary();
         reallocateTernary();
@@ -134,8 +135,8 @@ final class BddCache {
     }
 
     boolean binarySymmetricWellOrdered(int node1, int node2) {
-        int node1var = associatedBdd.variable(node1);
-        int node2var = associatedBdd.variable(node2);
+        int node1var = associatedBdd.variableOf(node1);
+        int node2var = associatedBdd.variableOf(node2);
         return node1var < node2var || (node1var == node2var && node1 < node2);
     }
 
@@ -524,7 +525,7 @@ final class BddCache {
     }
 
     private void reallocateNegation() {
-        int size = associatedBdd.tableSize() / associatedBdd.getConfiguration().cacheNegationDivider();
+        int size = associatedBdd.tableSize() / configuration.cacheNegationDivider();
         boolean invalidate;
         if (size < 2 * negationKeyCount) {
             invalidate = true;
@@ -543,7 +544,7 @@ final class BddCache {
     }
 
     private void reallocateBinary() {
-        int size = associatedBdd.tableSize() / associatedBdd.getConfiguration().cacheBinaryDivider();
+        int size = associatedBdd.tableSize() / configuration.cacheBinaryDivider();
         if (size < 2 * binaryKeyCount) {
             Arrays.fill(binaryOp, NOT_AN_OPERATION);
         } else {
@@ -556,7 +557,7 @@ final class BddCache {
     }
 
     private void reallocateTernary() {
-        int size = associatedBdd.tableSize() / associatedBdd.getConfiguration().cacheTernaryDivider();
+        int size = associatedBdd.tableSize() / configuration.cacheTernaryDivider();
         boolean invalidate;
         if (size < 2 * ternaryKeyCount) {
             invalidate = true;
@@ -575,7 +576,7 @@ final class BddCache {
     }
 
     private void reallocateSatisfaction() {
-        int size = associatedBdd.tableSize() / associatedBdd.getConfiguration().cacheSatisfactionDivider();
+        int size = associatedBdd.tableSize() / configuration.cacheSatisfactionDivider();
         boolean invalidate;
         if (size < 2 * satisfactionKeyCount) {
             invalidate = true;
@@ -593,7 +594,7 @@ final class BddCache {
     }
 
     private void reallocateCompose() {
-        int size = associatedBdd.tableSize() / associatedBdd.getConfiguration().cacheComposeDivider();
+        int size = associatedBdd.tableSize() / configuration.cacheComposeDivider();
         if (size < 2 * composeKeyCount) {
             clearComposeCache();
         } else {
@@ -605,7 +606,7 @@ final class BddCache {
     }
 
     private void reallocateQuantification() {
-        int size = associatedBdd.tableSize() / associatedBdd.getConfiguration().cacheQuantificationDivider();
+        int size = associatedBdd.tableSize() / configuration.cacheQuantificationDivider();
         if (size < 2 * quantificationKeyCount) {
             clearQuantificationCache();
         } else {
