@@ -29,12 +29,9 @@
     <exclude name="MethodArgumentCouldBeFinal"/>
     <exclude name="LocalVariableCouldBeFinal"/>
     <exclude name="CommentDefaultAccessModifier"/>
-    <exclude name="DefaultPackage"/>
     <exclude name="ShortClassName"/>
-    <exclude name="AbstractNaming"/>
     <exclude name="TooManyStaticImports"/>
     <exclude name="GenericsNaming"/>
-    <exclude name="VariableNamingConventions"/>
     <exclude name="UselessParentheses"/>
     <exclude name="AtLeastOneConstructor"/>
     <exclude name="PrematureDeclaration"/>
@@ -82,10 +79,8 @@
     <exclude name="LoosePackageCoupling"/>
     <exclude name="NcssCount"/>
     <exclude name="TooManyMethods"/>
-    <exclude name="ExcessiveMethodLength"/>
     <exclude name="ExcessivePublicCount"/>
     <exclude name="ExcessiveParameterList"/>
-    <exclude name="ExcessiveClassLength"/>
     <exclude name="NPathComplexity"/>
     <exclude name="AvoidDeeplyNestedIfStmts"/>
     <exclude name="CognitiveComplexity"/>
@@ -98,14 +93,12 @@
 
   <rule ref="category/java/errorprone.xml">
     <exclude name="AvoidLiteralsInIfCondition"/>
-    <exclude name="DataflowAnomalyAnalysis"/>
     <exclude name="NullAssignment"/>
     <exclude name="AvoidFieldNameMatchingMethodName"/>
     <exclude name="UseLocaleWithCaseConversions"/>
     <exclude name="AvoidDuplicateLiterals"/>
     <exclude name="MissingSerialVersionUID"/>
     <exclude name="MissingStaticMethodInNonInstantiatableClass"/> <!-- Bug: Abstract class -->
-    <exclude name="CloneThrowsCloneNotSupportedException"/>
     <exclude name="ProperCloneImplementation"/>
     <exclude name="OverrideBothEqualsAndHashcode"/>
   </rule>
