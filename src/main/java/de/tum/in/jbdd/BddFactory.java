@@ -24,19 +24,7 @@ public final class BddFactory {
     }
 
     public static Bdd buildBdd(BddConfiguration configuration) {
-        return buildBddRecursive(configuration);
-    }
-
-    public static Bdd buildBddRecursive(BddConfiguration configuration) {
-        return buildBdd(false, configuration);
-    }
-
-    public static Bdd buildBddIterative(BddConfiguration configuration) {
-        return buildBdd(true, configuration);
-    }
-
-    public static Bdd buildBdd(boolean iterative, BddConfiguration configuration) {
-        BddImpl bdd = new BddImpl(iterative, configuration);
+        BddImpl bdd = new BddImpl(configuration);
         return configuration.threadSafetyCheck() ? new CheckedBdd(bdd) : bdd;
     }
 }

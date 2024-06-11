@@ -88,7 +88,7 @@ public interface Bdd extends DecisionDiagram {
     BigInteger countSatisfyingAssignments(int node, BitSet support);
 
     /**
-     * Returns an iterator over {@code all} satisfying assignments of the given node. In other words,
+     * Returns an iterator over all satisfying assignments of the given node. In other words,
      * this call is equivalent to
      * {@code
      *   Set&lt;BitSet&gt; solutions = new HashSet&lt;&gt;();
@@ -101,6 +101,8 @@ public interface Bdd extends DecisionDiagram {
      * }
      * where {@code powerSet} is the power set over all variables, i.e. all possible valuations.
      *
+     * <p>The solutions are generated in lexicographic ascending order.</p>
+     *
      * <p><b>Note:</b> The passed bit sets are modified in-place. If all solutions should be gathered
      * into a set or similar, they have to be cloned after each call to {@link Iterator#next()}.</p>
      */
@@ -111,6 +113,8 @@ public interface Bdd extends DecisionDiagram {
     /**
      * Executes the given action for each satisfying assignment of the function represented by
      * {@code node}.
+     *
+     * <p>The solutions are generated in lexicographic ascending order.</p>
      *
      * @param node
      *     The node whose solutions should be computed.
@@ -126,10 +130,13 @@ public interface Bdd extends DecisionDiagram {
     }
 
     /**
-     * Iteratively computes all (minimal) solutions of the function represented by {@code node} and
-     * executes the given {@code action} with it. The returned solutions are all assignments
-     * representing a path from node to {@code true} in the graph induced by the BDD structure.
-     * The solutions are generated in lexicographic ascending order.
+     * Executes the given {@code action} for all <em>minimal</em> solutions of the function represented by
+     * {@code node}.
+     *
+     * <p>Minimal solutions are all assignments representing a path from node to {@code true} in the graph induced
+     * by the BDD structure.</p>
+     *
+     * <p>The solutions are generated in lexicographic ascending order.</p>
      *
      * <p><b>Note:</b> The passed bit set is modified in-place. If all solutions should be gathered
      * into a set or similar, they have to be cloned after each call to the consumer.</p>
@@ -141,6 +148,10 @@ public interface Bdd extends DecisionDiagram {
      */
     default void forEachPath(int node, Consumer<? super BitSet> action) {
         forEachPath(node, (path, pathSupport) -> action.accept(path));
+    }
+
+    default void forEachPath(int node, BitSet relevantSet, Consumer<? super BitSet> action) {
+        forEachPath(node, relevantSet, (path, pathSupport) -> action.accept(path));
     }
 
     /**
@@ -159,6 +170,8 @@ public interface Bdd extends DecisionDiagram {
      *     The action to be performed on these solutions.
      */
     void forEachPath(int node, BiConsumer<BitSet, BitSet> action);
+
+    void forEachPath(int node, BitSet relevantSet, BiConsumer<BitSet, BitSet> action);
 
     /**
      * Creates the conjunction of all {@code variables}.
@@ -222,6 +235,11 @@ public interface Bdd extends DecisionDiagram {
      * Constructs the node representing {@code node1 AND node2}.
      */
     int and(int node1, int node2);
+
+    /**
+     * Constructs the node representing {@code node1 AND NOT node2}.
+     */
+    int andNot(int node1, int node2);
 
     /**
      * Constructs the node representing the <i>composition</i> of the function represented by {@code

@@ -17,10 +17,11 @@
 package de.tum.in.jbdd;
 
 import java.util.BitSet;
+import java.util.function.IntConsumer;
 
 public interface DecisionDiagram {
     /**
-     * A special reserved placeholder distinct from any possible node value, which may be used as a placeholder in some operations.
+     * A special reserved placeholder distinct from any possible pointer value, which may be used as a placeholder in some operations.
      * Needs to stay constant throughout the life of the diagram.
      *
      * @return A placeholder value
@@ -37,12 +38,12 @@ public interface DecisionDiagram {
     int variable(int node);
 
     /**
-     * Determines whether the given {@code node} represents a constant, i.e. {@code true} or {@code false}.
+     * Determines whether the given {@code node} represents a constant, e.g. {@code true} or {@code false}.
      *
      * @param node The node to be checked.
      * @return If the {@code node} represents a constant.
      */
-    boolean isLeaf(int node);
+    boolean isTerminal(int node);
 
     /**
      * Determines whether the given {@code node} represents a variable.
@@ -164,26 +165,35 @@ public interface DecisionDiagram {
      * @see #support(int)
      */
     default BitSet supportTo(int node, BitSet bitSet) {
-        BitSet filter = new BitSet(numberOfVariables());
-        filter.set(0, numberOfVariables());
-        return supportFilteredTo(node, bitSet, filter);
-    }
-
-    default BitSet supportFiltered(int node, BitSet filter) {
-        return supportFilteredTo(node, new BitSet(numberOfVariables()), filter);
+        forEachSupport(node, bitSet::set);
+        return bitSet;
     }
 
     /**
-     * Computes the <b>support</b> of the given {@code node} and writes it in the {@code bitSet}.
-     * Only considers variables in the given {@code filter}. Note that the {@code bitSet} is not
-     * cleared, the support variables are added to the set.
+     * Calls the given {@code action} for each variable in the support of {@code node} <em>at least</em> once.
+     *
+     * @param node The node whose support should be computed.
+     */
+    default void forEachSupport(int node, IntConsumer action) {
+        BitSet filter = new BitSet(numberOfVariables());
+        filter.set(0, numberOfVariables());
+        forEachSupportFiltered(node, filter, action);
+    }
+
+    default BitSet supportFiltered(int node, BitSet filter) {
+        BitSet bitSet = new BitSet(numberOfVariables());
+        forEachSupportFiltered(node, filter, bitSet::set);
+        return bitSet;
+    }
+
+    /**
+     * Calls the given {@code action} for each variable in the support of {@code node} <em>at least</em> once.
+     * Only considers variables in the given {@code filter}.
      *
      * @param node   The node whose support should be computed.
-     * @param bitSet The BitSet used to store the result.
-     * @return The given bitset, useful for chaining.
-     * @see #support(int)
+     * @see #forEachSupport(int, IntConsumer)
      */
-    BitSet supportFilteredTo(int node, BitSet bitSet, BitSet filter);
+    void forEachSupportFiltered(int node, BitSet filter, IntConsumer action);
 
     /**
      * Auxiliary function useful for updating node variables. It dereferences the inputs and

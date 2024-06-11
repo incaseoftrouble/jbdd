@@ -23,6 +23,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import javax.annotation.Nullable;
 
 public abstract class BddGcReferenceManager<V extends BddGcReferenceManager.BddContainer> {
     private static final Logger logger = Logger.getLogger(BddGcReferenceManager.class.getName());
@@ -37,15 +38,27 @@ public abstract class BddGcReferenceManager<V extends BddGcReferenceManager.BddC
         this.bdd = bdd;
     }
 
-    protected abstract V construct(int node);
+    @Nullable
+    protected V get(int node) {
+        V wrapper = nonGcObjects.get(node);
+
+        if (wrapper != null) {
+            return wrapper;
+        }
+
+        BddReference<V> reference = gcObjects.get(node);
+        return reference == null ? null : reference.get();
+    }
 
     // This is not thread safe!
-    V make(int node) {
+    protected V protect(V container) {
+        int node = container.node();
+
         // Root nodes and variables are exempt from GC but still canonical
-        if (bdd.isLeaf(node) || bdd.isVariableOrNegated(node)) {
+        if (bdd.isTerminal(node) || bdd.isVariableOrNegated(node)) {
             assert bdd.referenceCount(node) == -1 : reportReferenceCountMismatch(-1, bdd.referenceCount(node));
 
-            return nonGcObjects.computeIfAbsent(node, this::construct);
+            return nonGcObjects.merge(node, container, (oldW, newW) -> oldW);
         }
 
         BddReference<V> canonicalReference = gcObjects.get(node);
@@ -55,8 +68,8 @@ public abstract class BddGcReferenceManager<V extends BddGcReferenceManager.BddC
 
             bdd.reference(node);
         } else {
-            // The BDD already existed.
-            assert bdd.referenceCount(node) == 1 : reportReferenceCountMismatch(1, bdd.referenceCount(node));
+            // The BDD already existed -- Can have a reference for the BDD and its negation
+            assert bdd.referenceCount(node) <= 2 : reportReferenceCountMismatch(1, bdd.referenceCount(node));
 
             V canonicalNode = canonicalReference.get();
             if (canonicalNode == null) {
@@ -70,14 +83,13 @@ public abstract class BddGcReferenceManager<V extends BddGcReferenceManager.BddC
             }
         }
 
-        assert bdd.referenceCount(node) == 1;
+        assert bdd.referenceCount(node) == 1 || bdd.referenceCount(node) == 2;
         // Remove queued BDDs from the mapping.
         processReferenceQueue(node);
 
         // Insert BDD into mapping.
-        V container = construct(node);
         gcObjects.put(node, new BddReference<>(container, queue));
-        assert bdd.referenceCount(node) == 1;
+        assert bdd.referenceCount(node) == 1 || bdd.referenceCount(node) == 2;
         return container;
     }
 

@@ -44,9 +44,8 @@ final class BddSetFactoryImpl extends BddGcReferenceManager<BddSetFactoryImpl.Bd
         universe = make(bdd.trueNode());
     }
 
-    @Override
-    protected BddSetImpl construct(int node) {
-        return new BddSetImpl(this, node);
+    private BddSetImpl make(int node) {
+        return protect(new BddSetImpl(this, node));
     }
 
     private int variableNode(int variable) {

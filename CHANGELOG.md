@@ -1,6 +1,19 @@
 # 0.x
 
-## 0.6 (2023-06-12)
+## 0.7 
+
+### 0.7.0 (2024-XX-XX)
+
+* Implemented complement edges
+* Remove iterative implementation: On most benchmarks about ~10% slower, tedious to maintain, and increasing stack size is cheap
+* Slightly improved usability of automatic reference management
+* `forEachPath` now has a version with `support` as parameter (replacing the previous `highestVariable`)
+* `andNot` method and significant improvement of `compose` / `ifThenElse` in certain cases
+* Preserve cached values when possible (should provide notable improvements on some workloads)
+
+## 0.6
+
+### 0.6.0 (2023-06-12)
 
 * Major rewrite and simplification of the internal structure, overall ~1.5-2x runtime improvements
 * Switched to a dumber, much simpler hash function, which seems to be much faster in practice (another ~2x improvement on several benchmarks)
@@ -36,53 +49,53 @@
 
 ### 0.4.0 (2018-05-28)
 
- * Removed synchronization - access should be synchronized on a higher level
- * Added a solution iterator
+* Removed synchronization - access should be synchronized on a higher level
+* Added a solution iterator
 
 ## 0.3.x
 
 ### 0.3.2 (2018-02-16)
 
- * Fixed a stupid bug in `createVariables(int)`
+* Fixed a stupid bug in `createVariables(int)`
 
 ### 0.3.1 (2018-02-15)
 
- * Re-add non-null annotations
+* Re-add non-null annotations
 
 ### 0.3.0 (2018-02-15)
 
- * Added utility methods to `Bdd` (`createVariables(int)` and `getSatisfyingAssignment(int)`).
- * A synchronized BDD can now only be obtained via the `BddFactory`.
- * `Bdd#support` does not clear the passed BitSet anymore.
- * Reordered some code.
- * Update build infrastructure, drop `javax.annotations` and SpotBugs (waiting for the checker framework gradle plugin to mature).
+* Added utility methods to `Bdd` (`createVariables(int)` and `getSatisfyingAssignment(int)`).
+* A synchronized BDD can now only be obtained via the `BddFactory`.
+* `Bdd#support` does not clear the passed BitSet anymore.
+* Reordered some code.
+* Update build infrastructure, drop `javax.annotations` and SpotBugs (waiting for the checker framework gradle plugin to mature).
 
 ## 0.2.x
 
 ### 0.2.0 (2017-10-10)
 
- * Improved `forEachMinimalSolution` (don't use a complex iterator, but rather a simple recursion).
- * Added an adaption of `forEachMinimalSolution` where additionally the relevant variables of the solution are passed.
- * Added `forEachNonEmptyPath`, which is a partial version of the above `forEachMinimalSolution`.
- * Upgrade Gradle and the static analysis tools.
- * Removed Guava dependency (now only JRE is needed).
+* Improved `forEachMinimalSolution` (don't use a complex iterator, but rather a simple recursion).
+* Added an adaption of `forEachMinimalSolution` where additionally the relevant variables of the solution are passed.
+* Added `forEachNonEmptyPath`, which is a partial version of the above `forEachMinimalSolution`.
+* Upgrade Gradle and the static analysis tools.
+* Removed Guava dependency (now only JRE is needed).
 
 ## 0.1.x
 
 ### 0.1.3 (2017-09-27)
 
- * Fixed a synchronization issue, added some more convenience methods.
+* Fixed a synchronization issue, added some more convenience methods.
 
 ### 0.1.2 (2017-07-26)
 
- * Add a simple synchronization wrapper for the Bdd interface.
- * Removed the minimal solution iterator, since it can't be synchronized.
+* Add a simple synchronization wrapper for the Bdd interface.
+* Removed the minimal solution iterator, since it can't be synchronized.
 
 ### 0.1.1 (2017-06-24)
 
- * Add automated deployment.
- * Fixed the package name (`jbdd` instead of `jdd`).
+* Add automated deployment.
+* Fixed the package name (`jbdd` instead of `jdd`).
 
 ### 0.1.0 (2017-06-23)
 
- + Initial release.
+* Initial release.

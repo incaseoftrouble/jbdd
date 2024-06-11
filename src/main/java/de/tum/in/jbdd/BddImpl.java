@@ -27,9 +27,11 @@ import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.function.BiConsumer;
+import java.util.function.IntConsumer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.IntStream;
+import javax.annotation.Nullable;
 
 /* Implementation notes:
  * - Many of the methods are practically copy-paste of each other except for a few variables and
@@ -37,7 +39,6 @@ import java.util.stream.IntStream;
  * - Due to the implementation of all operations, variable numbers increase while descending the
  *   tree of a particular node.
  */
-// TODO Complement edges on high nodes
 @SuppressWarnings({
     "PMD.AvoidReassigningParameters",
     "PMD.AssignmentInOperand",
@@ -45,19 +46,22 @@ import java.util.stream.IntStream;
     "ReassignedVariable",
     "AssignmentToMethodParameter",
     "ValueOfIncrementOrDecrementUsed",
-    "NestedAssignment"
+    "NestedAssignment",
+    "SameParameterValue"
 })
 final class BddImpl implements Bdd {
-    // Use 0 as "not a node" to make re-allocations slightly more efficient
-    private static final int NOT_A_NODE = 0;
-    private static final int FIRST_NODE = 1;
-
     private static final Logger logger = Logger.getLogger(BddImpl.class.getName());
     private static final BigInteger TWO = BigInteger.ONE.add(BigInteger.ONE);
     private static final int[] EMPTY_INT_ARRAY = new int[0];
 
-    private static final int TRUE_NODE = -1;
-    private static final int FALSE_NODE = -2;
+    // Use 0 as "not a node" to make re-allocations slightly more efficient
+    private static final int NOT_A_NODE = 0;
+    private static final int FIRST_NODE = 1;
+    // Prepare for complement edges
+    private static final int TRUE_NODE = Integer.MAX_VALUE;
+    private static final int FALSE_NODE = complement(TRUE_NODE);
+
+    // Node metadata helpers
 
     /* Bits allocated for the reference counter */
     private static final int REFERENCE_COUNT_BIT_SIZE = 14;
@@ -74,6 +78,7 @@ final class BddImpl implements Bdd {
     private static final int MAXIMAL_NODE_COUNT = Integer.MAX_VALUE / 2 - 8;
 
     static {
+        //noinspection ConstantValue
         assert VARIABLE_BIT_SIZE + REFERENCE_COUNT_BIT_SIZE + 1 == Integer.SIZE;
     }
 
@@ -106,9 +111,12 @@ final class BddImpl implements Bdd {
     /* Current top of the work stack. */
     private int workStackIndex = 0;
 
-    /* Low and high successors of each node */
-    private int[] tree;
+    // Internal structure
+    // There seems to be no performance difference to packing these into one array
 
+    /* Low and high successors of each node */
+    private int[] low;
+    private int[] high;
     /* Stores the meta-data for BDD nodes, namely the variable number, reference count and a mask used
      * by various internal algorithms. These values are manipulated through static helper functions.
      *
@@ -128,33 +136,22 @@ final class BddImpl implements Bdd {
     private int[] hashToChainStart;
     private int[] hashChain;
 
-    // Iterative stack
-    private final boolean iterative;
-    private int[] cacheStackHash = EMPTY_INT_ARRAY;
-    private int[] cacheStackFirstArg = EMPTY_INT_ARRAY;
-    private int[] cacheStackSecondArg = EMPTY_INT_ARRAY;
-    private int[] cacheStackThirdArg = EMPTY_INT_ARRAY;
-    private int[] branchStackParentVar = EMPTY_INT_ARRAY;
-    private int[] branchStackFirstArg = EMPTY_INT_ARRAY;
-    private int[] branchStackSecondArg = EMPTY_INT_ARRAY;
-    private int[] branchStackThirdArg = EMPTY_INT_ARRAY;
-    private int[] markStack = EMPTY_INT_ARRAY;
-
     // Statistics
     private long createdNodes = 0;
     private long hashChainLookups = 0;
     private long hashChainLookupLength = 0;
-    private long growCount = 0;
-    private long garbageCollectionCount = 0;
+    private int growCount = 0;
+    private int partialCacheInvalidation = 0;
+    private int garbageCollectionCount = 0;
     private long garbageCollectedNodeCount = 0;
     private long garbageCollectionTime = 0;
 
-    BddImpl(boolean iterative, BddConfiguration configuration) {
+    BddImpl(BddConfiguration configuration) {
         this.configuration = configuration;
-        this.iterative = iterative;
 
         int initialSize = Math.max(Primes.nextPrime(configuration.initialSize()), MINIMUM_NODE_TABLE_SIZE);
-        tree = new int[2 * initialSize];
+        low = new int[initialSize];
+        high = new int[initialSize];
         nodeData = new int[initialSize];
         hashToChainStart = new int[initialSize];
         hashChain = new int[initialSize];
@@ -166,6 +163,7 @@ final class BddImpl implements Bdd {
 
         Arrays.fill(nodeData, dataMakeInvalid());
         // Arrays.fill(hashToChainStart, NOT_A_NODE);
+        assert Arrays.stream(hashToChainStart).allMatch(i -> i == NOT_A_NODE);
 
         // Just to ensure a fail-fast
         Arrays.fill(hashChain, 0, FIRST_NODE, Integer.MIN_VALUE);
@@ -180,31 +178,61 @@ final class BddImpl implements Bdd {
         numberOfVariables = 0;
     }
 
+    private static int complement(int node) {
+        return -node;
+    }
+
+    private static int complementIf(int node, boolean condition) {
+        return condition ? complement(node) : node;
+    }
+
+    private static boolean isComplemented(int node) {
+        return node < 0;
+    }
+
+    private static boolean isRegular(int node) {
+        return node > 0;
+    }
+
+    private static int regular(int node) {
+        return node < 0 ? -node : node;
+    }
+
+    private static boolean isTrue(int node, boolean lookingFor) {
+        return lookingFor ? (node == TRUE_NODE) : (node == FALSE_NODE);
+    }
+
+    private static boolean isFalse(int node, boolean lookingFor) {
+        return lookingFor ? (node == FALSE_NODE) : (node == TRUE_NODE);
+    }
+
     // Reference counting
 
     @Override
     public int referenceCount(int node) {
-        assert isNodeValidOrLeaf(node);
-        if (isLeaf(node)) {
-            return -1;
-        }
-        int metadata = nodeData[node];
-        if (dataIsSaturated(metadata)) {
-            return -1;
-        }
-        return dataGetReferenceCount(metadata);
+        return referenceCountNode(regular(node));
+    }
+
+    private int referenceCountNode(int node) {
+        assert isNodeValidOrTerminal(node) && isRegular(node);
+        return node == TRUE_NODE ? -1 : dataGetReferenceCountOrSaturated(nodeData[node]);
     }
 
     @Override
     public int reference(int node) {
-        assert isNodeValidOrLeaf(node);
-        if (isLeaf(node)) {
-            return node;
+        referenceNode(regular(node));
+        return node;
+    }
+
+    private void referenceNode(int node) {
+        assert isNodeValidOrTerminal(node) && isRegular(node);
+        if (node == TRUE_NODE) {
+            return;
         }
         int metadata = nodeData[node];
         int referenceCount = dataGetReferenceCountUnsafe(metadata);
         if (referenceCount == REFERENCE_COUNT_SATURATED) {
-            return node;
+            return;
         }
         assert 0 <= dataGetReferenceCount(metadata);
 
@@ -213,19 +241,23 @@ final class BddImpl implements Bdd {
         if (node > biggestReferencedNode) {
             biggestReferencedNode = node;
         }
-        return node;
     }
 
     @Override
     public int dereference(int node) {
-        assert isNodeValidOrLeaf(node);
-        if (isLeaf(node)) {
-            return node;
+        dereferenceNode(regular(node));
+        return node;
+    }
+
+    private void dereferenceNode(int node) {
+        assert isNodeValidOrTerminal(node) && isRegular(node);
+        if (node == TRUE_NODE) {
+            return;
         }
         int metadata = nodeData[node];
         int referenceCount = dataGetReferenceCountUnsafe(metadata);
         if (referenceCount == REFERENCE_COUNT_SATURATED) {
-            return node;
+            return;
         }
         assert referenceCount > 0;
         if (referenceCount == 1) {
@@ -246,7 +278,6 @@ final class BddImpl implements Bdd {
             }
         }
         nodeData[node] = dataDecreaseReferenceCount(metadata);
-        return node;
     }
 
     /**
@@ -268,7 +299,7 @@ final class BddImpl implements Bdd {
     }
 
     int saturateNode(int node) {
-        assert isNodeValidOrLeaf(node);
+        assert isRegular(node);
         if (node > biggestReferencedNode) {
             biggestReferencedNode = node;
         }
@@ -284,9 +315,13 @@ final class BddImpl implements Bdd {
      * @return Whether the node is saturated
      * @see #saturateNode(int)
      */
-    public boolean isNodeSaturated(int node) {
-        assert isNodeValidOrLeaf(node);
-        return isLeaf(node) || dataIsSaturated(nodeData[node]);
+    public boolean isSaturated(int node) {
+        return isSaturatedNode(regular(node));
+    }
+
+    private boolean isSaturatedNode(int node) {
+        assert isRegular(node) && isNodeValidOrTerminal(node);
+        return node == TRUE_NODE || dataIsSaturated(nodeData[regular(node)]);
     }
 
     // Memory management
@@ -302,7 +337,7 @@ final class BddImpl implements Bdd {
      */
     public int forceGc() {
         int freedNodes = doGarbageCollection(0);
-        cache.invalidate();
+        assert freedNodes >= 0 && isNoneMarked();
         return freedNodes;
     }
 
@@ -310,42 +345,57 @@ final class BddImpl implements Bdd {
      * Tries to free space by garbage collection and, if that does not yield enough free nodes,
      * re-sizes the table, recreating hashes.
      *
-     * @return Whether the table size has changed.
+     * @return Whether the table size has changed (and thus hashes have to be re-computed).
      */
     boolean ensureCapacity() {
         assert check();
 
+        int currentSize = tableSize();
         if (configuration.useGarbageCollection() && approximateDeadNodeCount > 0) {
             logger.log(Level.FINE, "Running GC on {0} has size {1} and approximately {2} dead nodes", new Object[] {
-                this, tableSize(), approximateDeadNodeCount
+                this, currentSize, approximateDeadNodeCount
             });
 
             @SuppressWarnings("NumericCastThatLosesPrecision")
-            int minimumFreeNodeCount = (int) (tableSize() * configuration.minimumFreeNodePercentageAfterGc());
+            // If we only can free few nodes, it is not worth the effort
+            int minimumFreeNodeCount = (int) (currentSize * 0.3);
+
+            // Leaves all referenced nodes marked
             int clearedNodes = doGarbageCollection(minimumFreeNodeCount);
             if (clearedNodes == -1) {
                 logger.log(Level.FINE, "Not enough free nodes");
+
+                // Clear marks and free all unreferenced nodes
+                for (int node = biggestValidNode; node >= FIRST_NODE; node--) {
+                    int metadata = nodeData[node];
+                    int cleared = dataClearMark(metadata);
+                    if (metadata != cleared) {
+                        nodeData[node] = cleared;
+                    } else {
+                        if (node == biggestValidNode) {
+                            biggestValidNode--;
+                        }
+                        nodeData[node] = dataMakeInvalid();
+                    }
+                }
             } else {
                 logger.log(Level.FINE, "Collected {0} nodes", clearedNodes);
-
-                // Force all caches to be wiped out
-                // TODO Could do partial invalidation here
-                cache.invalidate();
+                unMarkAll();
                 return false;
             }
         }
 
         growCount += 1;
-        int oldSize = tableSize();
         @SuppressWarnings("NumericCastThatLosesPrecision")
-        int newSize =
-                Math.min(MAXIMAL_NODE_COUNT, Primes.nextPrime((int) Math.ceil(oldSize * configuration.growthFactor())));
-        assert oldSize < newSize : "Got new size " + newSize + " with old size " + oldSize;
+        int newSize = Math.min(
+                MAXIMAL_NODE_COUNT, Primes.nextPrime((int) Math.ceil(currentSize * configuration.growthFactor())));
+        assert currentSize < newSize : "Got new size " + newSize + " with old size " + currentSize;
 
         // Could not free enough space by GC, start growing
-        logger.log(Level.FINE, "Growing the table of {0} from {1} to {2}", new Object[] {this, oldSize, newSize});
+        logger.log(Level.FINE, "Growing the table of {0} from {1} to {2}", new Object[] {this, currentSize, newSize});
 
-        tree = Arrays.copyOf(tree, 2 * newSize);
+        low = Arrays.copyOf(low, newSize);
+        high = Arrays.copyOf(high, newSize);
         nodeData = Arrays.copyOf(this.nodeData, newSize); // NOPMD
         hashChain = Arrays.copyOf(this.hashChain, newSize); // NOPMD
         // We need to re-build hashToChainStart completely
@@ -360,19 +410,19 @@ final class BddImpl implements Bdd {
         int[] hashChain = this.hashChain;
 
         // Invalidate the new nodes
-        Arrays.fill(nodeData, oldSize, newSize, dataMakeInvalid());
+        Arrays.fill(nodeData, currentSize, newSize, dataMakeInvalid());
 
-        int firstFreeNode = oldSize;
-        int freeNodeCount = newSize - oldSize;
+        int firstFreeNode = currentSize;
+        int freeNodeCount = newSize - currentSize;
 
         // Update the hash references and free nodes chain of the old nodes
         // Reverse direction to build the downward chain towards first free node
 
         hashChain[newSize - 1] = FIRST_NODE;
-        for (int hash = newSize - 2; hash >= oldSize; hash--) {
+        for (int hash = newSize - 2; hash >= currentSize; hash--) {
             hashChain[hash] = hash + 1;
         }
-        for (int hash = oldSize - 1; hash >= FIRST_NODE; hash--) {
+        for (int hash = currentSize - 1; hash >= FIRST_NODE; hash--) {
             int data = nodeData[hash];
             if (!dataIsValid(data)) {
                 hashChain[hash] = firstFreeNode;
@@ -381,7 +431,7 @@ final class BddImpl implements Bdd {
         }
 
         // Need a second pass to build the existing nodes chain
-        for (int node = oldSize - 1; node >= FIRST_NODE; node--) {
+        for (int node = currentSize - 1; node >= FIRST_NODE; node--) {
             int data = nodeData[node];
             if (dataIsValid(data)) {
                 connectHashList(node, hashNode(node, data));
@@ -398,7 +448,7 @@ final class BddImpl implements Bdd {
 
         assert check();
 
-        cache.invalidate();
+        cache.tableSizeChanged();
         logger.log(Level.FINE, "Finished growing the table");
         return true;
     }
@@ -410,7 +460,7 @@ final class BddImpl implements Bdd {
         int referencedNodes = 0;
         for (int i = 0; i < workStackIndex; i++) {
             int node = workStack[i];
-            if (!isLeaf(node) && isNodeValid(node)) {
+            if (!isTerminal(node) && isNodeValid(node)) {
                 referencedNodes += markAllBelow(node);
             }
         }
@@ -429,13 +479,12 @@ final class BddImpl implements Bdd {
 
         int freeNodeCount = (tableSize() - FIRST_NODE) - referencedNodes;
         if (freeNodeCount < minimumFreeNodeCount) {
-            unMarkAll();
             return -1;
         }
 
         // Clear chain starts (we need to rebuild them) and push referenced nodes on the mark stack.
         // TODO Can we omit that complete invalidation / re-use the existing chains? Should be easy enough - its just
-        // open hashing
+        //   closed hashing
         Arrays.fill(hashToChainStart, NOT_A_NODE);
 
         int previousFreeNodes = this.freeNodeCount;
@@ -473,30 +522,45 @@ final class BddImpl implements Bdd {
         this.freeNodeCount = freeNodeCount;
         approximateDeadNodeCount = 0;
 
-        assert check();
-
         int collectedNodes = freeNodeCount - previousFreeNodes;
+
+        // Delete cache entries which are no longer valid
+        // If we reclaimed a lot of nodes, we won't be able to save much
+        if (configuration.useCachePartialInvalidate() && collectedNodes < tableSize() / 2) {
+            this.partialCacheInvalidation += 1;
+            cache.partialInvalidate();
+        } else {
+            cache.tableSizeChanged();
+        }
+
+        this.garbageCollectionTime += System.currentTimeMillis() - startTimestamp;
         this.garbageCollectedNodeCount += collectedNodes;
         this.garbageCollectionCount += 1;
-        this.garbageCollectionTime += System.currentTimeMillis() - startTimestamp;
+
+        assert check();
+
         return collectedNodes;
     }
 
     private int hashNode(int node, int metadata) {
-        assert dataIsValid(metadata);
-        return hash(dataGetVariable(metadata), low(node), high(node));
+        assert isRegular(node) && dataIsValid(metadata);
+        return hash(dataGetVariable(metadata), lowOfNode(node), highOfNode(node));
     }
 
     private int hash(int variable, int low, int high) {
-        int tableSize = tableSize();
-        int hash = HashUtil.hash(low, high, variable) % tableSize;
-        if (hash < 0) {
-            return hash + tableSize;
+        // TODO This silly "hash function" seems to be significantly better than any "proper" one and I have no idea why
+        //   Conjecture: This leads to "locality" in the hash chain?
+        int hash;
+        if (low < 0) {
+            hash = -low + high + variable;
+        } else {
+            hash = low + high + variable;
         }
-        return hash;
+        return (hash < 0 ? ~hash : hash) % tableSize();
     }
 
     private void connectHashList(int node, int hash) {
+        assert isRegular(node);
         assert isNodeValid(node) && 0 <= hash && hash == hashNode(node, nodeData[node]);
         int hashChainStart = hashToChainStart[hash];
         int[] hashChain = this.hashChain;
@@ -505,6 +569,7 @@ final class BddImpl implements Bdd {
         int chainLength = 1;
         int currentChain = hashChainStart;
         while (currentChain != NOT_A_NODE) {
+            assert isRegular(currentChain);
             if (currentChain == node) {
                 // The node is already contained in the hash list
                 return;
@@ -524,7 +589,7 @@ final class BddImpl implements Bdd {
     // Marking
 
     private boolean isNodeMarked(int node) {
-        assert isNodeValid(node);
+        assert isRegular(node) && isNodeValid(node);
         return dataIsMarked(nodeData[node]);
     }
 
@@ -532,16 +597,16 @@ final class BddImpl implements Bdd {
         return findFirstMarked() == NOT_A_NODE;
     }
 
-    private boolean isNoneMarkedBelowRecursive(int node) {
-        return isLeaf(node)
-                || !isNodeMarked(node)
-                        && isNoneMarkedBelowRecursive(low(node))
-                        && isNoneMarkedBelowRecursive(high(node));
+    private boolean isNoneMarkedBelow(int node) {
+        assert isRegular(node);
+        return node == TRUE_NODE
+                || !isNodeMarked(node) && isNoneMarkedBelow(regular(low(node))) && isNoneMarkedBelow(high(node));
     }
 
-    private boolean isAllMarkedBelowRecursive(int node) {
-        return isLeaf(node)
-                || isNodeMarked(node) && isAllMarkedBelowRecursive(low(node)) && isAllMarkedBelowRecursive(high(node));
+    private boolean isAllMarkedBelow(int node) {
+        assert isRegular(node);
+        return node == TRUE_NODE
+                || isNodeMarked(node) && isAllMarkedBelow(regular(low(node))) && isAllMarkedBelow(high(node));
     }
 
     private int findFirstMarked() {
@@ -556,61 +621,8 @@ final class BddImpl implements Bdd {
     private int markAllBelow(int node) {
         /* The algorithm does not descend into trees whose root is marked, hence at the start of the
          * algorithm, every marked node must have all of its descendants marked to ensure correctness. */
-        assert isNodeValidOrLeaf(node);
-        return iterative ? markAllBelowIterative(node) : markAllBelowRecursive(node);
-    }
-
-    private int markAllBelowIterative(int node) {
-        int[] tree = this.tree;
-        int[] nodeData = this.nodeData;
-        int[] stack = this.markStack;
-
-        int stackIndex = 0;
-        int unmarkedCount = 0;
-        int current = node;
-        while (true) {
-            while (!isLeaf(current)) {
-                int metadata = nodeData[current];
-                int markedData = dataSetMark(metadata);
-
-                if (metadata == markedData) {
-                    // Node was marked
-                    break;
-                }
-
-                nodeData[current] = markedData;
-                unmarkedCount++;
-
-                stack[stackIndex] = tree[2 * current + 1];
-                stackIndex += 1;
-
-                current = tree[2 * current];
-            }
-
-            if (stackIndex == 0) {
-                break;
-            }
-            stackIndex -= 1;
-            current = stack[stackIndex];
-        }
-        return unmarkedCount;
-    }
-
-    private int markAllBelowRecursive(int node) {
-        assert isNodeValidOrLeaf(node);
-
-        if (isLeaf(node)) {
-            return 0;
-        }
-
-        int metadata = nodeData[node];
-        int markedData = dataSetMark(metadata);
-
-        if (metadata == markedData) {
-            return 0;
-        }
-        nodeData[node] = markedData;
-        return 1 + markAllBelowRecursive(low(node)) + markAllBelowRecursive(high(node));
+        assert isNodeValidOrTerminal(node);
+        return setMarkAllBelowRecursive(regular(node), true);
     }
 
     private int unMarkAll() {
@@ -635,62 +647,27 @@ final class BddImpl implements Bdd {
     }
 
     private int unMarkAllBelow(int node) {
-        assert isNodeValidOrLeaf(node) && isAllMarkedBelowRecursive(node);
-        int unmarkedCount = iterative ? unMarkAllBelowIterative(node) : unmarkAllBelowRecursive(node);
-        assert isNoneMarkedBelowRecursive(node);
+        assert isNodeValidOrTerminal(node) && isAllMarkedBelow(regular(node));
+        int unmarkedCount = setMarkAllBelowRecursive(regular(node), false);
+        assert isNoneMarkedBelow(regular(node));
         return unmarkedCount;
     }
 
-    private int unMarkAllBelowIterative(int node) {
-        int[] nodeData = this.nodeData;
-        int[] tree = this.tree;
-        int[] stack = this.markStack;
+    private int setMarkAllBelowRecursive(int node, boolean mark) {
+        assert isRegular(node) && isNodeValidOrTerminal(node);
 
-        int stackIndex = 0;
-        int unmarkedCount = 0;
-        int current = node;
-        while (true) {
-            while (!isLeaf(current)) {
-                int metadata = nodeData[current];
-                int unmarkedData = dataClearMark(metadata);
-
-                if (metadata == unmarkedData) {
-                    // Node was not marked
-                    break;
-                }
-
-                nodeData[current] = unmarkedData;
-                unmarkedCount++;
-
-                stack[stackIndex] = tree[2 * current + 1];
-                stackIndex += 1;
-                current = tree[2 * current];
-            }
-
-            if (stackIndex == 0) {
-                break;
-            }
-            stackIndex -= 1;
-            current = stack[stackIndex];
-        }
-        return unmarkedCount;
-    }
-
-    private int unmarkAllBelowRecursive(int node) {
-        assert isNodeValidOrLeaf(node);
-
-        if (isLeaf(node)) {
+        if (node == TRUE_NODE) {
             return 0;
         }
 
         int metadata = nodeData[node];
-        int unmarkedData = dataClearMark(metadata);
+        int modifiedData = dataSetMark(metadata, mark);
 
-        if (metadata == unmarkedData) {
+        if (metadata == modifiedData) {
             return 0;
         }
-        nodeData[node] = unmarkedData;
-        return 1 + unmarkAllBelowRecursive(low(node)) + unmarkAllBelowRecursive(high(node));
+        nodeData[node] = modifiedData;
+        return 1 + setMarkAllBelowRecursive(regular(low(node)), mark) + setMarkAllBelowRecursive(high(node), mark);
     }
 
     public int tableSize() {
@@ -733,17 +710,6 @@ final class BddImpl implements Bdd {
         workStackIndex -= amount;
     }
 
-    private int peekWorkStack() {
-        assert !isWorkStackEmpty();
-        return workStack[workStackIndex - 1];
-    }
-
-    private int peekAndPopWorkStack() {
-        assert !isWorkStackEmpty();
-        workStackIndex -= 1;
-        return workStack[workStackIndex];
-    }
-
     /**
      * Pushes the given node onto the stack. While a node is on the work stack, it will not be garbage
      * collected. Hence, elements should be popped from the stack as soon as they are not used
@@ -754,7 +720,7 @@ final class BddImpl implements Bdd {
      * @see #popWorkStack(int)
      */
     int pushToWorkStack(int node) {
-        assert isNodeValidOrLeaf(node);
+        assert isNodeValidOrTerminal(node);
         ensureWorkStackSize(workStackIndex);
         workStack[workStackIndex] = node;
         workStackIndex += 1;
@@ -765,99 +731,125 @@ final class BddImpl implements Bdd {
 
     private int makeNode(int variable, int low, int high) {
         assert 0 <= variable && variable < INVALID_NODE_VARIABLE;
-        assert (isLeaf(low) || variable < variable(low));
-        assert (isLeaf(high) || variable < variable(high));
+        assert isTerminal(low) || variable < variable(low);
+        assert isTerminal(high) || variable < variable(high);
 
-        if (low == high) {
+        if (high == low) {
+            // If both are complemented; we complement both and the complement the result
             return low;
         }
 
-        createdNodes += 1;
+        int highNode = regular(high);
+        boolean isHighComplement = high < highNode;
+        int lowNode = complementIf(low, isHighComplement);
 
-        int[] tree = this.tree;
+        int[] lowEdge = this.low;
+        int[] highEdge = this.high;
         int[] nodeData = this.nodeData;
         int[] hashChain = this.hashChain;
 
-        int hash = hash(variable, low, high);
+        int hash = hash(variable, lowNode, highNode);
         int currentLookupNode = hashToChainStart[hash];
         assert currentLookupNode < tableSize() : "Invalid previous entry for " + hash;
 
-        // Search for the node in the hash chain
         int chainLookups = 1;
+        this.hashChainLookups += 1;
+        // Search for the node in the hash chain
         while (currentLookupNode != NOT_A_NODE) {
             if ((nodeData[currentLookupNode] >>> VARIABLE_OFFSET) == variable
-                    && tree[currentLookupNode * 2] == low
-                    && tree[currentLookupNode * 2 + 1] == high) {
-                return currentLookupNode;
+                    && lowEdge[currentLookupNode] == lowNode
+                    && highEdge[currentLookupNode] == highNode) {
+                this.hashChainLookupLength += chainLookups;
+                return complementIf(currentLookupNode, isHighComplement);
             }
-            int next = hashChain[currentLookupNode];
-            assert next != currentLookupNode;
-            currentLookupNode = next;
+            assert currentLookupNode != hashChain[currentLookupNode];
+            currentLookupNode = hashChain[currentLookupNode];
             chainLookups += 1;
         }
         this.hashChainLookupLength += chainLookups;
-        this.hashChainLookups += 1;
 
-        // Check we have enough space to add the node
-        assert freeNodeCount > 0;
-        if (freeNodeCount == 1) {
-            // We need a starting point for the free chain node, hence grow if only one node is remaining
-            // instead of occupying that node
-            // TODO Instead, we should try to clear / grow if freeNodes < load * total size, so that the
-            //  hash table is less pressured
+        /*
+        else if (approximateDeadNodeCount > 0.1 * tableSize() && freeNodeCount < 0.1 * tableSize()) {
+            tryGc();
+        }
+         */
+
+        if (freeNodeCount <= tableSize() / 4) {
+            // The hash table is very pressured, re-allocate
             if (ensureCapacity()) { // NOPMD
                 // Table size has changed, hence re-hash
-                hash = hash(variable, low, high);
+                hash = hash(variable, lowNode, highNode);
             }
         }
 
-        // Here we need to use this.tree etc. since we may have GC'd in between
+        // Here we need to use this.low etc. since we may have GC'd in between
 
         // Take next free node
+        assert freeNodeCount > 0;
+        createdNodes += 1;
         int freeNode = firstFreeNode;
-        firstFreeNode = this.hashChain[firstFreeNode];
+        firstFreeNode = this.hashChain[freeNode];
         freeNodeCount--;
-        assert !isNodeValidOrLeaf(freeNode) : "Overwriting existing node " + freeNode;
+        assert !isNodeValidOrTerminal(freeNode) : "Overwriting existing node " + freeNode;
         assert FIRST_NODE <= firstFreeNode && firstFreeNode < tableSize() : "Invalid free node " + firstFreeNode;
 
         // Adjust and write node
-        this.tree[2 * freeNode] = low;
-        this.tree[2 * freeNode + 1] = high;
+        this.low[freeNode] = lowNode;
+        this.high[freeNode] = highNode;
         this.nodeData[freeNode] = variable << VARIABLE_OFFSET;
         if (biggestValidNode < freeNode) {
             biggestValidNode = freeNode;
         }
         connectHashList(freeNode, hash);
-        return freeNode;
+        return complementIf(freeNode, isHighComplement);
     }
 
     @Override
     public int low(int node) {
-        assert isNodeValid(node);
-        return tree[2 * node];
+        return lowOfNode(regular(node));
+    }
+
+    private int lowOfNode(int node) {
+        assert isRegular(node) && isNodeValid(node);
+        return low[node];
+    }
+
+    private int lowC(int node, boolean complement) {
+        return complementIf(low(node), complement);
     }
 
     @Override
     public int high(int node) {
-        assert isNodeValid(node);
-        return tree[2 * node + 1];
+        return highOfNode(regular(node));
+    }
+
+    private int highOfNode(int node) {
+        assert isRegular(node) && isNodeValid(node);
+        return high[node];
+    }
+
+    private int highC(int node, boolean complement) {
+        return complementIf(high(node), complement);
     }
 
     @Override
     public int variable(int node) {
-        assert isNodeValid(node);
-        return dataGetVariable(nodeData[node]);
+        return variableOfNode(regular(node));
+    }
+
+    private int variableOfNode(int node) {
+        assert isRegular(node) && isNodeValid(node);
+        return dataGetVariable(nodeData[regular(node)]);
     }
 
     @Override
-    public boolean isLeaf(int node) {
-        assert -2 <= node && node < tableSize();
-        return node < 0;
+    public boolean isTerminal(int node) {
+        return node == TRUE_NODE || node == FALSE_NODE;
     }
 
     public boolean isNodeValid(int node) {
-        assert -2 <= node && node < tableSize();
-        return FIRST_NODE <= node && node <= biggestValidNode && dataIsValid(nodeData[node]);
+        int nodeRegular = regular(node);
+        return FIRST_NODE <= nodeRegular && nodeRegular <= biggestValidNode && dataIsValid(nodeData[nodeRegular]);
     }
 
     /**
@@ -866,11 +858,10 @@ final class BddImpl implements Bdd {
      *
      * @param node The node to be checked.
      * @return If {@code} is valid or root node.
-     * @see #isLeaf(int)
+     * @see #isTerminal(int)
      */
-    public boolean isNodeValidOrLeaf(int node) {
-        assert -2 <= node && node < tableSize();
-        return isLeaf(node) || isNodeValid(node);
+    public boolean isNodeValidOrTerminal(int node) {
+        return isTerminal(node) || isNodeValid(node);
     }
 
     // Variables and base nodes
@@ -904,7 +895,6 @@ final class BddImpl implements Bdd {
     @Override
     public int createVariable() {
         int variableNode = saturateNode(makeNode(numberOfVariables, FALSE_NODE, TRUE_NODE));
-        saturateNode(makeNode(numberOfVariables, TRUE_NODE, FALSE_NODE));
 
         if (numberOfVariables == variableNodes.length) {
             variableNodes = Arrays.copyOf(variableNodes, variableNodes.length * 2);
@@ -913,9 +903,6 @@ final class BddImpl implements Bdd {
         numberOfVariables++;
 
         cache.variablesChanged();
-        if (iterative) {
-            growStacks();
-        }
         ensureWorkStackSize(numberOfVariables * 2);
 
         return variableNode;
@@ -941,16 +928,12 @@ final class BddImpl implements Bdd {
             int variable = numberOfVariables + i;
 
             int variableNode = saturateNode(makeNode(variable, FALSE_NODE, TRUE_NODE));
-            saturateNode(makeNode(variable, TRUE_NODE, FALSE_NODE));
             newVariableNodes[i] = variableNode;
             this.variableNodes[variable] = variableNode;
         }
         numberOfVariables += count;
 
         cache.variablesChanged();
-        if (iterative) {
-            growStacks();
-        }
         ensureWorkStackSize(numberOfVariables * 2);
 
         return newVariableNodes;
@@ -958,34 +941,23 @@ final class BddImpl implements Bdd {
 
     @Override
     public boolean isVariable(int node) {
-        if (isLeaf(node)) {
-            return false;
-        }
-        return low(node) == FALSE_NODE && high(node) == TRUE_NODE;
+        return !isTerminal(node) && isRegular(node) && low(node) == FALSE_NODE && high(node) == TRUE_NODE;
     }
 
     @Override
     public boolean isVariableNegated(int node) {
-        if (isLeaf(node)) {
-            return false;
-        }
-        return low(node) == TRUE_NODE && high(node) == FALSE_NODE;
+        return isVariable(complement(node));
     }
 
     @Override
     public boolean isVariableOrNegated(int node) {
-        assert isNodeValidOrLeaf(node);
-        if (isLeaf(node)) {
-            return false;
-        }
-        int low = low(node);
-        int high = high(node);
-        return (low == FALSE_NODE && high == TRUE_NODE) || (low == TRUE_NODE && high == FALSE_NODE);
+        assert isNodeValidOrTerminal(node);
+        return isVariable(regular(node));
     }
 
     // Reading
 
-    BddConfiguration getConfiguration() {
+    public BddConfiguration configuration() {
         return configuration;
     }
 
@@ -1023,7 +995,7 @@ final class BddImpl implements Bdd {
      * @return The number of non-leaf nodes below {@code node}.
      */
     public int nodeCount(int node) {
-        assert isNodeValidOrLeaf(node);
+        assert isNodeValidOrTerminal(node);
         assert isNoneMarked();
 
         int count = markAllBelow(node);
@@ -1045,63 +1017,88 @@ final class BddImpl implements Bdd {
      * @see #nodeCount(int)
      */
     public int approximateNodeCount(int node) {
-        assert isNodeValidOrLeaf(node);
-        if (isLeaf(node)) {
-            return 0;
-        }
-        return 1 + approximateNodeCount(low(node)) + approximateNodeCount(high(node));
+        return approximateNodeCountRecursive(regular(node));
+    }
+
+    private int approximateNodeCountRecursive(int node) {
+        assert isRegular(node) && isNodeValidOrTerminal(node);
+        return isTerminal(node)
+                ? 0
+                : 1 + approximateNodeCountRecursive(regular(low(node))) + approximateNodeCountRecursive(high(node));
     }
 
     @Override
     public boolean evaluate(int node, boolean[] assignment) {
-        int current = node;
-        while (current >= FIRST_NODE) {
-            assert isNodeValid(current);
-            current = assignment[variable(current)] ? high(current) : low(current);
+        int current = regular(node);
+        boolean lookingFor = current == node;
+        while (current != TRUE_NODE) {
+            assert isNodeValid(current) && isRegular(current);
+            if (assignment[variableOfNode(current)]) {
+                current = high(current);
+            } else {
+                int low = low(current);
+                current = regular(low);
+                if (current != low) {
+                    lookingFor = !lookingFor;
+                }
+            }
         }
-        assert isLeaf(current);
-        return current == TRUE_NODE;
+        return lookingFor;
     }
 
     @Override
     public boolean evaluate(int node, BitSet assignment) {
-        int current = node;
-        while (current >= FIRST_NODE) {
+        int current = regular(node);
+        boolean lookingFor = current == node;
+        while (current != TRUE_NODE) {
             assert isNodeValid(current);
-            current = assignment.get(variable(current)) ? high(current) : low(current);
+            if (assignment.get(variableOfNode(current))) {
+                current = high(current);
+            } else {
+                int lowNode = low(current);
+                current = regular(lowNode);
+                if (current != lowNode) {
+                    lookingFor = !lookingFor;
+                }
+            }
         }
-        assert isLeaf(current);
-        return current == TRUE_NODE;
+        return lookingFor;
     }
 
     @Override
     public BitSet getSatisfyingAssignment(int node) {
-        assert isNodeValidOrLeaf(node);
+        assert isNodeValidOrTerminal(node);
 
         if (node == FALSE_NODE) {
             throw new NoSuchElementException("False has no solution");
         }
 
         BitSet path = new BitSet(numberOfVariables);
-        int currentNode = node;
-        while (currentNode != TRUE_NODE) {
-            int lowNode = low(currentNode);
-            if (lowNode == FALSE_NODE) {
-                int highNode = high(currentNode);
-                int variable = variable(currentNode);
+        int current = regular(node);
+        boolean lookingFor = current == node;
+
+        while (current != TRUE_NODE) {
+            int lowNode = lowOfNode(current);
+            if (isTrue(lowNode, !lookingFor)) {
+                int highNode = highOfNode(current);
+                int variable = variableOfNode(current);
 
                 path.set(variable);
-                currentNode = highNode;
+                current = highNode;
             } else {
-                currentNode = lowNode;
+                current = regular(lowNode);
+                if (current != lowNode) {
+                    lookingFor = !lookingFor;
+                }
             }
         }
+        assert lookingFor;
         return path;
     }
 
     @Override
     public Iterator<BitSet> solutionIterator(int node) {
-        assert isNodeValidOrLeaf(node);
+        assert isNodeValidOrTerminal(node);
         if (node == FALSE_NODE) {
             return Collections.emptyIterator();
         }
@@ -1116,7 +1113,7 @@ final class BddImpl implements Bdd {
 
     @Override
     public Iterator<BitSet> solutionIterator(int node, BitSet support) {
-        assert isNodeValidOrLeaf(node);
+        assert isNodeValidOrTerminal(node);
         if (support.isEmpty() || node == FALSE_NODE) {
             return Collections.emptyIterator();
         }
@@ -1129,7 +1126,7 @@ final class BddImpl implements Bdd {
 
     @Override
     public void forEachPath(int node, BiConsumer<BitSet, BitSet> action) {
-        assert isNodeValidOrLeaf(node);
+        assert isNodeValidOrTerminal(node);
         if (node == FALSE_NODE) {
             return;
         }
@@ -1142,148 +1139,112 @@ final class BddImpl implements Bdd {
         BitSet path = new BitSet(numberOfVariables);
         BitSet pathSupport = new BitSet(numberOfVariables);
 
-        if (iterative) {
-            forEachPathIterative(node, path, pathSupport, action, 0);
-        } else {
-            forEachPathRecursive(node, path, pathSupport, action);
-        }
+        forEachPathRecursive(regular(node), null, numberOfVariables, path, pathSupport, action, isRegular(node));
     }
 
-    public void forEachPathIterative(
-            int node, BitSet path, BitSet pathSupport, BiConsumer<BitSet, BitSet> action, int baseStackIndex) {
-        int[] branchStackParentVariable = this.branchStackParentVar;
-        int[] branchStackNode = this.branchStackFirstArg;
-
-        int stackIndex = baseStackIndex;
-        int current = node;
-        while (true) {
-            assert stackIndex >= baseStackIndex;
-
-            while (current != TRUE_NODE) {
-                int variable = variable(current);
-                int lowNode = low(current);
-                int highNode = high(current);
-
-                if (lowNode == FALSE_NODE) {
-                    assert highNode != FALSE_NODE;
-
-                    branchStackNode[stackIndex] = FALSE_NODE;
-
-                    path.set(variable);
-                    current = highNode;
-                } else {
-                    branchStackNode[stackIndex] = highNode;
-
-                    current = lowNode;
-                }
-                pathSupport.set(variable);
-                branchStackParentVariable[stackIndex] = variable;
-
-                stackIndex += 1;
-            }
-            action.accept(path, pathSupport);
-
-            do {
-                if (stackIndex == baseStackIndex) {
-                    return;
-                }
-                current = branchStackNode[--stackIndex];
-            } while (current == FALSE_NODE);
-
-            int variable = branchStackParentVariable[stackIndex];
-            path.set(variable);
-
-            path.clear(variable + 1, numberOfVariables);
-            pathSupport.clear(variable + 1, numberOfVariables);
+    @Override
+    public void forEachPath(int node, BitSet relevantSet, BiConsumer<BitSet, BitSet> action) {
+        assert isNodeValidOrTerminal(node);
+        if (node == FALSE_NODE) {
+            return;
         }
+        if (node == TRUE_NODE || relevantSet.isEmpty()) {
+            action.accept(new BitSet(0), new BitSet(0));
+            return;
+        }
+
+        int highestVariable = relevantSet.length() - 1;
+        BitSet path = new BitSet(highestVariable + 1);
+        BitSet pathSupport = new BitSet(highestVariable + 1);
+
+        forEachPathRecursive(regular(node), relevantSet, highestVariable, path, pathSupport, action, isRegular(node));
     }
 
-    private void forEachPathRecursive(int node, BitSet path, BitSet pathSupport, BiConsumer<BitSet, BitSet> action) {
+    private void forEachPathRecursive(
+            int node,
+            @Nullable BitSet support,
+            int depthLimit,
+            BitSet path,
+            BitSet pathSupport,
+            BiConsumer<BitSet, BitSet> action,
+            boolean lookingFor) {
+        assert isRegular(node);
         assert isNodeValid(node) || node == TRUE_NODE;
 
         if (node == TRUE_NODE) {
+            assert lookingFor;
+            action.accept(path, pathSupport);
+            return;
+        }
+        assert !isTerminal(node);
+
+        int variable = variableOfNode(node);
+        if (variable > depthLimit) {
+            // There must exist at least one satisfying path
             action.accept(path, pathSupport);
             return;
         }
 
-        int variable = variable(node);
-        int lowNode = low(node);
-        int highNode = high(node);
-        pathSupport.set(variable);
+        int lowNode = lowOfNode(node);
+        int highNode = highOfNode(node);
+        boolean relevant = support == null || support.get(variable);
 
-        if (lowNode != FALSE_NODE) {
-            forEachPathRecursive(lowNode, path, pathSupport, action);
-        }
-        if (highNode != FALSE_NODE) {
-            path.set(variable);
-            forEachPathRecursive(highNode, path, pathSupport, action);
-            path.clear(variable);
+        if (relevant) {
+            pathSupport.set(variable);
         }
 
-        assert pathSupport.get(variable);
-        pathSupport.clear(variable);
+        if (!isFalse(lowNode, lookingFor)) {
+            forEachPathRecursive(
+                    regular(lowNode), support, depthLimit, path, pathSupport, action, isRegular(lowNode) == lookingFor);
+        }
+        if (!isFalse(highNode, lookingFor)) {
+            if (relevant) {
+                path.set(variable);
+                forEachPathRecursive(highNode, support, depthLimit, path, pathSupport, action, lookingFor);
+                assert path.get(variable);
+                path.clear(variable);
+            } else {
+                assert !path.get(variable);
+                forEachPathRecursive(highNode, support, depthLimit, path, pathSupport, action, lookingFor);
+            }
+        }
+
+        assert relevant == pathSupport.get(variable);
+        if (relevant) {
+            pathSupport.clear(variable);
+        }
     }
 
     @Override
-    public BitSet supportFilteredTo(int node, BitSet bitSet, BitSet filter) {
-        assert isNodeValidOrLeaf(node);
+    public void forEachSupport(int node, IntConsumer action) {
+        assert isNodeValidOrTerminal(node);
+
+        int nodeRegular = regular(node);
+        assert isNoneMarkedBelow(nodeRegular);
+        supportRecursive(nodeRegular, action, null, numberOfVariables);
+        setMarkAllBelowRecursive(nodeRegular, false);
+        assert isNoneMarkedBelow(nodeRegular);
+    }
+
+    @Override
+    public void forEachSupportFiltered(int node, BitSet filter, IntConsumer action) {
+        assert isNodeValidOrTerminal(node);
 
         int depthLimit = filter.length();
         if (depthLimit == 0) {
-            return bitSet;
+            return;
         }
 
-        if (iterative) {
-            supportIterative(node, bitSet, filter, depthLimit, 0);
-            unMarkAllBelowIterative(node);
-        } else {
-            supportRecursive(node, bitSet, filter, depthLimit);
-            unmarkAllBelowRecursive(node);
-        }
-        return bitSet;
+        int nodeRegular = regular(node);
+        assert isNoneMarkedBelow(nodeRegular);
+        supportRecursive(nodeRegular, action, filter, depthLimit);
+        setMarkAllBelowRecursive(nodeRegular, false);
+        assert isNoneMarkedBelow(nodeRegular);
     }
 
-    private void supportIterative(int node, BitSet bitSet, BitSet filter, int depthLimit, int baseStackIndex) {
-        int[] nodeData = this.nodeData;
-        int[] branchStackNode = this.branchStackFirstArg;
-
-        int stackIndex = baseStackIndex;
-        int current = node;
-        while (true) {
-            assert stackIndex >= baseStackIndex;
-
-            while (!isLeaf(current)) {
-                int metadata = nodeData[current];
-                assert dataIsValid(metadata);
-                int variable = dataGetVariable(metadata);
-                if (variable >= depthLimit) {
-                    break;
-                }
-                int markedData = dataSetMark(metadata);
-                if (metadata == markedData) {
-                    break;
-                }
-                nodeData[current] = markedData;
-
-                if (filter.get(variable)) {
-                    bitSet.set(variable);
-                }
-                branchStackNode[stackIndex] = high(current);
-                current = low(current);
-                stackIndex += 1;
-            }
-
-            if (stackIndex == baseStackIndex) {
-                return;
-            }
-
-            stackIndex -= 1;
-            current = branchStackNode[stackIndex];
-        }
-    }
-
-    private void supportRecursive(int node, BitSet bitSet, BitSet filter, int depthLimit) {
-        if (isLeaf(node)) {
+    private void supportRecursive(int node, IntConsumer action, @Nullable BitSet filter, int depthLimit) {
+        assert isRegular(node);
+        if (isTerminal(node)) {
             return;
         }
 
@@ -1298,14 +1259,12 @@ final class BddImpl implements Bdd {
         }
         nodeData[node] = markedData;
 
-        int lowNode = low(node);
-        int highNode = high(node);
-
-        if (filter.get(variable)) {
-            bitSet.set(variable);
+        if (filter == null || filter.get(variable)) {
+            action.accept(variable);
         }
-        supportRecursive(lowNode, bitSet, filter, depthLimit);
-        supportRecursive(highNode, bitSet, filter, depthLimit);
+
+        supportRecursive(regular(low(node)), action, filter, depthLimit);
+        supportRecursive(high(node), action, filter, depthLimit);
     }
 
     @Override
@@ -1317,112 +1276,50 @@ final class BddImpl implements Bdd {
             return TWO.pow(numberOfVariables);
         }
         int variable = variable(node);
-        return TWO.pow(variable)
-                .multiply(
-                        iterative
-                                ? countSatisfyingAssignmentsIterative(node, 0)
-                                : countSatisfyingAssignmentsRecursive(node));
+        BigInteger satisfyingBelow = countSatisfyingAssignmentsRecursive(regular(node), isRegular(node));
+        return TWO.pow(variable).multiply(satisfyingBelow);
     }
 
     @Override
     public BigInteger countSatisfyingAssignments(int node, BitSet support) {
         assert BitSets.isSubset(support(node), support);
-
         return countSatisfyingAssignments(node).divide(TWO.pow(numberOfVariables - support.cardinality()));
     }
 
-    private BigInteger countSatisfyingAssignmentsIterative(int node, int baseStackIndex) {
-        int[] cacheStackHash = this.cacheStackHash;
-        int[] cacheStackArg = this.cacheStackFirstArg;
-        int[] branchStackParentVar = this.branchStackParentVar;
-        int[] branchTaskStack = this.branchStackFirstArg;
+    private BigInteger countSatisfyingAssignmentsRecursive(int node, boolean lookingFor) {
+        assert isRegular(node) && isNodeValid(node);
 
-        BigInteger[] resultStack = new BigInteger[numberOfVariables];
-        int stackIndex = baseStackIndex;
-        int current = node;
-        while (true) {
-            assert stackIndex >= baseStackIndex;
-
-            BigInteger result;
-            int nodeVar;
-            do {
-                if (current == FALSE_NODE) {
-                    nodeVar = numberOfVariables;
-                    result = BigInteger.ZERO;
-                } else if (current == TRUE_NODE) {
-                    nodeVar = numberOfVariables;
-                    result = BigInteger.ONE;
-                } else {
-                    nodeVar = variable(current);
-
-                    result = cache.lookupSatisfaction(current);
-                    if (result == null) {
-                        cacheStackHash[stackIndex] = cache.lookupHash();
-                        cacheStackArg[stackIndex] = current;
-                        branchStackParentVar[stackIndex] = nodeVar;
-                        branchTaskStack[stackIndex] = high(current);
-                        stackIndex += 1;
-
-                        current = low(current);
-                    }
-                }
-            } while (result == null);
-
-            if (stackIndex == baseStackIndex) {
-                return result;
-            }
-
-            int parentVar;
-            while ((parentVar = branchStackParentVar[--stackIndex]) < 0) {
-                int variable = -parentVar - 1;
-
-                if (result.signum() > 0) {
-                    result = result.multiply(TWO.pow(nodeVar - variable - 1));
-                }
-                nodeVar = variable;
-                result = result.add(resultStack[stackIndex]);
-
-                cache.putSatisfaction(cacheStackHash[stackIndex], cacheStackArg[stackIndex], result);
-
-                if (stackIndex == baseStackIndex) {
-                    return result;
-                }
-            }
-            branchStackParentVar[stackIndex] = -(parentVar + 1);
-            resultStack[stackIndex] = result.multiply(TWO.pow(nodeVar - parentVar - 1));
-
-            current = branchTaskStack[stackIndex];
-            stackIndex += 1;
-        }
-    }
-
-    private BigInteger countSatisfyingAssignmentsRecursive(int node) {
-        assert isNodeValid(node);
+        int nodeVar = variableOfNode(node);
 
         BigInteger cacheLookup = cache.lookupSatisfaction(node);
         if (cacheLookup != null) {
-            return cacheLookup;
+            return lookingFor
+                    ? cacheLookup
+                    : TWO.pow(numberOfVariables - nodeVar).subtract(cacheLookup);
         }
         int hash = cache.lookupHash();
 
-        int nodeVar = variable(node);
-        BigInteger lowCount = doCountSatisfyingAssignments(low(node), nodeVar);
-        BigInteger highCount = doCountSatisfyingAssignments(high(node), nodeVar);
+        int lowNode = lowOfNode(node);
+        BigInteger lowCount = doCountSatisfyingAssignments(regular(lowNode), nodeVar, isRegular(lowNode) == lookingFor);
+        BigInteger highCount = doCountSatisfyingAssignments(highOfNode(node), nodeVar, lookingFor);
 
         BigInteger result = lowCount.add(highCount);
-        cache.putSatisfaction(hash, node, result);
+        cache.putSatisfaction(
+                hash,
+                node,
+                lookingFor ? result : TWO.pow(numberOfVariables - nodeVar).subtract(result));
         return result;
     }
 
-    private BigInteger doCountSatisfyingAssignments(int subNode, int currentVar) {
-        if (subNode == FALSE_NODE) {
+    private BigInteger doCountSatisfyingAssignments(int subNode, int currentVar, boolean lookingFor) {
+        if (isFalse(subNode, lookingFor)) {
             return BigInteger.ZERO;
         }
-        if (subNode == TRUE_NODE) {
+        if (isTrue(subNode, lookingFor)) {
             return TWO.pow(numberOfVariables - currentVar - 1);
         }
         BigInteger multiplier = TWO.pow(variable(subNode) - currentVar - 1);
-        return multiplier.multiply(countSatisfyingAssignmentsRecursive(subNode));
+        return multiplier.multiply(countSatisfyingAssignmentsRecursive(subNode, lookingFor));
     }
 
     // Bdd operations
@@ -1432,10 +1329,7 @@ final class BddImpl implements Bdd {
         int node = TRUE_NODE;
         for (int variable : variables) {
             // Variable nodes are saturated, no need to guard them
-            pushToWorkStack(node);
-            node = iterative
-                    ? andIterative(node, variableNodes[variable], 0)
-                    : andRecursive(node, variableNodes[variable]);
+            node = andRecursive(pushToWorkStack(node), variableNodes[variable]);
             popWorkStack();
         }
         return node;
@@ -1446,10 +1340,7 @@ final class BddImpl implements Bdd {
         int node = TRUE_NODE;
         for (int variable = variables.nextSetBit(0); variable >= 0; variable = variables.nextSetBit(variable + 1)) {
             // Variable nodes are saturated, no need to guard them
-            pushToWorkStack(node);
-            node = iterative
-                    ? andIterative(node, variableNodes[variable], 0)
-                    : andRecursive(node, variableNodes[variable]);
+            node = andRecursive(pushToWorkStack(node), variableNodes[variable]);
             popWorkStack();
         }
         return node;
@@ -1460,10 +1351,7 @@ final class BddImpl implements Bdd {
         int node = FALSE_NODE;
         for (int variable : variables) {
             // Variable nodes are saturated, no need to guard them
-            pushToWorkStack(node);
-            node = iterative
-                    ? orIterative(node, variableNodes[variable], 0)
-                    : orRecursive(node, variableNodes[variable]);
+            node = orRecursive(pushToWorkStack(node), variableNodes[variable]);
             popWorkStack();
         }
         return node;
@@ -1474,10 +1362,7 @@ final class BddImpl implements Bdd {
         int node = FALSE_NODE;
         for (int variable = variables.nextSetBit(0); variable >= 0; variable = variables.nextSetBit(variable + 1)) {
             // Variable nodes are saturated, no need to guard them
-            pushToWorkStack(node);
-            node = iterative
-                    ? orIterative(node, variableNodes[variable], 0)
-                    : orRecursive(node, variableNodes[variable]);
+            node = orRecursive(pushToWorkStack(node), variableNodes[variable]);
             popWorkStack();
         }
         return node;
@@ -1486,113 +1371,33 @@ final class BddImpl implements Bdd {
     @Override
     public int and(int node1, int node2) {
         assert isWorkStackEmpty();
-        assert isNodeValidOrLeaf(node1) && isNodeValidOrLeaf(node2);
+        assert isNodeValidOrTerminal(node1) && isNodeValidOrTerminal(node2);
         pushToWorkStack(node1);
         pushToWorkStack(node2);
-        int result = iterative ? andIterative(node1, node2, 0) : andRecursive(node1, node2);
+        int result = andRecursive(node1, node2);
         popWorkStack(2);
         assert isWorkStackEmpty();
         return result;
     }
 
-    private int andIterative(int node1, int node2, int baseStackIndex) {
-        int[] cacheStackHash = this.cacheStackHash;
-        int[] cacheStackLeft = this.cacheStackFirstArg;
-        int[] cacheStackRight = this.cacheStackSecondArg;
-        int[] branchStackParentVar = this.branchStackParentVar;
-        int[] branchStackLeft = this.branchStackFirstArg;
-        int[] branchStackRight = this.branchStackSecondArg;
-
-        int stackIndex = baseStackIndex;
-        int current1 = node1;
-        int current2 = node2;
-
-        while (true) {
-            assert stackIndex >= baseStackIndex;
-
-            int result = NOT_A_NODE;
-            do {
-                if (current1 == current2 || current2 == TRUE_NODE) {
-                    result = current1;
-                } else if (current1 == FALSE_NODE || current2 == FALSE_NODE) {
-                    result = FALSE_NODE;
-                } else if (current1 == TRUE_NODE) {
-                    result = current2;
-                } else {
-                    int node1var = variable(current1);
-                    int node2var = variable(current2);
-
-                    if (node2var < node1var || (node2var == node1var && current2 < current1)) {
-                        int nodeSwap = current1;
-                        current1 = current2;
-                        current2 = nodeSwap;
-
-                        int varSwap = node1var;
-                        node1var = node2var;
-                        node2var = varSwap;
-                    }
-
-                    if (cache.lookupAnd(current1, current2)) {
-                        result = cache.lookupResult();
-                    } else {
-                        assert isNodeValid(current1) && isNodeValid(current2);
-
-                        cacheStackHash[stackIndex] = cache.lookupHash();
-                        cacheStackLeft[stackIndex] = current1;
-                        cacheStackRight[stackIndex] = current2;
-                        branchStackParentVar[stackIndex] = node1var;
-                        branchStackLeft[stackIndex] = high(current1);
-                        if (node1var == node2var) {
-                            branchStackRight[stackIndex] = high(current2);
-                            current2 = low(current2);
-                        } else {
-                            branchStackRight[stackIndex] = current2;
-                        }
-                        current1 = low(current1);
-
-                        stackIndex += 1;
-                    }
-                }
-            } while (result == NOT_A_NODE);
-
-            if (stackIndex == baseStackIndex) {
-                return result;
-            }
-
-            int parentVar;
-            while ((parentVar = branchStackParentVar[--stackIndex]) < 0) {
-                int variable = -parentVar - 1;
-                result = makeNode(variable, peekWorkStack(), pushToWorkStack(result));
-
-                int left = cacheStackLeft[stackIndex];
-                int right = cacheStackRight[stackIndex];
-                cache.putAnd(cacheStackHash[stackIndex], left, right, result);
-
-                popWorkStack(2);
-
-                if (stackIndex == baseStackIndex) {
-                    return result;
-                }
-            }
-            branchStackParentVar[stackIndex] = -(parentVar + 1);
-            pushToWorkStack(result);
-
-            current1 = branchStackLeft[stackIndex];
-            current2 = branchStackRight[stackIndex];
-            stackIndex += 1;
-        }
-    }
-
     private int andRecursive(int node1, int node2) {
-        if (node1 == node2 || node2 == TRUE_NODE) {
+        if (node1 == TRUE_NODE) {
+            return node2;
+        }
+        if (node2 == TRUE_NODE) {
             return node1;
         }
         if (node1 == FALSE_NODE || node2 == FALSE_NODE) {
             return FALSE_NODE;
         }
-        if (node1 == TRUE_NODE) {
-            return node2;
+        if (node1 == node2) {
+            return node1;
         }
+        if (node1 == complement(node2)) {
+            return FALSE_NODE;
+        }
+
+        assert !isTerminal(node1) && !isTerminal(node2);
 
         int node1var = variable(node1);
         int node2var = variable(node2);
@@ -1611,14 +1416,20 @@ final class BddImpl implements Bdd {
             return cache.lookupResult();
         }
         int hash = cache.lookupHash();
+
+        boolean node1c = isComplemented(node1);
+        int node1low = lowC(node1, node1c);
+        int node1high = highC(node1, node1c);
+
         int lowNode;
         int highNode;
         if (node1var == node2var) {
-            lowNode = pushToWorkStack(andRecursive(low(node1), low(node2)));
-            highNode = pushToWorkStack(andRecursive(high(node1), high(node2)));
-        } else { // v < getVariable(node2)
-            lowNode = pushToWorkStack(andRecursive(low(node1), node2));
-            highNode = pushToWorkStack(andRecursive(high(node1), node2));
+            boolean node2c = isComplemented(node2);
+            lowNode = pushToWorkStack(andRecursive(node1low, lowC(node2, node2c)));
+            highNode = pushToWorkStack(andRecursive(node1high, highC(node2, node2c)));
+        } else { // node1var < node2var
+            lowNode = pushToWorkStack(andRecursive(node1low, node2));
+            highNode = pushToWorkStack(andRecursive(node1high, node2));
         }
         int resultNode = makeNode(node1var, lowNode, highNode);
         popWorkStack(2);
@@ -1627,11 +1438,17 @@ final class BddImpl implements Bdd {
     }
 
     @Override
+    public int andNot(int node1, int node2) {
+        assert isNodeValidOrTerminal(node1) && isNodeValidOrTerminal(node2);
+        return and(node1, complement(node2));
+    }
+
+    @Override
     public int compose(int node, int[] variableMapping) {
         assert isWorkStackEmpty();
         assert variableMapping.length <= numberOfVariables;
 
-        if (node == TRUE_NODE || node == FALSE_NODE) {
+        if (isTerminal(node)) {
             return node;
         }
 
@@ -1642,8 +1459,8 @@ final class BddImpl implements Bdd {
             if (variableMapping[i] == NOT_A_NODE) {
                 variableMapping[i] = this.variableNodes[i];
             } else {
-                assert isNodeValidOrLeaf(variableMapping[i]);
-                if (!isNodeSaturated(variableMapping[i])) {
+                assert isNodeValidOrTerminal(variableMapping[i]);
+                if (!isSaturated(variableMapping[i])) {
                     pushToWorkStack(variableMapping[i]);
                     workStackCount++;
                 }
@@ -1652,6 +1469,7 @@ final class BddImpl implements Bdd {
 
         int highestReplacedVariable = variableMapping.length - 1;
         // Optimise the replacement array
+        // Note: Could also detect the case that everything is identity or true / false; which would be "restrict"
         for (int i = variableMapping.length - 1; i >= 0; i--) {
             if (variableMapping[i] != this.variableNodes[i]) {
                 highestReplacedVariable = i;
@@ -1665,91 +1483,14 @@ final class BddImpl implements Bdd {
         }
 
         cache.initCompose(variableMapping, highestReplacedVariable);
-        int result = iterative
-                ? composeIterative(node, variableMapping, highestReplacedVariable)
-                : composeRecursive(node, variableMapping, highestReplacedVariable);
+        int result = composeRecursive(node, variableMapping, highestReplacedVariable);
         popWorkStack(workStackCount);
         assert isWorkStackEmpty();
         return result;
     }
 
-    private int composeIterative(int node, int[] variableNodes, int highestReplacedVariable) {
-        int[] cacheStackHash = this.cacheStackHash;
-        int[] cacheArgStack = this.cacheStackFirstArg;
-        int[] branchStackParentVar = this.branchStackParentVar;
-        int[] branchTaskStack = this.branchStackFirstArg;
-
-        int initialSize = workStackIndex;
-        int stackIndex = 0;
-        int current = node;
-        while (true) {
-            assert stackIndex >= 0;
-            assert workStackIndex >= initialSize;
-
-            int result = NOT_A_NODE;
-            do {
-                if (current == TRUE_NODE || current == FALSE_NODE) {
-                    result = current;
-                } else {
-                    int nodeVariable = variable(current);
-
-                    if (nodeVariable > highestReplacedVariable) {
-                        result = current;
-                    } else {
-                        int replacementNode = variableNodes[nodeVariable];
-
-                        if (replacementNode == TRUE_NODE) {
-                            current = high(current);
-                        } else if (replacementNode == FALSE_NODE) {
-                            current = low(current);
-                        } else if (cache.lookupCompose(current)) {
-                            result = cache.lookupResult();
-                        } else {
-                            cacheStackHash[stackIndex] = cache.lookupHash();
-                            cacheArgStack[stackIndex] = current;
-                            branchStackParentVar[stackIndex] = nodeVariable;
-                            branchTaskStack[stackIndex] = high(current);
-                            stackIndex += 1;
-
-                            current = low(current);
-                        }
-                    }
-                }
-            } while (result == NOT_A_NODE);
-
-            if (stackIndex == 0) {
-                return result;
-            }
-
-            int parentVar;
-            while ((parentVar = branchStackParentVar[--stackIndex]) < 0) {
-                int variable = -parentVar - 1;
-                int replacementNode = variableNodes[variable];
-                int currentHash = cacheStackHash[stackIndex];
-                int currentNode = cacheArgStack[stackIndex];
-
-                // TODO Shortcut if replacement is a variable?
-                int lowResult = peekWorkStack();
-                pushToWorkStack(result);
-                result = ifThenElseIterative(replacementNode, result, lowResult, stackIndex);
-                popWorkStack(2);
-
-                cache.putCompose(currentHash, currentNode, result);
-
-                if (stackIndex == 0) {
-                    return result;
-                }
-            }
-            branchStackParentVar[stackIndex] = -(parentVar + 1);
-            pushToWorkStack(result);
-
-            current = branchTaskStack[stackIndex];
-            stackIndex += 1;
-        }
-    }
-
     private int composeRecursive(int node, int[] variableNodes, int highestReplacedVariable) {
-        if (node == TRUE_NODE || node == FALSE_NODE) {
+        if (isTerminal(node)) {
             return node;
         }
 
@@ -1758,8 +1499,11 @@ final class BddImpl implements Bdd {
             return node;
         }
 
-        if (cache.lookupCompose(node)) {
-            return cache.lookupResult();
+        int nodeRegular = regular(node);
+        boolean regular = nodeRegular == node;
+
+        if (cache.lookupCompose(nodeRegular)) {
+            return complementIf(cache.lookupResult(), !regular);
         }
         int hash = cache.lookupHash();
 
@@ -1776,469 +1520,91 @@ final class BddImpl implements Bdd {
             resultNode = ifThenElseRecursive(variableReplacementNode, highCompose, lowCompose);
             popWorkStack(2);
         }
-        cache.putCompose(hash, node, resultNode);
-        return resultNode;
+        cache.putCompose(hash, nodeRegular, resultNode);
+        return complementIf(resultNode, !regular);
     }
 
     @Override
     public int equivalence(int node1, int node2) {
-        assert isWorkStackEmpty();
-        assert isNodeValidOrLeaf(node1) && isNodeValidOrLeaf(node2);
-        pushToWorkStack(node1);
-        pushToWorkStack(node2);
-        int result = iterative ? equivalenceIterative(node1, node2, 0) : equivalenceRecursive(node1, node2);
-        popWorkStack(2);
-        assert isWorkStackEmpty();
-        return result;
-    }
-
-    private int equivalenceIterative(int node1, int node2, int baseStackIndex) {
-        int[] cacheStackHash = this.cacheStackHash;
-        int[] cacheStackLeft = this.cacheStackFirstArg;
-        int[] cacheStackRight = this.cacheStackSecondArg;
-        int[] branchStackParentVar = this.branchStackParentVar;
-        int[] branchStackLeft = this.branchStackFirstArg;
-        int[] branchStackRight = this.branchStackSecondArg;
-
-        int stackIndex = baseStackIndex;
-        int current1 = node1;
-        int current2 = node2;
-        while (true) {
-            assert stackIndex >= baseStackIndex;
-
-            int result = NOT_A_NODE;
-            do {
-                if (current1 == current2) {
-                    result = TRUE_NODE;
-                } else if (current1 == FALSE_NODE) {
-                    result = notIterative(current2, stackIndex);
-                } else if (current1 == TRUE_NODE) {
-                    result = current2;
-                } else if (current2 == FALSE_NODE) {
-                    result = notIterative(current1, stackIndex);
-                } else if (current2 == TRUE_NODE) {
-                    result = current1;
-                } else {
-                    int node1var = variable(current1);
-                    int node2var = variable(current2);
-
-                    if (node2var < node1var || (node2var == node1var && current2 < current1)) {
-                        int nodeSwap = current1;
-                        current1 = current2;
-                        current2 = nodeSwap;
-
-                        int varSwap = node1var;
-                        node1var = node2var;
-                        node2var = varSwap;
-                    }
-
-                    if (cache.lookupEquivalence(current1, current2)) {
-                        result = cache.lookupResult();
-                    } else {
-                        cacheStackHash[stackIndex] = cache.lookupHash();
-                        cacheStackLeft[stackIndex] = current1;
-                        cacheStackRight[stackIndex] = current2;
-
-                        branchStackParentVar[stackIndex] = node1var;
-                        branchStackLeft[stackIndex] = high(current1);
-                        if (node1var == node2var) {
-                            branchStackRight[stackIndex] = high(current2);
-                            current2 = low(current2);
-                        } else {
-                            branchStackRight[stackIndex] = current2;
-                        }
-                        current1 = low(current1);
-
-                        stackIndex += 1;
-                    }
-                }
-            } while (result == NOT_A_NODE);
-
-            if (stackIndex == baseStackIndex) {
-                return result;
-            }
-
-            int parentVar;
-            while ((parentVar = branchStackParentVar[--stackIndex]) < 0) {
-                int variable = -parentVar - 1;
-                result = makeNode(variable, peekWorkStack(), pushToWorkStack(result));
-                popWorkStack(2);
-
-                int left = cacheStackLeft[stackIndex];
-                int right = cacheStackRight[stackIndex];
-                cache.putEquivalence(cacheStackHash[stackIndex], left, right, result);
-
-                if (stackIndex == baseStackIndex) {
-                    return result;
-                }
-            }
-            branchStackParentVar[stackIndex] = -(parentVar + 1);
-            pushToWorkStack(result);
-
-            current1 = branchStackLeft[stackIndex];
-            current2 = branchStackRight[stackIndex];
-            stackIndex += 1;
-        }
-    }
-
-    private int equivalenceRecursive(int node1, int node2) {
-        if (node1 == node2) {
-            return TRUE_NODE;
-        }
-        if (node1 == FALSE_NODE) {
-            return notRecursive(node2);
-        }
-        if (node1 == TRUE_NODE) {
-            return node2;
-        }
-        if (node2 == FALSE_NODE) {
-            return notRecursive(node1);
-        }
-        if (node2 == TRUE_NODE) {
-            return node1;
-        }
-
-        int node1var = variable(node1);
-        int node2var = variable(node2);
-
-        if (node2var < node1var || (node2var == node1var && node2 < node1)) {
-            int nodeSwap = node1;
-            node1 = node2;
-            node2 = nodeSwap;
-
-            int varSwap = node1var;
-            node1var = node2var;
-            node2var = varSwap;
-        }
-
-        if (cache.lookupEquivalence(node1, node2)) {
-            return cache.lookupResult();
-        }
-        int hash = cache.lookupHash();
-        int lowNode;
-        int highNode;
-        if (node1var == node2var) {
-            lowNode = pushToWorkStack(equivalenceRecursive(low(node1), low(node2)));
-            highNode = pushToWorkStack(equivalenceRecursive(high(node1), high(node2)));
-        } else { // v < getVariable(node2)
-            lowNode = pushToWorkStack(equivalenceRecursive(low(node1), node2));
-            highNode = pushToWorkStack(equivalenceRecursive(high(node1), node2));
-        }
-        int resultNode = makeNode(node1var, lowNode, highNode);
-        popWorkStack(2);
-        cache.putEquivalence(hash, node1, node2, resultNode);
-        return resultNode;
+        assert isNodeValidOrTerminal(node1) && isNodeValidOrTerminal(node2);
+        return complement(xor(node1, node2));
     }
 
     @Override
     public int exists(int node, BitSet quantifiedVariables) {
         assert isWorkStackEmpty();
         assert quantifiedVariables.previousSetBit(quantifiedVariables.length()) <= numberOfVariables;
+        if (node == FALSE_NODE) {
+            return FALSE_NODE;
+        }
         if (quantifiedVariables.cardinality() == numberOfVariables) {
             return TRUE_NODE;
         }
 
-        // Shannon exists
+        cache.initQuantification(quantifiedVariables);
+
+        boolean regular = isRegular(node);
         pushToWorkStack(node);
-        int quantifiedVariablesConjunction = conjunction(quantifiedVariables);
-        pushToWorkStack(quantifiedVariablesConjunction);
-        int result = iterative
-                ? existsIterative(node, quantifiedVariablesConjunction, 0)
-                : existsRecursive(node, quantifiedVariablesConjunction);
-        popWorkStack(2);
+        int result = complementIf(quantifyRecursive(regular(node), quantifiedVariables, regular), !regular);
+        popWorkStack();
         assert isWorkStackEmpty();
         return result;
     }
 
-    private int existsIterative(int node, int quantifiedVariableCube, int baseStackIndex) {
-        // N.B.: The "root" of the cube is guarded in the main invocation - no need to guard it
-
-        int[] cacheStackHash = this.cacheStackHash;
-        int[] cacheStackArg = this.cacheStackFirstArg;
-        int[] branchStackParentVar = this.branchStackParentVar;
-        int[] branchStackArg = this.branchStackFirstArg;
-        int[] branchStackCubeNode = this.branchStackSecondArg;
-
-        int stackIndex = baseStackIndex;
-        int current = node;
-        int currentCubeNode = quantifiedVariableCube;
-        while (true) {
-            assert stackIndex >= baseStackIndex;
-
-            int result = NOT_A_NODE;
-            //noinspection LabeledStatement
-            loop:
-            do {
-                if (current == TRUE_NODE || current == FALSE_NODE) {
-                    result = current;
-                } else if (quantifiedVariableCube == TRUE_NODE) {
-                    result = current;
-                } else {
-                    int nodeVariable = variable(current);
-                    int currentCubeNodeVariable = variable(currentCubeNode);
-                    while (currentCubeNodeVariable < nodeVariable) {
-                        currentCubeNode = high(currentCubeNode);
-                        if (currentCubeNode == TRUE_NODE) {
-                            // No more variables to project
-                            result = current;
-                            //noinspection BreakStatementWithLabel
-                            break loop;
-                        }
-                        currentCubeNodeVariable = variable(currentCubeNode);
-                    }
-
-                    if (isVariableOrNegated(current)) {
-                        if (nodeVariable == currentCubeNodeVariable) {
-                            result = TRUE_NODE;
-                        } else {
-                            result = current;
-                        }
-                    } else if (cache.lookupExists(current, currentCubeNode)) {
-                        result = cache.lookupResult();
-                    } else {
-                        cacheStackHash[stackIndex] = cache.lookupHash();
-                        cacheStackArg[stackIndex] = current;
-
-                        branchStackParentVar[stackIndex] = nodeVariable;
-                        branchStackArg[stackIndex] = high(current);
-                        branchStackCubeNode[stackIndex] = currentCubeNode;
-
-                        current = low(current);
-                        stackIndex += 1;
-                    }
-                }
-            } while (result == NOT_A_NODE);
-
-            if (stackIndex == baseStackIndex) {
-                return result;
-            }
-
-            int parentVar;
-            while ((parentVar = branchStackParentVar[--stackIndex]) < 0) {
-                int variable = -parentVar - 1;
-                int currentNode = cacheStackArg[stackIndex];
-                int currentHash = cacheStackHash[stackIndex];
-
-                currentCubeNode = branchStackCubeNode[stackIndex];
-                if (variable(currentCubeNode) > variable) {
-                    // The variable of this node is smaller than the variable looked for - only propagate the
-                    // quantification downward
-                    result = makeNode(variable, peekWorkStack(), pushToWorkStack(result));
-                    popWorkStack(2);
-                } else {
-                    // nodeVariable == nextVariable, i.e. "quantify out" the current node.
-                    result = orIterative(peekAndPopWorkStack(), result, stackIndex);
-                }
-                cache.putExists(currentHash, currentNode, currentCubeNode, result);
-
-                if (stackIndex == baseStackIndex) {
-                    return result;
-                }
-            }
-            branchStackParentVar[stackIndex] = -(parentVar + 1);
-            pushToWorkStack(result);
-
-            currentCubeNode = branchStackCubeNode[stackIndex];
-            current = branchStackArg[stackIndex];
-            stackIndex += 1;
-        }
-    }
-
-    private int existsRecursive(int node, int quantifiedVariableCube) {
-        if (node == TRUE_NODE || node == FALSE_NODE) {
-            return node;
-        }
-        if (quantifiedVariableCube == TRUE_NODE) {
+    private int quantifyRecursive(int node, BitSet quantifiedVariables, boolean exists) {
+        if (isTerminal(node)) {
             return node;
         }
 
         int nodeVariable = variable(node);
-
-        int currentCubeNode = quantifiedVariableCube;
-        int currentCubeNodeVariable = variable(currentCubeNode);
-        while (currentCubeNodeVariable < nodeVariable) {
-            currentCubeNode = high(currentCubeNode);
-            if (currentCubeNode == TRUE_NODE) {
-                // No more variables to project
-                return node;
-            }
-            currentCubeNodeVariable = variable(currentCubeNode);
+        int currentCubeNodeVariable = quantifiedVariables.nextSetBit(nodeVariable);
+        if (currentCubeNodeVariable == -1) {
+            return node;
         }
-
         if (isVariableOrNegated(node)) {
             if (nodeVariable == currentCubeNodeVariable) {
-                return TRUE_NODE;
+                return exists ? TRUE_NODE : FALSE_NODE;
             }
             return node;
         }
 
-        if (cache.lookupExists(node, currentCubeNode)) {
+        if (cache.lookupQuantification(node, exists)) {
             return cache.lookupResult();
         }
         int hash = cache.lookupHash();
 
-        // The "root" of the cube is guarded in the main invocation - no need to guard its descendants
-        int lowExists = pushToWorkStack(existsRecursive(low(node), currentCubeNode));
-        int highExists = pushToWorkStack(existsRecursive(high(node), currentCubeNode));
+        boolean isRegular = isRegular(node);
+        int lowExists = pushToWorkStack(
+                complementIf(quantifyRecursive(low(node), quantifiedVariables, isRegular == exists), !isRegular));
+        int highExists = pushToWorkStack(
+                complementIf(quantifyRecursive(high(node), quantifiedVariables, isRegular == exists), !isRegular));
         int resultNode;
+
         if (currentCubeNodeVariable > nodeVariable) {
             // The variable of this node is smaller than the variable looked for - only propagate the
             // quantification downward
             resultNode = makeNode(nodeVariable, lowExists, highExists);
         } else {
             // nodeVariable == nextVariable, i.e. "quantify out" the current node.
-            resultNode = orRecursive(lowExists, highExists);
+            resultNode = exists ? orRecursive(lowExists, highExists) : andRecursive(lowExists, highExists);
         }
+
         popWorkStack(2);
-        cache.putExists(hash, node, currentCubeNode, resultNode);
+        cache.putQuantification(hash, node, exists, resultNode);
         return resultNode;
     }
 
     @Override
     public int ifThenElse(int ifNode, int thenNode, int elseNode) {
         assert isWorkStackEmpty();
-        assert isNodeValidOrLeaf(ifNode) && isNodeValidOrLeaf(thenNode) && isNodeValidOrLeaf(elseNode);
+        assert isNodeValidOrTerminal(ifNode) && isNodeValidOrTerminal(thenNode) && isNodeValidOrTerminal(elseNode);
         pushToWorkStack(ifNode);
         pushToWorkStack(thenNode);
         pushToWorkStack(elseNode);
-        int result = iterative
-                ? ifThenElseIterative(ifNode, thenNode, elseNode, 0)
-                : ifThenElseRecursive(ifNode, thenNode, elseNode);
+        int result = ifThenElseRecursive(ifNode, thenNode, elseNode);
         popWorkStack(3);
         assert isWorkStackEmpty();
         return result;
-    }
-
-    private int ifThenElseIterative(int ifNode, int thenNode, int elseNode, int baseStackIndex) {
-        int[] cacheStackHash = this.cacheStackHash;
-        int[] cacheIfArgStack = this.cacheStackFirstArg;
-        int[] cacheThenArgStack = this.cacheStackSecondArg;
-        int[] cacheElseArgStack = this.cacheStackThirdArg;
-        int[] branchStackParentVar = this.branchStackParentVar;
-        int[] branchTaskIfStack = this.branchStackFirstArg;
-        int[] branchTaskThenStack = this.branchStackSecondArg;
-        int[] branchTaskElseStack = this.branchStackThirdArg;
-
-        int stackIndex = baseStackIndex;
-        int currentIf = ifNode;
-        int currentThen = thenNode;
-        int currentElse = elseNode;
-
-        while (true) {
-            assert stackIndex >= baseStackIndex;
-
-            int result = NOT_A_NODE;
-            do {
-                if (currentIf == TRUE_NODE) {
-                    result = currentThen;
-                } else if (currentIf == FALSE_NODE) {
-                    result = currentElse;
-                } else if (currentThen == currentElse) {
-                    result = currentThen;
-                } else if (currentThen == TRUE_NODE) {
-                    result = currentElse == FALSE_NODE ? currentIf : orIterative(currentIf, currentElse, stackIndex);
-                } else if (currentThen == FALSE_NODE) {
-                    if (currentElse == TRUE_NODE) {
-                        result = notIterative(currentIf, stackIndex);
-                    } else {
-                        int not = notIterative(currentIf, stackIndex);
-                        result = andIterative(pushToWorkStack(not), currentElse, stackIndex);
-                        popWorkStack();
-                    }
-                } else if (currentElse == TRUE_NODE) {
-                    int not = notIterative(currentThen, stackIndex);
-                    result = notAndIterative(currentIf, pushToWorkStack(not), stackIndex);
-                    popWorkStack();
-                } else if (currentElse == FALSE_NODE) {
-                    result = andIterative(currentIf, currentThen, stackIndex);
-                } else if (currentIf == currentThen) {
-                    result = orIterative(currentIf, currentElse, stackIndex);
-                } else if (currentIf == currentElse) {
-                    result = andIterative(currentIf, currentThen, stackIndex);
-                } else if (cache.lookupIfThenElse(currentIf, currentThen, currentElse)) {
-                    result = cache.lookupResult();
-                } else {
-                    int ifVar = variable(currentIf);
-                    int thenVar = variable(currentThen);
-                    int elseVar = variable(currentElse);
-
-                    int minVar = min(ifVar, thenVar, elseVar);
-                    int ifLowNode;
-                    int ifHighNode;
-
-                    if (ifVar == minVar) {
-                        ifLowNode = low(currentIf);
-                        ifHighNode = high(currentIf);
-                    } else {
-                        ifLowNode = currentIf;
-                        ifHighNode = currentIf;
-                    }
-
-                    int thenHighNode;
-                    int thenLowNode;
-                    if (thenVar == minVar) {
-                        thenLowNode = low(currentThen);
-                        thenHighNode = high(currentThen);
-                    } else {
-                        thenLowNode = currentThen;
-                        thenHighNode = currentThen;
-                    }
-
-                    int elseHighNode;
-                    int elseLowNode;
-                    if (elseVar == minVar) {
-                        elseLowNode = low(currentElse);
-                        elseHighNode = high(currentElse);
-                    } else {
-                        elseLowNode = currentElse;
-                        elseHighNode = currentElse;
-                    }
-
-                    cacheStackHash[stackIndex] = cache.lookupHash();
-                    cacheIfArgStack[stackIndex] = currentIf;
-                    cacheThenArgStack[stackIndex] = currentThen;
-                    cacheElseArgStack[stackIndex] = currentElse;
-
-                    branchStackParentVar[stackIndex] = minVar;
-                    branchTaskIfStack[stackIndex] = ifHighNode;
-                    branchTaskThenStack[stackIndex] = thenHighNode;
-                    branchTaskElseStack[stackIndex] = elseHighNode;
-
-                    currentIf = ifLowNode;
-                    currentThen = thenLowNode;
-                    currentElse = elseLowNode;
-                    stackIndex += 1;
-                }
-            } while (result == NOT_A_NODE);
-
-            if (stackIndex == baseStackIndex) {
-                return result;
-            }
-
-            int parentVar;
-            while ((parentVar = branchStackParentVar[--stackIndex]) < 0) {
-                int variable = -parentVar - 1;
-                result = makeNode(variable, peekWorkStack(), pushToWorkStack(result));
-                popWorkStack(2);
-
-                int cacheIf = cacheIfArgStack[stackIndex];
-                int cacheThen = cacheThenArgStack[stackIndex];
-                int cacheElse = cacheElseArgStack[stackIndex];
-                cache.putIfThenElse(cacheStackHash[stackIndex], cacheIf, cacheThen, cacheElse, result);
-
-                if (stackIndex == baseStackIndex) {
-                    return result;
-                }
-            }
-            assert stackIndex >= baseStackIndex;
-            branchStackParentVar[stackIndex] = -(parentVar + 1);
-            pushToWorkStack(result);
-
-            currentIf = branchTaskIfStack[stackIndex];
-            currentThen = branchTaskThenStack[stackIndex];
-            currentElse = branchTaskElseStack[stackIndex];
-            stackIndex += 1;
-        }
     }
 
     private int ifThenElseRecursive(int ifNode, int thenNode, int elseNode) {
@@ -2248,309 +1614,113 @@ final class BddImpl implements Bdd {
         if (ifNode == FALSE_NODE) {
             return elseNode;
         }
+
+        if (thenNode == TRUE_NODE || thenNode == ifNode) {
+            return orRecursive(ifNode, elseNode);
+        }
+        if (thenNode == FALSE_NODE || thenNode == complement(ifNode)) {
+            return andRecursive(complement(ifNode), elseNode);
+        }
+
+        if (elseNode == TRUE_NODE || elseNode == complement(ifNode)) {
+            return complement(andRecursive(ifNode, complement(thenNode)));
+        }
+        if (elseNode == FALSE_NODE || ifNode == elseNode) {
+            return andRecursive(ifNode, thenNode);
+        }
+
         if (thenNode == elseNode) {
             return thenNode;
         }
-        if (thenNode == TRUE_NODE) {
-            if (elseNode == FALSE_NODE) {
-                return ifNode;
-            }
-            return orRecursive(ifNode, elseNode);
-        }
-        if (thenNode == FALSE_NODE) {
-            if (elseNode == TRUE_NODE) {
-                return notRecursive(ifNode);
-            }
-            int result = andRecursive(pushToWorkStack(notRecursive(ifNode)), elseNode);
-            popWorkStack();
-            return result;
+        if (thenNode == complement(elseNode)) {
+            return xorRecursive(ifNode, elseNode);
         }
 
-        if (elseNode == TRUE_NODE) {
-            int result = notAndRecursive(ifNode, pushToWorkStack(notRecursive(thenNode)));
-            popWorkStack();
-            return result;
-        }
-        if (elseNode == FALSE_NODE) {
-            return andRecursive(ifNode, thenNode);
-        }
-        if (ifNode == thenNode) {
-            return orRecursive(ifNode, elseNode);
-        }
-        if (ifNode == elseNode) {
-            return andRecursive(ifNode, thenNode);
+        // Normalize so that at most else is complemented
+        int ifNormalized = regular(ifNode);
+        int thenSwap;
+        int elseSwap;
+        if (ifNormalized != ifNode) {
+            thenSwap = elseNode;
+            elseSwap = thenNode;
+        } else {
+            thenSwap = thenNode;
+            elseSwap = elseNode;
         }
 
-        if (cache.lookupIfThenElse(ifNode, thenNode, elseNode)) {
-            return cache.lookupResult();
+        boolean complement = false;
+        int thenNormalized = regular(thenSwap);
+        int elseNormalized;
+        if (thenNormalized != thenSwap) {
+            elseNormalized = complement(elseSwap);
+            complement = true;
+        } else {
+            elseNormalized = elseSwap;
+        }
+        assert isRegular(ifNormalized) && isRegular(thenNormalized);
+
+        if (cache.lookupIfThenElse(ifNormalized, thenNormalized, elseNormalized)) {
+            return complementIf(cache.lookupResult(), complement);
         }
         int hash = cache.lookupHash();
-        int ifVar = variable(ifNode);
-        int thenVar = variable(thenNode);
-        int elseVar = variable(elseNode);
+        int ifVar = variable(ifNormalized);
+        int thenVar = variable(thenNormalized);
+        int elseVar = variable(elseNormalized);
 
         int minVar = Math.min(ifVar, Math.min(thenVar, elseVar));
         int ifLowNode;
         int ifHighNode;
 
         if (ifVar == minVar) {
-            ifLowNode = low(ifNode);
-            ifHighNode = high(ifNode);
+            ifLowNode = low(ifNormalized);
+            ifHighNode = high(ifNormalized);
         } else {
-            ifLowNode = ifNode;
-            ifHighNode = ifNode;
+            ifLowNode = ifNormalized;
+            ifHighNode = ifNormalized;
         }
 
         int thenHighNode;
         int thenLowNode;
         if (thenVar == minVar) {
-            thenLowNode = low(thenNode);
-            thenHighNode = high(thenNode);
+            thenLowNode = low(thenNormalized);
+            thenHighNode = high(thenNormalized);
         } else {
-            thenLowNode = thenNode;
-            thenHighNode = thenNode;
+            thenLowNode = thenNormalized;
+            thenHighNode = thenNormalized;
         }
 
         int elseHighNode;
         int elseLowNode;
         if (elseVar == minVar) {
-            elseLowNode = low(elseNode);
-            elseHighNode = high(elseNode);
+            boolean else1c = isComplemented(elseNormalized);
+            elseLowNode = lowC(elseNormalized, else1c);
+            elseHighNode = highC(elseNormalized, else1c);
         } else {
-            elseLowNode = elseNode;
-            elseHighNode = elseNode;
+            elseLowNode = elseNormalized;
+            elseHighNode = elseNormalized;
         }
 
         int lowNode = pushToWorkStack(ifThenElseRecursive(ifLowNode, thenLowNode, elseLowNode));
         int highNode = pushToWorkStack(ifThenElseRecursive(ifHighNode, thenHighNode, elseHighNode));
         int result = makeNode(minVar, lowNode, highNode);
         popWorkStack(2);
-        cache.putIfThenElse(hash, ifNode, thenNode, elseNode, result);
-        return result;
+        cache.putIfThenElse(hash, ifNormalized, thenNormalized, elseNormalized, result);
+        return complementIf(result, complement);
     }
 
     @Override
     public int implication(int node1, int node2) {
         assert isWorkStackEmpty();
-        assert isNodeValidOrLeaf(node1) && isNodeValidOrLeaf(node2);
-        pushToWorkStack(node1);
-        pushToWorkStack(node2);
-        int result = iterative ? implicationIterative(node1, node2, 0) : implicationRecursive(node1, node2);
-        popWorkStack(2);
-        assert isWorkStackEmpty();
-        return result;
-    }
-
-    private int implicationIterative(int node1, int node2, int baseStackIndex) {
-        int[] cacheStackHash = this.cacheStackHash;
-        int[] cacheStackLeft = this.cacheStackFirstArg;
-        int[] cacheStackRight = this.cacheStackSecondArg;
-        int[] branchStackParentVar = this.branchStackParentVar;
-        int[] branchStackLeft = this.branchStackFirstArg;
-        int[] branchStackRight = this.branchStackSecondArg;
-
-        int stackIndex = baseStackIndex;
-        int current1 = node1;
-        int current2 = node2;
-
-        while (true) {
-            assert stackIndex >= baseStackIndex;
-
-            int result = NOT_A_NODE;
-            do {
-                if (current1 == FALSE_NODE || current2 == TRUE_NODE || current1 == current2) {
-                    result = TRUE_NODE;
-                } else if (current1 == TRUE_NODE) {
-                    result = current2;
-                } else if (current2 == FALSE_NODE) {
-                    result = notIterative(current1, stackIndex);
-                } else if (cache.lookupImplication(current1, current2)) {
-                    result = cache.lookupResult();
-                } else {
-                    int node1var = variable(current1);
-                    int node2var = variable(current2);
-
-                    cacheStackHash[stackIndex] = cache.lookupHash();
-                    cacheStackLeft[stackIndex] = current1;
-                    cacheStackRight[stackIndex] = current2;
-
-                    if (node1var > node2var) {
-                        branchStackParentVar[stackIndex] = node2var;
-                        branchStackLeft[stackIndex] = current1;
-                        branchStackRight[stackIndex] = high(current2);
-
-                        current2 = low(current2);
-                    } else if (node1var == node2var) {
-                        branchStackParentVar[stackIndex] = node1var;
-                        branchStackLeft[stackIndex] = high(current1);
-                        branchStackRight[stackIndex] = high(current2);
-
-                        current1 = low(current1);
-                        current2 = low(current2);
-                    } else {
-                        branchStackParentVar[stackIndex] = node1var;
-                        branchStackLeft[stackIndex] = high(current1);
-                        branchStackRight[stackIndex] = current2;
-
-                        current1 = low(current1);
-                    }
-                    stackIndex += 1;
-                }
-            } while (result == NOT_A_NODE);
-
-            if (stackIndex == baseStackIndex) {
-                return result;
-            }
-
-            int parentVar;
-            while ((parentVar = branchStackParentVar[--stackIndex]) < 0) {
-                int variable = -parentVar - 1;
-                result = makeNode(variable, peekWorkStack(), pushToWorkStack(result));
-                popWorkStack(2);
-
-                int left = cacheStackLeft[stackIndex];
-                int right = cacheStackRight[stackIndex];
-                cache.putImplication(cacheStackHash[stackIndex], left, right, result);
-
-                if (stackIndex == baseStackIndex) {
-                    return result;
-                }
-            }
-            branchStackParentVar[stackIndex] = -(parentVar + 1);
-            pushToWorkStack(result);
-
-            current1 = branchStackLeft[stackIndex];
-            current2 = branchStackRight[stackIndex];
-            stackIndex += 1;
-        }
-    }
-
-    private int implicationRecursive(int node1, int node2) {
-        if (node1 == FALSE_NODE || node2 == TRUE_NODE || node1 == node2) {
-            return TRUE_NODE;
-        }
-        if (node1 == TRUE_NODE) {
-            return node2;
-        }
-        if (node2 == FALSE_NODE) {
-            return notRecursive(node1);
-        }
-
-        if (cache.lookupImplication(node1, node2)) {
-            return cache.lookupResult();
-        }
-        int hash = cache.lookupHash();
-
-        int node1var = variable(node1);
-        int node2var = variable(node2);
-
-        int lowNode;
-        int highNode;
-        int decisionVar;
-        if (node1var > node2var) {
-            lowNode = pushToWorkStack(implicationRecursive(node1, low(node2)));
-            highNode = pushToWorkStack(implicationRecursive(node1, high(node2)));
-            decisionVar = node2var;
-        } else if (node1var == node2var) {
-            lowNode = pushToWorkStack(implicationRecursive(low(node1), low(node2)));
-            highNode = pushToWorkStack(implicationRecursive(high(node1), high(node2)));
-            decisionVar = node1var;
-        } else {
-            lowNode = pushToWorkStack(implicationRecursive(low(node1), node2));
-            highNode = pushToWorkStack(implicationRecursive(high(node1), node2));
-            decisionVar = node1var;
-        }
-        int resultNode = makeNode(decisionVar, lowNode, highNode);
-        popWorkStack(2);
-        cache.putImplication(hash, node1, node2, resultNode);
-        return resultNode;
+        return complement(and(node1, complement(node2)));
     }
 
     @Override
     public boolean implies(int node1, int node2) {
         assert isWorkStackEmpty();
-        assert isNodeValidOrLeaf(node1) && isNodeValidOrLeaf(node2);
-        boolean result = iterative ? impliesIterative(node1, node2, 0) : impliesRecursive(node1, node2);
+        assert isNodeValidOrTerminal(node1) && isNodeValidOrTerminal(node2);
+        boolean result = impliesRecursive(node1, node2);
         assert isWorkStackEmpty();
         return result;
-    }
-
-    private boolean impliesIterative(int node1, int node2, int baseStackIndex) {
-        int[] branchStackLeft = this.branchStackFirstArg;
-        int[] branchStackRight = this.branchStackSecondArg;
-
-        int stackIndex = baseStackIndex;
-        int current1 = node1;
-        int current2 = node2;
-
-        while (true) {
-            assert stackIndex >= baseStackIndex;
-
-            //noinspection LoopWithImplicitTerminationCondition
-            while (true) {
-                if (current1 == FALSE_NODE) {
-                    // False implies anything
-                    break;
-                }
-                if (current2 == FALSE_NODE) {
-                    // node1 != FALSE_NODE
-                    return false;
-                }
-                if (current2 == TRUE_NODE) {
-                    // node1 != FALSE_NODE
-                    break;
-                }
-                if (current1 == TRUE_NODE) {
-                    // node2 != TRUE_NODE
-                    return false;
-                }
-                if (current1 == current2) {
-                    // Trivial implication
-                    break;
-                }
-                if (cache.lookupImplication(current1, current2)) {
-                    if (cache.lookupResult() == TRUE_NODE) {
-                        break;
-                    }
-                    return false;
-                }
-
-                int node1var = variable(current1);
-                int node2var = variable(current2);
-
-                int node1low = low(current1);
-                int node1high = high(current1);
-                int node2low = low(current2);
-                int node2high = high(current2);
-
-                if (node1var > node2var) {
-                    branchStackLeft[stackIndex] = current1;
-                    branchStackRight[stackIndex] = node2high;
-
-                    current2 = node2low;
-                } else if (node1var == node2var) {
-                    branchStackLeft[stackIndex] = node1high;
-                    branchStackRight[stackIndex] = node2high;
-
-                    current1 = node1low;
-                    current2 = node2low;
-                } else {
-                    branchStackLeft[stackIndex] = node1high;
-                    branchStackRight[stackIndex] = current2;
-
-                    current1 = node1low;
-                }
-                stackIndex += 1;
-            }
-
-            if (stackIndex == baseStackIndex) {
-                return true;
-            }
-
-            stackIndex--;
-            current1 = branchStackLeft[stackIndex];
-            current2 = branchStackRight[stackIndex];
-        }
     }
 
     private boolean impliesRecursive(int node1, int node2) {
@@ -2574,391 +1744,64 @@ final class BddImpl implements Bdd {
             // Trivial implication
             return true;
         }
+        if (node1 == complement(node2)) {
+            return false;
+        }
 
-        if (cache.lookupImplication(node1, node2)) {
+        if (cache.lookupImplies(node1, node2)) {
             return cache.lookupResult() == TRUE_NODE;
         }
+        int hash = cache.lookupHash();
+
         int node1var = variable(node1);
         int node2var = variable(node2);
 
+        boolean result;
         if (node1var == node2var) {
-            return impliesRecursive(low(node1), low(node2)) && impliesRecursive(high(node1), high(node2));
+            boolean node1c = isComplemented(node1);
+            boolean node2c = isComplemented(node2);
+            result = impliesRecursive(lowC(node1, node1c), lowC(node2, node2c))
+                    && impliesRecursive(highC(node1, node1c), highC(node2, node2c));
         } else if (node1var < node2var) {
-            return impliesRecursive(low(node1), node2) && impliesRecursive(high(node1), node2);
+            boolean node1c = isComplemented(node1);
+            result = impliesRecursive(lowC(node1, node1c), node2) && impliesRecursive(highC(node1, node1c), node2);
         } else {
-            return impliesRecursive(node1, low(node2)) && impliesRecursive(node1, high(node2));
+            boolean node2c = isComplemented(node2);
+            result = impliesRecursive(node1, lowC(node2, node2c)) && impliesRecursive(node1, highC(node2, node2c));
         }
+        cache.putImplies(hash, node1, node2, result);
+        return result;
     }
 
     @Override
     public int not(int node) {
-        assert isWorkStackEmpty();
-        assert isNodeValidOrLeaf(node);
-        pushToWorkStack(node);
-        int result = iterative ? notIterative(node, 0) : notRecursive(node);
-        popWorkStack();
-        assert isWorkStackEmpty();
-        return result;
-    }
-
-    private int notIterative(int node, int baseStackIndex) {
-        int[] cacheStackHash = this.cacheStackHash;
-        int[] cacheArgStack = this.cacheStackFirstArg;
-        int[] branchStackParentVar = this.branchStackParentVar;
-        int[] branchTaskStack = this.branchStackFirstArg;
-
-        int stackIndex = baseStackIndex;
-        int current = node;
-
-        while (true) {
-            assert stackIndex >= baseStackIndex;
-
-            int result = NOT_A_NODE;
-            do {
-                if (current == FALSE_NODE) {
-                    result = TRUE_NODE;
-                } else if (current == TRUE_NODE) {
-                    result = FALSE_NODE;
-                } else if (cache.lookupNot(current)) {
-                    result = cache.lookupResult();
-                } else {
-                    cacheStackHash[stackIndex] = cache.lookupHash();
-                    cacheArgStack[stackIndex] = current;
-                    branchStackParentVar[stackIndex] = variable(current);
-                    branchTaskStack[stackIndex] = high(current);
-                    stackIndex += 1;
-                    current = low(current);
-                }
-            } while (result == NOT_A_NODE);
-
-            if (stackIndex == baseStackIndex) {
-                return result;
-            }
-
-            int parentVar;
-            while ((parentVar = branchStackParentVar[--stackIndex]) < 0) {
-                assert stackIndex >= baseStackIndex;
-                int variable = -parentVar - 1;
-                result = makeNode(variable, peekWorkStack(), pushToWorkStack(result));
-                popWorkStack(2);
-                cache.putNot(cacheStackHash[stackIndex], cacheArgStack[stackIndex], result);
-                if (stackIndex == baseStackIndex) {
-                    return result;
-                }
-            }
-            assert stackIndex >= baseStackIndex;
-            branchStackParentVar[stackIndex] = -(parentVar + 1);
-            pushToWorkStack(result);
-
-            current = branchTaskStack[stackIndex];
-            stackIndex += 1;
-        }
-    }
-
-    private int notRecursive(int node) {
-        if (node == FALSE_NODE) {
-            return TRUE_NODE;
-        }
-        if (node == TRUE_NODE) {
-            return FALSE_NODE;
-        }
-
-        if (cache.lookupNot(node)) {
-            return cache.lookupResult();
-        }
-        int hash = cache.lookupHash();
-
-        int lowNode = pushToWorkStack(notRecursive(low(node)));
-        int highNode = pushToWorkStack(notRecursive(high(node)));
-        int resultNode = makeNode(variable(node), lowNode, highNode);
-        popWorkStack(2);
-        cache.putNot(hash, node, resultNode);
-        return resultNode;
+        assert isNodeValidOrTerminal(node);
+        return complement(node);
     }
 
     @Override
     public int notAnd(int node1, int node2) {
-        assert isWorkStackEmpty();
-        pushToWorkStack(node1);
-        pushToWorkStack(node2);
-        int result = iterative ? notAndIterative(node1, node2, 0) : notAndRecursive(node1, node2);
-        popWorkStack(2);
-        assert isWorkStackEmpty();
-        return result;
-    }
-
-    private int notAndIterative(int node1, int node2, int baseStackIndex) {
-        int[] cacheStackHash = this.cacheStackHash;
-        int[] cacheStackLeft = this.cacheStackFirstArg;
-        int[] cacheStackRight = this.cacheStackSecondArg;
-        int[] branchStackParentVar = this.branchStackParentVar;
-        int[] branchStackLeft = this.branchStackFirstArg;
-        int[] branchStackRight = this.branchStackSecondArg;
-
-        int stackIndex = baseStackIndex;
-        int current1 = node1;
-        int current2 = node2;
-
-        while (true) {
-            assert stackIndex >= baseStackIndex;
-
-            int result = NOT_A_NODE;
-            do {
-                if (current1 == FALSE_NODE || current2 == FALSE_NODE) {
-                    result = TRUE_NODE;
-                } else if (current1 == TRUE_NODE || current1 == current2) {
-                    result = notIterative(current2, stackIndex);
-                } else if (current2 == TRUE_NODE) {
-                    result = notIterative(current1, stackIndex);
-                } else {
-                    int node1var = variable(current1);
-                    int node2var = variable(current2);
-
-                    if (node2var < node1var || (node2var == node1var && current2 < current1)) {
-                        int nodeSwap = current1;
-                        current1 = current2;
-                        current2 = nodeSwap;
-
-                        int varSwap = node1var;
-                        node1var = node2var;
-                        node2var = varSwap;
-                    }
-
-                    if (cache.lookupNAnd(current1, current2)) {
-                        result = cache.lookupResult();
-                    } else {
-                        cacheStackHash[stackIndex] = cache.lookupHash();
-                        cacheStackLeft[stackIndex] = current1;
-                        cacheStackRight[stackIndex] = current2;
-                        branchStackParentVar[stackIndex] = node1var;
-                        branchStackLeft[stackIndex] = high(current1);
-                        if (node1var == node2var) {
-                            branchStackRight[stackIndex] = high(current2);
-                            current2 = low(current2);
-                        } else {
-                            branchStackRight[stackIndex] = current2;
-                        }
-                        stackIndex += 1;
-
-                        current1 = low(current1);
-                    }
-                }
-            } while (result == NOT_A_NODE);
-
-            if (stackIndex == baseStackIndex) {
-                return result;
-            }
-
-            int parentVar;
-            while ((parentVar = branchStackParentVar[--stackIndex]) < 0) {
-                int variable = -parentVar - 1;
-                result = makeNode(variable, peekWorkStack(), pushToWorkStack(result));
-                popWorkStack(2);
-                cache.putNAnd(
-                        cacheStackHash[stackIndex], cacheStackLeft[stackIndex], cacheStackRight[stackIndex], result);
-                if (stackIndex == baseStackIndex) {
-                    return result;
-                }
-            }
-            branchStackParentVar[stackIndex] = -(parentVar + 1);
-            pushToWorkStack(result);
-
-            current1 = branchStackLeft[stackIndex];
-            current2 = branchStackRight[stackIndex];
-            stackIndex += 1;
-        }
-    }
-
-    private int notAndRecursive(int node1, int node2) {
-        if (node1 == FALSE_NODE || node2 == FALSE_NODE) {
-            return TRUE_NODE;
-        }
-        if (node1 == TRUE_NODE || node1 == node2) {
-            return notRecursive(node2);
-        }
-        if (node2 == TRUE_NODE) {
-            return notRecursive(node1);
-        }
-
-        int node1var = variable(node1);
-        int node2var = variable(node2);
-
-        if (node2var < node1var || (node2var == node1var && node2 < node1)) {
-            int nodeSwap = node1;
-            node1 = node2;
-            node2 = nodeSwap;
-
-            int varSwap = node1var;
-            node1var = node2var;
-            node2var = varSwap;
-        }
-
-        if (cache.lookupNAnd(node1, node2)) {
-            return cache.lookupResult();
-        }
-        int hash = cache.lookupHash();
-        int lowNode;
-        int highNode;
-        if (node1var == node2var) {
-            lowNode = pushToWorkStack(notAndRecursive(low(node1), low(node2)));
-            highNode = pushToWorkStack(notAndRecursive(high(node1), high(node2)));
-        } else { // v < getVariable(node2)
-            lowNode = pushToWorkStack(notAndRecursive(low(node1), node2));
-            highNode = pushToWorkStack(notAndRecursive(high(node1), node2));
-        }
-        int resultNode = makeNode(node1var, lowNode, highNode);
-        popWorkStack(2);
-        cache.putNAnd(hash, node1, node2, resultNode);
-        return resultNode;
+        return complement(and(node1, node2));
     }
 
     @Override
     public int or(int node1, int node2) {
-        assert isWorkStackEmpty();
-        assert isNodeValidOrLeaf(node1) && isNodeValidOrLeaf(node2);
-        pushToWorkStack(node1);
-        pushToWorkStack(node2);
-        int result = iterative ? orIterative(node1, node2, 0) : orRecursive(node1, node2);
-        popWorkStack(2);
-        assert isWorkStackEmpty();
-        return result;
-    }
-
-    private int orIterative(int node1, int node2, int baseStackIndex) {
-        int[] cacheStackHash = this.cacheStackHash;
-        int[] cacheStackLeft = this.cacheStackFirstArg;
-        int[] cacheStackRight = this.cacheStackSecondArg;
-        int[] branchStackParentVar = this.branchStackParentVar;
-        int[] branchStackLeft = this.branchStackFirstArg;
-        int[] branchStackRight = this.branchStackSecondArg;
-
-        int stackIndex = baseStackIndex;
-        int current1 = node1;
-        int current2 = node2;
-
-        while (true) {
-            assert stackIndex >= baseStackIndex;
-
-            int result = NOT_A_NODE;
-            do {
-                if (current1 == TRUE_NODE || current2 == TRUE_NODE) {
-                    result = TRUE_NODE;
-                } else if (current1 == FALSE_NODE || current1 == current2) {
-                    result = current2;
-                } else if (current2 == FALSE_NODE) {
-                    result = current1;
-                } else {
-                    int node1var = variable(current1);
-                    int node2var = variable(current2);
-
-                    if (node2var < node1var || (node2var == node1var && current2 < current1)) {
-                        int nodeSwap = current1;
-                        current1 = current2;
-                        current2 = nodeSwap;
-
-                        int varSwap = node1var;
-                        node1var = node2var;
-                        node2var = varSwap;
-                    }
-
-                    if (cache.lookupOr(current1, current2)) {
-                        result = cache.lookupResult();
-                    } else {
-                        cacheStackHash[stackIndex] = cache.lookupHash();
-                        cacheStackLeft[stackIndex] = current1;
-                        cacheStackRight[stackIndex] = current2;
-
-                        branchStackParentVar[stackIndex] = node1var;
-                        branchStackLeft[stackIndex] = high(current1);
-                        if (node1var == node2var) {
-                            branchStackRight[stackIndex] = high(current2);
-                            current2 = low(current2);
-                        } else {
-                            branchStackRight[stackIndex] = current2;
-                        }
-                        stackIndex += 1;
-
-                        current1 = low(current1);
-                    }
-                }
-            } while (result == NOT_A_NODE);
-
-            if (stackIndex == baseStackIndex) {
-                return result;
-            }
-
-            int parentVar;
-            while ((parentVar = branchStackParentVar[--stackIndex]) < 0) {
-                int variable = -parentVar - 1;
-                result = makeNode(variable, peekWorkStack(), pushToWorkStack(result));
-                popWorkStack(2);
-                cache.putOr(
-                        cacheStackHash[stackIndex], cacheStackLeft[stackIndex], cacheStackRight[stackIndex], result);
-                if (stackIndex == baseStackIndex) {
-                    return result;
-                }
-            }
-            branchStackParentVar[stackIndex] = -(parentVar + 1);
-            pushToWorkStack(result);
-
-            current1 = branchStackLeft[stackIndex];
-            current2 = branchStackRight[stackIndex];
-            stackIndex += 1;
-        }
+        return complement(and(complement(node1), complement(node2)));
     }
 
     private int orRecursive(int node1, int node2) {
-        if (node1 == TRUE_NODE || node2 == TRUE_NODE) {
-            return TRUE_NODE;
-        }
-        if (node1 == FALSE_NODE || node1 == node2) {
-            return node2;
-        }
-        if (node2 == FALSE_NODE) {
-            return node1;
-        }
-
-        int node1var = variable(node1);
-        int node2var = variable(node2);
-
-        if (node2var < node1var || (node2var == node1var && node2 < node1)) {
-            int nodeSwap = node1;
-            node1 = node2;
-            node2 = nodeSwap;
-
-            int varSwap = node1var;
-            node1var = node2var;
-            node2var = varSwap;
-        }
-
-        if (cache.lookupOr(node1, node2)) {
-            return cache.lookupResult();
-        }
-        int hash = cache.lookupHash();
-        int lowNode;
-        int highNode;
-        if (node1var == node2var) {
-            lowNode = pushToWorkStack(orRecursive(low(node1), low(node2)));
-            highNode = pushToWorkStack(orRecursive(high(node1), high(node2)));
-        } else { // v < getVariable(node2)
-            lowNode = pushToWorkStack(orRecursive(low(node1), node2));
-            highNode = pushToWorkStack(orRecursive(high(node1), node2));
-        }
-        int resultNode = makeNode(node1var, lowNode, highNode);
-        popWorkStack(2);
-        cache.putOr(hash, node1, node2, resultNode);
-        return resultNode;
+        return complement(andRecursive(complement(node1), complement(node2)));
     }
 
     @Override
     public int restrict(int node, BitSet restrictedVariables, BitSet restrictedVariableValues) {
         assert isWorkStackEmpty();
-        assert isNodeValidOrLeaf(node);
+        assert isNodeValidOrTerminal(node);
 
         if (restrictedVariables.isEmpty()) {
             return node;
         }
-        if (isLeaf(node)) {
+        if (isTerminal(node)) {
             return node;
         }
 
@@ -2974,9 +1817,7 @@ final class BddImpl implements Bdd {
         }
 
         cache.initCompose(composeArray, highestReplacement);
-        int result = iterative
-                ? composeIterative(node, composeArray, highestReplacement)
-                : composeRecursive(node, composeArray, highestReplacement);
+        int result = composeRecursive(node, composeArray, highestReplacement);
         popWorkStack();
         assert isWorkStackEmpty();
         return result;
@@ -2987,114 +1828,30 @@ final class BddImpl implements Bdd {
         assert isWorkStackEmpty();
         pushToWorkStack(node1);
         pushToWorkStack(node2);
-        int ret = iterative ? xorIterative(node1, node2, 0) : xorRecursive(node1, node2);
+        int ret = xorRecursive(node1, node2);
         popWorkStack(2);
         assert isWorkStackEmpty();
         return ret;
-    }
-
-    private int xorIterative(int node1, int node2, int baseStackIndex) {
-        int[] cacheStackHash = this.cacheStackHash;
-        int[] cacheStackLeft = this.cacheStackFirstArg;
-        int[] cacheStackRight = this.cacheStackSecondArg;
-        int[] branchStackParentVar = this.branchStackParentVar;
-        int[] branchStackLeft = this.branchStackFirstArg;
-        int[] branchStackRight = this.branchStackSecondArg;
-
-        int stackIndex = baseStackIndex;
-        int current1 = node1;
-        int current2 = node2;
-
-        while (true) {
-            assert stackIndex >= baseStackIndex;
-
-            int result = NOT_A_NODE;
-            do {
-                if (current1 == current2) {
-                    result = FALSE_NODE;
-                } else if (current1 == FALSE_NODE) {
-                    result = current2;
-                } else if (current2 == FALSE_NODE) {
-                    result = current1;
-                } else if (current1 == TRUE_NODE) {
-                    result = notIterative(current2, stackIndex);
-                } else if (current2 == TRUE_NODE) {
-                    result = notIterative(current1, stackIndex);
-                } else {
-                    int node1var = variable(current1);
-                    int node2var = variable(current2);
-
-                    if (node2var < node1var || (node2var == node1var && current2 < current1)) {
-                        int nodeSwap = current1;
-                        current1 = current2;
-                        current2 = nodeSwap;
-
-                        int varSwap = node1var;
-                        node1var = node2var;
-                        node2var = varSwap;
-                    }
-
-                    if (cache.lookupXor(current1, current2)) {
-                        result = cache.lookupResult();
-                    } else {
-                        cacheStackHash[stackIndex] = cache.lookupHash();
-                        cacheStackLeft[stackIndex] = current1;
-                        cacheStackRight[stackIndex] = current2;
-
-                        branchStackParentVar[stackIndex] = node1var;
-                        branchStackLeft[stackIndex] = high(current1);
-                        if (node1var == node2var) {
-                            branchStackRight[stackIndex] = high(current2);
-                            current2 = low(current2);
-                        } else {
-                            branchStackRight[stackIndex] = current2;
-                        }
-                        current1 = low(current1);
-
-                        stackIndex += 1;
-                    }
-                }
-            } while (result == NOT_A_NODE);
-
-            if (stackIndex == baseStackIndex) {
-                return result;
-            }
-
-            int parentVar;
-            while ((parentVar = branchStackParentVar[--stackIndex]) < 0) {
-                int variable = -parentVar - 1;
-                result = makeNode(variable, peekWorkStack(), pushToWorkStack(result));
-                popWorkStack(2);
-                cache.putXor(
-                        cacheStackHash[stackIndex], cacheStackLeft[stackIndex], cacheStackRight[stackIndex], result);
-                if (stackIndex == baseStackIndex) {
-                    return result;
-                }
-            }
-            branchStackParentVar[stackIndex] = -(parentVar + 1);
-            pushToWorkStack(result);
-
-            current1 = branchStackLeft[stackIndex];
-            current2 = branchStackRight[stackIndex];
-            stackIndex += 1;
-        }
     }
 
     private int xorRecursive(int node1, int node2) {
         if (node1 == node2) {
             return FALSE_NODE;
         }
+        if (node1 == TRUE_NODE) {
+            return complement(node2);
+        }
         if (node1 == FALSE_NODE) {
             return node2;
+        }
+        if (node2 == TRUE_NODE) {
+            return complement(node1);
         }
         if (node2 == FALSE_NODE) {
             return node1;
         }
-        if (node1 == TRUE_NODE) {
-            return notRecursive(node2);
-        }
-        if (node2 == TRUE_NODE) {
-            return notRecursive(node1);
+        if (node1 == complement(node2)) {
+            return TRUE_NODE;
         }
 
         int node1var = variable(node1);
@@ -3116,38 +1873,20 @@ final class BddImpl implements Bdd {
         int hash = cache.lookupHash();
         int lowNode;
         int highNode;
+        boolean node1c = isComplemented(node1);
         if (node1var == node2var) {
-            lowNode = pushToWorkStack(xorRecursive(low(node1), low(node2)));
-            highNode = pushToWorkStack(xorRecursive(high(node1), high(node2)));
-        } else { // v < getVariable(node2)
-            lowNode = pushToWorkStack(xorRecursive(low(node1), node2));
-            highNode = pushToWorkStack(xorRecursive(high(node1), node2));
+            boolean node2c = isComplemented(node2);
+            lowNode = pushToWorkStack(xorRecursive(complementIf(low(node1), node1c), complementIf(low(node2), node2c)));
+            highNode =
+                    pushToWorkStack(xorRecursive(complementIf(high(node1), node1c), complementIf(high(node2), node2c)));
+        } else { // node1var < node2var
+            lowNode = pushToWorkStack(xorRecursive(complementIf(low(node1), node1c), node2));
+            highNode = pushToWorkStack(xorRecursive(complementIf(high(node1), node1c), node2));
         }
         int resultNode = makeNode(node1var, lowNode, highNode);
         popWorkStack(2);
         cache.putXor(hash, node1, node2, resultNode);
         return resultNode;
-    }
-
-    // Iterative management
-
-    private void growStacks() {
-        int minimumSize = numberOfVariables + 5;
-        if (cacheStackHash.length > minimumSize) {
-            return;
-        }
-
-        cacheStackHash = new int[minimumSize];
-        cacheStackFirstArg = new int[minimumSize];
-        cacheStackSecondArg = new int[minimumSize];
-        cacheStackThirdArg = new int[minimumSize];
-
-        branchStackParentVar = new int[minimumSize];
-        branchStackFirstArg = new int[minimumSize];
-        branchStackSecondArg = new int[minimumSize];
-        branchStackThirdArg = new int[minimumSize];
-
-        markStack = new int[minimumSize];
     }
 
     // Integrity checks and utility
@@ -3210,23 +1949,23 @@ final class BddImpl implements Bdd {
                 int low = low(node);
                 int high = high(node);
                 checkState(
-                        isNodeValidOrLeaf(low),
+                        isNodeValidOrTerminal(low),
                         "Invalid low entry (%s) -> (%s)",
                         nodeToStringSupplier(node),
                         nodeToStringSupplier(low));
                 checkState(
-                        isNodeValidOrLeaf(high),
+                        isNodeValidOrTerminal(high),
                         "Invalid high entry (%s) -> (%s)",
                         nodeToStringSupplier(node),
                         nodeToStringSupplier(high));
-                if (!isLeaf(low)) {
+                if (!isTerminal(low)) {
                     checkState(
-                            dataGetVariable(metadata) < dataGetVariable(nodeData[low]),
+                            dataGetVariable(metadata) < dataGetVariable(nodeData[regular(low)]),
                             "(%s) -> (%s) does not descend tree",
                             nodeToStringSupplier(node),
                             nodeToStringSupplier(low));
                 }
-                if (!isLeaf(high)) {
+                if (!isTerminal(high)) {
                     checkState(
                             dataGetVariable(metadata) < dataGetVariable(nodeData[high]),
                             "(%s) -> (%s) does not descend tree",
@@ -3238,7 +1977,7 @@ final class BddImpl implements Bdd {
 
         // Check if there are duplicate nodes
         //noinspection MagicNumber
-        int maximalNodeCountCheckedPairs = 1000;
+        int maximalNodeCountCheckedPairs = 2048;
         if (tableSize() < maximalNodeCountCheckedPairs) {
             for (int node = FIRST_NODE; node <= biggestValidNode; node++) {
                 int dataI = nodeData[node];
@@ -3327,14 +2066,14 @@ final class BddImpl implements Bdd {
     }
 
     void invalidateCache() {
-        cache.invalidate();
+        cache.tableSizeChanged();
     }
 
     // Statistics and Formatting
 
     @Override
     public String toString() {
-        return String.format("BDD%s@%d(%d)", iterative ? "iter" : "rec", tableSize(), System.identityHashCode(this));
+        return String.format("BDD@%d(%d)", tableSize(), System.identityHashCode(this));
     }
 
     @Override
@@ -3342,8 +2081,19 @@ final class BddImpl implements Bdd {
         return getStatistics() + '\n' + cache.getStatistics();
     }
 
+    private String formatNode(int node) {
+        if (node == TRUE_NODE) {
+            return "TRUE";
+        }
+        if (node == FALSE_NODE) {
+            return "FALSE";
+        }
+        return String.format("%s%d", isRegular(node) ? "" : "!", regular(node));
+    }
+
     String nodeToString(int node) {
-        int metadata = nodeData[node];
+        int nodeRegular = regular(node);
+        int metadata = nodeData[nodeRegular];
         if (!dataIsValid(metadata)) {
             return String.format("%5d| == INVALID ==", node);
         }
@@ -3354,7 +2104,12 @@ final class BddImpl implements Bdd {
             referenceCountString = String.format("%3d", dataGetReferenceCount(metadata));
         }
         return String.format(
-                "%5d|%3d|%5d|%5d|%s", node, dataGetVariable(metadata), low(node), high(node), referenceCountString);
+                "%5s|%3d|%5s|%5s|%s",
+                formatNode(nodeRegular),
+                dataGetVariable(metadata),
+                formatNode(low(node)),
+                formatNode(high(node)),
+                referenceCountString);
     }
 
     NodeToStringSupplier nodeToStringSupplier(int node) {
@@ -3368,28 +2123,32 @@ final class BddImpl implements Bdd {
      * @return A string representing the given node.
      */
     public String treeToString(int node) {
-        assert isNodeValidOrLeaf(node);
+        assert isNodeValidOrTerminal(node);
         assert isNoneMarked();
-        if (isLeaf(node)) {
-            return String.format("Node %d%n", node);
+        if (isTerminal(node)) {
+            return String.format("Node %s%n", formatNode(node));
         }
         //noinspection MagicNumber
-        StringBuilder builder =
-                new StringBuilder(50).append("Node ").append(node).append('\n').append("  NODE|VAR| LOW | HIGH|REF\n");
+        StringBuilder builder = new StringBuilder(50)
+                .append("Node ")
+                .append(formatNode(node))
+                .append('\n')
+                .append("  NODE|VAR| LOW | HIGH|REF\n");
         treeToStringRecursive(node, builder);
         unMarkAllBelow(node);
         return builder.toString();
     }
 
     private void treeToStringRecursive(int node, StringBuilder builder) {
-        if (isLeaf(node)) {
+        if (isTerminal(node)) {
             return;
         }
-        int metadata = nodeData[node];
+        int nodeRegular = regular(node);
+        int metadata = nodeData[nodeRegular];
         if (dataIsMarked(metadata)) {
             return;
         }
-        nodeData[node] = dataSetMark(metadata);
+        nodeData[nodeRegular] = dataSetMark(metadata);
         builder.append(' ').append(nodeToString(node)).append('\n');
         treeToStringRecursive(low(node), builder);
         treeToStringRecursive(high(node), builder);
@@ -3469,7 +2228,7 @@ final class BddImpl implements Bdd {
                         + "%4$d valid nodes, %5$d referenced (%6$d saturated), %7$d children%n"
                         + "Hash table: %8$d chains %9$.2f load, %10$.2f avg, %11$d max; "
                         + "%12$d lookups, %13$.2f avg. len%n"
-                        + "%14$d GC runs (%15$.2f s), %16$d freed, %17$d grows",
+                        + "%14$d GC runs (%15$.2f s), %16$d freed, %17$d partial invalidation, %18$d grows",
                 tableSize(),
                 biggestReferencedNode,
                 createdNodes,
@@ -3486,14 +2245,11 @@ final class BddImpl implements Bdd {
                 garbageCollectionCount,
                 garbageCollectionTime / 1000.0,
                 garbageCollectedNodeCount,
+                partialCacheInvalidation,
                 growCount);
     }
 
     // Static utility methods
-
-    private static int min(int a, int b, int c) {
-        return a < b ? Math.min(a, c) : Math.min(b, c);
-    }
 
     private static void checkState(boolean state) {
         if (!state) {
@@ -3521,7 +2277,7 @@ final class BddImpl implements Bdd {
     }
 
     private static boolean dataIsSaturated(int metadata) {
-        return ((metadata >>> REFERENCE_COUNT_OFFSET) & REFERENCE_COUNT_MASK) == REFERENCE_COUNT_SATURATED;
+        return dataGetReferenceCountUnsafe(metadata) == REFERENCE_COUNT_SATURATED;
     }
 
     private static int dataSaturate(int metadata) {
@@ -3537,6 +2293,11 @@ final class BddImpl implements Bdd {
         return (metadata >>> REFERENCE_COUNT_OFFSET) & REFERENCE_COUNT_MASK;
     }
 
+    private static int dataGetReferenceCountOrSaturated(int metadata) {
+        int count = dataGetReferenceCountUnsafe(metadata);
+        return count == REFERENCE_COUNT_SATURATED ? -1 : count;
+    }
+
     private static int dataGetReferenceCountUnsafe(int metadata) {
         return (metadata >>> REFERENCE_COUNT_OFFSET) & REFERENCE_COUNT_MASK;
     }
@@ -3549,6 +2310,10 @@ final class BddImpl implements Bdd {
     private static int dataDecreaseReferenceCount(int metadata) {
         assert !dataIsSaturated(metadata) && dataGetReferenceCount(metadata) > 0;
         return metadata - 2;
+    }
+
+    private static int dataSetMark(int metadata, boolean mark) {
+        return mark ? dataSetMark(metadata) : dataClearMark(metadata);
     }
 
     private static int dataSetMark(int metadata) {
@@ -3573,6 +2338,7 @@ final class BddImpl implements Bdd {
         private final BitSet support;
         private final int variableCount;
         private final int[] path;
+        private final boolean[] pathLookingFor;
         private boolean firstRun = true;
         private int highestLowVariableWithNonFalseHighBranch = 0;
         private int leafNodeVariable;
@@ -3592,12 +2358,14 @@ final class BddImpl implements Bdd {
             this.bdd = bdd;
             this.support = support;
             this.path = new int[variableCount];
+            this.pathLookingFor = new boolean[variableCount];
             this.assignment = new BitSet(variableCount);
             rootVariable = bdd.variable(node);
             assert support.get(rootVariable);
 
             Arrays.fill(path, NON_PATH_NODE);
-            path[rootVariable] = node;
+            path[rootVariable] = regular(node);
+            pathLookingFor[rootVariable] = isRegular(node);
 
             leafNodeVariable = 0;
             hasNextPath = true;
@@ -3615,9 +2383,11 @@ final class BddImpl implements Bdd {
             assert IntStream.range(0, variableCount).allMatch(i -> support.get(i) || path[i] == NON_PATH_NODE);
 
             int currentNode;
+            boolean currentLookingFor;
             if (firstRun) {
                 firstRun = false;
                 currentNode = path[rootVariable];
+                currentLookingFor = pathLookingFor[rootVariable];
             } else {
                 // Check if we can flip any non-path variable in the support
                 boolean clearedAny = false;
@@ -3646,7 +2416,8 @@ final class BddImpl implements Bdd {
                                     }
                                 }
                             }
-                            assert bdd.evaluate(path[rootVariable], assignment);
+                            assert bdd.evaluate(
+                                    complementIf(path[rootVariable], !pathLookingFor[rootVariable]), assignment);
                             return assignment;
                         }
                     }
@@ -3663,8 +2434,9 @@ final class BddImpl implements Bdd {
                 // to find a new path in the BDD
                 // TODO Use highestLowVariableWithNonFalseHighBranch?
                 currentNode = path[leafNodeVariable];
+                currentLookingFor = pathLookingFor[leafNodeVariable];
                 int branchIndex = leafNodeVariable;
-                while (assignment.get(branchIndex) || bdd.high(currentNode) == FALSE_NODE) {
+                while (assignment.get(branchIndex) || isFalse(bdd.high(currentNode), currentLookingFor)) {
                     // This node does not give us another branch, backtrack over the path until we get to
                     // the next element of the path
                     // TODO Could track the previous path element in int[]
@@ -3675,6 +2447,7 @@ final class BddImpl implements Bdd {
                         }
                     } while (path[branchIndex] == NON_PATH_NODE);
                     currentNode = path[branchIndex];
+                    currentLookingFor = pathLookingFor[branchIndex];
                 }
                 assert !assignment.get(branchIndex) && bdd.high(currentNode) != FALSE_NODE;
                 assert leafNodeVariable >= highestLowVariableWithNonFalseHighBranch;
@@ -3687,7 +2460,8 @@ final class BddImpl implements Bdd {
                 assignment.set(branchIndex);
                 assert path[branchIndex] == currentNode;
                 currentNode = bdd.high(currentNode);
-                assert currentNode != FALSE_NODE;
+                assert isRegular(currentNode);
+                assert !isFalse(currentNode, currentLookingFor);
                 leafNodeVariable = branchIndex;
 
                 // We flipped the candidate for low->high transition, clear this information
@@ -3703,30 +2477,35 @@ final class BddImpl implements Bdd {
             hasNextPath = highestLowVariableWithNonFalseHighBranch > -1
                     && highestLowVariableWithNonFalseHighBranch < leafNodeVariable;
 
-            while (currentNode != TRUE_NODE) {
-                assert currentNode != FALSE_NODE;
+            while (!isTrue(currentNode, currentLookingFor)) {
+                assert isRegular(currentNode) && !bdd.isTerminal(currentNode);
+
                 leafNodeVariable = bdd.variable(currentNode);
                 path[leafNodeVariable] = currentNode;
+                pathLookingFor[leafNodeVariable] = currentLookingFor;
                 assert support.get(leafNodeVariable);
 
                 int low = bdd.low(currentNode);
-                if (low == FALSE_NODE) {
+                if (isFalse(low, currentLookingFor)) {
                     // Descend high path
                     assignment.set(leafNodeVariable);
                     currentNode = bdd.high(currentNode);
                 } else {
-                    // If there is a non-false high node, we will be able to swap this node later on so we
+                    // If there is a non-false high node, we will be able to swap this node later on, so we
                     // definitely have a next assignment. On the other hand, if there is no such node, the
                     // last possible assignment has been reached, as there are no more possible switches
                     // higher up in the tree.
-                    if (!hasNextPath && bdd.high(currentNode) != FALSE_NODE) {
+                    if (!hasNextPath && !isFalse(bdd.high(currentNode), currentLookingFor)) {
                         hasNextPath = true;
                         highestLowVariableWithNonFalseHighBranch = leafNodeVariable;
                     }
-                    currentNode = low;
+                    currentNode = regular(low);
+                    if (currentNode != low) {
+                        currentLookingFor = !currentLookingFor;
+                    }
                 }
             }
-            assert bdd.evaluate(path[rootVariable], assignment);
+            assert bdd.evaluate(complementIf(path[rootVariable], !pathLookingFor[rootVariable]), assignment);
 
             // If this is a unique path, there won't be any trivial assignments
             // TODO We can make this faster!

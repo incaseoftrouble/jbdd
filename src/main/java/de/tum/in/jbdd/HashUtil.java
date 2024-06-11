@@ -17,10 +17,12 @@
 package de.tum.in.jbdd;
 
 final class HashUtil {
-    // Note: These are tremendously stupid hash functions, however this is called so often
-    // that the reduction in computation time seems to be very much worth it
+    // TODO Check performance differences on different benchmarks with slight variations
 
-    static final int PRIME = 0x1000193;
+    // Taken from https://planetmath.org/goodhashtableprimes
+    static final int P1 = 6291469;
+    static final int P2 = 12582917;
+    static final int P3 = 25165843;
 
     private HashUtil() {}
 
@@ -29,10 +31,19 @@ final class HashUtil {
     }
 
     static int hash(int firstKey, int secondKey, int thirdKey) {
-        return firstKey + secondKey + thirdKey;
+        // return firstKey + P1 * secondKey + thirdKey;
+        return P3 * (P2 * (P1 * firstKey + secondKey) + thirdKey);
     }
 
-    static int hash(byte firstKey, int secondKey, int thirdKey) {
-        return (PRIME * firstKey) + secondKey + thirdKey;
+    static int hash(byte primeKey, int secondKey, int thirdKey) {
+        return P1 * (primeKey * secondKey + thirdKey);
+    }
+
+    public static int hash(int firstKey, int secondKey) {
+        return P2 * (P1 * firstKey + secondKey);
+    }
+
+    public static int hash(int firstKey, boolean secondKey) {
+        return P1 * (firstKey + Boolean.hashCode(secondKey));
     }
 }
