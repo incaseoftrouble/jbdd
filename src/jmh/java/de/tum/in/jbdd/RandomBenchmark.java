@@ -29,6 +29,8 @@ import org.openjdk.jmh.annotations.Level;
 import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.TearDown;
+import org.openjdk.jmh.infra.Blackhole;
 
 public class RandomBenchmark extends BaseBddBenchmark {
     @SuppressWarnings("StaticCollection")
@@ -36,6 +38,7 @@ public class RandomBenchmark extends BaseBddBenchmark {
             n -> n.add(n.bdd.createVariable()),
             n -> n.add(n.bdd.not(n.get())),
             n -> n.add(n.bdd.and(n.get(), n.get())),
+            n -> n.add(n.bdd.andNot(n.get(), n.get())),
             n -> n.add(n.bdd.or(n.get(), n.get())),
             n -> n.add(n.bdd.notAnd(n.get(), n.get())),
             n -> n.add(n.bdd.xor(n.get(), n.get())),
@@ -80,7 +83,7 @@ public class RandomBenchmark extends BaseBddBenchmark {
             });
 
     @FunctionalInterface
-    private interface BddOperation {
+    public interface BddOperation {
         void run(BddNodes ops);
     }
 
@@ -117,9 +120,13 @@ public class RandomBenchmark extends BaseBddBenchmark {
                         int keep = size - 10;
                         nodes.subList(0, keep).forEach(bdd::dereference);
                         nodeSet.clear();
-                        nodeSet.addAll(nodes.subList(keep, size));
+                        var keepList = List.copyOf(nodes.subList(keep, size));
                         nodes.clear();
-                        nodes.addAll(nodeSet);
+                        for (int n : keepList) {
+                            if (nodeSet.add(n)) {
+                                nodes.add(n);
+                            }
+                        }
                     }
                 }
             }
@@ -133,8 +140,9 @@ public class RandomBenchmark extends BaseBddBenchmark {
 
     private static List<BddOperation> makeOperations(int count, Random random) {
         List<BddOperation> bddOperations = new ArrayList<>();
-        for (int i = 0; i < count; i++) {
-            bddOperations.add(OPERATION_LIST.get(random.nextInt(OPERATION_LIST.size())));
+        while (bddOperations.size() < count) {
+            BddOperation operation = OPERATION_LIST.get(random.nextInt(OPERATION_LIST.size()));
+            bddOperations.add(operation);
         }
         return bddOperations;
     }
@@ -159,12 +167,31 @@ public class RandomBenchmark extends BaseBddBenchmark {
             nodes = new BddNodes(bdd(), new Random(SEED));
             nodes.createVariables(64);
         }
+
+        @TearDown(Level.Iteration)
+        public void printStatistics() {
+            // System.err.println(nodes.bdd.statistics());
+        }
     }
 
     @Benchmark
-    public static void benchmarkRandom(RandomState state) {
+    public static void benchmarkRandom(RandomState state, Blackhole bh) {
         for (BddOperation operation : state.bddOperations) {
             operation.run(state.nodes);
         }
+        bh.consume(state.bdd());
+    }
+
+    public static void main(String[] args) {
+        BddImpl bdd = new BddImpl(ImmutableBddConfiguration.builder()
+                .growthFactor(4)
+                .initialSize(65536)
+                .build());
+        var nodes = new BddNodes(bdd, new Random(1234));
+        nodes.createVariables(64);
+        for (BddOperation operation : makeOperations(20_000, new Random(1234))) {
+            operation.run(nodes);
+        }
+        System.out.println(bdd.statistics());
     }
 }

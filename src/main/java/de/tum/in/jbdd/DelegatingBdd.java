@@ -21,6 +21,7 @@ import java.util.BitSet;
 import java.util.Iterator;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 
 public class DelegatingBdd implements Bdd {
     private final Bdd delegate;
@@ -107,9 +108,9 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
-    public boolean isLeaf(int node) {
+    public boolean isTerminal(int node) {
         onEnter("isNodeRoot");
-        return onExit(delegate.isLeaf(node));
+        return onExit(delegate.isTerminal(node));
     }
 
     @Override
@@ -219,9 +220,23 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
+    public void forEachPath(int node, BitSet relevantSet, Consumer<? super BitSet> action) {
+        onEnter("forEachPath");
+        delegate.forEachPath(node, relevantSet, action);
+        onExit();
+    }
+
+    @Override
     public void forEachPath(int node, BiConsumer<BitSet, BitSet> action) {
         onEnter("forEachPath");
         delegate.forEachPath(node, action);
+        onExit();
+    }
+
+    @Override
+    public void forEachPath(int node, BitSet relevantSet, BiConsumer<BitSet, BitSet> action) {
+        onEnter("forEachPath");
+        delegate.forEachPath(node, relevantSet, action);
         onExit();
     }
 
@@ -233,8 +248,15 @@ public class DelegatingBdd implements Bdd {
 
     @Override
     public BitSet supportTo(int node, BitSet bitSet) {
-        onEnter("support");
+        onEnter("supportTo");
         return onExit(delegate.supportTo(node, bitSet));
+    }
+
+    @Override
+    public void forEachSupport(int node, IntConsumer action) {
+        onEnter("forEachSupport");
+        delegate.forEachSupport(node, action);
+        onExit();
     }
 
     @Override
@@ -244,9 +266,10 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
-    public BitSet supportFilteredTo(int node, BitSet bitSet, BitSet filter) {
-        onEnter("support");
-        return onExit(delegate.supportFilteredTo(node, bitSet, filter));
+    public void forEachSupportFiltered(int node, BitSet filter, IntConsumer action) {
+        onEnter("forEachSupportFiltered");
+        delegate.forEachSupportFiltered(node, filter, action);
+        onExit();
     }
 
     @Override
@@ -289,6 +312,12 @@ public class DelegatingBdd implements Bdd {
     public int and(int node1, int node2) {
         onEnter("and");
         return onExit(delegate.and(node1, node2));
+    }
+
+    @Override
+    public int andNot(int node1, int node2) {
+        onEnter("andNot");
+        return onExit(delegate.andNot(node1, node2));
     }
 
     @Override

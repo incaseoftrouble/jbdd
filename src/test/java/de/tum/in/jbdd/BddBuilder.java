@@ -159,4 +159,8 @@ public final class BddBuilder {
         }
         return new int[][] {ain, bin, out};
     }
+
+    public static void main(String[] args) {
+        BddBuilder.makeAdder(BddFactory.buildBdd(), 1024);
+    }
 }

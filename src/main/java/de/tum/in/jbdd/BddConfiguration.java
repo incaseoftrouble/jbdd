@@ -22,12 +22,12 @@ import org.immutables.value.Value;
 @Value.Immutable
 public class BddConfiguration {
     public static final int DEFAULT_CACHE_BINARY_DIVIDER = 32;
+    public static final int DEFAULT_CACHE_IMPLIES_DIVIDER = 64;
     public static final int DEFAULT_CACHE_SATISFACTION_DIVIDER = 32;
     public static final int DEFAULT_CACHE_TERNARY_DIVIDER = 64;
-    public static final int DEFAULT_CACHE_NEGATION_DIVIDER = 32;
-    public static final int DEFAULT_CACHE_COMPOSE_DIVIDER = 64;
-    public static final double DEFAULT_NODE_TABLE_FREE_NODE_PERCENTAGE = 0.10d;
-    public static final double DEFAULT_NODE_TABLE_GROWTH_FACTOR = 1.5d;
+    public static final int DEFAULT_CACHE_COMPOSE_MULTIPLIER = 64;
+    public static final int DEFAULT_CACHE_QUANTIFICATION_MULTIPLIER = 32;
+    public static final double DEFAULT_NODE_TABLE_GROWTH_FACTOR = 2d;
 
     @Value.Default
     public int initialSize() {
@@ -37,6 +37,11 @@ public class BddConfiguration {
     @Value.Default
     public int cacheBinaryDivider() {
         return DEFAULT_CACHE_BINARY_DIVIDER;
+    }
+
+    @Value.Default
+    public int cacheImpliesDivider() {
+        return DEFAULT_CACHE_IMPLIES_DIVIDER;
     }
 
     @Value.Default
@@ -50,23 +55,18 @@ public class BddConfiguration {
     }
 
     @Value.Default
-    public int cacheNegationDivider() {
-        return DEFAULT_CACHE_NEGATION_DIVIDER;
+    public int cacheComposeMultiplier() {
+        return DEFAULT_CACHE_COMPOSE_MULTIPLIER;
     }
 
     @Value.Default
-    public int cacheComposeDivider() {
-        return DEFAULT_CACHE_COMPOSE_DIVIDER;
+    public int cacheQuantificationMultiplier() {
+        return DEFAULT_CACHE_QUANTIFICATION_MULTIPLIER;
     }
 
     @Value.Default
     public boolean logStatisticsOnShutdown() {
         return false;
-    }
-
-    @Value.Default
-    public double minimumFreeNodePercentageAfterGc() {
-        return DEFAULT_NODE_TABLE_FREE_NODE_PERCENTAGE;
     }
 
     @Value.Default
@@ -76,6 +76,16 @@ public class BddConfiguration {
 
     @Value.Default
     public boolean useGarbageCollection() {
+        return true;
+    }
+
+    @Value.Default
+    public boolean useCachePartialInvalidate() {
+        return true;
+    }
+
+    @Value.Default
+    public boolean useCachePreserveOnGrow() {
         return true;
     }
 

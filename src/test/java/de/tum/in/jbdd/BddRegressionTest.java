@@ -27,7 +27,7 @@ public class BddRegressionTest {
 
     @Test
     public void testReferenceOverflow() {
-        BddImpl bdd = new BddImpl(false, config);
+        BddImpl bdd = new BddImpl(config);
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int and = bdd.and(v1, v2);
@@ -43,7 +43,7 @@ public class BddRegressionTest {
 
     @Test
     public void testIteratorUniquePath() {
-        BddImpl bdd = new BddImpl(false, config);
+        BddImpl bdd = new BddImpl(config);
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int and = bdd.and(v1, v2);
