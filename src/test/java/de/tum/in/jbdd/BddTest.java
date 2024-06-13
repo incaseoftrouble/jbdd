@@ -66,6 +66,8 @@ public class BddTest {
     @Test
     public void internalTest() {
         BddImpl bdd = new BddImpl(config);
+        NodeTable table = bdd.table();
+
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int v3 = bdd.createVariable();
@@ -73,12 +75,12 @@ public class BddTest {
 
         // check deadnodes counter
         int dum = bdd.reference(bdd.and(v3, v2));
-        assertThat(bdd.approximateDeadNodeCount(), is(0));
+        assertThat(table.approximateDeadNodeCount(), is(0));
         bdd.dereference(dum);
-        assertThat(bdd.approximateDeadNodeCount(), is(1));
+        assertThat(table.approximateDeadNodeCount(), is(1));
 
         // test garbage collection:
-        bdd.ensureCapacity(); // make sure there is room for it
+        bdd.forceGc(); // make sure there is room for it
         int g1 = bdd.and(v3, v2);
         int g2 = bdd.reference(bdd.or(g1, v1));
         assertThat(bdd.forceGc(), is(0));
@@ -112,38 +114,37 @@ public class BddTest {
         int b1 = bdd.or(n1, bdd.and(bdd.not(v1), bdd.not(v2)));
         int b2 = bdd.equivalence(v1, v2);
         assertThat(b1, is(b2));
-        assertThat(bdd.isWorkStackEmpty(), is(true));
+        assertThat(table.isWorkStackEmpty(), is(true));
 
         // nodeCount
-        assertThat(bdd.nodeCount(bdd.trueNode()), is(0));
-        assertThat(bdd.nodeCount(bdd.falseNode()), is(0));
-        assertThat(bdd.nodeCount(v1), is(1));
-        assertThat(bdd.nodeCount(nv2), is(1));
-        assertThat(bdd.nodeCount(bdd.and(v1, v2)), is(2));
-        assertThat(bdd.nodeCount(bdd.xor(v1, v2)), is(2));
+        assertThat(table.nodeCountBelow(bdd.nodeFor(bdd.trueFunction())), is(0));
+        assertThat(table.nodeCountBelow(bdd.nodeFor(bdd.falseFunction())), is(0));
+        assertThat(table.nodeCountBelow(bdd.nodeFor(v1)), is(1));
+        assertThat(table.nodeCountBelow(bdd.nodeFor(nv2)), is(1));
+        assertThat(table.nodeCountBelow(bdd.nodeFor(bdd.and(v1, v2))), is(2));
+        assertThat(table.nodeCountBelow(bdd.nodeFor(bdd.xor(v1, v2))), is(2));
 
         // approximateNodeCount
-        assertThat(bdd.approximateNodeCount(bdd.trueNode()), is(0));
-        assertThat(bdd.approximateNodeCount(bdd.falseNode()), is(0));
-        assertThat(bdd.approximateNodeCount(v1), is(1));
-        assertThat(bdd.approximateNodeCount(nv2), is(1));
-        assertThat(bdd.approximateNodeCount(bdd.and(v1, v2)), is(2));
-        assertThat(bdd.approximateNodeCount(bdd.xor(v1, v2)), is(3));
+        assertThat(table.approximateNodeCount(bdd.nodeFor(bdd.trueFunction())), is(0));
+        assertThat(table.approximateNodeCount(bdd.nodeFor(bdd.falseFunction())), is(0));
+        assertThat(table.approximateNodeCount(bdd.nodeFor(v1)), is(1));
+        assertThat(table.approximateNodeCount(bdd.nodeFor(nv2)), is(1));
+        assertThat(table.approximateNodeCount(bdd.nodeFor(bdd.and(v1, v2))), is(2));
+        assertThat(table.approximateNodeCount(bdd.nodeFor(bdd.xor(v1, v2))), is(3));
 
         int qs1 = bdd.reference(bdd.xor(v1, v2));
         int qs2 = bdd.reference(bdd.xor(v3, v4));
         int qs3 = bdd.reference(bdd.xor(qs1, qs2));
-        assertThat(bdd.approximateNodeCount(qs1), is(3));
-        assertThat(bdd.approximateNodeCount(qs2), is(3));
-        assertThat(bdd.approximateNodeCount(qs3), is(15));
+        assertThat(table.approximateNodeCount(bdd.nodeFor(qs1)), is(3));
+        assertThat(table.approximateNodeCount(bdd.nodeFor(qs2)), is(3));
+        assertThat(table.approximateNodeCount(bdd.nodeFor(qs3)), is(15));
         // assertThat(bdd.nodeCount(qs3), is(7));
         bdd.dereference(qs1);
         bdd.dereference(qs2);
         bdd.dereference(qs3);
 
-        // satcount
-        assertThat(bdd.countSatisfyingAssignments(bdd.falseNode()).longValueExact(), is(0L));
-        assertThat(bdd.countSatisfyingAssignments(bdd.trueNode()).longValueExact(), is(16L));
+        assertThat(bdd.countSatisfyingAssignments(bdd.falseFunction()).longValueExact(), is(0L));
+        assertThat(bdd.countSatisfyingAssignments(bdd.trueFunction()).longValueExact(), is(16L));
         assertThat(bdd.countSatisfyingAssignments(v1).longValueExact(), is(8L));
         assertThat(bdd.countSatisfyingAssignments(n1).longValueExact(), is(4L));
         assertThat(bdd.countSatisfyingAssignments(b1).longValueExact(), is(8L));
@@ -184,10 +185,10 @@ public class BddTest {
         assertThat(bdd.ifThenElse(v1, v1, v1), is(v1));
         assertThat(bdd.ifThenElse(v1, v1andv2, v1andv2), is(v1andv2));
         assertThat(bdd.ifThenElse(v1, v1andv2, v2), is(v2));
-        assertThat(bdd.ifThenElse(v1, v2, bdd.falseNode()), is(bdd.and(v1, v2)));
-        assertThat(bdd.ifThenElse(v1, bdd.trueNode(), v2), is(bdd.or(v1, v2)));
+        assertThat(bdd.ifThenElse(v1, v2, bdd.falseFunction()), is(bdd.and(v1, v2)));
+        assertThat(bdd.ifThenElse(v1, bdd.trueFunction(), v2), is(bdd.or(v1, v2)));
         assertThat(bdd.ifThenElse(v1, bdd.not(v2), v2), is(bdd.xor(v1, v2)));
-        assertThat(bdd.ifThenElse(v1, bdd.falseNode(), bdd.trueNode()), is(bdd.not(v1)));
+        assertThat(bdd.ifThenElse(v1, bdd.falseFunction(), bdd.trueFunction()), is(bdd.not(v1)));
         assertThat(bdd.ifThenElse(v1, v2, bdd.not(v2)), is(bdd.equivalence(v1, v2)));
     }
 
@@ -220,11 +221,11 @@ public class BddTest {
         BddImpl bdd = new BddImpl(config);
 
         List<BitSet> falseSolutions = Lists.newArrayList();
-        bdd.forEachPath(bdd.falseNode(), set -> falseSolutions.add((BitSet) set.clone()));
+        bdd.forEachPath(bdd.falseFunction(), set -> falseSolutions.add((BitSet) set.clone()));
         assertThat(falseSolutions, is(Collections.emptyList()));
 
         List<BitSet> trueSolutions = Lists.newArrayList();
-        bdd.forEachPath(bdd.trueNode(), set -> trueSolutions.add((BitSet) set.clone()));
+        bdd.forEachPath(bdd.trueFunction(), set -> trueSolutions.add((BitSet) set.clone()));
         assertThat(trueSolutions, is(Collections.singletonList(new BitSet(0))));
     }
 
@@ -278,14 +279,16 @@ public class BddTest {
     @Test
     public void testWorkStack() {
         BddImpl bdd = new BddImpl(config);
+        NodeTable table = bdd.table();
+
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
-        int temporaryNode = bdd.pushToWorkStack(bdd.and(v1, v2));
+        int temporaryNode = table.pushToWorkStack(bdd.and(v1, v2));
         bdd.forceGc();
-        assertThat(bdd.isNodeValidOrTerminal(temporaryNode), is(true));
-        bdd.popWorkStack();
+        assertThat(bdd.isValidFunction(temporaryNode), is(true));
+        table.popFromWorkStack();
         bdd.forceGc();
-        assertThat(bdd.isNodeValidOrTerminal(temporaryNode), is(false));
+        assertThat(bdd.isValidFunction(temporaryNode), is(false));
     }
 
     @Test
@@ -293,7 +296,7 @@ public class BddTest {
         BddImpl bdd = new BddImpl(config);
         bdd.createVariables(5);
         Set<BitSet> solutions = new HashSet<>();
-        bdd.solutionIterator(bdd.trueNode()).forEachRemaining(val -> solutions.add((BitSet) val.clone()));
+        bdd.solutionIterator(bdd.trueFunction()).forEachRemaining(val -> solutions.add((BitSet) val.clone()));
         assertThat(solutions.size(), is(1 << 5));
     }
 
@@ -305,7 +308,7 @@ public class BddTest {
         conjunction.set(0, 5);
         bdd.solutionIterator(bdd.conjunction(conjunction));
         Set<BitSet> solutions = new HashSet<>();
-        bdd.solutionIterator(bdd.trueNode()).forEachRemaining(val -> solutions.add((BitSet) val.clone()));
+        bdd.solutionIterator(bdd.trueFunction()).forEachRemaining(val -> solutions.add((BitSet) val.clone()));
         assertThat(solutions.size(), is(1 << 5));
     }
 
@@ -316,29 +319,31 @@ public class BddTest {
         int node = bdd.reference(bdd.disjunction(0, 1));
         assertThrows(
                 IllegalStateException.class,
-                () -> bdd.forEachSolution(node, solution -> bdd.implies(bdd.trueNode(), bdd.falseNode())));
+                () -> bdd.forEachSolution(node, solution -> bdd.implies(bdd.trueFunction(), bdd.falseFunction())));
     }
 
     @Test
     public void testDeadNodeApproximation() {
         BddImpl bdd = new BddImpl(config);
+        NodeTable table = bdd.table();
+
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int v3 = bdd.createVariable();
         int or = bdd.reference(bdd.implication(bdd.and(v1, v2), v3));
-        int ite = bdd.reference(bdd.ifThenElse(v2, v3, bdd.trueNode()));
+        int ite = bdd.reference(bdd.ifThenElse(v2, v3, bdd.trueFunction()));
 
         bdd.forceGc();
         bdd.dereference(ite);
-        assertThat(bdd.approximateDeadNodeCount(), is(1));
-        assertThat(bdd.isNodeValidOrTerminal(ite), is(true));
+        assertThat(table.approximateDeadNodeCount(), is(1));
+        assertThat(bdd.isValidFunction(ite), is(true));
         int freed = bdd.forceGc();
         assertThat(freed, is(0));
-        assertThat(bdd.approximateDeadNodeCount(), is(0));
+        assertThat(table.approximateDeadNodeCount(), is(0));
         bdd.dereference(or);
-        assertThat(bdd.approximateDeadNodeCount(), is(1));
+        assertThat(table.approximateDeadNodeCount(), is(1));
         bdd.forceGc();
-        assertThat(bdd.isNodeValidOrTerminal(ite), is(false));
-        assertThat(bdd.referencedNodeCount(), is(3));
+        assertThat(bdd.isValidFunction(ite), is(false));
+        assertThat(table.referencedNodeCount(), is(3));
     }
 }

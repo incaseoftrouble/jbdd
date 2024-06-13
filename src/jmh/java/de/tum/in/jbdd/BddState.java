@@ -30,10 +30,11 @@ public class BddState {
     @Param({"true"})
     private boolean partialInvalidation;
 
-    @Param({
-        "true",
-    })
+    @Param({"true"})
     private boolean preserveCache;
+
+    @Param({"false"})
+    private boolean emulateMdd;
 
     private Bdd bdd;
 
@@ -50,7 +51,7 @@ public class BddState {
                 .useCachePartialInvalidate(partialInvalidation)
                 .useCachePreserveOnGrow(preserveCache)
                 .build();
-        bdd = BddFactory.buildBdd(configuration);
+        bdd = emulateMdd ? new MddAsTestBdd(new MddImpl(configuration)) : BddFactory.buildBdd(configuration);
     }
 
     public Bdd bdd() {

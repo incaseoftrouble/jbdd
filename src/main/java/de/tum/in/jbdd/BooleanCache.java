@@ -26,21 +26,21 @@ import java.util.logging.Logger;
 import javax.annotation.Nullable;
 
 @SuppressWarnings({"PMD.UseUtilityClass", "PMD.TooManyFields"})
-final class BddCache {
-    private static final Logger logger = Logger.getLogger(BddCache.class.getName());
+final class BooleanCache {
+    private static final Logger logger = Logger.getLogger(BooleanCache.class.getName());
 
     private static final byte NOT_AN_OPERATION = 0;
     private static final byte BINARY_OPERATION_AND = (byte) 97;
     private static final byte BINARY_OPERATION_XOR = (byte) 193;
 
     @SuppressWarnings("StaticCollection")
-    private static final Collection<BddCache> cacheShutdownHook = new ConcurrentLinkedDeque<>();
+    private static final Collection<BooleanCache> cacheShutdownHook = new ConcurrentLinkedDeque<>();
 
     private static final int[] EMPTY_INT_ARRAY = new int[0];
     private static final byte[] EMPTY_BYTE_ARRAY = new byte[0];
     private static final BigInteger[] EMPTY_BIGINT_ARRAY = new BigInteger[0];
 
-    private final BddImpl associatedBdd;
+    private final BooleanBase<?> associatedBdd;
     private final int placeholder;
     private final CacheAccessStatistics binaryAccessStatistics = new CacheAccessStatistics();
     private final CacheAccessStatistics impliesAccessStatistics = new CacheAccessStatistics();
@@ -50,6 +50,7 @@ final class BddCache {
     private int composeReuseCount = 0;
     private final CacheAccessStatistics quantificationAccessStatistics = new CacheAccessStatistics();
     private int quantificationReuseCount = 0;
+    private int partialInvalidationCount = 0;
 
     private int binaryKeyCount = 0;
     private byte[] binaryOp = EMPTY_BYTE_ARRAY;
@@ -79,7 +80,7 @@ final class BddCache {
     private int lookupHash;
     private int lookupResult;
 
-    BddCache(BddImpl associatedBdd) {
+    BooleanCache(BooleanBase<?> associatedBdd) {
         this.associatedBdd = associatedBdd;
         this.placeholder = associatedBdd.placeholder();
         this.lookupHash = -1;
@@ -94,7 +95,7 @@ final class BddCache {
         }
     }
 
-    private static void addToShutdownHook(BddCache cache) {
+    private static void addToShutdownHook(BooleanCache cache) {
         ShutdownHookLazyHolder.init();
         cacheShutdownHook.add(cache);
     }
@@ -103,18 +104,14 @@ final class BddCache {
         return operationId == BINARY_OPERATION_AND || operationId == BINARY_OPERATION_XOR;
     }
 
-    private static boolean isTernaryOperation(byte operationId) {
-        return operationId == 0;
-    }
-
     private static int mod(int value, int modulus) {
         int val = value % modulus;
         return val < 0 ? val + modulus : val;
     }
 
     boolean binarySymmetricWellOrdered(int node1, int node2) {
-        int node1var = associatedBdd.variable(node1);
-        int node2var = associatedBdd.variable(node2);
+        int node1var = associatedBdd.decisionVariable(node1);
+        int node2var = associatedBdd.decisionVariable(node2);
         return node1var < node2var || (node1var == node2var && node1 < node2);
     }
 
@@ -135,7 +132,7 @@ final class BddCache {
                 loadedBinaryBins++;
             }
         }
-        return (float) loadedBinaryBins / (float) binaryKeyCount();
+        return (float) loadedBinaryBins / binaryKeyCount();
     }
 
     private float impliesLoadFactor() {
@@ -145,7 +142,7 @@ final class BddCache {
                 loadedImpliesBins++;
             }
         }
-        return (float) loadedImpliesBins / (float) impliesKeyCount();
+        return (float) loadedImpliesBins / impliesKeyCount();
     }
 
     private float ternaryLoadFactor() {
@@ -155,7 +152,7 @@ final class BddCache {
                 loadedTernaryBins++;
             }
         }
-        return (float) loadedTernaryBins / (float) ternaryKeyCount();
+        return (float) loadedTernaryBins / ternaryKeyCount();
     }
 
     private float satisfactionLoadFactor() {
@@ -165,7 +162,7 @@ final class BddCache {
                 loadedSatisfactionBins++;
             }
         }
-        return (float) loadedSatisfactionBins / (float) satisfactionKeyCount();
+        return (float) loadedSatisfactionBins / satisfactionKeyCount();
     }
 
     private float composeLoadFactor() {
@@ -175,7 +172,7 @@ final class BddCache {
                 loadedComposeBins++;
             }
         }
-        return (float) loadedComposeBins / (float) composeKeyCount();
+        return (float) loadedComposeBins / composeKeyCount();
     }
 
     private float quantificationLoadFactor() {
@@ -185,7 +182,7 @@ final class BddCache {
                 loadedQuantificationBins++;
             }
         }
-        return (float) loadedQuantificationBins / (float) quantificationKeyCount();
+        return (float) loadedQuantificationBins / quantificationKeyCount();
     }
 
     // Key mapping
@@ -272,7 +269,7 @@ final class BddCache {
             return;
         }
 
-        BddImpl bdd = associatedBdd;
+        BooleanBase<?> bdd = associatedBdd;
         binaryAccessStatistics.partialInvalidation();
         int[] binaryCache = this.binaryCache;
         for (int i = 0; i < binaryKeyCount(); i++) {
@@ -280,9 +277,9 @@ final class BddCache {
                 continue;
             }
             int binStart = 3 * i;
-            if (!(bdd.isNodeValidOrTerminal(binaryCache[binStart])
-                    && bdd.isNodeValidOrTerminal(binaryCache[binStart + 1])
-                    && bdd.isNodeValidOrTerminal(binaryCache[binStart + 2]))) {
+            if (!(bdd.isValidNonConstantFunction(binaryCache[binStart])
+                    && bdd.isValidNonConstantFunction(binaryCache[binStart + 1])
+                    && bdd.isValidFunction(binaryCache[binStart + 2]))) {
                 binaryOp[i] = NOT_AN_OPERATION;
             }
         }
@@ -298,7 +295,7 @@ final class BddCache {
             return;
         }
 
-        BddImpl bdd = associatedBdd;
+        BooleanBase<?> bdd = associatedBdd;
         impliesAccessStatistics.partialInvalidation();
         int[] impliesCache = this.impliesCache;
         for (int i = 0; i < impliesKeyCount(); i++) {
@@ -306,8 +303,8 @@ final class BddCache {
                 continue;
             }
             int binStart = 2 * i;
-            if (!(bdd.isNodeValidOrTerminal(impliesCache[binStart])
-                    && bdd.isNodeValidOrTerminal(impliesCache[binStart + 1]))) {
+            if (!(bdd.isValidNonConstantFunction(impliesCache[binStart])
+                    && bdd.isValidNonConstantFunction(impliesCache[binStart + 1]))) {
                 impliesCache[i] = placeholder;
             }
         }
@@ -323,7 +320,7 @@ final class BddCache {
             return;
         }
 
-        BddImpl bdd = associatedBdd;
+        BooleanBase<?> bdd = associatedBdd;
         ternaryAccessStatistics.partialInvalidation();
         int[] ternaryCache = this.ternaryCache;
         for (int binStart = 0; binStart < ternaryCache.length; binStart += 4) {
@@ -331,10 +328,10 @@ final class BddCache {
             if (first == placeholder) {
                 continue;
             }
-            if (!(bdd.isNodeValid(first)
-                    && bdd.isNodeValid(ternaryCache[binStart + 1])
-                    && bdd.isNodeValid(ternaryCache[binStart + 2])
-                    && bdd.isNodeValid(ternaryCache[binStart + 3]))) {
+            if (!(bdd.isValidNonConstantFunction(first)
+                    && bdd.isValidNonConstantFunction(ternaryCache[binStart + 1])
+                    && bdd.isValidNonConstantFunction(ternaryCache[binStart + 2])
+                    && bdd.isValidFunction(ternaryCache[binStart + 3]))) {
                 ternaryCache[binStart] = placeholder;
             }
         }
@@ -353,7 +350,7 @@ final class BddCache {
         satisfactionAccessStatistics.partialInvalidation();
         int[] satisfactionKey = this.satisfactionKey;
         for (int i = 0; i < satisfactionKeyCount(); i++) {
-            if (!associatedBdd.isNodeValid(satisfactionKey[i])) {
+            if (!associatedBdd.isValidNonConstantFunction(satisfactionKey[i])) {
                 satisfactionKey[i] = placeholder;
             }
         }
@@ -369,11 +366,11 @@ final class BddCache {
             return;
         }
 
-        BddImpl bdd = associatedBdd;
+        BooleanBase<?> bdd = associatedBdd;
         int[] composeCache = this.composeCache;
         boolean composeAllValid = true;
         for (int composeNode : composeArray) {
-            if (!bdd.isNodeValidOrTerminal(composeNode)) {
+            if (!bdd.isValidFunction(composeNode)) {
                 composeAllValid = false;
                 break;
             }
@@ -385,7 +382,7 @@ final class BddCache {
                 if (first == placeholder) {
                     continue;
                 }
-                if (!(bdd.isNodeValid(first) && !bdd.isNodeValidOrTerminal(composeCache[binStart + 1]))) {
+                if (!(bdd.isValidNonConstantFunction(first) && !bdd.isValidFunction(composeCache[binStart + 1]))) {
                     composeCache[binStart] = placeholder;
                 }
             }
@@ -404,7 +401,7 @@ final class BddCache {
             return;
         }
 
-        BddImpl bdd = associatedBdd;
+        BooleanBase<?> bdd = associatedBdd;
         quantificationAccessStatistics.partialInvalidation();
         int[] quantificationCache = this.quantificationCache;
         for (int binStart = 0; binStart < quantificationCache.length; binStart += 2) {
@@ -412,13 +409,14 @@ final class BddCache {
             if (first == placeholder) {
                 continue;
             }
-            if (!(bdd.isNodeValid(first) && !bdd.isNodeValidOrTerminal(quantificationCache[binStart + 1]))) {
+            if (!(bdd.isValidNonConstantFunction(first) && !bdd.isValidFunction(quantificationCache[binStart + 1]))) {
                 quantificationCache[binStart] = placeholder;
             }
         }
     }
 
     public void partialInvalidate() {
+        partialInvalidationCount += 1;
         pruneBinary();
         pruneImplies();
         pruneTernary();
@@ -428,7 +426,7 @@ final class BddCache {
     }
 
     private void growBinary() {
-        BddImpl bdd = associatedBdd;
+        BooleanBase<?> bdd = associatedBdd;
         int size = bdd.tableSize() / bdd.configuration().cacheBinaryDivider();
         if (size < 2 * binaryKeyCount) {
             pruneBinary();
@@ -447,7 +445,9 @@ final class BddCache {
                     int input1 = binaryCache[binStart];
                     int input2 = binaryCache[binStart + 1];
                     int result = binaryCache[binStart + 2];
-                    if (!(bdd.isNodeValid(input1) && bdd.isNodeValid(input2) && bdd.isNodeValidOrTerminal(result))) {
+                    if (!(bdd.isValidNonConstantFunction(input1)
+                            && bdd.isValidNonConstantFunction(input2)
+                            && bdd.isValidFunction(result))) {
                         continue;
                     }
                     int newPosition = mod(HashUtil.hash(input1, input2), keyCount);
@@ -489,7 +489,7 @@ final class BddCache {
     }
 
     private void growTernary() {
-        BddImpl bdd = associatedBdd;
+        BooleanBase<?> bdd = associatedBdd;
         int size = bdd.tableSize() / bdd.configuration().cacheTernaryDivider();
 
         if (size < 2 * ternaryKeyCount) {
@@ -512,10 +512,10 @@ final class BddCache {
                     int input2 = ternaryCache[binStart + 1];
                     int input3 = ternaryCache[binStart + 2];
                     int result = ternaryCache[binStart + 3];
-                    if (!(bdd.isNodeValid(input1)
-                            && bdd.isNodeValid(input2)
-                            && bdd.isNodeValid(input3)
-                            && bdd.isNodeValidOrTerminal(result))) {
+                    if (!(bdd.isValidNonConstantFunction(input1)
+                            && bdd.isValidNonConstantFunction(input2)
+                            && bdd.isValidNonConstantFunction(input3)
+                            && bdd.isValidFunction(result))) {
                         if (placeholder != 0) {
                             newTernary[binStart] = placeholder;
                         }
@@ -570,7 +570,7 @@ final class BddCache {
     }
 
     private void growCompose() {
-        BddImpl bdd = associatedBdd;
+        BooleanBase<?> bdd = associatedBdd;
         int size = bdd.numberOfVariables() * bdd.configuration().cacheComposeMultiplier();
         if (size < 2 * composeKeyCount) {
             pruneCompose();
@@ -584,7 +584,7 @@ final class BddCache {
                     int binStart = 2 * i;
                     int input = composeCache[binStart];
                     int result = composeCache[binStart + 1];
-                    if (!(bdd.isNodeValid(input) && bdd.isNodeValidOrTerminal(result))) {
+                    if (!(bdd.isValidNonConstantFunction(input) && bdd.isValidFunction(result))) {
                         if (placeholder != 0) {
                             newCompose[binStart] = placeholder;
                         }
@@ -671,7 +671,8 @@ final class BddCache {
     }
 
     boolean lookupImplies(int inputNode1, int inputNode2) {
-        assert associatedBdd.isNodeValid(inputNode1) && associatedBdd.isNodeValid(inputNode2);
+        assert associatedBdd.isValidNonConstantFunction(inputNode1)
+                && associatedBdd.isValidNonConstantFunction(inputNode2);
 
         int hash = HashUtil.hash(inputNode1, inputNode2);
         lookupHash = hash;
@@ -679,7 +680,8 @@ final class BddCache {
 
         int binStart = 2 * cachePosition;
         if (inputNode1 == impliesCache[binStart] && inputNode2 == impliesCache[binStart + 1]) {
-            lookupResult = impliesValues.get(cachePosition) ? associatedBdd.trueNode() : associatedBdd.falseNode();
+            lookupResult =
+                    impliesValues.get(cachePosition) ? associatedBdd.trueFunction() : associatedBdd.falseFunction();
             impliesAccessStatistics.cacheHit();
             return true;
         }
@@ -687,9 +689,9 @@ final class BddCache {
     }
 
     boolean lookupIfThenElse(int inputNode1, int inputNode2, int inputNode3) {
-        assert associatedBdd.isNodeValid(inputNode1)
-                && associatedBdd.isNodeValid(inputNode2)
-                && associatedBdd.isNodeValid(inputNode3);
+        assert associatedBdd.isValidNonConstantFunction(inputNode1)
+                && associatedBdd.isValidNonConstantFunction(inputNode2)
+                && associatedBdd.isValidNonConstantFunction(inputNode3);
 
         int hash = HashUtil.hash(inputNode1, inputNode2, inputNode3);
         lookupHash = hash;
@@ -701,7 +703,7 @@ final class BddCache {
                 && inputNode3 == ternaryCache[binStart + 2]) {
             int result = ternaryCache[binStart + 3];
             lookupResult = result;
-            assert associatedBdd.isNodeValidOrTerminal(result);
+            assert associatedBdd.isValidFunction(result);
             ternaryAccessStatistics.cacheHit();
             return true;
         }
@@ -710,7 +712,7 @@ final class BddCache {
 
     @Nullable
     BigInteger lookupSatisfaction(int node) {
-        assert associatedBdd.isNodeValid(node);
+        assert associatedBdd.isValidNonConstantFunction(node);
 
         int hash = HashUtil.hash(node);
         lookupHash = hash;
@@ -728,7 +730,7 @@ final class BddCache {
     }
 
     boolean lookupCompose(int inputNode) {
-        assert associatedBdd.isNodeValid(inputNode);
+        assert associatedBdd.isValidNonConstantFunction(inputNode);
 
         int hash = HashUtil.hash(inputNode);
         lookupHash = hash;
@@ -740,7 +742,7 @@ final class BddCache {
         if (composeCache[binStart] == inputNode) {
             int result = composeCache[binStart + 1];
             lookupResult = result;
-            assert associatedBdd.isNodeValidOrTerminal(result);
+            assert associatedBdd.isValidFunction(result);
             composeAccessStatistics.cacheHit();
             return true;
         }
@@ -748,7 +750,7 @@ final class BddCache {
     }
 
     boolean lookupQuantification(int inputNode, boolean exists) {
-        assert associatedBdd.isNodeValid(inputNode);
+        assert associatedBdd.isValidNonConstantFunction(inputNode);
 
         int hash = HashUtil.hash(inputNode, exists);
         lookupHash = hash;
@@ -760,7 +762,7 @@ final class BddCache {
         if (quantificationCache[binStart] == inputNode && quantificationExists.get(cachePosition) == exists) {
             int result = quantificationCache[binStart + 1];
             lookupResult = result;
-            assert associatedBdd.isNodeValidOrTerminal(result);
+            assert associatedBdd.isValidFunction(result);
             quantificationAccessStatistics.cacheHit();
             return true;
         }
@@ -781,7 +783,8 @@ final class BddCache {
 
     private boolean binaryLookup(byte operationId, int inputNode1, int inputNode2) {
         assert isBinaryOperation(operationId);
-        assert associatedBdd.isNodeValid(inputNode1) && associatedBdd.isNodeValid(inputNode2);
+        assert associatedBdd.isValidNonConstantFunction(inputNode1)
+                && associatedBdd.isValidNonConstantFunction(inputNode2);
 
         int hash = HashUtil.hash(operationId, inputNode1, inputNode2);
         lookupHash = hash;
@@ -794,7 +797,7 @@ final class BddCache {
             int result = binaryCache[binStart + 2];
             lookupResult = result;
 
-            assert associatedBdd.isNodeValidOrTerminal(result);
+            assert associatedBdd.isValidFunction(result);
             binaryAccessStatistics.cacheHit();
             return true;
         }
@@ -803,9 +806,9 @@ final class BddCache {
 
     private void binaryPut(byte operationId, int hash, int inputNode1, int inputNode2, int resultNode) {
         assert isBinaryOperation(operationId);
-        assert associatedBdd.isNodeValid(inputNode1)
-                && associatedBdd.isNodeValid(inputNode2)
-                && associatedBdd.isNodeValidOrTerminal(resultNode);
+        assert associatedBdd.isValidNonConstantFunction(inputNode1)
+                && associatedBdd.isValidNonConstantFunction(inputNode2)
+                && associatedBdd.isValidFunction(resultNode);
         assert hash == HashUtil.hash(operationId, inputNode1, inputNode2);
 
         int cachePosition = binaryCachePosition(hash);
@@ -819,7 +822,8 @@ final class BddCache {
     }
 
     void putImplies(int hash, int inputNode1, int inputNode2, boolean result) {
-        assert associatedBdd.isNodeValid(inputNode1) && associatedBdd.isNodeValid(inputNode2);
+        assert associatedBdd.isValidNonConstantFunction(inputNode1)
+                && associatedBdd.isValidNonConstantFunction(inputNode2);
         assert hash == HashUtil.hash(inputNode1, inputNode2);
 
         int cachePosition = impliesCachePosition(hash);
@@ -832,10 +836,10 @@ final class BddCache {
     }
 
     void putIfThenElse(int hash, int inputNode1, int inputNode2, int inputNode3, int resultNode) {
-        assert associatedBdd.isNodeValid(inputNode1)
-                && associatedBdd.isNodeValid(inputNode2)
-                && associatedBdd.isNodeValid(inputNode3)
-                && associatedBdd.isNodeValidOrTerminal(resultNode);
+        assert associatedBdd.isValidNonConstantFunction(inputNode1)
+                && associatedBdd.isValidNonConstantFunction(inputNode2)
+                && associatedBdd.isValidNonConstantFunction(inputNode3)
+                && associatedBdd.isValidFunction(resultNode);
         assert hash == HashUtil.hash(inputNode1, inputNode2, inputNode3);
 
         ternaryAccessStatistics.put();
@@ -849,7 +853,7 @@ final class BddCache {
     }
 
     void putSatisfaction(int hash, int node, BigInteger satisfactionCount) {
-        assert associatedBdd.isNodeValid(node);
+        assert associatedBdd.isValidNonConstantFunction(node);
         assert hash == HashUtil.hash(node);
 
         satisfactionAccessStatistics.put();
@@ -860,7 +864,7 @@ final class BddCache {
     }
 
     void putCompose(int hash, int inputNode, int resultNode) {
-        assert associatedBdd.isNodeValid(inputNode) && associatedBdd.isNodeValidOrTerminal(resultNode);
+        assert associatedBdd.isValidNonConstantFunction(inputNode) && associatedBdd.isValidFunction(resultNode);
         assert hash == HashUtil.hash(inputNode);
 
         composeAccessStatistics.put();
@@ -872,7 +876,7 @@ final class BddCache {
     }
 
     void putQuantification(int hash, int inputNode, boolean exists, int resultNode) {
-        assert associatedBdd.isNodeValid(inputNode) && associatedBdd.isNodeValidOrTerminal(resultNode);
+        assert associatedBdd.isValidNonConstantFunction(inputNode) && associatedBdd.isValidFunction(resultNode);
         assert hash == HashUtil.hash(inputNode, exists);
 
         quantificationAccessStatistics.put();
@@ -892,7 +896,8 @@ final class BddCache {
                         + "Satisfaction: size: %d, load: %s\n %s\n"
                         + "Implies: size: %d, load: %s\n %s\n"
                         + "Compose: current size: %d, load: %s\n %s\n Reuse count: %d\n"
-                        + "Quantification: current size: %d, load: %s\n %s\n Reuse count: %d",
+                        + "Quantification: current size: %d, load: %s\n %s\n Reuse count: %d\n"
+                        + "Partial invalidations: %d",
                 binaryKeyCount(),
                 binaryLoadFactor(),
                 binaryAccessStatistics,
@@ -912,7 +917,8 @@ final class BddCache {
                 quantificationKeyCount(),
                 quantificationLoadFactor(),
                 quantificationAccessStatistics,
-                quantificationReuseCount);
+                quantificationReuseCount,
+                partialInvalidationCount);
     }
 
     private static final class CacheAccessStatistics {
@@ -945,7 +951,7 @@ final class BddCache {
 
         @Override
         public String toString() {
-            float hitToPutRatio = (float) hitCount / (float) Math.max(putCount, 1);
+            float hitToPutRatio = (float) hitCount / Math.max(putCount, 1);
             return String.format(
                     "Cache access: put=%d, hit=%d, hit-to-put=%3.3f%n"
                             + "       invalidation: %d times (%d partial), since last: put=%d, hit=%d",
@@ -978,7 +984,7 @@ final class BddCache {
             if (!logger.isLoggable(Level.INFO)) {
                 return;
             }
-            for (BddCache cache : cacheShutdownHook) {
+            for (BooleanCache cache : cacheShutdownHook) {
                 logger.info(cache.associatedBdd.statistics());
             }
         }

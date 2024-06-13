@@ -62,7 +62,7 @@ public final class DimacsReader {
         if (bdd.numberOfVariables() < variables) {
             bdd.createVariables(variables - bdd.numberOfVariables());
         }
-        int expression = bdd.trueNode();
+        int expression = bdd.trueFunction();
         while (true) {
             String clauseLine = nextLine(reader);
             if (clauseLine == null) {
@@ -83,10 +83,12 @@ public final class DimacsReader {
                 }
                 clauseLiterals[j] = clauseInt;
             }
-            int clauseNode = bdd.falseNode();
+            int clauseNode = bdd.falseFunction();
             for (int variable : clauseLiterals) {
                 assert variable != 0;
-                int node = variable < 0 ? bdd.not(bdd.variableNode(-variable - 1)) : bdd.variableNode(variable - 1);
+                int node = variable < 0
+                        ? bdd.not(bdd.variableFunction(-variable - 1))
+                        : bdd.variableFunction(variable - 1);
                 clauseNode = bdd.updateWith(bdd.or(node, clauseNode), clauseNode);
             }
             expression = bdd.updateWith(clauseNode, expression);

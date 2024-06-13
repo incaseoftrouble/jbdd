@@ -29,7 +29,7 @@ You can either build the jar using gradle (see below) or fetch it from maven cen
 <dependency>
   <groupId>de.tum.in</groupId>
   <artifactId>jbdd</artifactId>
-  <version>0.6.1</version>
+  <version>0.7.0</version>
 </dependency>
 ```
 
@@ -37,7 +37,7 @@ and for gradle:
 
 ```kotlin
 // https://mvnrepository.com/artifact/de.tum.in/jbdd
-implementation("de.tum.in:jbdd:0.6.1")
+implementation("de.tum.in:jbdd:0.7.0")
 ```
 
 ## Building

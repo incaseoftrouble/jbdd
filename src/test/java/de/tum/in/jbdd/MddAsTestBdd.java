@@ -1,0 +1,407 @@
+/*
+ * This file is part of JBDD (https://github.com/incaseoftrouble/jbdd).
+ * Copyright (c) 2024 Tobias Meggendorfer.
+ *
+ * JBDD is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 3.
+ *
+ * JBDD is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with JBDD. If not, see <http://www.gnu.org/licenses/>.
+ */
+package de.tum.in.jbdd;
+
+import com.google.common.collect.Iterators;
+import java.math.BigInteger;
+import java.util.Arrays;
+import java.util.BitSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.function.BiConsumer;
+import java.util.function.IntConsumer;
+
+class MddAsTestBdd implements TestBdd {
+    private final MddImpl mdd;
+    private static final int TRUE = 1;
+    private static final int FALSE = 0;
+
+    public MddAsTestBdd(MddImpl mdd) {
+        this.mdd = mdd;
+    }
+
+    @Override
+    public int placeholder() {
+        return mdd.placeholder();
+    }
+
+    @Override
+    public int trueFunction() {
+        return mdd.trueFunction();
+    }
+
+    @Override
+    public int falseFunction() {
+        return mdd.falseFunction();
+    }
+
+    @Override
+    public int highOf(int node) {
+        return mdd.follow(node, TRUE);
+    }
+
+    @Override
+    public int lowOf(int node) {
+        return mdd.follow(node, FALSE);
+    }
+
+    @Override
+    public int nodeFor(int function) {
+        return mdd.nodeFor(function);
+    }
+
+    @Override
+    public int nodeReferenceCount(int node) {
+        return mdd.nodeReferenceCount(node);
+    }
+
+    @Override
+    public boolean isSaturatedNode(int node) {
+        return mdd.isSaturatedNode(node);
+    }
+
+    @Override
+    public int referencedNodeCount() {
+        return mdd.referencedNodeCount();
+    }
+
+    @Override
+    public int nodeCount() {
+        return mdd.nodeCount();
+    }
+
+    @Override
+    public int reference(int node) {
+        return mdd.reference(node);
+    }
+
+    @Override
+    public int dereference(int node) {
+        return mdd.dereference(node);
+    }
+
+    @Override
+    public boolean isConstant(int function) {
+        return mdd.isConstant(function);
+    }
+
+    @Override
+    public boolean isVariable(int function) {
+        return !isConstant(function)
+                && mdd.follow(function, FALSE) == falseFunction()
+                && mdd.follow(function, TRUE) == trueFunction();
+    }
+
+    @Override
+    public boolean isVariableNegated(int function) {
+        return !isConstant(function)
+                && mdd.follow(function, FALSE) == trueFunction()
+                && mdd.follow(function, TRUE) == falseFunction();
+    }
+
+    @Override
+    public boolean isVariableOrNegated(int function) {
+        return isVariable(function) || isVariableNegated(function);
+    }
+
+    @Override
+    public int numberOfVariables() {
+        return mdd.numberOfVariables();
+    }
+
+    @Override
+    public int createVariable() {
+        int variable = mdd.declareVariable(2);
+        int variableFunction = mdd.makeVariableFunction(variable, new boolean[] {false, true});
+        assert isVariable(variableFunction);
+        mdd.table().saturateNode(mdd.nodeFor(variableFunction));
+        return variableFunction;
+    }
+
+    @Override
+    public int variableFunction(int variableNumber) {
+        return mdd.makeVariableFunction(variableNumber, new boolean[] {false, true});
+    }
+
+    @Override
+    public int decisionVariable(int function) {
+        return mdd.decisionVariable(function);
+    }
+
+    @Override
+    public boolean isValidFunction(int function) {
+        return mdd.isValidFunction(function);
+    }
+
+    @Override
+    public boolean isValidNonConstantFunction(int function) {
+        return mdd.isValidNonConstantFunction(function);
+    }
+
+    @Override
+    public boolean evaluate(int node, boolean[] assignment) {
+        int[] values = new int[assignment.length];
+        Arrays.setAll(values, i -> assignment[i] ? TRUE : FALSE);
+        return mdd.evaluate(node, values);
+    }
+
+    @Override
+    public boolean evaluate(int node, BitSet assignment) {
+        int[] values = new int[mdd.numberOfVariables()];
+        Arrays.setAll(values, i -> assignment.get(i) ? TRUE : FALSE);
+        return mdd.evaluate(node, values);
+    }
+
+    @Override
+    public BitSet satisfyingAssignment(int node) {
+        int[] values = mdd.satisfyingAssignment(node);
+        BitSet set = new BitSet(mdd.numberOfVariables());
+        for (int i = 0; i < values.length; i++) {
+            if (values[i] == TRUE) {
+                set.set(i);
+            }
+        }
+        return set;
+    }
+
+    @Override
+    public BigInteger countSatisfyingAssignments(int node) {
+        return mdd.countSatisfyingAssignments(node);
+    }
+
+    @Override
+    public BigInteger countSatisfyingAssignments(int node, BitSet support) {
+        return mdd.countSatisfyingAssignments(node, support);
+    }
+
+    @Override
+    public Iterator<BitSet> solutionIterator(int node) {
+        BitSet set = new BitSet(mdd.numberOfVariables());
+        return Iterators.transform(mdd.solutionIterator(node), a -> {
+            for (int i = 0; i < a.length; i++) {
+                assert a[i] == TRUE || a[i] == FALSE;
+                set.set(i, a[i] == TRUE);
+            }
+            return set;
+        });
+    }
+
+    @Override
+    public Iterator<BitSet> solutionIterator(int node, BitSet support) {
+        BitSet set = new BitSet(mdd.numberOfVariables());
+        return Iterators.transform(mdd.solutionIterator(node, support), a -> {
+            for (int i = 0; i < a.length; i++) {
+                assert a[i] == TRUE || a[i] == FALSE;
+                set.set(i, a[i] == TRUE);
+            }
+            return set;
+        });
+    }
+
+    @Override
+    public void forEachPath(int node, BiConsumer<BitSet, BitSet> action) {
+        BitSet everything = new BitSet();
+        everything.set(0, mdd.numberOfVariables());
+        forEachPath(node, everything, action);
+    }
+
+    @Override
+    public void forEachPath(int node, BitSet relevantSet, BiConsumer<BitSet, BitSet> action) {
+        BitSet values = new BitSet(mdd.numberOfVariables());
+        mdd.forEachPath(node, relevantSet, (assignment, support) -> {
+            values.clear();
+            for (int var = 0; var < assignment.length; var++) {
+                assert assignment[var] == TRUE || assignment[var] == FALSE;
+                if (relevantSet.get(var)) {
+                    values.set(var, assignment[var] == TRUE);
+                }
+            }
+            action.accept(values, support);
+        });
+    }
+
+    @Override
+    public void forEachSupportFiltered(int function, BitSet filter, IntConsumer action) {
+        mdd.forEachSupportFiltered(function, filter, action);
+    }
+
+    @Override
+    public int conjunction(BitSet variables) {
+        int node = TRUE;
+        for (int var = variables.nextSetBit(0); var >= 0; var = variables.nextSetBit(var + 1)) {
+            node = mdd.and(node, variableFunction(var));
+        }
+        return node;
+    }
+
+    @Override
+    public int disjunction(BitSet variables) {
+        int node = FALSE;
+        for (int var = variables.nextSetBit(0); var >= 0; var = variables.nextSetBit(var + 1)) {
+            node = mdd.or(node, variableFunction(var));
+        }
+        return node;
+    }
+
+    @Override
+    public int and(int node1, int node2) {
+        return mdd.and(node1, node2);
+    }
+
+    @Override
+    public int andNot(int function1, int function2) {
+        return mdd.andNot(function1, function2);
+    }
+
+    @Override
+    public int equivalence(int node1, int node2) {
+        return mdd.equivalence(node1, node2);
+    }
+
+    @Override
+    public int exists(int node, BitSet quantifiedVariables) {
+        return mdd.exists(node, quantifiedVariables);
+    }
+
+    @Override
+    public int forall(int node, BitSet quantifiedVariables) {
+        return mdd.forall(node, quantifiedVariables);
+    }
+
+    @Override
+    public int not(int node) {
+        return mdd.not(node);
+    }
+
+    @Override
+    public int notAnd(int node1, int node2) {
+        return mdd.notAnd(node1, node2);
+    }
+
+    @Override
+    public int or(int node1, int node2) {
+        return mdd.or(node1, node2);
+    }
+
+    @Override
+    public int xor(int node1, int node2) {
+        return mdd.xor(node1, node2);
+    }
+
+    @Override
+    public int implication(int node1, int node2) {
+        return mdd.implication(node1, node2);
+    }
+
+    @Override
+    public boolean implies(int node1, int node2) {
+        return mdd.implies(node1, node2);
+    }
+
+    @Override
+    public int compose(int node, int[] variableMapping) {
+        int[] constantReplacements = new int[mdd.numberOfVariables()];
+        Arrays.fill(constantReplacements, -1);
+        BitSet replaced = new BitSet(mdd.numberOfVariables());
+        for (int var = 0; var < variableMapping.length; var++) {
+            int replacement = variableMapping[var];
+            if (replacement == mdd.placeholder() || (isVariable(replacement) && decisionVariable(replacement) == var)) {
+                continue;
+            }
+            if (replacement == trueFunction()) {
+                constantReplacements[var] = TRUE;
+            } else if (replacement == falseFunction()) {
+                constantReplacements[var] = FALSE;
+            } else {
+                replaced.set(var);
+            }
+        }
+        int base = mdd.reference(mdd.restrict(node, constantReplacements));
+
+        if (replaced.isEmpty()) {
+            mdd.dereference(base);
+            return base;
+        }
+
+        var iterator = BitSets.powerSetIterator(replaced);
+        int result = falseFunction();
+        while (iterator.hasNext()) {
+            var assigment = iterator.next();
+            int restrict = mdd.reference(restrict(base, replaced, assigment));
+
+            int assignment = trueFunction();
+            for (int var = replaced.nextSetBit(0); var >= 0; var = replaced.nextSetBit(var + 1)) {
+                int replacement = variableMapping[var];
+                int varNode = assigment.get(var) ? replacement : not(replacement);
+                assignment = mdd.updateWith(mdd.and(assignment, varNode), assignment);
+            }
+
+            int value = mdd.consume(mdd.and(assignment, restrict), assignment, restrict);
+            result = mdd.consume(mdd.or(result, value), result, value);
+        }
+        mdd.dereference(result);
+        return result;
+    }
+
+    @Override
+    public int restrict(int node, BitSet restrictedVariables, BitSet restrictedVariableValues) {
+        int[] restriction = new int[mdd.numberOfVariables()];
+        for (int var = 0; var < restriction.length; var++) {
+            if (restrictedVariables.get(var)) {
+                restriction[var] = restrictedVariableValues.get(var) ? TRUE : FALSE;
+            } else {
+                restriction[var] = -1;
+            }
+        }
+        return mdd.restrict(node, restriction);
+    }
+
+    @Override
+    public int ifThenElse(int ifNode, int thenNode, int elseNode) {
+        return mdd.ifThenElse(ifNode, thenNode, elseNode);
+    }
+
+    @Override
+    public String statistics() {
+        return mdd.statistics();
+    }
+
+    @Override
+    public void invalidateCache() {
+        mdd.invalidateCache();
+    }
+
+    @Override
+    public boolean check() {
+        return mdd.check();
+    }
+
+    @Override
+    public String treeToString(int function) {
+        return mdd.table().treeToString(function);
+    }
+
+    @Override
+    public <V> MtBdd<V> createMtBdd(Class<V> clazz) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public <V> MtBdd<List<V>> intersect(List<MtBdd<? extends V>> mtBdds, Class<V> clazz) {
+        throw new UnsupportedOperationException();
+    }
+}

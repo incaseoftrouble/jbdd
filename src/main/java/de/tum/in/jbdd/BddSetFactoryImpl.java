@@ -40,24 +40,24 @@ final class BddSetFactoryImpl extends BddGcReferenceManager<BddSetFactoryImpl.Bd
         bdd.createVariables(variables);
         assert bdd.numberOfVariables() == variables;
 
-        empty = make(bdd.falseNode());
-        universe = make(bdd.trueNode());
+        empty = make(bdd.falseFunction());
+        universe = make(bdd.trueFunction());
     }
 
     private BddSetImpl make(int node) {
         return protect(new BddSetImpl(this, node));
     }
 
-    private int variableNode(int variable) {
+    private int variableFunction(int variable) {
         int variables = bdd.numberOfVariables();
         if (variable >= variables) {
             bdd.createVariables(variable - variables + 1);
         }
-        return bdd.variableNode(variable);
+        return bdd.variableFunction(variable);
     }
 
     private int createBddUpdateHelper(BitSet set, int variable, int node) {
-        int variableNode = variableNode(variable);
+        int variableNode = variableFunction(variable);
         return bdd.and(node, set.get(variable) ? variableNode : bdd.not(variableNode));
     }
 
@@ -73,12 +73,12 @@ final class BddSetFactoryImpl extends BddGcReferenceManager<BddSetFactoryImpl.Bd
 
     @Override
     public BddSet of(boolean booleanConstant) {
-        return make(booleanConstant ? bdd.trueNode() : bdd.falseNode());
+        return make(booleanConstant ? bdd.trueFunction() : bdd.falseFunction());
     }
 
     @Override
     public BddSet of(BitSet valuation, BitSet support) {
-        int node = bdd.trueNode();
+        int node = bdd.trueFunction();
         for (int i = support.nextSetBit(0); i >= 0; i = support.nextSetBit(i + 1)) {
             node = createBddUpdateHelper(valuation, i, node);
         }
@@ -92,15 +92,14 @@ final class BddSetFactoryImpl extends BddGcReferenceManager<BddSetFactoryImpl.Bd
 
     @Override
     public BddSet var(int variable) {
-        return make(variableNode(variable));
+        return make(variableFunction(variable));
     }
 
     @SuppressWarnings("MethodOnlyUsedFromInnerClass")
-    private int node(BddSet set) {
-        assert (set instanceof BddSetImpl) && (this == ((BddSetImpl) set).factory);
-        int node = ((BddSetImpl) set).node;
-        assert bdd.referenceCount(node) > 0 || bdd.referenceCount(node) == -1;
-        return node;
+    private int function(BddSet set) {
+        assert (set instanceof BddSetImpl) && (this == ((BddSetImpl) set).factory); // NOPMD
+        // assert bdd.nodeReferenceCount(node) > 0 || bdd.nodeReferenceCount(node) == -1;
+        return ((BddSetImpl) set).function;
     }
 
     @Override
@@ -110,38 +109,38 @@ final class BddSetFactoryImpl extends BddGcReferenceManager<BddSetFactoryImpl.Bd
 
     static final class BddSetImpl implements BddSet, BddContainer {
         private final BddSetFactoryImpl factory;
-        private final int node;
+        private final int function;
 
         @Nullable
         private BitSet supportCache;
 
-        public BddSetImpl(BddSetFactoryImpl factory, int node) {
+        public BddSetImpl(BddSetFactoryImpl factory, int function) {
             this.factory = factory;
-            this.node = node;
+            this.function = function;
         }
 
         private BddSetImpl make(int node) {
-            return node == this.node ? this : factory.make(node);
+            return node == this.function ? this : factory.make(node);
         }
 
         @Override
-        public int node() {
-            return node;
+        public int function() {
+            return function;
         }
 
         @Override
         public boolean isEmpty() {
-            return this == factory.empty;
+            return this == factory.empty; // NOPMD
         }
 
         @Override
         public boolean isUniverse() {
-            return this == factory.universe;
+            return this == factory.universe; // NOPMD
         }
 
         @Override
         public boolean contains(BitSet o) {
-            return factory.bdd.evaluate(node, o);
+            return factory.bdd.evaluate(function, o);
         }
 
         @Override
@@ -150,27 +149,27 @@ final class BddSetFactoryImpl extends BddGcReferenceManager<BddSetFactoryImpl.Bd
             BddSetImpl other = (BddSetImpl) collection;
             //noinspection ObjectEquality
             assert factory == other.factory; // NOPMD
-            return factory.bdd.implies(other.node, node);
+            return factory.bdd.implies(other.function, function);
         }
 
         @Override
         public Optional<BitSet> element() {
-            return isEmpty() ? Optional.empty() : Optional.of(factory.bdd.getSatisfyingAssignment(this.node));
+            return isEmpty() ? Optional.empty() : Optional.of(factory.bdd.satisfyingAssignment(this.function));
         }
 
         @Override
         public BddSet union(BddSet other) {
-            return make(factory.bdd.or(node, factory.node(other)));
+            return make(factory.bdd.or(function, factory.function(other)));
         }
 
         @Override
         public BddSet intersection(BddSet other) {
-            return make(factory.bdd.and(node, factory.node(other)));
+            return make(factory.bdd.and(function, factory.function(other)));
         }
 
         @Override
         public BddSet exists(BitSet quantifiedVariables) {
-            return make(factory.bdd.exists(node, quantifiedVariables));
+            return make(factory.bdd.exists(function, quantifiedVariables));
         }
 
         @Override
@@ -185,13 +184,13 @@ final class BddSetFactoryImpl extends BddGcReferenceManager<BddSetFactoryImpl.Bd
                 if (j == -1) {
                     substitutions[i] = -1;
                 } else if (j >= 0) {
-                    substitutions[i] = factory.variableNode(j);
+                    substitutions[i] = factory.variableFunction(j);
                 } else {
                     throw new IllegalArgumentException(String.format("Invalid mapping %s -> %s", i, j));
                 }
             }
 
-            return make(factory.bdd.compose(node, substitutions));
+            return make(factory.bdd.compose(function, substitutions));
         }
 
         @Override
@@ -200,14 +199,14 @@ final class BddSetFactoryImpl extends BddGcReferenceManager<BddSetFactoryImpl.Bd
             int[] substitutions = new int[support.length()];
             Arrays.fill(substitutions, -1);
             for (int i = support.nextSetBit(0); i >= 0; i = support.nextSetBit(i + 1)) {
-                substitutions[i] = factory.node(mapping.apply(i));
+                substitutions[i] = factory.function(mapping.apply(i));
             }
-            return make(factory.bdd.compose(node, substitutions));
+            return make(factory.bdd.compose(function, substitutions));
         }
 
         private BitSet getSupport() {
             if (supportCache == null) {
-                supportCache = factory.bdd.support(node);
+                supportCache = factory.bdd.support(function);
             }
             return supportCache;
         }
@@ -219,39 +218,39 @@ final class BddSetFactoryImpl extends BddGcReferenceManager<BddSetFactoryImpl.Bd
 
         @Override
         public Iterator<BitSet> iterator(BitSet support) {
-            return factory.bdd.solutionIterator(node, support);
+            return factory.bdd.solutionIterator(function, support);
         }
 
         @Override
         public BigInteger size(BitSet support) {
-            return factory.bdd.countSatisfyingAssignments(node, support);
+            return factory.bdd.countSatisfyingAssignments(function, support);
         }
 
         @Override
         public void forEach(BitSet support, Consumer<? super BitSet> consumer) {
-            factory.bdd.forEachSolution(node, support, consumer);
+            factory.bdd.forEachSolution(function, support, consumer);
         }
 
         @Override
         public BddSet complement() {
-            return make(factory.bdd.not(node));
+            return make(factory.bdd.not(function));
         }
 
         @Override
         public boolean equals(Object o) {
-            assert (this == o) == (o instanceof BddSetImpl && this.node == ((BddSetImpl) o).node);
+            assert (this == o) == (o instanceof BddSetImpl && this.function == ((BddSetImpl) o).function);
             assert !(o instanceof BddSetImpl) || (this.factory == ((BddSetImpl) o).factory); // NOPMD
             return this == o;
         }
 
         @Override
         public int hashCode() {
-            return HashUtil.hash(node);
+            return HashUtil.hash(function);
         }
 
         @Override
         public String toString() {
-            return String.format("%d@[%s]", node, factory);
+            return String.format("%d@[%s]", function, factory);
         }
     }
 }
