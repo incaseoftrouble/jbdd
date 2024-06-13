@@ -1,3 +1,5 @@
+import me.champeau.jmh.JMHTask
+
 plugins {
   `java-library`
 
@@ -58,7 +60,21 @@ spotless {
   kotlinGradle { ktfmt() }
 }
 
-jmh { includeTests.set(true) }
+tasks.create("jmhRandom") {
+  doFirst {
+    jmh.includes.add("RandomBenchmark*")
+    jmh.warmupIterations = 5
+    jmh.iterations = 15
+  }
+  finalizedBy("jmh")
+}
+
+tasks.create("jmhSynthetic") {
+  doFirst { jmh.includes.add("SyntheticBenchmark*") }
+  finalizedBy("jmh")
+}
+
+tasks.withType<JMHTask> { includeTests.set(true) }
 
 dependencies {
   compileOnly("com.google.code.findbugs:jsr305:3.0.2")

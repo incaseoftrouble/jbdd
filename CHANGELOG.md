@@ -5,11 +5,17 @@
 ### 0.7.0 (2024-XX-XX)
 
 * Implemented complement edges
+* Significant renaming / restructuring of the API:
+  * Distinguish between boolean function (what a BDD node abstracts) and internal structure (nodes) to prohibit careless mixing of these now different concepts
+  * True is now Integer.MAX_VALUE and False is its complement
 * Remove iterative implementation: On most benchmarks about ~10% slower, tedious to maintain, and increasing stack size is cheap
+* Separate out the node table structure to have a unified base for BDDs, MTBDDs, LDDs, etc.
 * Slightly improved usability of automatic reference management
 * `forEachPath` now has a version with `support` as parameter (replacing the previous `highestVariable`)
 * `andNot` method and significant improvement of `compose` / `ifThenElse` in certain cases
+* `forall` quantification
 * Preserve cached values when possible (should provide notable improvements on some workloads)
+* MDD implementation: Function with boolean values but n-valued domains for their variables
 
 ## 0.6
 

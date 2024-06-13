@@ -63,6 +63,6 @@ public class DimacsBenchmark extends BaseBddBenchmark {
             throws IOException, DimacsReader.InvalidFormatException {
         Bdd bdd = state.bdd();
         int node = DimacsReader.loadDimacs(bdd, state.reader());
-        bh.consume(node == bdd.falseNode());
+        bh.consume(node == bdd.falseFunction());
     }
 }

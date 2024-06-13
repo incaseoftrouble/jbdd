@@ -20,9 +20,9 @@ final class HashUtil {
     // TODO Check performance differences on different benchmarks with slight variations
 
     // Taken from https://planetmath.org/goodhashtableprimes
-    static final int P1 = 6291469;
-    static final int P2 = 12582917;
-    static final int P3 = 25165843;
+    static final int P1 = 6291469; // NOPMD
+    static final int P2 = 12582917; // NOPMD
+    static final int P3 = 25165843; // NOPMD
 
     private HashUtil() {}
 

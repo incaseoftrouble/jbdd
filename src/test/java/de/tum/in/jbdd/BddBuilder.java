@@ -21,7 +21,7 @@ public final class BddBuilder {
 
     /* N-Queens problem, loosely inspired by RuDD, which took it from BuDDy */
     public static int makeQueens(Bdd bdd, int n) {
-        int queen = bdd.trueNode();
+        int queen = bdd.trueFunction();
 
         int[][] x = new int[n][n];
         for (int r = 0; r < n; r++) {
@@ -32,7 +32,7 @@ public final class BddBuilder {
 
         // Queen in each row
         for (int r = 0; r < n; r++) {
-            int cond = bdd.falseNode();
+            int cond = bdd.falseFunction();
             for (int c = 0; c < n; c++) {
                 cond = bdd.updateWith(bdd.or(cond, x[r][c]), cond);
             }
@@ -42,7 +42,7 @@ public final class BddBuilder {
         // Constraints
         for (int r = 0; r < n; r++) {
             for (int c = 0; c < n; c++) {
-                int cond = bdd.trueNode();
+                int cond = bdd.trueFunction();
 
                 // No two in same row
                 for (int oc = 0; oc < n; oc++) {

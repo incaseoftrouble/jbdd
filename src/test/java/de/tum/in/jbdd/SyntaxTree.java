@@ -29,7 +29,7 @@ import java.util.Set;
  */
 @SuppressWarnings({"unused", "WeakerAccess", "PMD.GodClass", "checkstyle:javadoc"})
 // TODO Add a "toBddNode(BDD bdd)" method
-final class SyntaxTree {
+public final class SyntaxTree {
     private final SyntaxTreeNode rootNode;
 
     SyntaxTree(SyntaxTreeNode rootNode) {

@@ -78,7 +78,7 @@ final class Primes { // NOPMD
         if (n % 7L == 0L || n % 11L == 0L || n % 13L == 0L) {
             return false;
         }
-        if (n < (long) (17 * 17)) {
+        if (n < (17 * 17)) {
             return true;
         }
 

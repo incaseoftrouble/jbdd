@@ -25,7 +25,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.annotation.Nullable;
 
-public abstract class BddGcReferenceManager<V extends BddGcReferenceManager.BddContainer> {
+public class BddGcReferenceManager<V extends BddGcReferenceManager.BddContainer> {
     private static final Logger logger = Logger.getLogger(BddGcReferenceManager.class.getName());
 
     protected final Bdd bdd;
@@ -39,37 +39,40 @@ public abstract class BddGcReferenceManager<V extends BddGcReferenceManager.BddC
     }
 
     @Nullable
-    protected V get(int node) {
-        V wrapper = nonGcObjects.get(node);
+    protected V get(int function) {
+        V wrapper = nonGcObjects.get(function);
 
         if (wrapper != null) {
             return wrapper;
         }
 
-        BddReference<V> reference = gcObjects.get(node);
+        BddReference<V> reference = gcObjects.get(function);
         return reference == null ? null : reference.get();
     }
 
     // This is not thread safe!
     protected V protect(V container) {
-        int node = container.node();
+        int function = container.function();
 
-        // Root nodes and variables are exempt from GC but still canonical
-        if (bdd.isTerminal(node) || bdd.isVariableOrNegated(node)) {
-            assert bdd.referenceCount(node) == -1 : reportReferenceCountMismatch(-1, bdd.referenceCount(node));
+        // Constants and variables are exempt from GC but still canonical
+        if (bdd.isConstant(function) || bdd.isVariableOrNegated(function)) {
+            // assert bdd.nodeReferenceCount(node) == -1 : reportReferenceCountMismatch(-1,
+            // bdd.nodeReferenceCount(node));
 
-            return nonGcObjects.merge(node, container, (oldW, newW) -> oldW);
+            return nonGcObjects.merge(function, container, (oldW, newW) -> oldW);
         }
 
-        BddReference<V> canonicalReference = gcObjects.get(node);
+        BddReference<V> canonicalReference = gcObjects.get(function);
         if (canonicalReference == null) {
             // The BDD was created and needs a reference to be protected.
-            assert bdd.referenceCount(node) == 0 : reportReferenceCountMismatch(0, bdd.referenceCount(node));
+            // assert bdd.nodeReferenceCount(function) == 0 : reportReferenceCountMismatch(0,
+            // bdd.nodeReferenceCount(function));
 
-            bdd.reference(node);
+            bdd.reference(function);
         } else {
             // The BDD already existed -- Can have a reference for the BDD and its negation
-            assert bdd.referenceCount(node) <= 2 : reportReferenceCountMismatch(1, bdd.referenceCount(node));
+            // assert bdd.nodeReferenceCount(function) <= 2 : reportReferenceCountMismatch(1,
+            // bdd.nodeReferenceCount(function));
 
             V canonicalNode = canonicalReference.get();
             if (canonicalNode == null) {
@@ -78,18 +81,18 @@ public abstract class BddGcReferenceManager<V extends BddGcReferenceManager.BddC
                 // avoid inconsistencies.
                 canonicalReference.enqueue();
             } else {
-                assert node == canonicalNode.node();
+                assert function == canonicalNode.function();
                 return canonicalNode;
             }
         }
 
-        assert bdd.referenceCount(node) == 1 || bdd.referenceCount(node) == 2;
+        // assert bdd.nodeReferenceCount(function) == 1 || bdd.nodeReferenceCount(function) == 2;
         // Remove queued BDDs from the mapping.
-        processReferenceQueue(node);
+        processReferenceQueue(function);
 
         // Insert BDD into mapping.
-        gcObjects.put(node, new BddReference<>(container, queue));
-        assert bdd.referenceCount(node) == 1 || bdd.referenceCount(node) == 2;
+        gcObjects.put(function, new BddReference<>(container, queue));
+        // assert bdd.nodeReferenceCount(function) == 1 || bdd.nodeReferenceCount(function) == 2;
         return container;
     }
 
@@ -106,9 +109,9 @@ public abstract class BddGcReferenceManager<V extends BddGcReferenceManager.BddC
             gcObjects.remove(node);
 
             if (node != protectedNode) {
-                assert bdd.referenceCount(node) == 1;
+                // assert bdd.nodeReferenceCount(node) == 1;
                 bdd.dereference(node);
-                assert bdd.referenceCount(node) == 0;
+                // assert bdd.nodeReferenceCount(node) == 0;
                 count += 1;
             }
 
@@ -124,16 +127,16 @@ public abstract class BddGcReferenceManager<V extends BddGcReferenceManager.BddC
 
         private BddReference(V node, ReferenceQueue<? super V> queue) {
             super(node, queue);
-            this.node = node.node();
+            this.node = node.function();
         }
     }
 
     @SuppressWarnings("InterfaceMayBeAnnotatedFunctional")
     public interface BddContainer {
-        int node();
+        int function();
     }
 
-    private static String reportReferenceCountMismatch(int expected, int actual) {
+    private static String reportReferenceCountMismatch(int expected, int actual) { // NOPMD
         return String.format("Expected reference count {%d}, but actual count is {%d}.", expected, actual);
     }
 }

@@ -47,7 +47,7 @@ public final class Generator {
         // empty
     }
 
-    public static <T extends Bdd> Info<T> fill(
+    public static <T extends TestBdd> Info<T> fill(
             T bdd,
             int seed,
             int variableCount,
@@ -69,8 +69,8 @@ public final class Generator {
         }
 
         Map<Integer, SyntaxTree> syntaxTreeMap = new LinkedHashMap<>();
-        syntaxTreeMap.put(bdd.falseNode(), SyntaxTree.constant(false));
-        syntaxTreeMap.put(bdd.trueNode(), SyntaxTree.constant(true));
+        syntaxTreeMap.put(bdd.falseFunction(), SyntaxTree.constant(false));
+        syntaxTreeMap.put(bdd.trueFunction(), SyntaxTree.constant(true));
         for (int i = 0; i < variableList.size(); i++) {
             SyntaxTree literal = SyntaxTree.literal(i);
             syntaxTreeMap.put(variableList.get(i), literal);
@@ -220,7 +220,7 @@ public final class Generator {
         return new Info<>(bdd, unaryDataPointSet, binaryDataPointSet, ternaryDataPointSet, syntaxTreeMap, variableList);
     }
 
-    public static final class Info<T extends Bdd> {
+    public static final class Info<T extends TestBdd> {
         public final T bdd;
         public final ImmutableSet<UnaryDataPoint<T>> unaryDataPoints;
         public final ImmutableSet<BinaryDataPoint<T>> binaryDataPoints;
@@ -244,14 +244,14 @@ public final class Generator {
         }
     }
 
-    public static final class UnaryDataPoint<T extends Bdd> {
+    public static final class UnaryDataPoint<T extends TestBdd> {
         public final T bdd;
-        public final int node;
+        public final int function;
         public final SyntaxTree tree;
 
-        UnaryDataPoint(T bdd, int node, SyntaxTree tree) {
+        UnaryDataPoint(T bdd, int function, SyntaxTree tree) {
             this.bdd = bdd;
-            this.node = node;
+            this.function = function;
             this.tree = tree;
         }
 
@@ -264,12 +264,12 @@ public final class Generator {
                 return false;
             }
             UnaryDataPoint<?> other = (UnaryDataPoint<?>) object;
-            return Objects.equals(bdd, other.bdd) && node == other.node;
+            return Objects.equals(bdd, other.bdd) && function == other.function;
         }
 
         @Override
         public int hashCode() {
-            return 31 * node + bdd.hashCode();
+            return 31 * function + bdd.hashCode();
         }
 
         @Override

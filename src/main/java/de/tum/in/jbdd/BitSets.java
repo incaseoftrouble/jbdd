@@ -16,7 +16,12 @@
  */
 package de.tum.in.jbdd;
 
+import java.util.Arrays;
 import java.util.BitSet;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.NoSuchElementException;
+import java.util.Objects;
 
 public final class BitSets {
     private BitSets() {}
@@ -46,5 +51,114 @@ public final class BitSets {
             pos += 1;
         }
         return array;
+    }
+
+    public static Iterator<BitSet> powerSetIterator(BitSet support) {
+        if (support.isEmpty()) {
+            return Collections.singleton(new BitSet()).iterator();
+        }
+        return new PowerIteratorShift(support);
+    }
+
+    public static Iterator<BitSet> powerSetIterator(int size) {
+        if (size == 0) {
+            return Collections.singleton(new BitSet()).iterator();
+        }
+        return new PowerIterator(size);
+    }
+
+    private static final class PowerIteratorShift implements Iterator<BitSet> {
+        private final BitSet bitSet;
+        private final int[] restrictionPositions;
+        private final BitSet variableRestriction;
+        private int assignment;
+
+        PowerIteratorShift(BitSet restriction) {
+            this(restriction.length(), restriction);
+        }
+
+        PowerIteratorShift(int size, BitSet restriction) {
+            assert restriction.cardinality() > 0;
+            this.bitSet = new BitSet(size);
+            this.variableRestriction = restriction;
+            this.assignment = 0;
+            this.restrictionPositions = new int[restriction.cardinality()];
+
+            restrictionPositions[0] = restriction.nextSetBit(0);
+            for (int i = 1; i < restrictionPositions.length; i++) {
+                restrictionPositions[i] = restriction.nextSetBit(restrictionPositions[i - 1] + 1);
+            }
+        }
+
+        @Override
+        public boolean hasNext() {
+            return !Objects.equals(bitSet, variableRestriction);
+        }
+
+        @Override
+        public BitSet next() {
+            if (assignment == 1 << restrictionPositions.length) {
+                throw new NoSuchElementException("No next element");
+            }
+
+            bitSet.clear();
+
+            for (int restrictionPosition = 0;
+                    restrictionPosition < restrictionPositions.length;
+                    restrictionPosition++) {
+                if (((assignment >>> restrictionPosition) & 1) == 1) {
+                    bitSet.set(restrictionPositions[restrictionPosition]);
+                }
+            }
+            assignment += 1;
+            return bitSet;
+        }
+    }
+
+    static final class PowerIterator implements Iterator<BitSet> {
+        private final BitSet iteration;
+        private final int[] base;
+        private int numSetBits = -1;
+
+        private PowerIterator(int size) {
+            base = new int[size];
+            Arrays.setAll(base, i -> i);
+            iteration = new BitSet(size);
+        }
+
+        private PowerIterator(BitSet base) {
+            this.base = toArray(base);
+            iteration = new BitSet(base.length());
+        }
+
+        @Override
+        public boolean hasNext() {
+            return numSetBits < base.length;
+        }
+
+        @Override
+        public BitSet next() {
+            if (numSetBits == -1) {
+                numSetBits = 0;
+                return iteration;
+            }
+
+            if (numSetBits == base.length) {
+                throw new NoSuchElementException("No next element");
+            }
+
+            for (int index : base) {
+                if (iteration.get(index)) {
+                    iteration.clear(index);
+                    numSetBits -= 1;
+                } else {
+                    iteration.set(index);
+                    numSetBits += 1;
+                    break;
+                }
+            }
+
+            return iteration;
+        }
     }
 }

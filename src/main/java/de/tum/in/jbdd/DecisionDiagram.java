@@ -1,6 +1,6 @@
 /*
  * This file is part of JBDD (https://github.com/incaseoftrouble/jbdd).
- * Copyright (c) 2023 Tobias Meggendorfer.
+ * Copyright (c) 2024 Tobias Meggendorfer.
  *
  * JBDD is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,246 +19,173 @@ package de.tum.in.jbdd;
 import java.util.BitSet;
 import java.util.function.IntConsumer;
 
+/**
+ * Generic interface for (binary) decision diagrams, i.e. a data structure that represents functions mapping
+ * from boolean assignments to some domain through a tree-like structure. Each function is represented by an
+ * (opaque) integer. A (reduced) decision diagram ensures that two functions are equal exactly if their
+ * identifiers are equal.
+ */
 public interface DecisionDiagram {
     /**
-     * A special reserved placeholder distinct from any possible pointer value, which may be used as a placeholder in some operations.
-     * Needs to stay constant throughout the life of the diagram.
-     *
-     * @return A placeholder value
+     * A special reserved placeholder distinct from any possible function or node value, which may be used as a
+     * placeholder in some operations. Needs to stay constant throughout the life of the diagram.
      */
     int placeholder();
 
-    int high(int node);
-
-    int low(int node);
-
     /**
-     * Gets the variable of the given {@code node}.
-     */
-    int variable(int node);
-
-    /**
-     * Determines whether the given {@code node} represents a constant, e.g. {@code true} or {@code false}.
+     * Determines whether the given {@code function} is a constant, e.g. {@code true} or {@code false}.
      *
-     * @param node The node to be checked.
+     * @param function The function to be checked.
      * @return If the {@code node} represents a constant.
      */
-    boolean isTerminal(int node);
+    boolean isConstant(int function);
 
     /**
-     * Determines whether the given {@code node} represents a variable.
-     *
-     * @param node The node to be checked.
-     * @return If the {@code node} represents a variable.
-     */
-    boolean isVariable(int node);
-
-    /**
-     * Determines whether the given {@code node} represents a negated variable.
-     *
-     * @param node The node to be checked.
-     * @return If the {@code node} represents a negated variable.
-     */
-    boolean isVariableNegated(int node);
-
-    /**
-     * Determines whether the given {@code node} represents a variable or it's negation.
-     *
-     * @param node The node to be checked.
-     * @return If the {@code node} represents a variable.
-     */
-    boolean isVariableOrNegated(int node);
-
-    /**
-     * Returns the number of variables in this BDD.
+     * Returns the number of variables in this decision diagram.
      *
      * @return The number of variables.
      */
     int numberOfVariables();
 
     /**
-     * Returns the node which represents the variable with given {@code variableNumber}. The variable
-     * must already have been created.
-     *
-     * @param variableNumber The number of the requested variable.
-     * @return The corresponding node.
+     * Gets the topmost decision variable of the given {@code function}.
      */
-    int variableNode(int variableNumber);
+    int decisionVariable(int function);
+
+    // Reference counting
 
     /**
-     * Creates a new variable and returns the node representing it. The implementation guarantees that
-     * variables are always allocated sequentially starting from 0, i.e. {@code
-     * getVariable(createVariable()) == numberOfVariables() - 1}.
+     * Increases the reference count of the specified {@code function}.
      *
-     * @return The node representing the new variable.
+     * @param function The to be referenced function
+     * @return The given function, to be used for chaining.
      */
-    int createVariable();
+    int reference(int function);
 
     /**
-     * Creates {@code count} many variables and returns their respective nodes. The first created
-     * variable is at first position of the array.
+     * Decreases the reference count of the specified {@code function}.
      *
-     * @throws IllegalArgumentException if count is not positive.
+     * @param function The to be de-referenced function
+     * @return The given function, to be used for chaining.
      */
-    default int[] createVariables(int count) {
-        if (count <= 0) {
-            throw new IllegalArgumentException("Count must be positive");
-        }
-        int[] array = new int[count];
-        for (int i = 0; i < count; i++) {
-            array[i] = createVariable();
-        }
-        return array;
-    }
+    int dereference(int function);
 
     /**
-     * Increases the reference count of the specified {@code node}.
+     * Decreases the reference count of the specified {@code functions}.
      *
-     * @param node The to be referenced node
-     * @return The given node, to be used for chaining.
+     * @param functions The to be de-referenced functions
      */
-    int reference(int node);
-
-    /**
-     * Decreases the reference count of the specified {@code node}.
-     *
-     * @param node The to be de-referenced node
-     * @return The given node, to be used for chaining.
-     */
-    int dereference(int node);
-
-    /**
-     * Decreases the reference count of the specified {@code nodes}.
-     *
-     * @param nodes The to be de-referenced nodes
-     */
-    default void dereference(int... nodes) {
-        for (int node : nodes) {
+    default void dereference(int... functions) {
+        for (int node : functions) {
             dereference(node);
         }
     }
 
     /**
-     * Returns the reference count of the given node or {@literal -1} if this number can't be
-     * accurately determined (e.g., when a node is saturated).
-     */
-    int referenceCount(int node);
-
-    /**
-     * Computes the <b>support</b> of the function represented by the given {@code node}. The support
-     * of a function are all variables which have an influence on its value.
+     * Auxiliary method useful for updating function variables. It dereferences the inputs and
+     * references {@code result}. This is useful for assignments like {@code fun = f(in1, in2)} where
+     * {@code f} is some operation on this object and both {@code in1} and {@code in2} are temporary
+     * functions or not used anymore. In this case, calling {@code fun = bdd.consume(f(in1, in2),
+     * in1, in2)} updates the references as needed.
      *
-     * @param node The node whose support should be computed.
-     * @return A bit set with bit {@code i} is set iff the {@code i}-th variable is in the support.
+     * @param result The result of some operation involving input1 and input2
+     * @param input1 First input of the operation.
+     * @param input2 Second input of the operation.
+     * @return The given {@code result}.
      */
-    default BitSet support(int node) {
-        return supportTo(node, new BitSet(numberOfVariables()));
+    default int consume(int result, int input1, int input2) {
+        reference(result);
+        dereference(input1);
+        dereference(input2);
+        return result;
     }
 
     /**
-     * Computes the <b>support</b> of the given {@code node} and writes it in the {@code bitSet}.
+     * Auxiliary method useful for updating node variables. It dereferences {@code input} and
+     * references {@code result}. This is useful for assignments like {@code fun = f(fun, ...)}
+     * where {@code f} is some operation on this object. In this case, calling {@code fun =
+     * bdd.updateWith(f(fun, ...), fun)} updates the references as needed and leaves the other
+     * parameters untouched.
+     *
+     * @param result The result of some operation involving input.
+     * @param input The function which gets assigned the value of the result.
+     * @return The given {@code result}.
+     */
+    default int updateWith(int result, int input) {
+        reference(result);
+        dereference(input);
+        return result;
+    }
+
+    // Support
+
+    /**
+     * Computes the <b>support</b> of the given {@code function}. The support of a function are
+     * all variables which have an influence on its value.
+     *
+     * @param function The function whose support should be computed.
+     * @return A bit set with bit {@code i} is set iff the {@code i}-th variable is in the support.
+     */
+    default BitSet support(int function) {
+        return supportTo(function, new BitSet(numberOfVariables()));
+    }
+
+    /**
+     * Computes the <b>support</b> of the given {@code function} and writes it in the {@code bitSet}.
      * Note that the {@code bitSet} is not cleared, the support variables are added to the set.
      *
-     * @param node   The node whose support should be computed.
+     * @param function The function whose support should be computed.
      * @param bitSet The BitSet used to store the result.
      * @return The given bitset, useful for chaining.
      * @see #support(int)
      */
-    default BitSet supportTo(int node, BitSet bitSet) {
-        forEachSupport(node, bitSet::set);
+    default BitSet supportTo(int function, BitSet bitSet) {
+        forEachSupport(function, bitSet::set);
         return bitSet;
     }
 
     /**
-     * Calls the given {@code action} for each variable in the support of {@code node} <em>at least</em> once.
+     * Calls the given {@code action} for each variable in the support of {@code function} <em>at least</em> once.
      *
-     * @param node The node whose support should be computed.
+     * @param function The function whose support should be computed.
      */
-    default void forEachSupport(int node, IntConsumer action) {
+    default void forEachSupport(int function, IntConsumer action) {
         BitSet filter = new BitSet(numberOfVariables());
         filter.set(0, numberOfVariables());
-        forEachSupportFiltered(node, filter, action);
+        forEachSupportFiltered(function, filter, action);
     }
 
-    default BitSet supportFiltered(int node, BitSet filter) {
+    default BitSet supportFiltered(int function, BitSet filter) {
         BitSet bitSet = new BitSet(numberOfVariables());
-        forEachSupportFiltered(node, filter, bitSet::set);
+        forEachSupportFiltered(function, filter, bitSet::set);
         return bitSet;
     }
 
     /**
-     * Calls the given {@code action} for each variable in the support of {@code node} <em>at least</em> once.
+     * Calls the given {@code action} for each variable in the support of {@code function} <em>at least</em> once.
      * Only considers variables in the given {@code filter}.
      *
-     * @param node   The node whose support should be computed.
+     * @param function The function whose support should be computed.
      * @see #forEachSupport(int, IntConsumer)
      */
-    void forEachSupportFiltered(int node, BitSet filter, IntConsumer action);
+    void forEachSupportFiltered(int function, BitSet filter, IntConsumer action);
 
     /**
-     * Auxiliary function useful for updating node variables. It dereferences the inputs and
-     * references {@code result}. This is useful for assignments like {@code node = f(in1, in2)} where
-     * {@code f} is some operation on this BDD and both {@code in1} and {@code in2} are temporary
-     * nodes or not used anymore. In this case, calling {@code node = consume(bdd, node(in1, in2),
-     * in1, in2)} updates the references as needed.
-     *
-     * <p>This would be more concise when implemented using method references, but these are
-     * comparatively heavyweight.</p>
-     *
-     * @param result     The result of some operation on this BDD involving inputNode1 and inputNode2
-     * @param inputNode1 First input of the operation.
-     * @param inputNode2 Second input of the operation.
-     * @return The given {@code result}.
-     */
-    default int consume(int result, int inputNode1, int inputNode2) {
-        reference(result);
-        dereference(inputNode1);
-        dereference(inputNode2);
-        return result;
-    }
-
-    /**
-     * Auxiliary function useful for updating node variables. It dereferences {@code inputNode} and
-     * references {@code result}. This is useful for assignments like {@code node = f(node, ...)}
-     * where {@code f} is some operation on the BDD. In this case, calling {@code node =
-     * updateWith(bdd, f(node, ...), inputNode)} updates the references as needed and leaves the other
-     * parameters untouched.
-     *
-     * <p>This would be more concise when implemented using method references, but these are
-     * comparatively heavyweight.</p>
-     *
-     * @param result    The result of some operation on this BDD.
-     * @param inputNode The node which gets assigned the value of the result.
-     * @return The given {@code result}.
-     */
-    default int updateWith(int result, int inputNode) {
-        reference(result);
-        dereference(inputNode);
-        return result;
-    }
-
-    /**
-     * Returns a string containing some statistics about the Bdd. The content and formatting of this
-     * string may change drastically and are only intended as human-readable output.
-     */
-    String statistics();
-
-    /**
-     * A wrapper class to guard some node in an area where exceptions can occur. It increases the
-     * reference count of the given node and decreases it when it's closed.
+     * A wrapper class to guard some function in an area where exceptions can occur. It increases
+     * the reference count of the given function and decreases it when it's closed.
      */
     final class ReferenceGuard implements AutoCloseable {
         public final DecisionDiagram diagram;
-        public final int node;
+        public final int function;
 
-        public ReferenceGuard(int node, Bdd diagram) {
-            this.node = diagram.reference(node);
+        public ReferenceGuard(int function, DecisionDiagram diagram) {
+            this.function = diagram.reference(function);
             this.diagram = diagram;
         }
 
         @Override
         public void close() {
-            diagram.dereference(node);
+            diagram.dereference(function);
         }
     }
 }

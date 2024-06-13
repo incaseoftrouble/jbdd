@@ -19,6 +19,7 @@ package de.tum.in.jbdd;
 import java.math.BigInteger;
 import java.util.BitSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
@@ -54,15 +55,15 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
-    public int trueNode() {
-        onEnter("trueNode");
-        return onExit(delegate.trueNode());
+    public int trueFunction() {
+        onEnter("true");
+        return onExit(delegate.trueFunction());
     }
 
     @Override
-    public int falseNode() {
-        onEnter("falseNode");
-        return onExit(delegate.falseNode());
+    public int falseFunction() {
+        onEnter("false");
+        return onExit(delegate.falseFunction());
     }
 
     @Override
@@ -72,27 +73,27 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
-    public int high(int node) {
-        onEnter("high");
-        return onExit(delegate.high(node));
+    public int highOf(int function) {
+        onEnter("highOf");
+        return onExit(delegate.highOf(function));
     }
 
     @Override
-    public int low(int node) {
-        onEnter("low");
-        return onExit(delegate.low(node));
+    public int lowOf(int function) {
+        onEnter("lowOf");
+        return onExit(delegate.lowOf(function));
     }
 
     @Override
-    public int variable(int node) {
-        onEnter("variable");
-        return onExit(delegate.variable(node));
+    public int decisionVariable(int function) {
+        onEnter("topVariable");
+        return onExit(delegate.decisionVariable(function));
     }
 
     @Override
-    public int variableNode(int variableNumber) {
-        onEnter("variableNode");
-        return onExit(delegate.variableNode(variableNumber));
+    public int variableFunction(int variableNumber) {
+        onEnter("variableFunction");
+        return onExit(delegate.variableFunction(variableNumber));
     }
 
     @Override
@@ -108,128 +109,134 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
-    public boolean isTerminal(int node) {
-        onEnter("isNodeRoot");
-        return onExit(delegate.isTerminal(node));
+    public boolean isConstant(int function) {
+        onEnter("isConstant");
+        return onExit(delegate.isConstant(function));
     }
 
     @Override
-    public boolean isVariable(int node) {
+    public boolean isVariable(int function) {
         onEnter("isVariable");
-        return onExit(delegate.isVariable(node));
+        return onExit(delegate.isVariable(function));
     }
 
     @Override
-    public boolean isVariableNegated(int node) {
+    public boolean isVariableNegated(int function) {
         onEnter("isVariableNegated");
-        return onExit(delegate.isVariableNegated(node));
+        return onExit(delegate.isVariableNegated(function));
     }
 
     @Override
-    public boolean isVariableOrNegated(int node) {
+    public boolean isVariableOrNegated(int function) {
         onEnter("isVariableOrNegated");
-        return onExit(delegate.isVariableOrNegated(node));
+        return onExit(delegate.isVariableOrNegated(function));
     }
 
     @Override
-    public int reference(int node) {
+    public int reference(int function) {
         onEnter("reference");
-        return onExit(delegate.reference(node));
+        return onExit(delegate.reference(function));
     }
 
     @Override
-    public int dereference(int node) {
+    public int dereference(int function) {
         onEnter("dereference");
-        return onExit(delegate.dereference(node));
+        return onExit(delegate.dereference(function));
     }
 
     @Override
-    public void dereference(int... nodes) {
+    public void dereference(int... functions) {
         onEnter("dereference");
-        delegate.dereference(nodes);
+        delegate.dereference(functions);
         onExit();
     }
 
     @Override
-    public int referenceCount(int node) {
-        onEnter("getReferenceCount");
-        return onExit(delegate.referenceCount(node));
+    public int updateWith(int result, int input) {
+        onEnter("updateWith");
+        return onExit(delegate.updateWith(result, input));
     }
 
     @Override
-    public boolean evaluate(int node, boolean[] assignment) {
+    public int consume(int result, int input1, int input2) {
+        onEnter("consume");
+        return onExit(delegate.consume(result, input1, input2));
+    }
+
+    @Override
+    public boolean evaluate(int function, boolean[] assignment) {
         onEnter("evaluate");
-        return onExit(delegate.evaluate(node, assignment));
+        return onExit(delegate.evaluate(function, assignment));
     }
 
     @Override
-    public boolean evaluate(int node, BitSet assignment) {
+    public boolean evaluate(int function, BitSet assignment) {
         onEnter("evaluate");
-        return onExit(delegate.evaluate(node, assignment));
+        return onExit(delegate.evaluate(function, assignment));
     }
 
     @Override
-    public BitSet getSatisfyingAssignment(int node) {
-        onEnter("getSatisfyingAssignment");
-        return onExit(delegate.getSatisfyingAssignment(node));
+    public BitSet satisfyingAssignment(int function) {
+        onEnter("satisfyingAssignment");
+        return onExit(delegate.satisfyingAssignment(function));
     }
 
     @Override
-    public BigInteger countSatisfyingAssignments(int node) {
+    public BigInteger countSatisfyingAssignments(int function) {
         onEnter("countSatisfyingAssignments");
-        return onExit(delegate.countSatisfyingAssignments(node));
+        return onExit(delegate.countSatisfyingAssignments(function));
     }
 
     @Override
-    public BigInteger countSatisfyingAssignments(int node, BitSet support) {
+    public BigInteger countSatisfyingAssignments(int function, BitSet support) {
         onEnter("countSatisfyingAssignments");
-        return onExit(delegate.countSatisfyingAssignments(node, support));
+        return onExit(delegate.countSatisfyingAssignments(function, support));
     }
 
     @Override
-    public Iterator<BitSet> solutionIterator(int node) {
+    public Iterator<BitSet> solutionIterator(int function) {
         onEnter("solutionIterator");
-        return onExit(delegate.solutionIterator(node));
+        return onExit(delegate.solutionIterator(function));
     }
 
     @Override
-    public Iterator<BitSet> solutionIterator(int node, BitSet support) {
+    public Iterator<BitSet> solutionIterator(int function, BitSet support) {
         onEnter("solutionIterator");
-        return onExit(delegate.solutionIterator(node, support));
+        return onExit(delegate.solutionIterator(function, support));
     }
 
     @Override
-    public void forEachSolution(int node, Consumer<? super BitSet> action) {
+    public void forEachSolution(int function, Consumer<? super BitSet> action) {
         onEnter("forEachSolution");
-        delegate.forEachSolution(node, action);
+        delegate.forEachSolution(function, action);
         onExit();
     }
 
     @Override
-    public void forEachSolution(int node, BitSet support, Consumer<? super BitSet> action) {
+    public void forEachSolution(int function, BitSet support, Consumer<? super BitSet> action) {
         onEnter("forEachSolution");
-        delegate.forEachSolution(node, support, action);
+        delegate.forEachSolution(function, support, action);
         onExit();
     }
 
     @Override
-    public void forEachPath(int node, Consumer<? super BitSet> action) {
+    public void forEachPath(int function, Consumer<? super BitSet> action) {
         onEnter("forEachPath");
-        delegate.forEachPath(node, action);
+        delegate.forEachPath(function, action);
         onExit();
     }
 
     @Override
-    public void forEachPath(int node, BitSet relevantSet, Consumer<? super BitSet> action) {
+    public void forEachPath(int function, BitSet relevantSet, Consumer<? super BitSet> action) {
         onEnter("forEachPath");
-        delegate.forEachPath(node, relevantSet, action);
+        delegate.forEachPath(function, relevantSet, action);
         onExit();
     }
 
     @Override
-    public void forEachPath(int node, BiConsumer<BitSet, BitSet> action) {
+    public void forEachPath(int function, BiConsumer<BitSet, BitSet> action) {
         onEnter("forEachPath");
-        delegate.forEachPath(node, action);
+        delegate.forEachPath(function, action);
         onExit();
     }
 
@@ -241,34 +248,34 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
-    public BitSet support(int node) {
+    public BitSet support(int function) {
         onEnter("support");
-        return onExit(delegate.support(node));
+        return onExit(delegate.support(function));
     }
 
     @Override
-    public BitSet supportTo(int node, BitSet bitSet) {
+    public BitSet supportTo(int function, BitSet bitSet) {
         onEnter("supportTo");
-        return onExit(delegate.supportTo(node, bitSet));
+        return onExit(delegate.supportTo(function, bitSet));
     }
 
     @Override
-    public void forEachSupport(int node, IntConsumer action) {
+    public void forEachSupport(int function, IntConsumer action) {
         onEnter("forEachSupport");
-        delegate.forEachSupport(node, action);
+        delegate.forEachSupport(function, action);
         onExit();
     }
 
     @Override
-    public BitSet supportFiltered(int node, BitSet filter) {
+    public BitSet supportFiltered(int function, BitSet filter) {
         onEnter("supportFiltered");
-        return onExit(delegate.supportTo(node, filter));
+        return onExit(delegate.supportTo(function, filter));
     }
 
     @Override
-    public void forEachSupportFiltered(int node, BitSet filter, IntConsumer action) {
+    public void forEachSupportFiltered(int function, BitSet filter, IntConsumer action) {
         onEnter("forEachSupportFiltered");
-        delegate.forEachSupportFiltered(node, filter, action);
+        delegate.forEachSupportFiltered(function, filter, action);
         onExit();
     }
 
@@ -297,93 +304,99 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
-    public int consume(int result, int inputNode1, int inputNode2) {
-        onEnter("consume");
-        return onExit(delegate.consume(result, inputNode1, inputNode2));
-    }
-
-    @Override
-    public int updateWith(int result, int inputNode) {
-        onEnter("updateWith");
-        return onExit(delegate.updateWith(result, inputNode));
-    }
-
-    @Override
-    public int and(int node1, int node2) {
+    public int and(int function1, int function2) {
         onEnter("and");
-        return onExit(delegate.and(node1, node2));
+        return onExit(delegate.and(function1, function2));
     }
 
     @Override
-    public int andNot(int node1, int node2) {
+    public int andNot(int function1, int function2) {
         onEnter("andNot");
-        return onExit(delegate.andNot(node1, node2));
+        return onExit(delegate.andNot(function1, function2));
     }
 
     @Override
-    public int compose(int node, int[] variableMapping) {
+    public int compose(int function, int[] variableMapping) {
         onEnter("compose");
-        return onExit(delegate.compose(node, variableMapping));
+        return onExit(delegate.compose(function, variableMapping));
     }
 
     @Override
-    public int equivalence(int node1, int node2) {
+    public int equivalence(int function1, int function2) {
         onEnter("equivalence");
-        return onExit(delegate.equivalence(node1, node2));
+        return onExit(delegate.equivalence(function1, function2));
     }
 
     @Override
-    public int exists(int node, BitSet quantifiedVariables) {
+    public int exists(int function, BitSet quantifiedVariables) {
         onEnter("exists");
-        return onExit(delegate.exists(node, quantifiedVariables));
+        return onExit(delegate.exists(function, quantifiedVariables));
     }
 
     @Override
-    public int ifThenElse(int ifNode, int thenNode, int elseNode) {
+    public int forall(int function, BitSet quantifiedVariables) {
+        onEnter("forall");
+        return onExit(delegate.forall(function, quantifiedVariables));
+    }
+
+    @Override
+    public int ifThenElse(int ifFunction, int thenFunction, int elseFunction) {
         onEnter("ifThenElse");
-        return onExit(delegate.ifThenElse(ifNode, thenNode, elseNode));
+        return onExit(delegate.ifThenElse(ifFunction, thenFunction, elseFunction));
     }
 
     @Override
-    public int implication(int node1, int node2) {
+    public int implication(int function1, int function2) {
         onEnter("implication");
-        return onExit(delegate.implication(node1, node2));
+        return onExit(delegate.implication(function1, function2));
     }
 
     @Override
-    public boolean implies(int node1, int node2) {
+    public boolean implies(int function1, int function2) {
         onEnter("implies");
-        return onExit(delegate.implies(node1, node2));
+        return onExit(delegate.implies(function1, function2));
     }
 
     @Override
-    public int not(int node) {
+    public int not(int function) {
         onEnter("not");
-        return onExit(delegate.not(node));
+        return onExit(delegate.not(function));
     }
 
     @Override
-    public int notAnd(int node1, int node2) {
+    public int notAnd(int function1, int function2) {
         onEnter("notAnd");
-        return onExit(delegate.notAnd(node1, node2));
+        return onExit(delegate.notAnd(function1, function2));
     }
 
     @Override
-    public int or(int node1, int node2) {
+    public int or(int function1, int function2) {
         onEnter("or");
-        return onExit(delegate.or(node1, node2));
+        return onExit(delegate.or(function1, function2));
     }
 
     @Override
-    public int restrict(int node, BitSet restrictedVariables, BitSet restrictedVariableValues) {
+    public int restrict(int function, BitSet restrictedVariables, BitSet restrictedVariableValues) {
         onEnter("restrict");
-        return onExit(delegate.restrict(node, restrictedVariables, restrictedVariableValues));
+        return onExit(delegate.restrict(function, restrictedVariables, restrictedVariableValues));
     }
 
     @Override
-    public int xor(int node1, int node2) {
+    public int xor(int function1, int function2) {
         onEnter("xor");
-        return onExit(delegate.xor(node1, node2));
+        return onExit(delegate.xor(function1, function2));
+    }
+
+    @Override
+    public <V> MtBdd<V> createMtBdd(Class<V> clazz) {
+        onEnter("createMtBdd");
+        return onExit(delegate.createMtBdd(clazz));
+    }
+
+    @Override
+    public <V> MtBdd<List<V>> intersect(List<MtBdd<? extends V>> mtBdds, Class<V> clazz) {
+        onEnter("intersect");
+        return onExit(delegate.intersect(mtBdds, clazz));
     }
 
     @Override
@@ -394,6 +407,7 @@ public class DelegatingBdd implements Bdd {
 
     @Override
     public int placeholder() {
-        return delegate.placeholder();
+        onEnter("placeholder");
+        return onExit(delegate.placeholder());
     }
 }

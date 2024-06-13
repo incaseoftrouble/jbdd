@@ -17,7 +17,6 @@
 package de.tum.in.jbdd;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collections;
 import java.util.HashSet;
@@ -57,11 +56,11 @@ public class RandomBenchmark extends BaseBddBenchmark {
                 }
                 n.add(n.bdd.restrict(n.get(), mask, values));
             },
-            n -> {
+            /* n -> {
                 int[] compose = new int[Math.min(n.bdd.numberOfVariables(), 10)];
                 Arrays.setAll(compose, i -> n.get());
                 n.add(n.bdd.compose(n.get(), compose));
-            },
+            }, */
             n -> {
                 int variables = n.bdd.numberOfVariables();
                 BitSet mask = new BitSet(variables);
@@ -105,6 +104,7 @@ public class RandomBenchmark extends BaseBddBenchmark {
                 nodes.add(variable);
                 nodes.add(bdd.not(variable));
             }
+            nodeSet.addAll(nodes);
         }
 
         public void add(int node) {
@@ -115,12 +115,12 @@ public class RandomBenchmark extends BaseBddBenchmark {
                     nodes.add(node);
 
                     int size = nodes.size();
-                    if (size > 200) {
+                    if (size > 5000) {
                         Collections.shuffle(nodes, random);
-                        int keep = size - 10;
-                        nodes.subList(0, keep).forEach(bdd::dereference);
+                        int keep = size / 2;
+                        nodes.subList(keep, size).forEach(bdd::dereference);
                         nodeSet.clear();
-                        var keepList = List.copyOf(nodes.subList(keep, size));
+                        var keepList = List.copyOf(nodes.subList(0, keep));
                         nodes.clear();
                         for (int n : keepList) {
                             if (nodeSet.add(n)) {
