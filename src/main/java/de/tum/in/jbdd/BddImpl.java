@@ -881,7 +881,7 @@ final class BddImpl extends NodeTable implements BddWithTestInterface {
             return node;
         }
 
-        cache.initCompose(variableMapping, highestReplacedVariable);
+        cache.initMappingCache(variableMapping, highestReplacedVariable);
         int result = iterative
                 ? composeIterative(node, variableMapping, highestReplacedVariable)
                 : composeRecursive(node, variableMapping, highestReplacedVariable);
@@ -917,7 +917,7 @@ final class BddImpl extends NodeTable implements BddWithTestInterface {
                             current = high(current);
                         } else if (replacementNode == FALSE_NODE) {
                             current = low(current);
-                        } else if (cache.lookupCompose(current)) {
+                        } else if (cache.lookupMapping(current)) {
                             result = cache.lookupResult();
                         } else {
                             cacheStackHash[stackIndex] = cache.lookupHash();
@@ -948,7 +948,7 @@ final class BddImpl extends NodeTable implements BddWithTestInterface {
                 result = ifThenElseIterative(replacementNode, result, lowResult, stackIndex);
                 popWorkStack(2);
 
-                cache.putCompose(currentHash, currentNode, result);
+                cache.putMapping(currentHash, currentNode, result);
 
                 if (stackIndex == 0) {
                     return result;
@@ -972,7 +972,7 @@ final class BddImpl extends NodeTable implements BddWithTestInterface {
             return node;
         }
 
-        if (cache.lookupCompose(node)) {
+        if (cache.lookupMapping(node)) {
             return cache.lookupResult();
         }
         int hash = cache.lookupHash();
@@ -990,7 +990,7 @@ final class BddImpl extends NodeTable implements BddWithTestInterface {
             resultNode = ifThenElseRecursive(variableReplacementNode, highCompose, lowCompose);
             popWorkStack(2);
         }
-        cache.putCompose(hash, node, resultNode);
+        cache.putMapping(hash, node, resultNode);
         return resultNode;
     }
 
@@ -2336,7 +2336,7 @@ final class BddImpl extends NodeTable implements BddWithTestInterface {
             }
         }
 
-        cache.initCompose(composeArray, highestReplacement);
+        cache.initMappingCache(composeArray, highestReplacement);
         int result = iterative
                 ? composeIterative(node, composeArray, highestReplacement)
                 : composeRecursive(node, composeArray, highestReplacement);

@@ -61,7 +61,7 @@ final class BddCache {
     private final CacheStatistics satisfactionStatistics = new CacheStatistics();
     private final CacheStatistics ternaryStatistics = new CacheStatistics();
     private final CacheStatistics negationStatistics = new CacheStatistics();
-    private final CacheStatistics composeStatistics = new CacheStatistics();
+    private final CacheStatistics mappingStatistics = new CacheStatistics();
     private final CacheStatistics quantificationStatistics = new CacheStatistics();
 
     private int negationKeyCount = 0;
@@ -74,10 +74,10 @@ final class BddCache {
     private int ternaryKeyCount = 0;
     private int[] ternaryCache = EMPTY_INT_ARRAY;
 
-    private int[] composeArray = EMPTY_INT_ARRAY;
-    private int composeHighestReplacement = -1;
-    private int composeKeyCount = 0;
-    private int[] composeCache = EMPTY_INT_ARRAY;
+    private int[] mappingArray = EMPTY_INT_ARRAY;
+    private int mappingHighestReplacement = -1;
+    private int mappingKeyCount = 0;
+    private int[] mappingCache = EMPTY_INT_ARRAY;
 
     private BitSet quantificationSet = new BitSet();
     private QuantificationType quantificationType = QuantificationType.EXISTS;
@@ -102,7 +102,7 @@ final class BddCache {
         reallocateBinary();
         reallocateTernary();
         reallocateSatisfaction();
-        reallocateCompose();
+        reallocateMapping();
         reallocateQuantification();
 
         if (logger.isLoggable(Level.INFO) && configuration.logStatisticsOnShutdown()) {
@@ -148,10 +148,10 @@ final class BddCache {
         return lookupResult;
     }
 
-    void clearComposeCache() {
-        composeStatistics.invalidation();
-        for (int i = 0; i < composeCache.length; i += 2) {
-            composeCache[i] = placeholder;
+    void clearMappingCache() {
+        mappingStatistics.invalidation();
+        for (int i = 0; i < mappingCache.length; i += 2) {
+            mappingCache[i] = placeholder;
         }
     }
 
@@ -204,14 +204,14 @@ final class BddCache {
         return (float) loadedSatisfactionBins / (float) satisfactionKeyCount();
     }
 
-    private float composeLoadFactor() {
-        int loadedComposeBins = 0;
-        for (int i = 0; i < composeKeyCount(); i++) {
-            if (composeCache[2 * i] != placeholder) {
-                loadedComposeBins++;
+    private float mappingLoadFactor() {
+        int loadedMappingBins = 0;
+        for (int i = 0; i < mappingKeyCount(); i++) {
+            if (mappingCache[2 * i] != placeholder) {
+                loadedMappingBins++;
             }
         }
-        return (float) loadedComposeBins / (float) composeKeyCount();
+        return (float) loadedMappingBins / (float) mappingKeyCount();
     }
 
     private float quantificationLoadFactor() {
@@ -260,13 +260,13 @@ final class BddCache {
         return satisfactionKeyCount;
     }
 
-    private int composeCachePosition(int hash) {
-        return mod(hash, composeKeyCount());
+    private int mappingCachePosition(int hash) {
+        return mod(hash, mappingKeyCount());
     }
 
-    private int composeKeyCount() {
-        assert composeKeyCount == composeCache.length / 2;
-        return composeKeyCount;
+    private int mappingKeyCount() {
+        assert mappingKeyCount == mappingCache.length / 2;
+        return mappingKeyCount;
     }
 
     private int quantificationCachePosition(int hash) {
@@ -288,14 +288,14 @@ final class BddCache {
         reallocateTernary();
         satisfactionStatistics.invalidation();
         reallocateSatisfaction();
-        reallocateCompose();
+        reallocateMapping();
         reallocateQuantification();
     }
 
     public void variablesChanged() {
         satisfactionStatistics.invalidation();
         reallocateSatisfaction();
-        reallocateCompose();
+        reallocateMapping();
         reallocateQuantification();
     }
 
@@ -350,33 +350,33 @@ final class BddCache {
         return null;
     }
 
-    void initCompose(int[] array, int highestReplacement) {
-        if (this.composeHighestReplacement == highestReplacement) {
-            int mismatch = Arrays.mismatch(composeArray, array);
+    void initMappingCache(int[] array, int highestReplacement) {
+        if (this.mappingHighestReplacement == highestReplacement) {
+            int mismatch = Arrays.mismatch(mappingArray, array);
             if (mismatch == -1 || mismatch > highestReplacement) {
                 return;
             }
         }
-        this.composeArray = Arrays.copyOf(array, highestReplacement);
-        this.composeHighestReplacement = highestReplacement;
-        clearComposeCache();
+        this.mappingArray = Arrays.copyOf(array, highestReplacement);
+        this.mappingHighestReplacement = highestReplacement;
+        clearMappingCache();
     }
 
-    boolean lookupCompose(int inputNode) {
+    boolean lookupMapping(int inputNode) {
         assert associatedBdd.isNodeValid(inputNode);
 
         int hash = HashUtil.hash(inputNode);
         lookupHash = hash;
 
-        int cachePosition = composeCachePosition(hash);
-        int[] composeCache = this.composeCache;
+        int cachePosition = mappingCachePosition(hash);
+        int[] mappingCache = this.mappingCache;
 
         int binStart = 2 * cachePosition;
-        if (composeCache[binStart] == inputNode) {
-            int result = composeCache[binStart + 1];
+        if (mappingCache[binStart] == inputNode) {
+            int result = mappingCache[binStart + 1];
             lookupResult = result;
             assert associatedBdd.isNodeValidOrLeaf(result);
-            composeStatistics.cacheHit();
+            mappingStatistics.cacheHit();
             return true;
         }
         return false;
@@ -483,17 +483,17 @@ final class BddCache {
         satisfactionResult[cachePosition] = satisfactionCount;
     }
 
-    void putCompose(int hash, int inputNode, int resultNode) {
+    void putMapping(int hash, int inputNode, int resultNode) {
         assert associatedBdd.isNodeValid(inputNode) && associatedBdd.isNodeValidOrLeaf(resultNode);
         assert hash == HashUtil.hash(inputNode);
 
-        composeStatistics.put();
-        int cachePosition = composeCachePosition(hash);
-        int[] composeCache = this.composeCache;
+        mappingStatistics.put();
+        int cachePosition = mappingCachePosition(hash);
+        int[] mappingCache = this.mappingCache;
 
         int binStart = 2 * cachePosition;
-        composeCache[binStart] = inputNode;
-        composeCache[binStart + 1] = resultNode;
+        mappingCache[binStart] = inputNode;
+        mappingCache[binStart + 1] = resultNode;
     }
 
     void putExists(int hash, int inputNode, int resultNode) {
@@ -593,15 +593,15 @@ final class BddCache {
         }
     }
 
-    private void reallocateCompose() {
-        int size = associatedBdd.tableSize() / configuration.cacheComposeDivider();
-        if (size < 2 * composeKeyCount) {
-            clearComposeCache();
+    private void reallocateMapping() {
+        int size = associatedBdd.tableSize() / configuration.cacheMappingDivider();
+        if (size < 2 * mappingKeyCount) {
+            clearMappingCache();
         } else {
             int keyCount = Primes.nextPrime(size);
-            composeCache = new int[keyCount * 2];
-            composeKeyCount = keyCount;
-            assert composeKeyCount() == keyCount;
+            mappingCache = new int[keyCount * 2];
+            mappingKeyCount = keyCount;
+            assert mappingKeyCount() == keyCount;
         }
     }
 
@@ -743,7 +743,7 @@ final class BddCache {
                         + " %s\nBinary: size: %d, load: %s\n"
                         + " %s\nTernary: size: %d, load: %s\n"
                         + " %s\nSatisfaction: size: %d, load: %s\n"
-                        + " %s\nCompose: current size: %d, load: %s\n"
+                        + " %s\nMapping: current size: %d, load: %s\n"
                         + " %s\nQuant: current size: %d, load %s\n"
                         + " %s",
                 negationCacheKeyCount(),
@@ -758,9 +758,9 @@ final class BddCache {
                 satisfactionKeyCount(),
                 satisfactionLoadFactor(),
                 satisfactionStatistics,
-                composeKeyCount(),
-                composeLoadFactor(),
-                composeStatistics,
+                mappingKeyCount(),
+                mappingLoadFactor(),
+            mappingStatistics,
                 quantificationKeyCount(),
                 quantificationLoadFactor(),
                 quantificationStatistics);

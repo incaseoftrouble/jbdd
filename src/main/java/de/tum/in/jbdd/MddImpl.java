@@ -990,7 +990,7 @@ final class MddImpl extends NodeTable implements Mdd {
 
         pushToWorkStack(node);
 
-        cache.initCompose(values, highestReplacedVariable);
+        cache.initMappingCache(values, highestReplacedVariable);
         int result = restrictRecursive(node, values, highestReplacedVariable);
         popWorkStack();
         assert isWorkStackEmpty();
@@ -1007,7 +1007,7 @@ final class MddImpl extends NodeTable implements Mdd {
             return node;
         }
 
-        if (cache.lookupCompose(node)) {
+        if (cache.lookupMapping(node)) {
             return cache.lookupResult();
         }
         int hash = cache.lookupHash();
@@ -1029,7 +1029,7 @@ final class MddImpl extends NodeTable implements Mdd {
             resultNode = restrictRecursive(children[variableReplacementValue], values, highestReplacedVariable);
         }
 
-        cache.putCompose(hash, node, resultNode);
+        cache.putMapping(hash, node, resultNode);
         return resultNode;
     }
 

@@ -46,7 +46,6 @@ public class BenchBddState {
                 .cacheBinaryDivider((int) (BddConfiguration.DEFAULT_CACHE_BINARY_DIVIDER / cacheSizeFactor))
                 .cacheTernaryDivider((int) (BddConfiguration.DEFAULT_CACHE_TERNARY_DIVIDER / cacheSizeFactor))
                 .cacheSatisfactionDivider((int) (BddConfiguration.DEFAULT_CACHE_SATISFACTION_DIVIDER / cacheSizeFactor))
-                .cacheComposeDivider((int) (BddConfiguration.DEFAULT_CACHE_COMPOSE_DIVIDER / cacheSizeFactor))
                 .build();
         if (bddType == BddType.ITERATIVE) {
             bdd = BddFactory.buildBdd(true, configuration);

@@ -51,7 +51,7 @@ public class BddConfiguration {
     }
 
     @Value.Default
-    public int cacheComposeDivider() {
+    public int cacheMappingDivider() {
         return DEFAULT_CACHE_COMPOSE_DIVIDER;
     }
 
