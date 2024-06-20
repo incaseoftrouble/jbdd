@@ -28,6 +28,8 @@ import java.util.function.IntUnaryOperator;
  * Symbolic representation of a {@code Set<BitSet>}.
  */
 public interface BddSet {
+    BddSetFactory factory();
+
     boolean isEmpty();
 
     boolean isUniverse();
@@ -42,9 +44,31 @@ public interface BddSet {
 
     BddSet union(BddSet other);
 
+    default BddSet union(BddSet... bddSets) {
+        BddSet result = this;
+        for (BddSet bddSet : bddSets) {
+            result = result.union(bddSet);
+        }
+        return result;
+    }
+
+    boolean intersects(BddSet other);
+
     BddSet intersection(BddSet other);
 
+    default BddSet intersection(BddSet... bddSets) {
+        BddSet result = this;
+        for (BddSet bddSet : bddSets) {
+            result = result.intersection(bddSet);
+        }
+        return result;
+    }
+
     BddSet exists(BitSet quantifiedVariables);
+
+    BddSet symmetricDifference(BddSet other);
+
+    BddSet difference(BddSet other);
 
     BddSet relabelVariables(IntUnaryOperator mapping);
 

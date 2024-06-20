@@ -24,15 +24,16 @@ import java.util.BitSet;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
-import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import java.util.function.IntConsumer;
+import java.util.function.Predicate;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.IntStream;
 import javax.annotation.Nullable;
 
 @SuppressWarnings({"PMD.AvoidReassigningParameters", "AssignmentToMethodParameter", "DuplicatedCode"})
-final class MddImpl extends BooleanBase<int[]> implements Mdd {
+final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     private static final Logger logger = Logger.getLogger(BddImpl.class.getName());
 
     private final BooleanCache cache;
@@ -215,43 +216,41 @@ final class MddImpl extends BooleanBase<int[]> implements Mdd {
     }
 
     @Override
-    public void forEachPath(int function, BiConsumer<int[], BitSet> action) {
+    public void forEachPath(int function, Consumer<? super int[]> action) {
         assert isValidFunction(function);
 
         if (function == FALSE) {
             return;
         }
+        int[] path = new int[numberOfVariables];
+        Arrays.fill(path, -1);
+
         if (function == TRUE) {
-            action.accept(EMPTY_INT_ARRAY, new BitSet(0));
+            action.accept(path);
             return;
         }
 
         int numberOfVariables = numberOfVariables();
-        int[] path = new int[numberOfVariables];
-        BitSet pathSupport = new BitSet(numberOfVariables);
-
-        forEachPathRecursive(
-                positive(function), null, numberOfVariables, path, pathSupport, action, isPositive(function));
+        forEachPathRecursive(positive(function), null, numberOfVariables, path, action, isPositive(function));
     }
 
     @Override
-    public void forEachPath(int function, BitSet relevantSet, BiConsumer<int[], BitSet> action) {
+    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super int[]> action) {
         assert isValidFunction(function);
 
         if (function == FALSE) {
             return;
         }
+        int[] path = new int[numberOfVariables];
+        Arrays.fill(path, -1);
         if (function == TRUE || relevantSet.isEmpty()) {
-            action.accept(EMPTY_INT_ARRAY, new BitSet(0));
+            action.accept(path);
             return;
         }
 
         int highestVariable = relevantSet.length() - 1;
-        int[] path = new int[highestVariable + 1];
-        BitSet pathSupport = new BitSet(highestVariable + 1);
 
-        forEachPathRecursive(
-                positive(function), relevantSet, highestVariable, path, pathSupport, action, isPositive(function));
+        forEachPathRecursive(positive(function), relevantSet, highestVariable, path, action, isPositive(function));
     }
 
     private void forEachPathRecursive(
@@ -259,13 +258,12 @@ final class MddImpl extends BooleanBase<int[]> implements Mdd {
             @Nullable BitSet support,
             int depthLimit,
             int[] path,
-            BitSet pathSupport,
-            BiConsumer<int[], BitSet> action,
+            Consumer<? super int[]> action,
             boolean lookingFor) {
 
         if (node == TRUE) {
             assert lookingFor;
-            action.accept(path, pathSupport);
+            action.accept(path);
             return;
         }
         assert table.isValidNode(node);
@@ -274,15 +272,11 @@ final class MddImpl extends BooleanBase<int[]> implements Mdd {
         int variable = table.variable(node);
         if (variable > depthLimit) {
             // There must exist at least one satisfying path
-            action.accept(path, pathSupport);
+            action.accept(path);
             return;
         }
 
         boolean relevant = support == null || support.get(variable);
-
-        if (relevant) {
-            pathSupport.set(variable);
-        }
 
         int[] children = table.children(node);
         for (int val = 0; val < children.length; val++) {
@@ -292,21 +286,56 @@ final class MddImpl extends BooleanBase<int[]> implements Mdd {
                     path[variable] = val;
                 }
                 forEachPathRecursive(
-                        positive(child),
-                        support,
-                        depthLimit,
-                        path,
-                        pathSupport,
-                        action,
-                        isPositive(child) == lookingFor);
+                        positive(child), support, depthLimit, path, action, isPositive(child) == lookingFor);
             }
         }
 
-        assert relevant == pathSupport.get(variable);
+        assert (path[variable] >= 0) == relevant;
         if (relevant) {
-            path[variable] = 0;
-            pathSupport.clear(variable);
+            path[variable] = -1;
         }
+    }
+
+    @Override
+    public boolean anyPathMatches(int function, Predicate<? super int[]> predicate) {
+        assert isValidFunction(function);
+
+        if (function == FALSE) {
+            return false;
+        }
+        int[] path = new int[numberOfVariables];
+        Arrays.fill(path, -1);
+        if (function == TRUE) {
+            return predicate.test(path);
+        }
+
+        return anyPathMatchesRecursive(positive(function), path, predicate, isPositive(function));
+    }
+
+    private boolean anyPathMatchesRecursive(
+            int node, int[] path, Predicate<? super int[]> predicate, boolean lookingFor) {
+        if (node == TRUE) {
+            assert lookingFor;
+            return predicate.test(path);
+        }
+        assert table.isValidNode(node);
+        assert !isConstant(node);
+
+        int variable = table.variable(node);
+
+        int[] children = table.children(node);
+        for (int val = 0; val < children.length; val++) {
+            int child = children[val];
+            if (!isFalse(child, lookingFor)) {
+                path[variable] = val;
+                if (anyPathMatchesRecursive(positive(child), path, predicate, isPositive(child) == lookingFor)) {
+                    return true;
+                }
+            }
+        }
+
+        path[variable] = -1;
+        return false;
     }
 
     @Override
@@ -742,6 +771,79 @@ final class MddImpl extends BooleanBase<int[]> implements Mdd {
     }
 
     @Override
+    public boolean intersects(int function1, int function2) {
+        assert isValidFunction(function1) && isValidFunction(function2);
+
+        assert table.isWorkStackEmpty();
+        boolean result = intersectsRecursive(function1, function2);
+        assert table.isWorkStackEmpty();
+        return result;
+    }
+
+    private boolean intersectsRecursive(int function1, int function2) {
+        if (function1 == FALSE || function2 == FALSE) {
+            return false;
+        }
+        if (function1 == TRUE || function2 == TRUE) {
+            return true;
+        }
+        if (function1 == function2) {
+            return true;
+        }
+        if (function1 == complement(function2)) {
+            return false;
+        }
+
+        assert !isConstant(function1) && !isConstant(function2);
+
+        int fun1var = decisionVariable(function1);
+        int fun2var = decisionVariable(function2);
+
+        if (fun2var < fun1var || (fun2var == fun1var && function2 < function1)) {
+            int nodeSwap = function1;
+            function1 = function2;
+            function2 = nodeSwap;
+
+            int varSwap = fun1var;
+            fun1var = fun2var;
+            fun2var = varSwap;
+        }
+
+        if (cache.lookupIntersects(function1, function2)) {
+            return cache.lookupResult() == TRUE;
+        }
+        int hash = cache.lookupHash();
+
+        int node1 = positive(function1);
+        boolean fun1c = function1 != node1;
+        int[] node1children = table.children(node1);
+
+        boolean result = false;
+        if (fun1var == fun2var) {
+            int node2 = positive(function2);
+            boolean fun2c = function2 != node2;
+
+            int[] node2children = table.children(node2);
+            for (int val = 0; val < node1children.length; val++) {
+                if (intersectsRecursive(
+                        complementIf(node1children[val], fun1c), complementIf(node2children[val], fun2c))) {
+                    result = true;
+                    break;
+                }
+            }
+        } else {
+            for (int node1child : node1children) {
+                if (intersectsRecursive(complementIf(node1child, fun1c), function2)) {
+                    result = true;
+                    break;
+                }
+            }
+        }
+        cache.putIntersects(hash, function1, function2, result);
+        return result;
+    }
+
+    @Override
     public int restrict(int function, int[] values) {
         assert isValidFunction(function);
 
@@ -900,6 +1002,101 @@ final class MddImpl extends BooleanBase<int[]> implements Mdd {
         return complementIf(result, complement);
     }
 
+    @Override
+    public int constrain(int function, int domain) {
+        assert isValidFunction(function) && isValidFunction(domain);
+
+        if (domain == FALSE) {
+            return FALSE;
+        }
+
+        assert table.isWorkStackEmpty();
+        table.pushToWorkStack(function, domain);
+        int result = computeConstrain(function, domain);
+        table.popFromWorkStack(2);
+        assert table.isWorkStackEmpty();
+        return result;
+    }
+
+    private int computeConstrain(int function, int domain) {
+        assert domain != FALSE;
+        if (function == TRUE || function == FALSE || domain == TRUE) {
+            return function;
+        }
+        if (domain == function) {
+            return TRUE;
+        }
+        if (domain == complement(function)) {
+            return FALSE;
+        }
+
+        int functionNode = positive(function);
+        boolean func = functionNode != function;
+
+        if (cache.lookupConstrain(functionNode, domain)) {
+            return complementIf(cache.lookupResult(), func);
+        }
+        int hash = cache.lookupHash();
+
+        int domainNode = positive(domain);
+        boolean domc = domainNode != domain;
+        int functionVar = decisionVariable(functionNode);
+        int domainVar = decisionVariable(domainNode);
+
+        int result;
+        if (functionVar == domainVar) {
+            int[] functionChildren = table.children(functionNode);
+            int[] domainChildren = table.children(domainNode);
+            int variableDomainSize = functionChildren.length;
+
+            int[] resultChildren = new int[variableDomainSize];
+            int firstDecision = -1;
+            int workStack = 0;
+            for (int val = 0; val < variableDomainSize; val++) {
+                int domainChild = complementIf(domainChildren[val], domc);
+                if (domainChild == FALSE) {
+                    resultChildren[val] = FALSE;
+                } else {
+                    if (firstDecision == -1) {
+                        firstDecision = val;
+                    } else {
+                        firstDecision = -2;
+                    }
+                    resultChildren[val] = table.pushToWorkStack(computeConstrain(functionChildren[val], domainChild));
+                    workStack += 1;
+                }
+            }
+            if (firstDecision >= 0) {
+                result = resultChildren[firstDecision];
+            } else {
+                assert firstDecision == -2;
+                result = makeFunction(functionVar, resultChildren);
+            }
+            table.popFromWorkStack(workStack);
+        } else if (functionVar < domainVar) {
+            int[] functionChildren = table.children(functionNode);
+            int variableDomainSize = functionChildren.length;
+            int[] resultChildren = new int[variableDomainSize];
+            for (int i = 0; i < variableDomainSize; i++) {
+                resultChildren[i] = table.pushToWorkStack(computeConstrain(functionChildren[i], domain));
+            }
+            result = makeFunction(functionVar, resultChildren);
+            table.popFromWorkStack(variableDomainSize);
+        } else {
+            int[] domainChildren = table.children(domainNode);
+            int disjunction = complementIf(domainChildren[0], domc);
+            for (int i = 1; i < domainChildren.length; i++) {
+                table.pushToWorkStack(disjunction);
+                disjunction = computeOr(disjunction, complementIf(domainChildren[i], domc));
+                table.popFromWorkStack();
+            }
+            result = computeConstrain(functionNode, table.pushToWorkStack(disjunction));
+            table.popFromWorkStack();
+        }
+        cache.putConstrain(hash, functionNode, domain, result);
+        return complementIf(result, func);
+    }
+
     // Statistics and Formatting
 
     @Override
@@ -1023,13 +1220,12 @@ final class MddImpl extends BooleanBase<int[]> implements Mdd {
                 currentLookingFor = pathLookingFor[leafNodeVariable];
                 int branchVar = leafNodeVariable;
 
-                int[] children;
                 //noinspection LabeledStatement
                 outer:
                 while (true) {
                     assert path[branchVar] != NON_PATH_NODE;
 
-                    children = mdd.table.children(currentNode);
+                    int[] children = mdd.table.children(currentNode);
                     int val = assignment[branchVar] + 1;
                     while (val < children.length) {
                         if (!isFalse(children[val], currentLookingFor)) {
@@ -1188,19 +1384,6 @@ final class MddImpl extends BooleanBase<int[]> implements Mdd {
         }
 
         @Override
-        protected int recurseApproximateNodeCount(int node) {
-            int[] children = tree[node];
-            int sum = 0;
-            for (int child : children) {
-                int childNode = positive(child);
-                if (childNode != TRUE) {
-                    sum += doApproximateNodeCount(childNode);
-                }
-            }
-            return sum;
-        }
-
-        @Override
         protected int recurseSetMarkBelow(int node, boolean mark) {
             int[] children = tree[node];
             int sum = 0;
@@ -1260,6 +1443,7 @@ final class MddImpl extends BooleanBase<int[]> implements Mdd {
                 logger.log(Level.FINER, "Not enough free nodes");
                 table.invalidateUnmarkedNodes();
             }
+            //noinspection NumericCastThatLosesPrecision
             table.grow((int) (currentSize * mdd.configuration.growthFactor()));
             mdd.cache.tableSizeChanged();
             assert mdd.check();

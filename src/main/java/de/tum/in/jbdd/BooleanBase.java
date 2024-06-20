@@ -20,7 +20,7 @@ import java.math.BigInteger;
 import java.util.BitSet;
 import java.util.function.IntConsumer;
 
-abstract class BooleanBase<S> implements BooleanTerminalDecisionDiagram<S>, NodeBasedDecisionDiagram {
+abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>, NodeBasedDecisionDiagram {
     static final BigInteger TWO = BigInteger.ONE.add(BigInteger.ONE);
     static final int[] EMPTY_INT_ARRAY = new int[0];
     static final int TRUE = Integer.MAX_VALUE;

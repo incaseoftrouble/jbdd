@@ -161,6 +161,6 @@ public final class BddBuilder {
     }
 
     public static void main(String[] args) {
-        BddBuilder.makeAdder(BddFactory.buildBdd(), 1024);
+        makeAdder(BddFactory.buildBdd(), 1024);
     }
 }

@@ -42,12 +42,10 @@ public class BddState {
     @Setup(Level.Iteration)
     public void setUpBdd() {
         BddConfiguration configuration = ImmutableBddConfiguration.builder()
+                .cacheUnaryDivider((int) (BddConfiguration.DEFAULT_CACHE_UNARY_DIVIDER / cacheSizeFactor))
                 .cacheBinaryDivider((int) (BddConfiguration.DEFAULT_CACHE_BINARY_DIVIDER / cacheSizeFactor))
                 .cacheTernaryDivider((int) (BddConfiguration.DEFAULT_CACHE_TERNARY_DIVIDER / cacheSizeFactor))
-                .cacheSatisfactionDivider((int) (BddConfiguration.DEFAULT_CACHE_SATISFACTION_DIVIDER / cacheSizeFactor))
-                .cacheComposeMultiplier((int) (BddConfiguration.DEFAULT_CACHE_COMPOSE_MULTIPLIER * cacheSizeFactor))
-                .cacheQuantificationMultiplier(
-                        (int) (BddConfiguration.DEFAULT_CACHE_QUANTIFICATION_MULTIPLIER * cacheSizeFactor))
+                .cacheEphemeralMultiplier((int) (BddConfiguration.DEFAULT_CACHE_EPHEMERAL_MULTIPLIER * cacheSizeFactor))
                 .useCachePartialInvalidate(partialInvalidation)
                 .useCachePreserveOnGrow(preserveCache)
                 .build();

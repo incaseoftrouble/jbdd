@@ -17,6 +17,7 @@
 package de.tum.in.jbdd;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collections;
 import java.util.HashSet;
@@ -56,11 +57,11 @@ public class RandomBenchmark extends BaseBddBenchmark {
                 }
                 n.add(n.bdd.restrict(n.get(), mask, values));
             },
-            /* n -> {
+            n -> {
                 int[] compose = new int[Math.min(n.bdd.numberOfVariables(), 10)];
                 Arrays.setAll(compose, i -> n.get());
                 n.add(n.bdd.compose(n.get(), compose));
-            }, */
+            },
             n -> {
                 int variables = n.bdd.numberOfVariables();
                 BitSet mask = new BitSet(variables);
@@ -150,7 +151,7 @@ public class RandomBenchmark extends BaseBddBenchmark {
     @State(Scope.Benchmark)
     public static class RandomState extends BddState {
         private static final int SEED = 1234;
-        private static final int OPERATION_COUNT = 20_000;
+        private static final int OPERATION_COUNT = 18_000;
 
         public BddNodes nodes;
         public List<BddOperation> bddOperations;
@@ -185,13 +186,13 @@ public class RandomBenchmark extends BaseBddBenchmark {
     public static void main(String[] args) {
         BddImpl bdd = new BddImpl(ImmutableBddConfiguration.builder()
                 .growthFactor(4)
-                .initialSize(65536)
+                .initialSize(65_536)
                 .build());
         var nodes = new BddNodes(bdd, new Random(1234));
         nodes.createVariables(64);
         for (BddOperation operation : makeOperations(20_000, new Random(1234))) {
             operation.run(nodes);
         }
-        System.out.println(bdd.statistics());
+        System.out.println(bdd.statistics()); // NOPMD
     }
 }

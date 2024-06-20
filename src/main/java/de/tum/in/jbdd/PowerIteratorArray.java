@@ -21,13 +21,14 @@ import java.util.BitSet;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 
+@SuppressWarnings("AssignmentOrReturnOfFieldWithMutableType")
 final class PowerIteratorArray implements Iterator<int[]> {
     private final int[] iteration;
     private final int[] domain;
     private final int[] support;
     private int maximalPositions = -1;
 
-    public PowerIteratorArray(int[] domain) {
+    PowerIteratorArray(int[] domain) {
         assert Arrays.stream(domain).allMatch(i -> i > 1);
         this.domain = domain;
         this.support = new int[domain.length];

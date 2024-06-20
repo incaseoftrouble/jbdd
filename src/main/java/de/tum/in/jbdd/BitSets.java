@@ -22,6 +22,7 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.Objects;
+import java.util.function.IntConsumer;
 
 public final class BitSets {
     private BitSets() {}
@@ -65,6 +66,12 @@ public final class BitSets {
             return Collections.singleton(new BitSet()).iterator();
         }
         return new PowerIterator(size);
+    }
+
+    public static void forEach(BitSet bitSet, IntConsumer action) {
+        for (int i = bitSet.nextSetBit(0); i >= 0; i = bitSet.nextSetBit(i + 1)) {
+            action.accept(i);
+        }
     }
 
     private static final class PowerIteratorShift implements Iterator<BitSet> {

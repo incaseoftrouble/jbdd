@@ -16,7 +16,7 @@
  */
 package de.tum.in.jbdd;
 
-public interface Mdd extends BooleanTerminalDecisionDiagram<int[]>, NodeBasedDecisionDiagram {
+public interface Mdd extends BooleanTerminalDecisionDiagram<int[], int[]>, NodeBasedDecisionDiagram {
     int declareVariable(int domain);
 
     int makeVariableFunction(int variable, boolean[] values);

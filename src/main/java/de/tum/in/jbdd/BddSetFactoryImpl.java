@@ -129,6 +129,11 @@ final class BddSetFactoryImpl extends BddGcReferenceManager<BddSetFactoryImpl.Bd
         }
 
         @Override
+        public BddSetFactory factory() {
+            return factory;
+        }
+
+        @Override
         public boolean isEmpty() {
             return this == factory.empty; // NOPMD
         }
@@ -163,6 +168,11 @@ final class BddSetFactoryImpl extends BddGcReferenceManager<BddSetFactoryImpl.Bd
         }
 
         @Override
+        public boolean intersects(BddSet other) {
+            return factory.bdd.intersects(function, factory.function(other));
+        }
+
+        @Override
         public BddSet intersection(BddSet other) {
             return make(factory.bdd.and(function, factory.function(other)));
         }
@@ -170,6 +180,16 @@ final class BddSetFactoryImpl extends BddGcReferenceManager<BddSetFactoryImpl.Bd
         @Override
         public BddSet exists(BitSet quantifiedVariables) {
             return make(factory.bdd.exists(function, quantifiedVariables));
+        }
+
+        @Override
+        public BddSet symmetricDifference(BddSet other) {
+            return make(factory.bdd.xor(function, factory.function(other)));
+        }
+
+        @Override
+        public BddSet difference(BddSet other) {
+            return make(factory.bdd.andNot(function, factory.function(other)));
         }
 
         @Override
@@ -245,7 +265,7 @@ final class BddSetFactoryImpl extends BddGcReferenceManager<BddSetFactoryImpl.Bd
 
         @Override
         public int hashCode() {
-            return HashUtil.hash(function);
+            return function;
         }
 
         @Override

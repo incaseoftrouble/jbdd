@@ -657,26 +657,6 @@ abstract class NodeTable {
 
     protected abstract boolean recurseIsAllMarkedBelow(int node);
 
-    /**
-     * Over-approximates the number of nodes below the specified {@code node}, possibly counting
-     * shared subtrees multiple times. Guaranteed to be bigger or equal to {@link #nodeCountBelow(int)}.
-     *
-     * @param node The node to be counted.
-     * @return An approximate number of non-leaf nodes below {@code node}.
-     * @see #nodeCountBelow(int)
-     */
-    public int approximateNodeCount(int node) {
-        assert isValidNodeOrPlaceholder(node);
-        return node == PLACEHOLDER ? 0 : doApproximateNodeCount(node);
-    }
-
-    protected int doApproximateNodeCount(int node) {
-        assert isValidNode(node);
-        return 1 + recurseApproximateNodeCount(node);
-    }
-
-    protected abstract int recurseApproximateNodeCount(int node);
-
     public int unMarkAllBelowNode(int node) {
         /* The algorithm does not descend into trees whose root is unmarked, hence at the start of the
          * algorithm, all children of marked nodes must be marked to ensure correctness. */
