@@ -22,8 +22,9 @@ import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Iterator;
 import java.util.List;
-import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import java.util.function.IntConsumer;
+import java.util.function.Predicate;
 
 class MddAsTestBdd implements TestBdd {
     private final MddImpl mdd;
@@ -213,24 +214,53 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public void forEachPath(int node, BiConsumer<BitSet, BitSet> action) {
+    public void forEachPath(int function, Consumer<? super BddPath> action) {
         BitSet everything = new BitSet();
         everything.set(0, mdd.numberOfVariables());
-        forEachPath(node, everything, action);
+        forEachPartialPath(function, everything, action);
     }
 
     @Override
-    public void forEachPath(int node, BitSet relevantSet, BiConsumer<BitSet, BitSet> action) {
-        BitSet values = new BitSet(mdd.numberOfVariables());
-        mdd.forEachPath(node, relevantSet, (assignment, support) -> {
-            values.clear();
-            for (int var = 0; var < assignment.length; var++) {
-                assert assignment[var] == TRUE || assignment[var] == FALSE;
+    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super BddPath> action) {
+        int variables = mdd.numberOfVariables();
+        BitSet values = new BitSet(variables);
+        BitSet support = new BitSet(variables);
+        BddPath bddPath = new BddPath(values, support);
+        mdd.forEachPartialPath(function, relevantSet, path -> {
+            for (int var = 0; var < path.length; var++) {
+                assert path[var] == -1 || path[var] == TRUE || path[var] == FALSE;
                 if (relevantSet.get(var)) {
-                    values.set(var, assignment[var] == TRUE);
+                    if (path[var] == -1) {
+                        values.clear(var);
+                        support.clear(var);
+                    } else {
+                        support.set(var);
+                        values.set(var, path[var] == TRUE);
+                    }
                 }
             }
-            action.accept(values, support);
+            action.accept(bddPath);
+        });
+    }
+
+    @Override
+    public boolean anyPathMatches(int function, Predicate<? super BddPath> predicate) {
+        int variables = mdd.numberOfVariables();
+        BitSet values = new BitSet(variables);
+        BitSet support = new BitSet(variables);
+        BddPath bddPath = new BddPath(values, support);
+        return mdd.anyPathMatches(function, path -> {
+            for (int var = 0; var < path.length; var++) {
+                assert path[var] == -1 || path[var] == TRUE || path[var] == FALSE;
+                if (path[var] == -1) {
+                    values.clear(var);
+                    support.clear(var);
+                } else {
+                    support.set(var);
+                    values.set(var, path[var] == TRUE);
+                }
+            }
+            return predicate.test(bddPath);
         });
     }
 
@@ -258,8 +288,8 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public int and(int node1, int node2) {
-        return mdd.and(node1, node2);
+    public int and(int function1, int function2) {
+        return mdd.and(function1, function2);
     }
 
     @Override
@@ -268,8 +298,8 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public int equivalence(int node1, int node2) {
-        return mdd.equivalence(node1, node2);
+    public int equivalence(int function1, int function2) {
+        return mdd.equivalence(function1, function2);
     }
 
     @Override
@@ -288,32 +318,37 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public int notAnd(int node1, int node2) {
-        return mdd.notAnd(node1, node2);
+    public int notAnd(int function1, int function2) {
+        return mdd.notAnd(function1, function2);
     }
 
     @Override
-    public int or(int node1, int node2) {
-        return mdd.or(node1, node2);
+    public int or(int function1, int function2) {
+        return mdd.or(function1, function2);
     }
 
     @Override
-    public int xor(int node1, int node2) {
-        return mdd.xor(node1, node2);
+    public int xor(int function1, int function2) {
+        return mdd.xor(function1, function2);
     }
 
     @Override
-    public int implication(int node1, int node2) {
-        return mdd.implication(node1, node2);
+    public int implication(int function1, int function2) {
+        return mdd.implication(function1, function2);
     }
 
     @Override
-    public boolean implies(int node1, int node2) {
-        return mdd.implies(node1, node2);
+    public boolean implies(int function1, int function2) {
+        return mdd.implies(function1, function2);
     }
 
     @Override
-    public int compose(int node, int[] variableMapping) {
+    public boolean intersects(int function1, int function2) {
+        return mdd.intersects(function1, function2);
+    }
+
+    @Override
+    public int compose(int function, int[] variableMapping) {
         int[] constantReplacements = new int[mdd.numberOfVariables()];
         Arrays.fill(constantReplacements, -1);
         BitSet replaced = new BitSet(mdd.numberOfVariables());
@@ -330,7 +365,7 @@ class MddAsTestBdd implements TestBdd {
                 replaced.set(var);
             }
         }
-        int base = mdd.reference(mdd.restrict(node, constantReplacements));
+        int base = mdd.reference(mdd.restrict(function, constantReplacements));
 
         if (replaced.isEmpty()) {
             mdd.dereference(base);
@@ -346,8 +381,8 @@ class MddAsTestBdd implements TestBdd {
             int assignment = trueFunction();
             for (int var = replaced.nextSetBit(0); var >= 0; var = replaced.nextSetBit(var + 1)) {
                 int replacement = variableMapping[var];
-                int varNode = assigment.get(var) ? replacement : not(replacement);
-                assignment = mdd.updateWith(mdd.and(assignment, varNode), assignment);
+                int varFunction = assigment.get(var) ? replacement : not(replacement);
+                assignment = mdd.updateWith(mdd.and(assignment, varFunction), assignment);
             }
 
             int value = mdd.consume(mdd.and(assignment, restrict), assignment, restrict);
@@ -358,7 +393,7 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public int restrict(int node, BitSet restrictedVariables, BitSet restrictedVariableValues) {
+    public int restrict(int function, BitSet restrictedVariables, BitSet restrictedVariableValues) {
         int[] restriction = new int[mdd.numberOfVariables()];
         for (int var = 0; var < restriction.length; var++) {
             if (restrictedVariables.get(var)) {
@@ -367,12 +402,17 @@ class MddAsTestBdd implements TestBdd {
                 restriction[var] = -1;
             }
         }
-        return mdd.restrict(node, restriction);
+        return mdd.restrict(function, restriction);
     }
 
     @Override
-    public int ifThenElse(int ifNode, int thenNode, int elseNode) {
-        return mdd.ifThenElse(ifNode, thenNode, elseNode);
+    public int ifThenElse(int ifFunction, int thenFunction, int elseFunction) {
+        return mdd.ifThenElse(ifFunction, thenFunction, elseFunction);
+    }
+
+    @Override
+    public int constrain(int function, int domain) {
+        return mdd.constrain(function, domain);
     }
 
     @Override

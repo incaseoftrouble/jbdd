@@ -20,12 +20,13 @@ import java.math.BigInteger;
 import java.util.BitSet;
 import java.util.Iterator;
 import java.util.List;
-import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
+import java.util.function.Predicate;
 
+@SuppressWarnings("PMD.TestClassWithoutTestCases")
 class TestBddImpl implements TestBdd {
-    private final BddImpl delegate;
+    final BddImpl delegate;
 
     public TestBddImpl(BddImpl delegate) {
         this.delegate = delegate;
@@ -112,16 +113,6 @@ class TestBddImpl implements TestBdd {
     }
 
     @Override
-    public void forEachPath(int function, BiConsumer<BitSet, BitSet> action) {
-        delegate.forEachPath(function, action);
-    }
-
-    @Override
-    public void forEachPath(int function, BitSet relevantSet, BiConsumer<BitSet, BitSet> action) {
-        delegate.forEachPath(function, relevantSet, action);
-    }
-
-    @Override
     public BigInteger countSatisfyingAssignments(int function) {
         return delegate.countSatisfyingAssignments(function);
     }
@@ -182,8 +173,18 @@ class TestBddImpl implements TestBdd {
     }
 
     @Override
+    public int constrain(int function, int domain) {
+        return delegate.constrain(function, domain);
+    }
+
+    @Override
     public boolean implies(int function1, int function2) {
         return delegate.implies(function1, function2);
+    }
+
+    @Override
+    public boolean intersects(int function1, int function2) {
+        return delegate.intersects(function1, function2);
     }
 
     @Override
@@ -347,13 +348,18 @@ class TestBddImpl implements TestBdd {
     }
 
     @Override
-    public void forEachPath(int function, Consumer<? super BitSet> action) {
+    public void forEachPath(int function, Consumer<? super BddPath> action) {
         delegate.forEachPath(function, action);
     }
 
     @Override
-    public void forEachPath(int function, BitSet relevantSet, Consumer<? super BitSet> action) {
-        delegate.forEachPath(function, relevantSet, action);
+    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super BddPath> action) {
+        delegate.forEachPartialPath(function, relevantSet, action);
+    }
+
+    @Override
+    public boolean anyPathMatches(int function, Predicate<? super BddPath> predicate) {
+        return delegate.anyPathMatches(function, predicate);
     }
 
     @Override

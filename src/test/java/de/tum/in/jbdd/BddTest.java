@@ -44,8 +44,8 @@ public class BddTest {
         BitSet bitSet = new BitSet(values.length());
         char[] characters = values.toCharArray();
         for (int i = 0; i < characters.length; i++) {
-            assert characters[i] == (int) '0' || characters[i] == (int) '1';
-            bitSet.set(i, characters[i] == (int) '1');
+            assert characters[i] == '0' || characters[i] == '1';
+            bitSet.set(i, characters[i] == '1');
         }
         return bitSet;
     }
@@ -124,21 +124,12 @@ public class BddTest {
         assertThat(table.nodeCountBelow(bdd.nodeFor(bdd.and(v1, v2))), is(2));
         assertThat(table.nodeCountBelow(bdd.nodeFor(bdd.xor(v1, v2))), is(2));
 
-        // approximateNodeCount
-        assertThat(table.approximateNodeCount(bdd.nodeFor(bdd.trueFunction())), is(0));
-        assertThat(table.approximateNodeCount(bdd.nodeFor(bdd.falseFunction())), is(0));
-        assertThat(table.approximateNodeCount(bdd.nodeFor(v1)), is(1));
-        assertThat(table.approximateNodeCount(bdd.nodeFor(nv2)), is(1));
-        assertThat(table.approximateNodeCount(bdd.nodeFor(bdd.and(v1, v2))), is(2));
-        assertThat(table.approximateNodeCount(bdd.nodeFor(bdd.xor(v1, v2))), is(3));
-
         int qs1 = bdd.reference(bdd.xor(v1, v2));
         int qs2 = bdd.reference(bdd.xor(v3, v4));
         int qs3 = bdd.reference(bdd.xor(qs1, qs2));
-        assertThat(table.approximateNodeCount(bdd.nodeFor(qs1)), is(3));
-        assertThat(table.approximateNodeCount(bdd.nodeFor(qs2)), is(3));
-        assertThat(table.approximateNodeCount(bdd.nodeFor(qs3)), is(15));
-        // assertThat(bdd.nodeCount(qs3), is(7));
+        assertThat(table.nodeCountBelow(bdd.nodeFor(qs1)), is(2));
+        assertThat(table.nodeCountBelow(bdd.nodeFor(qs2)), is(2));
+        assertThat(table.nodeCountBelow(bdd.nodeFor(qs3)), is(4));
         bdd.dereference(qs1);
         bdd.dereference(qs2);
         bdd.dereference(qs3);
@@ -221,11 +212,11 @@ public class BddTest {
         BddImpl bdd = new BddImpl(config);
 
         List<BitSet> falseSolutions = Lists.newArrayList();
-        bdd.forEachPath(bdd.falseFunction(), set -> falseSolutions.add((BitSet) set.clone()));
+        bdd.forEachPath(bdd.falseFunction(), path -> falseSolutions.add(BitSets.copyOf(path.assignment)));
         assertThat(falseSolutions, is(Collections.emptyList()));
 
         List<BitSet> trueSolutions = Lists.newArrayList();
-        bdd.forEachPath(bdd.trueFunction(), set -> trueSolutions.add((BitSet) set.clone()));
+        bdd.forEachPath(bdd.trueFunction(), path -> trueSolutions.add(BitSets.copyOf(path.assignment)));
         assertThat(trueSolutions, is(Collections.singletonList(new BitSet(0))));
     }
 

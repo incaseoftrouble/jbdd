@@ -20,9 +20,9 @@ import java.math.BigInteger;
 import java.util.BitSet;
 import java.util.Iterator;
 import java.util.List;
-import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
+import java.util.function.Predicate;
 
 public class DelegatingBdd implements Bdd {
     private final Bdd delegate;
@@ -220,31 +220,23 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
-    public void forEachPath(int function, Consumer<? super BitSet> action) {
+    public void forEachPath(int function, Consumer<? super BddPath> action) {
         onEnter("forEachPath");
         delegate.forEachPath(function, action);
         onExit();
     }
 
     @Override
-    public void forEachPath(int function, BitSet relevantSet, Consumer<? super BitSet> action) {
-        onEnter("forEachPath");
-        delegate.forEachPath(function, relevantSet, action);
+    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super BddPath> action) {
+        onEnter("forEachPartialPath");
+        delegate.forEachPartialPath(function, relevantSet, action);
         onExit();
     }
 
     @Override
-    public void forEachPath(int function, BiConsumer<BitSet, BitSet> action) {
-        onEnter("forEachPath");
-        delegate.forEachPath(function, action);
-        onExit();
-    }
-
-    @Override
-    public void forEachPath(int node, BitSet relevantSet, BiConsumer<BitSet, BitSet> action) {
-        onEnter("forEachPath");
-        delegate.forEachPath(node, relevantSet, action);
-        onExit();
+    public boolean anyPathMatches(int function, Predicate<? super BddPath> predicate) {
+        onEnter("anyPathMatches");
+        return onExit(delegate.anyPathMatches(function, predicate));
     }
 
     @Override
@@ -346,6 +338,12 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
+    public int constrain(int function, int domain) {
+        onEnter("constrain");
+        return onExit(delegate.constrain(function, domain));
+    }
+
+    @Override
     public int implication(int function1, int function2) {
         onEnter("implication");
         return onExit(delegate.implication(function1, function2));
@@ -355,6 +353,12 @@ public class DelegatingBdd implements Bdd {
     public boolean implies(int function1, int function2) {
         onEnter("implies");
         return onExit(delegate.implies(function1, function2));
+    }
+
+    @Override
+    public boolean intersects(int function1, int function2) {
+        onEnter("intersects");
+        return onExit(delegate.intersects(function1, function2));
     }
 
     @Override

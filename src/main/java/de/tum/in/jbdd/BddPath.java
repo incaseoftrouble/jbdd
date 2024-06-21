@@ -1,6 +1,6 @@
 /*
  * This file is part of JBDD (https://github.com/incaseoftrouble/jbdd).
- * Copyright (c) 2017-2023 Tobias Meggendorfer.
+ * Copyright (c) 2024 Tobias Meggendorfer.
  *
  * JBDD is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,12 +16,30 @@
  */
 package de.tum.in.jbdd;
 
-public interface Mdd extends BooleanTerminalDecisionDiagram<int[], int[]>, NodeBasedDecisionDiagram {
-    int declareVariable(int domain);
+import java.util.BitSet;
 
-    int makeVariableFunction(int variable, boolean[] values);
+public final class BddPath {
+    final BitSet assignment;
+    final BitSet support;
 
-    int follow(int function, int value);
+    public BddPath(BitSet assignment, BitSet support) {
+        this.assignment = assignment;
+        this.support = support;
+    }
 
-    int restrict(int function, int[] values);
+    public BitSet copyAssignment() {
+        return BitSets.copyOf(assignment);
+    }
+
+    public BitSet copySupport() {
+        return BitSets.copyOf(support);
+    }
+
+    public BitSet viewAssignment() {
+        return assignment;
+    }
+
+    public BitSet viewSupport() {
+        return support;
+    }
 }

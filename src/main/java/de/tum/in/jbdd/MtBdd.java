@@ -118,26 +118,7 @@ public interface MtBdd<V> extends DecisionDiagram {
      * @param action
      *     The action to be performed on these solutions.
      */
-    default void forEachPath(int function, BiConsumer<? super BitSet, ? super V> action) {
-        forEachPath(function, (path, pathSupport, value) -> action.accept(path, value));
-    }
-
-    /**
-     * Executes the given {@code action} for all <em>minimal</em> assignment of the given {@code function}.
-     *
-     * <p>Minimal solutions are all point-wise smallest assignments that satisfy the function.</p>
-     *
-     * <p>The solutions are generated in lexicographic ascending order.</p>
-     *
-     * <p><b>Note:</b> The passed bit sets are modified in-place. If all solutions should be gathered
-     * into a set or similar, they have to be cloned after each call to the consumer.</p>
-     *
-     * @param function
-     *     The function whose solutions should be computed.
-     * @param action
-     *     The action to be performed on these solutions.
-     */
-    void forEachPath(int function, TerminalPathConsumer<? super V> action);
+    void forEachPath(int function, BiConsumer<BddPath, ? super V> action);
 
     /**
      * Computes the co-domain of the given {@code function}.
@@ -222,6 +203,12 @@ public interface MtBdd<V> extends DecisionDiagram {
     <T> int map(int function, Function<? super V, ? extends T> map, MtBdd<T> other);
 
     /**
+     * Constructs the boolean function in the associated BDD which evaluates to true exactly for those
+     * valuations on which the given functions agree.
+     */
+    int agreement(int function1, int function2);
+
+    /**
      * Returns a view on this structure with values remapped. The given mapping needs to be an injection for
      * consistency.
      */
@@ -230,6 +217,8 @@ public interface MtBdd<V> extends DecisionDiagram {
     /**
      * Creates the boolean function representing all assignments under which the given {@code function}
      * evaluates to the given {@code values}.
+     *
+     * @see #agreement(int, int)
      */
     int mapBoolean(int function, Predicate<? super V> values);
 
@@ -248,11 +237,6 @@ public interface MtBdd<V> extends DecisionDiagram {
      * {@code h(x_1, x_3, ..., x_n)} that evaluates to {@code f(x_1, ..., x_n)}.
      */
     int split(int function, BitSet splitVariables, MtBdd<MtBdd<V>> other);
-
-    @FunctionalInterface
-    interface TerminalPathConsumer<V> {
-        void accept(BitSet path, BitSet support, V value);
-    }
 
     interface Inverse<V> {
         int functionFor(V value);

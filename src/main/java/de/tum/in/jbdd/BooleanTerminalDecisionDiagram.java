@@ -19,10 +19,10 @@ package de.tum.in.jbdd;
 import java.math.BigInteger;
 import java.util.BitSet;
 import java.util.Iterator;
-import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
-public interface BooleanTerminalDecisionDiagram<S> extends DecisionDiagram {
+public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
     /**
      * Returns the boolean function representing {@code true}.
      */
@@ -105,8 +105,6 @@ public interface BooleanTerminalDecisionDiagram<S> extends DecisionDiagram {
         solutionIterator(function, support).forEachRemaining(action);
     }
 
-    // TODO MDDs can communicate support in their array directly (with -1 as value)
-
     /**
      * Executes the given {@code action} for all <em>minimal</em> solutions of the given boolean {@code function}.
      *
@@ -120,30 +118,27 @@ public interface BooleanTerminalDecisionDiagram<S> extends DecisionDiagram {
      * @param action
      *     The action to be performed on these solutions.
      */
-    default void forEachPath(int function, Consumer<? super S> action) {
-        forEachPath(function, (path, pathSupport) -> action.accept(path));
-    }
+    void forEachPath(int function, Consumer<? super P> action);
 
-    default void forEachPath(int function, BitSet relevantSet, Consumer<? super S> action) {
-        forEachPath(function, relevantSet, (path, pathSupport) -> action.accept(path));
-    }
+    void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super P> action);
+
+    boolean anyPathMatches(int function, Predicate<? super P> predicate);
 
     /**
-     * Executes the given {@code action} for all <em>minimal</em> solutions of the given boolean {@code function}.
-     *
-     * <p>The solutions are generated in lexicographic ascending order.</p>
-     *
-     * <p><b>Note:</b> The passed bit sets are modified in-place. If all solutions should be gathered
-     * into a set or similar, they have to be cloned after each call to the consumer.</p>
-     *
-     * @param function
-     *     The function whose solutions should be computed.
-     * @param action
-     *     The action to be performed on these solutions.
+     * Checks whether the boolean {@code function1} implies {@code function2}, i.e. if every valuation under
+     * which {@code function1} evaluates to true also evaluates to true on {@code function2}. This is
+     * equivalent to checking if {@link #implication(int, int)} with {@code function1} and {@code function2}
+     * as parameters is equal to {@link #trueFunction()} and equal to checking whether {@code function1} equals
+     * {@code function1 OR function2}, but faster.
      */
-    void forEachPath(int function, BiConsumer<S, BitSet> action);
+    boolean implies(int function1, int function2);
 
-    void forEachPath(int node, BitSet relevantSet, BiConsumer<S, BitSet> action);
+    /**
+     * Checks whether there exists an assignment for which both {@code function1} and {@code function2}
+     * evaluate to true. This is equivalent to checking if {@link #and(int, int)} with {@code function1}
+     * and {@code function2} as parameters is not equal to {@link #falseFunction()}, but faster.
+     */
+    boolean intersects(int function1, int function2);
 
     /**
      * Constructs the boolean function {@code function1 AND function2}.
@@ -196,22 +191,6 @@ public interface BooleanTerminalDecisionDiagram<S> extends DecisionDiagram {
     int implication(int function1, int function2);
 
     /**
-     * Checks whether the boolean {@code function1} implies {@code function2}, i.e. if every valuation under
-     * which {@code function1} evaluates to true also evaluates to true on {@code function2}. This is
-     * equivalent to checking if {@link #implication(int, int)} with {@code function1} and {@code function2}
-     * as parameters is equal to {@link #trueFunction()} and equal to checking whether {@code function1} equals
-     * {@code function1 OR function2}, but faster.
-     *
-     * @param function1
-     *     The assumption.
-     * @param function2
-     *     The consequence.
-     *
-     * @return Whether {@code function1 IMPLIES function2} is a tautology.
-     */
-    boolean implies(int function1, int function2);
-
-    /**
      * Constructs the boolean function {@code NOT {@code function}}.
      */
     int not(int function);
@@ -232,7 +211,14 @@ public interface BooleanTerminalDecisionDiagram<S> extends DecisionDiagram {
     int xor(int function1, int function2);
 
     /**
-     * Constructs the boolean function {@code IF {@code ifFunction} THEN {@code thenFunction} ELSE {@code elseFunction}}.
+     * Constructs the boolean function {@code IF ifFunction THEN thenFunction ELSE elseFunction}.
      */
     int ifThenElse(int ifFunction, int thenFunction, int elseFunction);
+
+    /**
+     * Constructs a simplified version of the given {@code function} which is equivalent to it for all assignments
+     * where {@code domain} is true. This is equivalent to {@code IF domain THEN function ELSE x} where {@code x}
+     * is any function.
+     */
+    int constrain(int function, int domain);
 }

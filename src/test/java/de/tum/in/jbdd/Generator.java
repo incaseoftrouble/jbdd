@@ -38,7 +38,7 @@ import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-@SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
+@SuppressWarnings({"PMD.AvoidInstantiatingObjectsInLoops", "PMD.CouplingBetweenObjects", "PMD.DataClass"})
 public final class Generator {
     private static final int MAX_FAILED_UPDATE = 10;
     private static final Logger logger = Logger.getLogger(Generator.class.getName());
@@ -222,9 +222,9 @@ public final class Generator {
 
     public static final class Info<T extends TestBdd> {
         public final T bdd;
-        public final ImmutableSet<UnaryDataPoint<T>> unaryDataPoints;
-        public final ImmutableSet<BinaryDataPoint<T>> binaryDataPoints;
-        public final ImmutableSet<TernaryDataPoint<T>> ternaryDataPoints;
+        public final Set<UnaryDataPoint<T>> unaryDataPoints;
+        public final Set<BinaryDataPoint<T>> binaryDataPoints;
+        public final Set<TernaryDataPoint<T>> ternaryDataPoints;
         public final Map<Integer, SyntaxTree> syntaxTreeMap;
         public final List<Integer> variableList;
 

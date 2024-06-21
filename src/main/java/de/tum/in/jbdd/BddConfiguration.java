@@ -21,17 +21,20 @@ import org.immutables.value.Value;
 @SuppressWarnings("MethodReturnAlwaysConstant")
 @Value.Immutable
 public class BddConfiguration {
+    public static final int DEFAULT_CACHE_UNARY_DIVIDER = 64;
     public static final int DEFAULT_CACHE_BINARY_DIVIDER = 32;
-    public static final int DEFAULT_CACHE_IMPLIES_DIVIDER = 64;
-    public static final int DEFAULT_CACHE_SATISFACTION_DIVIDER = 32;
-    public static final int DEFAULT_CACHE_TERNARY_DIVIDER = 64;
-    public static final int DEFAULT_CACHE_COMPOSE_MULTIPLIER = 64;
-    public static final int DEFAULT_CACHE_QUANTIFICATION_MULTIPLIER = 32;
-    public static final double DEFAULT_NODE_TABLE_GROWTH_FACTOR = 2d;
+    public static final int DEFAULT_CACHE_TERNARY_DIVIDER = 32;
+    public static final int DEFAULT_CACHE_EPHEMERAL_MULTIPLIER = 32;
+    public static final double DEFAULT_NODE_TABLE_GROWTH_FACTOR = 2.0d;
 
     @Value.Default
     public int initialSize() {
         return 1024;
+    }
+
+    @Value.Default
+    public int cacheUnaryDivider() {
+        return DEFAULT_CACHE_UNARY_DIVIDER;
     }
 
     @Value.Default
@@ -40,28 +43,13 @@ public class BddConfiguration {
     }
 
     @Value.Default
-    public int cacheImpliesDivider() {
-        return DEFAULT_CACHE_IMPLIES_DIVIDER;
-    }
-
-    @Value.Default
-    public int cacheSatisfactionDivider() {
-        return DEFAULT_CACHE_SATISFACTION_DIVIDER;
-    }
-
-    @Value.Default
     public int cacheTernaryDivider() {
         return DEFAULT_CACHE_TERNARY_DIVIDER;
     }
 
     @Value.Default
-    public int cacheComposeMultiplier() {
-        return DEFAULT_CACHE_COMPOSE_MULTIPLIER;
-    }
-
-    @Value.Default
-    public int cacheQuantificationMultiplier() {
-        return DEFAULT_CACHE_QUANTIFICATION_MULTIPLIER;
+    public int cacheEphemeralMultiplier() {
+        return DEFAULT_CACHE_EPHEMERAL_MULTIPLIER;
     }
 
     @Value.Default

@@ -5,17 +5,20 @@
 ### 0.7.0 (2024-XX-XX)
 
 * Implemented complement edges
-* Significant renaming / restructuring of the API:
-  * Distinguish between boolean function (what a BDD node abstracts) and internal structure (nodes) to prohibit careless mixing of these now different concepts
-  * True is now Integer.MAX_VALUE and False is its complement
-* Remove iterative implementation: On most benchmarks about ~10% slower, tedious to maintain, and increasing stack size is cheap
-* Separate out the node table structure to have a unified base for BDDs, MTBDDs, LDDs, etc.
+* Implemented MDDs (Function with boolean values but n-valued domains for their variables)
+* Significant renaming / restructuring of the API: Distinguish between boolean function (what a BDD node abstracts) and internal structure (nodes) to prohibit careless mixing of these now different concepts
+* Remove iterative implementation: On some benchmarks about ~10% slower, tedious to maintain, and increasing stack size is cheap
+* Separate out the node table structure to have a unified base for BDDs, MTBDDs, MDDs, etc.
 * Slightly improved usability of automatic reference management
-* `forEachPath` now has a version with `support` as parameter (replacing the previous `highestVariable`)
-* `andNot` method and significant improvement of `compose` / `ifThenElse` in certain cases
-* `forall` quantification
+* New methods:
+  * `andNot`
+  * `forall` quantification
+  * `forEachPath` now has a version with `support` as parameter (replacing the previous `highestVariable`)
+  * `anyPathMatches`: check if any path matches a given predicate 
+  * `intersects`: check if `and(f, g) != FALSE`
+  * `constrain`: reduce a function `f` to a given domain `d`, i.e. preserve the values of `f` where `d` is true but otherwise do whatever 
+* Significant improvement of `compose` / `ifThenElse` in certain cases
 * Preserve cached values when possible (should provide notable improvements on some workloads)
-* MDD implementation: Function with boolean values but n-valued domains for their variables
 
 ## 0.6
 

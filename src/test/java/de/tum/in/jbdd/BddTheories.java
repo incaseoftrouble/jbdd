@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -58,7 +59,8 @@ import org.junit.jupiter.params.provider.MethodSource;
     "AccessingNonPublicFieldOfAnotherObject",
     "StaticCollection",
     "NewClassNamingConvention",
-    "PMD.ClassNamingConventions"
+    "PMD.ClassNamingConventions",
+    "PMD.CouplingBetweenObjects"
 })
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class BddTheories {
@@ -306,7 +308,7 @@ public class BddTheories {
             }
         }
         int[] composePlaceholderArray = new int[variableCount];
-        for (int i = 0; i < variableCount; i++) {
+        for (int i = 0; i < variableCount; i++) { // NOPMD
             if (bdd.isVariable(composeArray[i]) && bdd.decisionVariable(composeArray[i]) == i) {
                 composePlaceholderArray[i] = NodeTable.PLACEHOLDER;
             } else {
@@ -429,6 +431,58 @@ public class BddTheories {
         }
 
         bdd.dereference(selfComposeNode);
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("unary")
+    public void testComposeRelabel(Generator.UnaryDataPoint<TestBdd> dataPoint) {
+        TestBdd bdd = dataPoint.bdd;
+        Generator.Info<TestBdd> bddInfo = infoMap.get(bdd).bddInfo;
+        int function = dataPoint.function;
+        assumeTrue(bdd.isValidFunction(function));
+
+        int variables = bdd.numberOfVariables();
+        List<Integer> ordering = new ArrayList<>(variables);
+        for (int i = 0; i < variables; i++) {
+            ordering.add(i);
+        }
+        Collections.shuffle(ordering, new Random(function));
+        int[] inverse = new int[variableCount];
+
+        int[] composeArray = new int[variableCount];
+        for (int i = 0; i < variableCount; i++) {
+            int map = ordering.get(i);
+            composeArray[i] = bdd.variableFunction(map);
+            inverse[map] = i;
+        }
+
+        Map<Integer, SyntaxTree> replacementMap = new HashMap<>();
+        for (int i = 0; i < composeArray.length; i++) {
+            int variableReplacement = composeArray[i];
+            if (variableReplacement != NodeTable.PLACEHOLDER) {
+                replacementMap.put(i, bddInfo.syntaxTreeMap.get(variableReplacement));
+            }
+        }
+
+        int composeNode = bdd.reference(bdd.compose(function, composeArray));
+
+        BitSet pathMap = new BitSet();
+        bdd.forEachPath(composeNode, path -> {
+            pathMap.clear();
+            BitSets.forEach(path.assignment, i -> pathMap.set(inverse[i]));
+            assertThat(bdd.evaluate(function, pathMap), is(true));
+        });
+
+        SyntaxTree composeTree = SyntaxTree.buildReplacementTree(dataPoint.tree, replacementMap);
+        assumeTrue(composeTree.depth() <= 25);
+
+        Iterator<boolean[]> iterator = getArrayIterator(bdd.support(function));
+        while (iterator.hasNext()) {
+            boolean[] valuation = iterator.next();
+            assertThat(bdd.evaluate(composeNode, valuation), is(composeTree.evaluate(valuation)));
+        }
+
+        bdd.dereference(composeNode);
     }
 
     @ParameterizedTest(name = "{index}")
@@ -694,9 +748,9 @@ public class BddTheories {
         BitSet supportFromPathSupport = new BitSet(bdd.numberOfVariables());
 
         List<BitSet> paths = new ArrayList<>();
-        bdd.forEachPath(function, (solution, pathSupport) -> {
-            paths.add(BitSets.copyOf(solution));
-            supportFromPathSupport.or(pathSupport);
+        bdd.forEachPath(function, path -> {
+            paths.add(path.copyAssignment());
+            supportFromPathSupport.or(path.copySupport());
         });
         assertThat(supportFromPathSupport, is(support));
 
@@ -743,10 +797,10 @@ public class BddTheories {
         BitSet supportFromPathSupport = new BitSet(bdd.numberOfVariables());
 
         Set<BitSet> paths = new HashSet<>();
-        bdd.forEachPath(function, supportRestriction, (solution, pathSupport) -> {
-            assertThat(BitSets.isSubset(pathSupport, supportRestriction), is(true));
-            paths.add(BitSets.copyOf(solution));
-            supportFromPathSupport.or(pathSupport);
+        bdd.forEachPartialPath(function, supportRestriction, path -> {
+            assertThat(BitSets.isSubset(path.viewSupport(), supportRestriction), is(true));
+            paths.add(path.copyAssignment());
+            supportFromPathSupport.or(path.viewSupport());
         });
         var supportCopy = BitSets.copyOf(support);
         supportCopy.and(supportRestriction);
@@ -778,23 +832,23 @@ public class BddTheories {
 
         List<BitSet> minimalSolutions = new ArrayList<>();
         int variableCount = bdd.numberOfVariables();
-        bdd.forEachPath(function, (solution, solutionSupport) -> {
-            minimalSolutions.add(BitSets.copyOf(solution));
-            BitSet nonRelevantVariables = BitSets.copyOf(solutionSupport);
+        bdd.forEachPath(function, path -> {
+            minimalSolutions.add(path.copyAssignment());
+            BitSet nonRelevantVariables = path.copySupport();
             nonRelevantVariables.flip(0, variableCount);
-            assertThat(nonRelevantVariables.intersects(solution), is(false));
-            assertThat(bdd.evaluate(function, solution), is(true));
+            assertThat(nonRelevantVariables.intersects(path.viewAssignment()), is(false));
+            assertThat(bdd.evaluate(function, path.viewAssignment()), is(true));
 
             Iterator<BitSet> iterator = BitSets.powerSetIterator(nonRelevantVariables);
             while (iterator.hasNext()) {
                 BitSet next = BitSets.copyOf(iterator.next());
-                next.or(solution);
+                next.or(path.viewAssignment());
                 assertThat(bdd.evaluate(function, next), is(true));
             }
         });
 
         List<BitSet> otherMinimalSolutions = new ArrayList<>();
-        bdd.forEachPath(function, solution -> otherMinimalSolutions.add(BitSets.copyOf(solution)));
+        bdd.forEachPath(function, path -> otherMinimalSolutions.add(path.copyAssignment()));
         assertThat(minimalSolutions, is(otherMinimalSolutions));
     }
 
@@ -961,6 +1015,25 @@ public class BddTheories {
                     bdd.not(implication),
                     valuation -> assertThat(
                             bdd.evaluate(function1, valuation) && !bdd.evaluate(function2, valuation), is(true)));
+        }
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("binary")
+    public void testIntersects(Generator.BinaryDataPoint<TestBdd> dataPoint) {
+        TestBdd bdd = dataPoint.bdd;
+        int function1 = dataPoint.left;
+        int function2 = dataPoint.right;
+        assumeTrue(bdd.isValidFunction(function1));
+        assumeTrue(bdd.isValidFunction(function2));
+
+        boolean intersects = bdd.intersects(function1, function2);
+        int and = bdd.and(function1, function2);
+
+        if (intersects) {
+            assertThat(and, is(not(bdd.falseFunction())));
+        } else {
+            assertThat(and, is(bdd.falseFunction()));
         }
     }
 
@@ -1261,6 +1334,30 @@ public class BddTheories {
         BitSet cutoffSupport = bdd.supportFiltered(function, supportRestrict);
         support.and(supportRestrict);
         assertThat(cutoffSupport, is(support));
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("binary")
+    public void testConstrain(Generator.BinaryDataPoint<TestBdd> dataPoint) {
+        TestBdd bdd = dataPoint.bdd;
+        int function = dataPoint.left;
+        int domain = dataPoint.right;
+        assumeTrue(bdd.isValidFunction(function));
+        assumeTrue(bdd.isValidFunction(domain));
+
+        int constrain = bdd.reference(bdd.constrain(function, domain));
+
+        for (boolean[] valuation : valuations) {
+            if (bdd.evaluate(domain, valuation)) {
+                assertThat(bdd.evaluate(constrain, valuation), is(bdd.evaluate(function, valuation)));
+            }
+        }
+
+        int ifThenElse = bdd.reference(bdd.ifThenElse(domain, constrain, function));
+        assertThat(ifThenElse, is(function));
+        bdd.dereference(ifThenElse);
+
+        bdd.dereference(constrain);
     }
 
     @ParameterizedTest(name = "{index}")
