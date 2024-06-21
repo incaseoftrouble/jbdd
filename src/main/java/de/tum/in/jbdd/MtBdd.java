@@ -222,6 +222,12 @@ public interface MtBdd<V> extends DecisionDiagram {
     <T> int map(int function, Function<? super V, ? extends T> map, MtBdd<T> other);
 
     /**
+     * Constructs the boolean function in the associated BDD which evaluates to true exactly for those
+     * valuations on which the given functions agree.
+     */
+    int agreement(int function1, int function2);
+
+    /**
      * Returns a view on this structure with values remapped. The given mapping needs to be an injection for
      * consistency.
      */
