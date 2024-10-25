@@ -145,7 +145,7 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
     }
 
     @Override
-    public void forEachSupport(int function, IntConsumer action) {
+    public void forEachSupportVariable(int function, IntConsumer action) {
         table().forEachVariable(function, action);
     }
 

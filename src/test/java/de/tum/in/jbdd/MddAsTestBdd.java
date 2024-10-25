@@ -214,18 +214,18 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public void forEachPath(int function, Consumer<? super BddPath> action) {
+    public void forEachPath(int function, Consumer<? super BinaryPath> action) {
         BitSet everything = new BitSet();
         everything.set(0, mdd.numberOfVariables());
         forEachPartialPath(function, everything, action);
     }
 
     @Override
-    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super BddPath> action) {
+    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super BinaryPath> action) {
         int variables = mdd.numberOfVariables();
         BitSet values = new BitSet(variables);
         BitSet support = new BitSet(variables);
-        BddPath bddPath = new BddPath(values, support);
+        BinaryPath bddPath = new BinaryPath(values, support);
         mdd.forEachPartialPath(function, relevantSet, path -> {
             for (int var = 0; var < path.length; var++) {
                 assert path[var] == -1 || path[var] == TRUE || path[var] == FALSE;
@@ -244,11 +244,11 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public boolean anyPathMatches(int function, Predicate<? super BddPath> predicate) {
+    public boolean anyPathMatches(int function, Predicate<? super BinaryPath> predicate) {
         int variables = mdd.numberOfVariables();
         BitSet values = new BitSet(variables);
         BitSet support = new BitSet(variables);
-        BddPath bddPath = new BddPath(values, support);
+        BinaryPath bddPath = new BinaryPath(values, support);
         return mdd.anyPathMatches(function, path -> {
             for (int var = 0; var < path.length; var++) {
                 assert path[var] == -1 || path[var] == TRUE || path[var] == FALSE;

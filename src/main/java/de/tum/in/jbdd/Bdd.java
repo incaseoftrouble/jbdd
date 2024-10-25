@@ -29,7 +29,7 @@ import java.util.List;
  * time after an invalid call.</p>
  */
 // TODO AndExists and similar (quantify + apply at the same time)
-public interface Bdd extends BooleanDecisionDiagram, BooleanTerminalDecisionDiagram<BitSet, BddPath> {
+public interface Bdd extends BooleanDecisionDiagram, BooleanTerminalDecisionDiagram<BitSet, BinaryPath> {
     /**
      * Creates a new variable and returns the BDD function representing it. The implementation guarantees that
      * variables are always allocated sequentially starting from 0, i.e. {@code

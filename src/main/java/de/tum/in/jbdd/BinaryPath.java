@@ -18,11 +18,11 @@ package de.tum.in.jbdd;
 
 import java.util.BitSet;
 
-public final class BddPath {
+public final class BinaryPath {
     final BitSet assignment;
     final BitSet support;
 
-    public BddPath(BitSet assignment, BitSet support) {
+    public BinaryPath(BitSet assignment, BitSet support) {
         this.assignment = assignment;
         this.support = support;
     }

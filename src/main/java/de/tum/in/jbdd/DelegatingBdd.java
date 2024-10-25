@@ -220,21 +220,21 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
-    public void forEachPath(int function, Consumer<? super BddPath> action) {
+    public void forEachPath(int function, Consumer<? super BinaryPath> action) {
         onEnter("forEachPath");
         delegate.forEachPath(function, action);
         onExit();
     }
 
     @Override
-    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super BddPath> action) {
+    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super BinaryPath> action) {
         onEnter("forEachPartialPath");
         delegate.forEachPartialPath(function, relevantSet, action);
         onExit();
     }
 
     @Override
-    public boolean anyPathMatches(int function, Predicate<? super BddPath> predicate) {
+    public boolean anyPathMatches(int function, Predicate<? super BinaryPath> predicate) {
         onEnter("anyPathMatches");
         return onExit(delegate.anyPathMatches(function, predicate));
     }
@@ -252,9 +252,9 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
-    public void forEachSupport(int function, IntConsumer action) {
+    public void forEachSupportVariable(int function, IntConsumer action) {
         onEnter("forEachSupport");
-        delegate.forEachSupport(function, action);
+        delegate.forEachSupportVariable(function, action);
         onExit();
     }
 

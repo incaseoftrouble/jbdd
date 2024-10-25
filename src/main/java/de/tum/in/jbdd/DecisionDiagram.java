@@ -140,7 +140,7 @@ public interface DecisionDiagram {
      * @see #support(int)
      */
     default BitSet supportTo(int function, BitSet bitSet) {
-        forEachSupport(function, bitSet::set);
+        forEachSupportVariable(function, bitSet::set);
         return bitSet;
     }
 
@@ -149,7 +149,7 @@ public interface DecisionDiagram {
      *
      * @param function The function whose support should be computed.
      */
-    default void forEachSupport(int function, IntConsumer action) {
+    default void forEachSupportVariable(int function, IntConsumer action) {
         BitSet filter = new BitSet(numberOfVariables());
         filter.set(0, numberOfVariables());
         forEachSupportFiltered(function, filter, action);
@@ -166,7 +166,7 @@ public interface DecisionDiagram {
      * Only considers variables in the given {@code filter}.
      *
      * @param function The function whose support should be computed.
-     * @see #forEachSupport(int, IntConsumer)
+     * @see #forEachSupportVariable(int, IntConsumer)
      */
     void forEachSupportFiltered(int function, BitSet filter, IntConsumer action);
 

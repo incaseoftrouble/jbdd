@@ -1246,7 +1246,7 @@ abstract class NodeTable {
             return hash(dataGetVariable(metadata), low(node), high(node));
         }
 
-        private int hash(int variable, int low, int high) {
+        private static int hash(int variable, int low, int high) {
             // TODO This silly "hash function" seems to be significantly better than any "proper" one and I have no idea
             // why
             //   Conjecture: This leads to "locality" in the hash chain?
@@ -1351,7 +1351,7 @@ abstract class NodeTable {
             return hash(dataGetVariable(metadata), tree[node]);
         }
 
-        private int hash(int variable, int[] children) {
+        private static int hash(int variable, int[] children) {
             int hashCode = variable;
             for (int child : children) {
                 hashCode += child < 0 ? -child : child;

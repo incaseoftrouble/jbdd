@@ -17,14 +17,11 @@
 package de.tum.in.jbdd;
 
 import java.math.BigInteger;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
@@ -45,7 +42,7 @@ import javax.annotation.Nullable;
     "AssignmentToMethodParameter",
     "SameParameterValue"
 })
-final class BddImpl extends BooleanBase<BitSet, BddPath> implements Bdd {
+final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     private static final Logger logger = Logger.getLogger(BddImpl.class.getName());
 
     private final BooleanCache cache;
@@ -289,36 +286,36 @@ final class BddImpl extends BooleanBase<BitSet, BddPath> implements Bdd {
     }
 
     @Override
-    public void forEachPath(int function, Consumer<? super BddPath> action) {
+    public void forEachPath(int function, Consumer<? super BinaryPath> action) {
         assert isValidFunction(function);
 
         if (function == FALSE) {
             return;
         }
         if (function == TRUE) {
-            action.accept(new BddPath(new BitSet(0), new BitSet(0)));
+            action.accept(new BinaryPath(new BitSet(0), new BitSet(0)));
             return;
         }
 
         int numberOfVariables = numberOfVariables();
-        BddPath path = new BddPath(new BitSet(numberOfVariables), new BitSet(numberOfVariables));
+        BinaryPath path = new BinaryPath(new BitSet(numberOfVariables), new BitSet(numberOfVariables));
         forEachPathRecursive(positive(function), null, numberOfVariables, path, action, isPositive(function));
     }
 
     @Override
-    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super BddPath> action) {
+    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super BinaryPath> action) {
         assert isValidFunction(function);
 
         if (function == FALSE) {
             return;
         }
         if (function == TRUE || relevantSet.isEmpty()) {
-            action.accept(new BddPath(new BitSet(0), new BitSet(0)));
+            action.accept(new BinaryPath(new BitSet(0), new BitSet(0)));
             return;
         }
 
         int highestVariable = relevantSet.length() - 1;
-        BddPath path = new BddPath(new BitSet(highestVariable + 1), new BitSet(highestVariable + 1));
+        BinaryPath path = new BinaryPath(new BitSet(highestVariable + 1), new BitSet(highestVariable + 1));
         forEachPathRecursive(positive(function), relevantSet, highestVariable, path, action, isPositive(function));
     }
 
@@ -326,8 +323,8 @@ final class BddImpl extends BooleanBase<BitSet, BddPath> implements Bdd {
             int node,
             @Nullable BitSet support,
             int depthLimit,
-            BddPath path,
-            Consumer<? super BddPath> action,
+            BinaryPath path,
+            Consumer<? super BinaryPath> action,
             boolean lookingFor) {
         if (node == TRUE) {
             assert lookingFor;
@@ -375,23 +372,23 @@ final class BddImpl extends BooleanBase<BitSet, BddPath> implements Bdd {
     }
 
     @Override
-    public boolean anyPathMatches(int function, Predicate<? super BddPath> predicate) {
+    public boolean anyPathMatches(int function, Predicate<? super BinaryPath> predicate) {
         assert isValidFunction(function);
 
         if (function == FALSE) {
             return false;
         }
         if (function == TRUE) {
-            return predicate.test(new BddPath(new BitSet(0), new BitSet(0)));
+            return predicate.test(new BinaryPath(new BitSet(0), new BitSet(0)));
         }
 
         int numberOfVariables = numberOfVariables();
-        BddPath path = new BddPath(new BitSet(numberOfVariables), new BitSet(numberOfVariables));
+        BinaryPath path = new BinaryPath(new BitSet(numberOfVariables), new BitSet(numberOfVariables));
         return anyPathMatchesRecursive(positive(function), path, predicate, isPositive(function));
     }
 
     private boolean anyPathMatchesRecursive(
-            int node, BddPath path, Predicate<? super BddPath> predicate, boolean lookingFor) {
+        int node, BinaryPath path, Predicate<? super BinaryPath> predicate, boolean lookingFor) {
         if (node == TRUE) {
             assert lookingFor;
             return predicate.test(path);
@@ -1397,30 +1394,6 @@ final class BddImpl extends BooleanBase<BitSet, BddPath> implements Bdd {
             }
             hasNextAssignment = hasNextPath;
             return assignment;
-        }
-    }
-
-    @SuppressWarnings("PMD")
-    abstract static class MtBddImpl<V> implements MtBdd<V> {
-        private final BddImpl bdd;
-        private final Class<V> valueType;
-        private final List<V> values;
-        private final Map<V, Integer> valueToNode = new HashMap<>();
-
-        MtBddImpl(BddImpl bdd, Class<V> valueType) {
-            this.bdd = bdd;
-            this.valueType = valueType;
-            this.values = new ArrayList<>();
-        }
-
-        @Override
-        public Bdd bdd() {
-            return bdd;
-        }
-
-        @Override
-        public Class<V> valueType() {
-            return valueType;
         }
     }
 

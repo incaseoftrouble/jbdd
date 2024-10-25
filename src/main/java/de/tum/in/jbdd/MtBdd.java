@@ -118,7 +118,7 @@ public interface MtBdd<V> extends DecisionDiagram {
      * @param action
      *     The action to be performed on these solutions.
      */
-    void forEachPath(int function, BiConsumer<BddPath, ? super V> action);
+    void forEachPath(int function, BiConsumer<BinaryPath, ? super V> action);
 
     /**
      * Computes the co-domain of the given {@code function}.

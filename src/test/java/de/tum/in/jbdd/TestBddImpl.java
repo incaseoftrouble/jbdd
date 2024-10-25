@@ -248,8 +248,8 @@ class TestBddImpl implements TestBdd {
     }
 
     @Override
-    public void forEachSupport(int function, IntConsumer action) {
-        delegate.forEachSupport(function, action);
+    public void forEachSupportVariable(int function, IntConsumer action) {
+        delegate.forEachSupportVariable(function, action);
     }
 
     @Override
@@ -348,17 +348,17 @@ class TestBddImpl implements TestBdd {
     }
 
     @Override
-    public void forEachPath(int function, Consumer<? super BddPath> action) {
+    public void forEachPath(int function, Consumer<? super BinaryPath> action) {
         delegate.forEachPath(function, action);
     }
 
     @Override
-    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super BddPath> action) {
+    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super BinaryPath> action) {
         delegate.forEachPartialPath(function, relevantSet, action);
     }
 
     @Override
-    public boolean anyPathMatches(int function, Predicate<? super BddPath> predicate) {
+    public boolean anyPathMatches(int function, Predicate<? super BinaryPath> predicate) {
         return delegate.anyPathMatches(function, predicate);
     }
 
