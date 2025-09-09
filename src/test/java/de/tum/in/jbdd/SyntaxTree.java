@@ -27,7 +27,7 @@ import java.util.Set;
 /**
  * Utility class used to represent propositional formulas.
  */
-@SuppressWarnings({"unused", "WeakerAccess", "PMD.GodClass", "checkstyle:javadoc"})
+@SuppressWarnings({"unused", "WeakerAccess"})
 // TODO Add a "toBddNode(BDD bdd)" method
 public final class SyntaxTree {
     private final SyntaxTreeNode rootNode;
@@ -190,7 +190,7 @@ public final class SyntaxTree {
 
         @Override
         boolean evaluate(BitSet valuation) {
-            switch (type) {
+            switch (type) { // NOPMD
                 case AND:
                     return left.evaluate(valuation) && right.evaluate(valuation);
                 case OR:
@@ -202,13 +202,13 @@ public final class SyntaxTree {
                 case EQUIVALENCE:
                     return left.evaluate(valuation) == right.evaluate(valuation);
                 default:
-                    throw new IllegalStateException("Unknown type");
+                    throw new AssertionError("Unknown type");
             }
         }
 
         @Override
         boolean evaluate(boolean[] valuation) {
-            switch (type) {
+            switch (type) { // NOPMD
                 case AND:
                     return left.evaluate(valuation) && right.evaluate(valuation);
                 case OR:

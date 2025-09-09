@@ -10,14 +10,13 @@
     <exclude name="AccessorMethodGeneration"/>
     <exclude name="UseVarargs"/>
     <exclude name="GuardLogStatement"/>
-    <exclude name="JUnit4TestShouldUseTestAnnotation"/>
     <exclude name="JUnit5TestShouldBePackagePrivate"/>
-    <exclude name="JUnitAssertionsShouldIncludeMessage"/>
-    <exclude name="JUnitTestContainsTooManyAsserts"/>
-    <exclude name="JUnitTestsShouldIncludeAssert"/>
     <exclude name="MissingOverride"/> <!-- Bug: Static methods -->
     <exclude name="ArrayIsStoredDirectly"/>
     <exclude name="MethodReturnsInternalArray"/>
+    <exclude name="UnitTestAssertionsShouldIncludeMessage"/>
+    <exclude name="UnitTestContainsTooManyAsserts"/>
+    <exclude name="UnitTestShouldIncludeAssert"/>
   </rule>
 
   <rule ref="category/java/codestyle.xml">

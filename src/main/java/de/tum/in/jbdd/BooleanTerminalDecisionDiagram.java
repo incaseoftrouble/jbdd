@@ -105,6 +105,8 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
         solutionIterator(function, support).forEachRemaining(action);
     }
 
+    Iterator<P> pathIterator(int function);
+
     /**
      * Executes the given {@code action} for all <em>minimal</em> solutions of the given boolean {@code function}.
      *
@@ -220,5 +222,5 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      * where {@code domain} is true. This is equivalent to {@code IF domain THEN function ELSE x} where {@code x}
      * is any function.
      */
-    int constrain(int function, int domain);
+    int simplify(int function, int domain);
 }

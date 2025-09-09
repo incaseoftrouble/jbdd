@@ -23,6 +23,7 @@ public final class BinaryPath {
     final BitSet support;
 
     public BinaryPath(BitSet assignment, BitSet support) {
+        assert assignment.stream().allMatch(support::get);
         this.assignment = assignment;
         this.support = support;
     }
@@ -35,11 +36,35 @@ public final class BinaryPath {
         return BitSets.copyOf(support);
     }
 
-    public BitSet viewAssignment() {
+    public BitSet assignment() {
         return assignment;
     }
 
-    public BitSet viewSupport() {
+    public BitSet support() {
         return support;
+    }
+
+    public BinaryPath copy() {
+        return new BinaryPath(BitSets.copyOf(assignment), BitSets.copyOf(support));
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder(support.length());
+        for (int i = 0; i < support.length(); i++) {
+            if (support.get(i)) {
+                sb.append(assignment.get(i) ? '1' : '0');
+            } else {
+                sb.append('?');
+            }
+        }
+        return sb.toString();
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        return (obj instanceof BinaryPath)
+                && this.assignment.equals(((BinaryPath) obj).assignment)
+                && this.support.equals(((BinaryPath) obj).support);
     }
 }

@@ -19,7 +19,6 @@ package de.tum.in.jbdd;
 import java.math.BigInteger;
 import java.util.BitSet;
 import java.util.Iterator;
-import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.Predicate;
@@ -220,6 +219,12 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
+    public Iterator<BinaryPath> pathIterator(int function) {
+        onEnter("pathIterator");
+        return onExit(delegate.pathIterator(function));
+    }
+
+    @Override
     public void forEachPath(int function, Consumer<? super BinaryPath> action) {
         onEnter("forEachPath");
         delegate.forEachPath(function, action);
@@ -338,9 +343,9 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
-    public int constrain(int function, int domain) {
+    public int simplify(int function, int domain) {
         onEnter("constrain");
-        return onExit(delegate.constrain(function, domain));
+        return onExit(delegate.simplify(function, domain));
     }
 
     @Override
@@ -389,18 +394,6 @@ public class DelegatingBdd implements Bdd {
     public int xor(int function1, int function2) {
         onEnter("xor");
         return onExit(delegate.xor(function1, function2));
-    }
-
-    @Override
-    public <V> MtBdd<V> createMtBdd(Class<V> clazz) {
-        onEnter("createMtBdd");
-        return onExit(delegate.createMtBdd(clazz));
-    }
-
-    @Override
-    public <V> MtBdd<List<V>> intersect(List<MtBdd<? extends V>> mtBdds, Class<V> clazz) {
-        onEnter("intersect");
-        return onExit(delegate.intersect(mtBdds, clazz));
     }
 
     @Override

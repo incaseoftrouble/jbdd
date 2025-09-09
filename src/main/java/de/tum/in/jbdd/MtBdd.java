@@ -156,11 +156,11 @@ public interface MtBdd<V> extends DecisionDiagram {
      * replaced by the actual corresponding variable nodes. </p>
      *
      * @param function
-     *     The function to be composed.
+     *     The MTBDD function to be composed.
      * @param variableMapping
-     *     The boolean functions with which each variable should be replaced.
+     *     The boolean functions (in the underlying BDD) with which each variable should be replaced.
      *
-     * @return The composed function.
+     * @return The composed MTBDD function.
      */
     int compose(int function, int[] variableMapping);
 
@@ -212,7 +212,7 @@ public interface MtBdd<V> extends DecisionDiagram {
      * Returns a view on this structure with values remapped. The given mapping needs to be an injection for
      * consistency.
      */
-    <T> MtBdd<T> viewAs(Function<? super V, ? extends T> injection);
+    <T> MtBdd<T> view(Function<? super V, ? extends T> injection);
 
     /**
      * Creates the boolean function representing all assignments under which the given {@code function}
@@ -237,6 +237,17 @@ public interface MtBdd<V> extends DecisionDiagram {
      * {@code h(x_1, x_3, ..., x_n)} that evaluates to {@code f(x_1, ..., x_n)}.
      */
     int split(int function, BitSet splitVariables, MtBdd<MtBdd<V>> other);
+
+    /**
+     * Constructs a simplified version of the given {@code function} which is equivalent to it for all assignments
+     * where {@code domain} is true. This is equivalent to {@code IF domain THEN function ELSE x} where {@code x}
+     * is any function.
+     *
+     * @param function A function in this MTBDD
+     * @param domain A function in the underlying BDD
+     * @return The simplified MTBDD function
+     */
+    int simplify(int function, int domain);
 
     interface Inverse<V> {
         int functionFor(V value);

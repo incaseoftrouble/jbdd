@@ -19,7 +19,6 @@ package de.tum.in.jbdd;
 import java.math.BigInteger;
 import java.util.BitSet;
 import java.util.Iterator;
-import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.Predicate;
@@ -173,8 +172,8 @@ class TestBddImpl implements TestBdd {
     }
 
     @Override
-    public int constrain(int function, int domain) {
-        return delegate.constrain(function, domain);
+    public int simplify(int function, int domain) {
+        return delegate.simplify(function, domain);
     }
 
     @Override
@@ -185,16 +184,6 @@ class TestBddImpl implements TestBdd {
     @Override
     public boolean intersects(int function1, int function2) {
         return delegate.intersects(function1, function2);
-    }
-
-    @Override
-    public <V> MtBdd<V> createMtBdd(Class<V> clazz) {
-        return delegate.createMtBdd(clazz);
-    }
-
-    @Override
-    public <V> MtBdd<List<V>> intersect(List<MtBdd<? extends V>> mtBdds, Class<V> clazz) {
-        return delegate.intersect(mtBdds, clazz);
     }
 
     @Override
@@ -345,6 +334,11 @@ class TestBddImpl implements TestBdd {
     @Override
     public void forEachSolution(int function, BitSet support, Consumer<? super BitSet> action) {
         delegate.forEachSolution(function, support, action);
+    }
+
+    @Override
+    public Iterator<BinaryPath> pathIterator(int function) {
+        return delegate.pathIterator(function);
     }
 
     @Override

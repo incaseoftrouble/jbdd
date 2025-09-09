@@ -21,7 +21,6 @@ import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Iterator;
-import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.Predicate;
@@ -51,13 +50,13 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public int highOf(int node) {
-        return mdd.follow(node, TRUE);
+    public int highOf(int function) {
+        return mdd.follow(function, TRUE);
     }
 
     @Override
-    public int lowOf(int node) {
-        return mdd.follow(node, FALSE);
+    public int lowOf(int function) {
+        return mdd.follow(function, FALSE);
     }
 
     @Override
@@ -86,13 +85,13 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public int reference(int node) {
-        return mdd.reference(node);
+    public int reference(int function) {
+        return mdd.reference(function);
     }
 
     @Override
-    public int dereference(int node) {
-        return mdd.dereference(node);
+    public int dereference(int function) {
+        return mdd.dereference(function);
     }
 
     @Override
@@ -154,22 +153,22 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public boolean evaluate(int node, boolean[] assignment) {
+    public boolean evaluate(int function, boolean[] assignment) {
         int[] values = new int[assignment.length];
         Arrays.setAll(values, i -> assignment[i] ? TRUE : FALSE);
-        return mdd.evaluate(node, values);
+        return mdd.evaluate(function, values);
     }
 
     @Override
-    public boolean evaluate(int node, BitSet assignment) {
+    public boolean evaluate(int function, BitSet assignment) {
         int[] values = new int[mdd.numberOfVariables()];
         Arrays.setAll(values, i -> assignment.get(i) ? TRUE : FALSE);
-        return mdd.evaluate(node, values);
+        return mdd.evaluate(function, values);
     }
 
     @Override
-    public BitSet satisfyingAssignment(int node) {
-        int[] values = mdd.satisfyingAssignment(node);
+    public BitSet satisfyingAssignment(int function) {
+        int[] values = mdd.satisfyingAssignment(function);
         BitSet set = new BitSet(mdd.numberOfVariables());
         for (int i = 0; i < values.length; i++) {
             if (values[i] == TRUE) {
@@ -180,19 +179,19 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public BigInteger countSatisfyingAssignments(int node) {
-        return mdd.countSatisfyingAssignments(node);
+    public BigInteger countSatisfyingAssignments(int function) {
+        return mdd.countSatisfyingAssignments(function);
     }
 
     @Override
-    public BigInteger countSatisfyingAssignments(int node, BitSet support) {
-        return mdd.countSatisfyingAssignments(node, support);
+    public BigInteger countSatisfyingAssignments(int function, BitSet support) {
+        return mdd.countSatisfyingAssignments(function, support);
     }
 
     @Override
-    public Iterator<BitSet> solutionIterator(int node) {
+    public Iterator<BitSet> solutionIterator(int function) {
         BitSet set = new BitSet(mdd.numberOfVariables());
-        return Iterators.transform(mdd.solutionIterator(node), a -> {
+        return Iterators.transform(mdd.solutionIterator(function), a -> {
             for (int i = 0; i < a.length; i++) {
                 assert a[i] == TRUE || a[i] == FALSE;
                 set.set(i, a[i] == TRUE);
@@ -202,14 +201,33 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public Iterator<BitSet> solutionIterator(int node, BitSet support) {
+    public Iterator<BitSet> solutionIterator(int function, BitSet support) {
         BitSet set = new BitSet(mdd.numberOfVariables());
-        return Iterators.transform(mdd.solutionIterator(node, support), a -> {
+        return Iterators.transform(mdd.solutionIterator(function, support), a -> {
             for (int i = 0; i < a.length; i++) {
                 assert a[i] == TRUE || a[i] == FALSE;
                 set.set(i, a[i] == TRUE);
             }
             return set;
+        });
+    }
+
+    @Override
+    public Iterator<BinaryPath> pathIterator(int function) {
+        BitSet assignment = new BitSet(mdd.numberOfVariables());
+        BitSet support = new BitSet(mdd.numberOfVariables());
+        return Iterators.transform(mdd.pathIterator(function), a -> {
+            for (int i = 0; i < a.length; i++) {
+                assert a[i] == TRUE || a[i] == FALSE || a[i] == -1;
+                if (a[i] == -1) {
+                    support.clear(i);
+                    assignment.clear(i);
+                } else {
+                    support.set(i);
+                    assignment.set(i, a[i] == TRUE);
+                }
+            }
+            return new BinaryPath(assignment, support);
         });
     }
 
@@ -271,20 +289,20 @@ class MddAsTestBdd implements TestBdd {
 
     @Override
     public int conjunction(BitSet variables) {
-        int node = TRUE;
+        int function = TRUE;
         for (int var = variables.nextSetBit(0); var >= 0; var = variables.nextSetBit(var + 1)) {
-            node = mdd.and(node, variableFunction(var));
+            function = mdd.and(function, variableFunction(var));
         }
-        return node;
+        return function;
     }
 
     @Override
     public int disjunction(BitSet variables) {
-        int node = FALSE;
+        int function = FALSE;
         for (int var = variables.nextSetBit(0); var >= 0; var = variables.nextSetBit(var + 1)) {
-            node = mdd.or(node, variableFunction(var));
+            function = mdd.or(function, variableFunction(var));
         }
-        return node;
+        return function;
     }
 
     @Override
@@ -303,18 +321,18 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public int exists(int node, BitSet quantifiedVariables) {
-        return mdd.exists(node, quantifiedVariables);
+    public int exists(int function, BitSet quantifiedVariables) {
+        return mdd.exists(function, quantifiedVariables);
     }
 
     @Override
-    public int forall(int node, BitSet quantifiedVariables) {
-        return mdd.forall(node, quantifiedVariables);
+    public int forall(int function, BitSet quantifiedVariables) {
+        return mdd.forall(function, quantifiedVariables);
     }
 
     @Override
-    public int not(int node) {
-        return mdd.not(node);
+    public int not(int function) {
+        return mdd.not(function);
     }
 
     @Override
@@ -411,8 +429,8 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public int constrain(int function, int domain) {
-        return mdd.constrain(function, domain);
+    public int simplify(int function, int domain) {
+        return mdd.simplify(function, domain);
     }
 
     @Override
@@ -433,15 +451,5 @@ class MddAsTestBdd implements TestBdd {
     @Override
     public String treeToString(int function) {
         return mdd.table().treeToString(function);
-    }
-
-    @Override
-    public <V> MtBdd<V> createMtBdd(Class<V> clazz) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public <V> MtBdd<List<V>> intersect(List<MtBdd<? extends V>> mtBdds, Class<V> clazz) {
-        throw new UnsupportedOperationException();
     }
 }

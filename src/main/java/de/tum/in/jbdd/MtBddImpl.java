@@ -1,3 +1,19 @@
+/*
+ * This file is part of JBDD (https://github.com/incaseoftrouble/jbdd).
+ * Copyright (c) 2025 Tobias Meggendorfer.
+ *
+ * JBDD is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 3.
+ *
+ * JBDD is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with JBDD. If not, see <http://www.gnu.org/licenses/>.
+ */
 package de.tum.in.jbdd;
 
 import java.math.BigInteger;
@@ -16,7 +32,7 @@ import java.util.logging.Logger;
 import javax.annotation.Nullable;
 
 @SuppressWarnings("PMD")
-abstract class MtBddImpl<V>implements MtBdd<V>, NodeBasedDecisionDiagram {
+abstract class MtBddImpl<V> implements MtBdd<V>, NodeBasedDecisionDiagram {
     private static final Logger logger = Logger.getLogger(MtBddImpl.class.getName());
 
     private final BddImpl bdd;
@@ -164,7 +180,8 @@ abstract class MtBddImpl<V>implements MtBdd<V>, NodeBasedDecisionDiagram {
         int currentNode = function;
         while (!isConstant(currentNode)) {
             assert table.isValidNode(currentNode);
-            currentNode = assignment.get(decisionVariable(currentNode)) ? table.high(currentNode) : table.low(currentNode);
+            currentNode =
+                    assignment.get(decisionVariable(currentNode)) ? table.high(currentNode) : table.low(currentNode);
         }
         return terminalToValue.get(currentNode);
     }
@@ -211,7 +228,6 @@ abstract class MtBddImpl<V>implements MtBdd<V>, NodeBasedDecisionDiagram {
         return false;
     }
 
-
     @Override
     public BigInteger countAssignments(int function, Predicate<? super V> values) {
         throw new UnsupportedOperationException();
@@ -243,7 +259,6 @@ abstract class MtBddImpl<V>implements MtBdd<V>, NodeBasedDecisionDiagram {
         // <--REF--><MARK>
         private int[] terminalData;
 
-
         MtBddTable(MtBddImpl<V> mtbdd, int initialSize) {
             super(initialSize);
             this.mtbdd = mtbdd;
@@ -263,21 +278,24 @@ abstract class MtBddImpl<V>implements MtBdd<V>, NodeBasedDecisionDiagram {
         protected boolean recurseNoneMarkedBelow(int node) {
             int low = low(node);
             int high = high(node);
-            return (mtbdd.isConstant(node) || doIsNoneMarkedBelow(low)) && (mtbdd.isConstant(high) || doIsNoneMarkedBelow(high));
+            return (mtbdd.isConstant(node) || doIsNoneMarkedBelow(low))
+                    && (mtbdd.isConstant(high) || doIsNoneMarkedBelow(high));
         }
 
         @Override
         protected boolean recurseIsAllMarkedBelow(int node) {
             int low = low(node);
             int high = high(node);
-            return (mtbdd.isConstant(node) || doIsAllMarkedBelow(low)) && (mtbdd.isConstant(high) || doIsAllMarkedBelow(high));
+            return (mtbdd.isConstant(node) || doIsAllMarkedBelow(low))
+                    && (mtbdd.isConstant(high) || doIsAllMarkedBelow(high));
         }
 
         @Override
         protected int recurseSetMarkBelow(int node, boolean mark) {
             int low = low(node);
             int high = high(node);
-            return (mtbdd.isConstant(node) ? 0 : doSetMarkBelow(low, mark)) + (mtbdd.isConstant(high) ? 0 : doSetMarkBelow(high, mark));
+            return (mtbdd.isConstant(node) ? 0 : doSetMarkBelow(low, mark))
+                    + (mtbdd.isConstant(high) ? 0 : doSetMarkBelow(high, mark));
         }
 
         @Override
@@ -306,8 +324,8 @@ abstract class MtBddImpl<V>implements MtBdd<V>, NodeBasedDecisionDiagram {
             NodeTable table = mtbdd.table;
             int currentSize = table.size();
             int approximateDeadNodeCount = table.approximateDeadNodeCount();
-            if (// mtbdd.configuration.useGarbageCollection() &&
-                approximateDeadNodeCount > 0) {
+            if ( // mtbdd.configuration.useGarbageCollection() &&
+            approximateDeadNodeCount > 0) {
                 logger.log(Level.FINE, "Running GC on {0} has size {1} and approximately {2} dead nodes", new Object[] {
                     this, currentSize, approximateDeadNodeCount
                 });
@@ -338,13 +356,11 @@ abstract class MtBddImpl<V>implements MtBdd<V>, NodeBasedDecisionDiagram {
 
         @Override
         public String format(int pointer) {
-            return mtbdd.format(pointer);
+            throw new UnsupportedOperationException();
         }
     }
 
-    private void clearCacheAfterGC(int reclaimedNodes) {
-
-    }
+    private void clearCacheAfterGC(int reclaimedNodes) {}
 
     private boolean check() {
         return true;

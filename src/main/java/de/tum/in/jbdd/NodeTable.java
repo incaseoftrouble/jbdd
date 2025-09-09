@@ -456,8 +456,8 @@ abstract class NodeTable {
         // Could not free enough space by GC, start growing
         logger.log(Level.FINE, "Growing the table of {0} from {1} to {2}", new Object[] {this, currentSize, newSize});
 
-        nodeData = Arrays.copyOf(this.nodeData, newSize); // NOPMD
-        hashChain = Arrays.copyOf(this.hashChain, newSize); // NOPMD
+        nodeData = Arrays.copyOf(this.nodeData, newSize);
+        hashChain = Arrays.copyOf(this.hashChain, newSize);
         growTo(newSize);
 
         // We need to re-build hashToChainStart completely
@@ -787,7 +787,6 @@ abstract class NodeTable {
      *
      * @return True. This way, check can easily be called by an {@code assert} statement.
      */
-    @SuppressWarnings("PMD.AvoidDeeplyNestedIfStmts")
     boolean check() {
         logger.log(Level.FINER, "Running integrity check");
         Preconditions.checkState(biggestReferencedNode <= biggestValidNode);

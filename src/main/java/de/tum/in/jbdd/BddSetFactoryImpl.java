@@ -259,7 +259,7 @@ final class BddSetFactoryImpl extends BddGcReferenceManager<BddSetFactoryImpl.Bd
         @Override
         public boolean equals(Object o) {
             assert (this == o) == (o instanceof BddSetImpl && this.function == ((BddSetImpl) o).function);
-            assert !(o instanceof BddSetImpl) || (this.factory == ((BddSetImpl) o).factory); // NOPMD
+            assert !(o instanceof BddSetImpl) || (this.factory == ((BddSetImpl) o).factory);
             return this == o;
         }
 

@@ -25,7 +25,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.annotation.Nullable;
 
-@SuppressWarnings({"PMD.UseUtilityClass", "PMD.TooManyFields"})
+@SuppressWarnings("PMD.TooManyFields")
 final class BooleanCache {
     private static final Logger logger = Logger.getLogger(BooleanCache.class.getName());
 
@@ -1319,7 +1319,6 @@ final class BooleanCache {
         }
     }
 
-    @SuppressWarnings("PMD.SystemPrintln")
     private static final class ShutdownHookPrinter implements Runnable {
         @Override
         public void run() {

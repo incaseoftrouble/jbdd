@@ -205,7 +205,7 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     public Iterator<int[]> solutionIterator(int function, BitSet support) {
         assert isValidFunction(function);
 
-        if (support.isEmpty() || function == FALSE) {
+        if (function == FALSE) {
             return Collections.emptyIterator();
         }
         if (function == TRUE) {
@@ -213,6 +213,22 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         return new NodeSolutionIterator(this, function, support);
+    }
+
+    @Override
+    public Iterator<int[]> pathIterator(int function) {
+        assert isValidFunction(function);
+
+        if (function == FALSE) {
+            return Collections.emptyIterator();
+        }
+        if (function == TRUE) {
+            int[] path = new int[numberOfVariables];
+            Arrays.fill(path, -1);
+            return Collections.singleton(path).iterator();
+        }
+
+        return new NodePathIterator(this, function);
     }
 
     @Override
@@ -1003,7 +1019,7 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     }
 
     @Override
-    public int constrain(int function, int domain) {
+    public int simplify(int function, int domain) {
         assert isValidFunction(function) && isValidFunction(domain);
 
         if (domain == FALSE) {
@@ -1333,6 +1349,178 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
                 }
             }
             hasNextAssignment = hasNextPath;
+            return assignment;
+        }
+    }
+
+    static final class NodePathIterator implements Iterator<int[]> {
+        private static final int NON_PATH_NODE = PLACEHOLDER;
+
+        private final MddImpl mdd;
+        private final int variableCount;
+        private final int[] assignment;
+        private final BitSet pathSupport;
+        private final int[] path;
+        private final boolean[] pathLookingFor;
+        private boolean firstRun = true;
+        private int highestSwitchableVariable = 0;
+        private int leafNodeVariable;
+        private boolean hasNextPath;
+        private final int rootVariable;
+
+        NodePathIterator(MddImpl mdd, int function) {
+            // Require at least one possible solution to exist.
+            assert mdd.isValidNonConstantFunction(function);
+            variableCount = mdd.numberOfVariables();
+
+            this.mdd = mdd;
+            this.path = new int[variableCount];
+            this.pathLookingFor = new boolean[variableCount];
+            this.assignment = new int[variableCount];
+            this.pathSupport = new BitSet(variableCount);
+            rootVariable = mdd.decisionVariable(function);
+
+            Arrays.fill(assignment, -1);
+            Arrays.fill(path, NON_PATH_NODE);
+            path[rootVariable] = positive(function);
+            pathSupport.set(rootVariable);
+            pathLookingFor[rootVariable] = mdd.isPositive(function);
+
+            leafNodeVariable = 0;
+            hasNextPath = true;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return hasNextPath;
+        }
+
+        @SuppressWarnings("AssignmentOrReturnOfFieldWithMutableType")
+        @Override
+        public int[] next() {
+            assert IntStream.range(0, variableCount).allMatch(i -> pathSupport.get(i) != (path[i] == NON_PATH_NODE));
+
+            int currentNode;
+            boolean currentLookingFor;
+            if (firstRun) {
+                firstRun = false;
+                currentNode = path[rootVariable];
+                currentLookingFor = pathLookingFor[rootVariable];
+            } else {
+                assert IntStream.range(0, variableCount)
+                        .noneMatch(var -> path[var] == NON_PATH_NODE && assignment[var] > 0);
+                assert hasNextPath
+                        : "Expected another path after " + Arrays.toString(assignment) + ", node:\n"
+                                + mdd.table.treeToString(path[rootVariable]);
+
+                // Backtrack on the current path until we find a node that we can increase to non-false branch
+                // to find a new path
+                // TODO Use highestLowVariableWithNonFalseHighBranch?
+                currentNode = path[leafNodeVariable];
+                currentLookingFor = pathLookingFor[leafNodeVariable];
+                int branchVar = leafNodeVariable;
+
+                //noinspection LabeledStatement
+                outer:
+                while (true) {
+                    assert path[branchVar] != NON_PATH_NODE;
+
+                    int[] children = mdd.table.children(currentNode);
+                    int val = assignment[branchVar] + 1;
+                    while (val < children.length) {
+                        if (!isFalse(children[val], currentLookingFor)) {
+                            assignment[branchVar] = val;
+                            //noinspection BreakStatementWithLabel
+                            break outer;
+                        }
+                        val += 1;
+                    }
+                    assert val == children.length;
+
+                    // This node does not give us another branch, backtrack over the path until we get to
+                    // the next element of the path
+                    branchVar = pathSupport.previousSetBit(branchVar - 1);
+                    if (branchVar == -1) {
+                        throw new NoSuchElementException("No next element");
+                    }
+                    currentNode = path[branchVar];
+                    currentLookingFor = pathLookingFor[branchVar];
+                }
+                assert assignment[branchVar] < mdd.variableDomain[branchVar];
+                assert leafNodeVariable >= highestSwitchableVariable;
+                assert mdd.decisionVariable(currentNode) == branchVar;
+                assert pathSupport.get(branchVar);
+
+                // currentNode is the deepest node we could increase; set the value and descend the tree
+                Arrays.fill(assignment, branchVar + 1, leafNodeVariable + 1, -1);
+                Arrays.fill(path, branchVar + 1, leafNodeVariable + 1, NON_PATH_NODE);
+                pathSupport.clear(branchVar + 1, leafNodeVariable + 1);
+
+                assert path[branchVar] == currentNode;
+                int child = mdd.follow(currentNode, assignment[branchVar]);
+                currentNode = positive(child);
+                if (currentNode != child) {
+                    currentLookingFor = !currentLookingFor;
+                }
+                assert mdd.isPositive(currentNode);
+                assert !isFalse(currentNode, currentLookingFor);
+                leafNodeVariable = branchVar;
+
+                // We maxed out the candidate for increase, clear this information
+                if (highestSwitchableVariable == branchVar) {
+                    highestSwitchableVariable = -1;
+                    /*for (int val = assignment[branchVar] + 1; val < children.length; val++) {
+                        if (children[val] != FALSE_NODE) {
+                            highestSwitchableVariable = branchVar;
+                            break;
+                        }
+                    }*/
+                }
+            }
+
+            // Situation: Either the currentNode valuation was just increased or we are in initial state.
+            // Descend the tree, searching for a solution and determine if there is a next assignment.
+
+            // If there is a possible path higher up, there definitely are more solutions
+            hasNextPath = highestSwitchableVariable > -1 && highestSwitchableVariable < leafNodeVariable;
+
+            while (!isTrue(currentNode, currentLookingFor)) {
+                assert mdd.isPositive(currentNode) && !mdd.isConstant(currentNode);
+
+                leafNodeVariable = mdd.table.variable(currentNode);
+                path[leafNodeVariable] = currentNode;
+                pathSupport.set(leafNodeVariable);
+                pathLookingFor[leafNodeVariable] = currentLookingFor;
+
+                int[] children = mdd.table.children(currentNode);
+                int domain = children.length;
+                int val = 0;
+                while (isFalse(children[val], currentLookingFor)) {
+                    val += 1;
+                }
+                assignment[leafNodeVariable] = val;
+                int child = mdd.follow(currentNode, val);
+
+                if (!hasNextPath) {
+                    val += 1;
+                    while (val < domain) {
+                        if (isFalse(children[val], currentLookingFor)) {
+                            val += 1;
+                        } else {
+                            hasNextPath = true;
+                            highestSwitchableVariable = leafNodeVariable; // NOPMD
+                            break;
+                        }
+                    }
+                }
+
+                currentNode = positive(child);
+                if (currentNode != child) {
+                    currentLookingFor = !currentLookingFor;
+                }
+            }
+            assert mdd.evaluate(complementIf(path[rootVariable], !pathLookingFor[rootVariable]), assignment);
+
             return assignment;
         }
     }
