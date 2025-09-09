@@ -23,9 +23,68 @@ import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.function.IntConsumer;
+import java.util.function.IntPredicate;
+import java.util.function.IntSupplier;
+import java.util.function.ToIntFunction;
+import java.util.stream.IntStream;
 
 public final class BitSets {
     private BitSets() {}
+
+    public static BitSet of(int value) {
+        BitSet set = new BitSet(value + 1);
+        set.set(value);
+        return set;
+    }
+
+    public static BitSet of(int... values) {
+        BitSet set = new BitSet();
+        for (int value : values) {
+            set.set(value);
+        }
+        return set;
+    }
+
+    public static BitSet of(Iterator<Integer> values) {
+        BitSet set = new BitSet();
+        while (values.hasNext()) {
+            set.set(values.next());
+        }
+        return set;
+    }
+
+    public static BitSet of(Iterable<Integer> values) {
+        return of(values.iterator());
+    }
+
+    public static BitSet of(IntSupplier values) {
+        BitSet set = new BitSet();
+        while (true) {
+            int value = values.getAsInt();
+            if (value < 0) {
+                return set;
+            }
+            set.set(value);
+        }
+    }
+
+    public static BitSet of(IntStream values) {
+        BitSet set = new BitSet();
+        values.forEach(set::set);
+        return set;
+    }
+
+    public static <V> BitSet of(Iterator<V> iterator, ToIntFunction<? super V> mapper) {
+        BitSet set = new BitSet();
+        while (iterator.hasNext()) {
+            set.set(mapper.applyAsInt(iterator.next()));
+        }
+        return set;
+    }
+
+    public static <V> BitSet of(Iterable<V> values, ToIntFunction<? super V> mapper) {
+        return of(values.iterator(), mapper);
+    }
 
     @SuppressWarnings("UseOfClone")
     public static BitSet copyOf(BitSet set) {
@@ -33,12 +92,28 @@ public final class BitSets {
     }
 
     public static boolean isSubset(BitSet set, BitSet of) {
-        if (set.cardinality() > of.cardinality()) {
+        int cardinality = set.cardinality();
+        if (cardinality > of.cardinality()) {
             return false;
         }
-        if (set.length() > of.length()) {
-            return false;
+        if (cardinality == 0) {
+            return true;
         }
+        if (cardinality == 1) {
+            return of.get(set.nextSetBit(0));
+        }
+
+        int length = set.length();
+        if (cardinality < length / 32) {
+            // Very sparse set, avoid copying it
+            for (int i = set.nextSetBit(0); i >= 0; i = set.nextSetBit(i + 1)) {
+                if (!of.get(i)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         BitSet copy = copyOf(set);
         copy.andNot(of);
         return copy.isEmpty();
@@ -72,6 +147,24 @@ public final class BitSets {
         for (int i = bitSet.nextSetBit(0); i >= 0; i = bitSet.nextSetBit(i + 1)) {
             action.accept(i);
         }
+    }
+
+    public static boolean anyMatch(BitSet bitSet, IntPredicate predicate) {
+        for (int i = bitSet.nextSetBit(0); i >= 0; i = bitSet.nextSetBit(i + 1)) {
+            if (predicate.test(i)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static boolean allMatch(BitSet bitSet, IntPredicate predicate) {
+        for (int i = bitSet.nextSetBit(0); i >= 0; i = bitSet.nextSetBit(i + 1)) {
+            if (!predicate.test(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static final class PowerIteratorShift implements Iterator<BitSet> {

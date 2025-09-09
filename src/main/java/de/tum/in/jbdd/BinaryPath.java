@@ -67,4 +67,9 @@ public final class BinaryPath {
                 && this.assignment.equals(((BinaryPath) obj).assignment)
                 && this.support.equals(((BinaryPath) obj).support);
     }
+
+    @Override
+    public int hashCode() {
+        return 31 * assignment.hashCode() + support.hashCode();
+    }
 }

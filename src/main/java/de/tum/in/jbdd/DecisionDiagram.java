@@ -27,7 +27,7 @@ import java.util.function.IntConsumer;
  */
 public interface DecisionDiagram {
     /**
-     * A special reserved placeholder distinct from any possible function or node value, which may be used as a
+     * A special reserved placeholder distinct from any possible function, which may be used as a
      * placeholder in some operations. Needs to stay constant throughout the life of the diagram.
      */
     int placeholder();
@@ -36,7 +36,7 @@ public interface DecisionDiagram {
      * Determines whether the given {@code function} is a constant, e.g. {@code true} or {@code false}.
      *
      * @param function The function to be checked.
-     * @return If the {@code node} represents a constant.
+     * @return If the {@code function} represents a constant.
      */
     boolean isConstant(int function);
 

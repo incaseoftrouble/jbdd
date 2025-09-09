@@ -17,40 +17,29 @@
 package de.tum.in.jbdd;
 
 import java.math.BigInteger;
-import java.util.ArrayList;
 import java.util.BitSet;
-import java.util.HashMap;
 import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.function.BiConsumer;
 import java.util.function.IntConsumer;
-import java.util.function.Predicate;
+import java.util.function.IntPredicate;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.annotation.Nullable;
 
 @SuppressWarnings("PMD")
-abstract class MtBddImpl<V> implements MtBdd<V>, NodeBasedDecisionDiagram {
+abstract class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     private static final Logger logger = Logger.getLogger(MtBddImpl.class.getName());
 
     private final BddImpl bdd;
-    private final Class<V> valueType;
-    private final List<V> values;
-    private final Map<V, Integer> valueToTerminal = new HashMap<>();
-    private final Map<Integer, V> terminalToValue = new HashMap<>();
-
-    private final MtBddTable<V> table;
-
+    private final MtBddTable table;
+    private int[] valueReferenceCounts;
     private int numberOfVariables = 0;
 
-    MtBddImpl(BddImpl bdd, Class<V> valueType) {
+    MtBddImpl(BddImpl bdd) {
         this.bdd = bdd;
-        this.valueType = valueType;
-        this.values = new ArrayList<>();
-
-        this.table = new MtBddTable<>(this, 1024);
+        this.table = new MtBddTable(this, 1024);
+        this.valueReferenceCounts = new int[1024];
     }
 
     @Override
@@ -58,9 +47,14 @@ abstract class MtBddImpl<V> implements MtBdd<V>, NodeBasedDecisionDiagram {
         return bdd;
     }
 
-    @Override
-    public Class<V> valueType() {
-        return valueType;
+    private static int valueToConstant(int value) {
+        assert value >= 0;
+        return -value - 1;
+    }
+
+    private static int constantToValue(int function) {
+        assert function < 0;
+        return -function - 1;
     }
 
     // Reference counting
@@ -68,14 +62,22 @@ abstract class MtBddImpl<V> implements MtBdd<V>, NodeBasedDecisionDiagram {
     @Override
     public int reference(int function) {
         assert isValidFunction(function);
-        table.referenceNode(function);
+        if (isConstant(function)) {
+            valueReferenceCounts[constantToValue(function)] += 1;
+        } else {
+            table.referenceNode(function);
+        }
         return function;
     }
 
     @Override
     public int dereference(int function) {
         assert isValidFunction(function);
-        table.dereferenceNode(function);
+        if (isConstant(function)) {
+            valueReferenceCounts[constantToValue(function)] -= 1;
+        } else {
+            table.dereferenceNode(function);
+        }
         return function;
     }
 
@@ -145,7 +147,7 @@ abstract class MtBddImpl<V> implements MtBdd<V>, NodeBasedDecisionDiagram {
     }
 
     public boolean isValidFunction(int function) {
-        return function < 0 ? terminalToValue.containsKey(function) : table.isValidNode(function);
+        return function < 0 || table.isValidNode(function);
     }
 
     private boolean isValidNonConstantFunction(int function) {
@@ -164,18 +166,18 @@ abstract class MtBddImpl<V> implements MtBdd<V>, NodeBasedDecisionDiagram {
     }
 
     @Override
-    public V evaluate(int function, boolean[] assignment) {
+    public int evaluate(int function, boolean[] assignment) {
         assert isValidFunction(function);
         int currentNode = function;
         while (!isConstant(currentNode)) {
             assert table.isValidNode(currentNode);
             currentNode = assignment[decisionVariable(currentNode)] ? table.high(currentNode) : table.low(currentNode);
         }
-        return terminalToValue.get(currentNode);
+        return constantToValue(currentNode);
     }
 
     @Override
-    public V evaluate(int function, BitSet assignment) {
+    public int evaluate(int function, BitSet assignment) {
         assert isValidFunction(function);
         int currentNode = function;
         while (!isConstant(currentNode)) {
@@ -183,19 +185,13 @@ abstract class MtBddImpl<V> implements MtBdd<V>, NodeBasedDecisionDiagram {
             currentNode =
                     assignment.get(decisionVariable(currentNode)) ? table.high(currentNode) : table.low(currentNode);
         }
-        return terminalToValue.get(currentNode);
+        return constantToValue(currentNode);
     }
 
     @Override
-    public int of(V value) {
-        return valueToTerminal.computeIfAbsent(value, k -> {
-            int node = -1;
-            while (terminalToValue.containsKey(node)) {
-                node -= 1;
-            }
-            terminalToValue.put(node, k);
-            return node;
-        });
+    public int of(int value) {
+        assert value >= 0;
+        return valueToConstant(value);
     }
 
     @Override
@@ -204,7 +200,7 @@ abstract class MtBddImpl<V> implements MtBdd<V>, NodeBasedDecisionDiagram {
     }
 
     @Override
-    public Optional<BitSet> anyAssignment(int function, Predicate<? super V> values) {
+    public Optional<BitSet> anyAssignment(int function, IntPredicate values) {
         assert isValidFunction(function);
 
         BitSet assigment = new BitSet(numberOfVariables);
@@ -212,9 +208,9 @@ abstract class MtBddImpl<V> implements MtBdd<V>, NodeBasedDecisionDiagram {
         return found ? Optional.of(assigment) : Optional.empty();
     }
 
-    private boolean anyAssigmentRecursive(int function, Predicate<? super V> values, BitSet assignment) {
+    private boolean anyAssigmentRecursive(int function, IntPredicate values, BitSet assignment) {
         if (isConstant(function)) {
-            if (values.test(terminalToValue.get(function))) {
+            if (values.test(constantToValue(function))) {
                 return true;
             }
         }
@@ -229,37 +225,35 @@ abstract class MtBddImpl<V> implements MtBdd<V>, NodeBasedDecisionDiagram {
     }
 
     @Override
-    public BigInteger countAssignments(int function, Predicate<? super V> values) {
+    public BigInteger countAssignments(int function, IntPredicate values) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public BigInteger countAssignments(int function, Predicate<? super V> values, BitSet support) {
+    public BigInteger countAssignments(int function, IntPredicate values, BitSet support) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public Iterator<BitSet> assignmentIterator(int function, Predicate<? super V> values) {
+    public Iterator<BitSet> assignmentIterator(int function, IntPredicate values) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public Iterator<BitSet> assignmentIterator(int function, Predicate<? super V> values, BitSet support) {
+    public Iterator<BitSet> assignmentIterator(int function, IntPredicate values, BitSet support) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public void forEachPath(int function, BiConsumer<BinaryPath, ? super V> action) {
+    public void forEachPath(int function, BiConsumer<BinaryPath, Integer> action) {
         throw new UnsupportedOperationException();
     }
 
-    private static final class MtBddTable<V> extends NodeTable.Binary {
-        private final MtBddImpl<V> mtbdd;
-        private Map<V, Integer> valueToTerminal;
-        // <--REF--><MARK>
-        private int[] terminalData;
+    private static final class MtBddTable extends NodeTable.Binary {
+        private final MtBddImpl mtbdd;
+        private final BitSet markedValues = new BitSet();
 
-        MtBddTable(MtBddImpl<V> mtbdd, int initialSize) {
+        MtBddTable(MtBddImpl mtbdd, int initialSize) {
             super(initialSize);
             this.mtbdd = mtbdd;
         }
@@ -274,28 +268,46 @@ abstract class MtBddImpl<V> implements MtBdd<V>, NodeBasedDecisionDiagram {
             return mtbdd.isValidFunction(pointer);
         }
 
+        private boolean isUnmarkedConstant(int node) {
+            return mtbdd.isConstant(node) && !markedValues.get(constantToValue(node));
+        }
+
+        private boolean isMarkedConstant(int node) {
+            return mtbdd.isConstant(node) && markedValues.get(constantToValue(node));
+        }
+
         @Override
         protected boolean recurseNoneMarkedBelow(int node) {
             int low = low(node);
             int high = high(node);
-            return (mtbdd.isConstant(node) || doIsNoneMarkedBelow(low))
-                    && (mtbdd.isConstant(high) || doIsNoneMarkedBelow(high));
+            return (isUnmarkedConstant(low) || doIsNoneMarkedBelow(low))
+                    && (isUnmarkedConstant(high) || doIsNoneMarkedBelow(high));
         }
 
         @Override
         protected boolean recurseIsAllMarkedBelow(int node) {
             int low = low(node);
             int high = high(node);
-            return (mtbdd.isConstant(node) || doIsAllMarkedBelow(low))
-                    && (mtbdd.isConstant(high) || doIsAllMarkedBelow(high));
+            return (isMarkedConstant(low) || doIsAllMarkedBelow(low))
+                    && (isMarkedConstant(high) || doIsAllMarkedBelow(high));
         }
 
         @Override
         protected int recurseSetMarkBelow(int node, boolean mark) {
             int low = low(node);
             int high = high(node);
-            return (mtbdd.isConstant(node) ? 0 : doSetMarkBelow(low, mark))
-                    + (mtbdd.isConstant(high) ? 0 : doSetMarkBelow(high, mark));
+            int sum = 0;
+            if (mtbdd.isConstant(low)) {
+                markedValues.set(constantToValue(low), mark);
+            } else {
+                sum += doSetMarkBelow(low, mark);
+            }
+            if (mtbdd.isConstant(high)) {
+                markedValues.set(constantToValue(high), mark);
+            } else {
+                sum += doSetMarkBelow(high, mark);
+            }
+            return sum;
         }
 
         @Override

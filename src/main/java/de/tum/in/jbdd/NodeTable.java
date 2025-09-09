@@ -32,7 +32,7 @@ import javax.annotation.Nullable;
 abstract class NodeTable {
     private static final Logger logger = Logger.getLogger(NodeTable.class.getName());
 
-    // Use 0 as "not a node" to make re-allocations slightly more efficient
+    // Use 0 as "not a node" to make re-allocations slightly more efficient (arrays are always filled with zeroes)
     public static final int PLACEHOLDER = 0;
     static final int FIRST_NODE = 1;
 
@@ -150,7 +150,7 @@ abstract class NodeTable {
         return freeNodeCount;
     }
 
-    protected abstract int nodeFor(int node);
+    protected abstract int nodeFor(int pointer);
 
     protected abstract boolean isConstantPointer(int pointer);
 
@@ -632,6 +632,8 @@ abstract class NodeTable {
     }
 
     // Tree marking
+
+    // TODO: abstract boolean isConstantMarked(...) etc.
 
     public boolean isNoneMarkedBelowNode(int node) {
         assert isValidNodeOrPlaceholder(node);
