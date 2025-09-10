@@ -137,7 +137,7 @@ abstract class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
 
     @Override
     public int nodeFor(int function) {
-        return isConstant(function) ? NodeTable.PLACEHOLDER : function;
+        return function;
     }
 
     @Override
@@ -147,11 +147,11 @@ abstract class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     }
 
     public boolean isValidFunction(int function) {
-        return function < 0 || table.isValidNode(function);
+        return function < 0 || table.isValidDecisionNode(function);
     }
 
     private boolean isValidNonConstantFunction(int function) {
-        return function > 0 && table.isValidNode(function);
+        return function > 0 && table.isValidDecisionNode(function);
     }
 
     @Override
@@ -170,7 +170,7 @@ abstract class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         assert isValidFunction(function);
         int currentNode = function;
         while (!isConstant(currentNode)) {
-            assert table.isValidNode(currentNode);
+            assert table.isValidDecisionNode(currentNode);
             currentNode = assignment[decisionVariable(currentNode)] ? table.high(currentNode) : table.low(currentNode);
         }
         return constantToValue(currentNode);
@@ -181,7 +181,7 @@ abstract class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         assert isValidFunction(function);
         int currentNode = function;
         while (!isConstant(currentNode)) {
-            assert table.isValidNode(currentNode);
+            assert table.isValidDecisionNode(currentNode);
             currentNode =
                     assignment.get(decisionVariable(currentNode)) ? table.high(currentNode) : table.low(currentNode);
         }
@@ -245,6 +245,11 @@ abstract class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     }
 
     @Override
+    public Product cartesianProduct(int[] functions) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void forEachPath(int function, BiConsumer<BinaryPath, Integer> action) {
         throw new UnsupportedOperationException();
     }
@@ -259,7 +264,7 @@ abstract class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         }
 
         @Override
-        public boolean isConstantPointer(int pointer) {
+        public boolean isValidConstant(int pointer) {
             return mtbdd.isConstant(pointer);
         }
 
@@ -293,6 +298,11 @@ abstract class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         }
 
         @Override
+        protected void markLeafNodeIfManaged(int node, boolean mark) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         protected int recurseSetMarkBelow(int node, boolean mark) {
             int low = low(node);
             int high = high(node);
@@ -323,8 +333,18 @@ abstract class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         }
 
         @Override
-        public int nodeFor(int pointer) {
-            return pointer;
+        public int treeNodeFor(int pointer) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        protected boolean isLeafNode(int node) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        protected boolean isValidLeafNode(int node) {
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -364,6 +384,24 @@ abstract class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
             // mtbdd.cache.tableSizeChanged();
             assert mtbdd.check();
             return true;
+        }
+
+        @Override
+        protected boolean anyManagedLeafMarked() {
+            return false;
+        }
+
+        @Override
+        protected void unmarkAllManagedLeafs() {}
+
+        @Override
+        protected boolean isLeafNodeMarkedOrUnmanaged(int leaf) {
+            return false;
+        }
+
+        @Override
+        protected boolean isLeafUnmarkedOrUnmanaged(int leaf) {
+            return false;
         }
 
         @Override

@@ -68,7 +68,7 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
     }
 
     boolean isValidNonConstantFunction(int function) {
-        return table().isValidNode(positive(function));
+        return table().isValidDecisionNode(positive(function));
     }
 
     // Reference counting
@@ -141,7 +141,7 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
 
     @Override
     public boolean isSaturatedNode(int node) {
-        return table().isSaturatedNode(node);
+        return node == TRUE || table().isSaturatedNode(node);
     }
 
     @Override
@@ -185,13 +185,13 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
      */
     public boolean isValidFunction(int function) {
         int positive = positive(function);
-        return positive == TRUE || table().isValidNode(positive);
+        return positive == TRUE || table().isValidDecisionNode(positive);
     }
 
     @Override
     public int nodeFor(int function) {
-        int node = positive(function);
-        return node == TRUE ? NodeTable.PLACEHOLDER : node;
+        assert isValidFunction(function);
+        return positive(function);
     }
 
     @Override

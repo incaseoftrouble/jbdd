@@ -187,7 +187,7 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         int currentNode = positive(function);
         boolean lookingFor = currentNode == function;
         while (currentNode != TRUE) {
-            assert table.isValidNode(currentNode);
+            assert table.isValidDecisionNode(currentNode);
             if (assignment[decisionVariable(currentNode)]) {
                 currentNode = table.high(currentNode);
             } else {
@@ -208,7 +208,7 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         int currentNode = positive(function);
         boolean lookingFor = currentNode == function;
         while (currentNode != TRUE) {
-            assert table.isValidNode(currentNode);
+            assert table.isValidDecisionNode(currentNode);
             if (assignment.get(table.variable(currentNode))) {
                 currentNode = table.high(currentNode);
             } else {
@@ -344,7 +344,7 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             action.accept(path);
             return;
         }
-        assert table.isValidNode(node);
+        assert table.isValidDecisionNode(node);
         assert !isConstant(node);
 
         int variable = table.variable(node);
@@ -406,7 +406,7 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             assert lookingFor;
             return predicate.test(path);
         }
-        assert table.isValidNode(node);
+        assert table.isValidDecisionNode(node);
         assert !isConstant(node);
 
         int variable = table.variable(node);
@@ -1543,7 +1543,7 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
 
         @Override
-        public boolean isConstantPointer(int pointer) {
+        public boolean isValidConstant(int pointer) {
             return bdd.isConstant(pointer);
         }
 
@@ -1567,6 +1567,11 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
 
         @Override
+        protected void markLeafNodeIfManaged(int node, boolean mark) {
+            // Nothing to do
+        }
+
+        @Override
         protected int recurseSetMarkBelow(int node, boolean mark) {
             int low = positive(low(node));
             int high = high(node);
@@ -1586,8 +1591,18 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
 
         @Override
-        public int nodeFor(int pointer) {
+        public int treeNodeFor(int pointer) {
             return bdd.nodeFor(pointer);
+        }
+
+        @Override
+        protected boolean isLeafNode(int node) {
+            return node == TRUE;
+        }
+
+        @Override
+        protected boolean isValidLeafNode(int node) {
+            return node == TRUE;
         }
 
         @Override
@@ -1625,6 +1640,26 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             table.grow((int) (currentSize * bdd.configuration.growthFactor()));
             bdd.cache.tableSizeChanged();
             assert bdd.check();
+            return true;
+        }
+
+        @Override
+        protected boolean anyManagedLeafMarked() {
+            return false;
+        }
+
+        @Override
+        protected void unmarkAllManagedLeafs() {
+            // Nothing to do
+        }
+
+        @Override
+        protected boolean isLeafNodeMarkedOrUnmanaged(int leaf) {
+            return true;
+        }
+
+        @Override
+        protected boolean isLeafUnmarkedOrUnmanaged(int leaf) {
             return true;
         }
 

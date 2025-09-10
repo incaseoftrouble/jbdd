@@ -19,6 +19,7 @@ package de.tum.in.jbdd;
 import java.math.BigInteger;
 import java.util.BitSet;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
@@ -227,6 +228,13 @@ public interface MtBdd extends BooleanDecisionDiagram {
     int split(int function, BitSet splitVariables);
 
     /**
+     * Creates the product of the given {@code functions}. Suppose each function is {@code f_i(x_1, ..., x_n}},
+     * then their product is a function {@code f(x)} that yields {@code [f_1(x), ..., f_m(x)]}. The returned
+     * function indexes the {@code values} map. The outputs of {@code f} do not need to be dense.
+     */
+    Product cartesianProduct(int[] functions);
+
+    /**
      * Constructs a simplified version of the given {@code function} which is equivalent to it for all assignments
      * where {@code domain} is true. This is equivalent to {@code IF domain THEN function ELSE x} where {@code x}
      * is any function.
@@ -241,5 +249,11 @@ public interface MtBdd extends BooleanDecisionDiagram {
         int functionFor(int value);
 
         BitSet values();
+    }
+
+    interface Product {
+        int function();
+
+        Map<Integer, int[]> values();
     }
 }
