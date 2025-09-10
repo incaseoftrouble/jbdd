@@ -18,7 +18,7 @@ package de.tum.in.jbdd;
 
 public interface NodeBasedDecisionDiagram extends DecisionDiagram {
     /**
-     * Returns the <em>node</em> which is used to represent the given {@code function} internally or {}
+     * Returns the <em>node</em> which is used to represent the given {@code function} internally
      *
      * <p>This is an implementation detail of decision diagrams, exposed to allow for
      * interaction tailored towards the underlying structure.</p>

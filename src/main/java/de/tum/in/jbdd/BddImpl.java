@@ -17,14 +17,10 @@
 package de.tum.in.jbdd;
 
 import java.math.BigInteger;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
@@ -40,12 +36,11 @@ import javax.annotation.Nullable;
  */
 @SuppressWarnings({
     "PMD.AvoidReassigningParameters",
-    "PMD.TooManyFields",
     "ReassignedVariable",
     "AssignmentToMethodParameter",
     "SameParameterValue"
 })
-final class BddImpl extends BooleanBase<BitSet, BddPath> implements Bdd {
+final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     private static final Logger logger = Logger.getLogger(BddImpl.class.getName());
 
     private final BooleanCache cache;
@@ -192,7 +187,7 @@ final class BddImpl extends BooleanBase<BitSet, BddPath> implements Bdd {
         int currentNode = positive(function);
         boolean lookingFor = currentNode == function;
         while (currentNode != TRUE) {
-            assert table.isValidNode(currentNode);
+            assert table.isValidDecisionNode(currentNode);
             if (assignment[decisionVariable(currentNode)]) {
                 currentNode = table.high(currentNode);
             } else {
@@ -213,7 +208,7 @@ final class BddImpl extends BooleanBase<BitSet, BddPath> implements Bdd {
         int currentNode = positive(function);
         boolean lookingFor = currentNode == function;
         while (currentNode != TRUE) {
-            assert table.isValidNode(currentNode);
+            assert table.isValidDecisionNode(currentNode);
             if (assignment.get(table.variable(currentNode))) {
                 currentNode = table.high(currentNode);
             } else {
@@ -278,7 +273,7 @@ final class BddImpl extends BooleanBase<BitSet, BddPath> implements Bdd {
     public Iterator<BitSet> solutionIterator(int function, BitSet support) {
         assert isValidFunction(function);
 
-        if (support.isEmpty() || function == FALSE) {
+        if (function == FALSE) {
             return Collections.emptyIterator();
         }
         if (function == TRUE) {
@@ -289,36 +284,51 @@ final class BddImpl extends BooleanBase<BitSet, BddPath> implements Bdd {
     }
 
     @Override
-    public void forEachPath(int function, Consumer<? super BddPath> action) {
+    public Iterator<BinaryPath> pathIterator(int function) {
+        assert isValidFunction(function);
+
+        if (function == FALSE) {
+            return Collections.emptyIterator();
+        }
+        if (function == TRUE) {
+            BitSet set = new BitSet();
+            return Collections.singleton(new BinaryPath(set, set)).iterator();
+        }
+
+        return new BooleanFunctionPathIterator(this, function);
+    }
+
+    @Override
+    public void forEachPath(int function, Consumer<? super BinaryPath> action) {
         assert isValidFunction(function);
 
         if (function == FALSE) {
             return;
         }
         if (function == TRUE) {
-            action.accept(new BddPath(new BitSet(0), new BitSet(0)));
+            action.accept(new BinaryPath(new BitSet(0), new BitSet(0)));
             return;
         }
 
         int numberOfVariables = numberOfVariables();
-        BddPath path = new BddPath(new BitSet(numberOfVariables), new BitSet(numberOfVariables));
+        BinaryPath path = new BinaryPath(new BitSet(numberOfVariables), new BitSet(numberOfVariables));
         forEachPathRecursive(positive(function), null, numberOfVariables, path, action, isPositive(function));
     }
 
     @Override
-    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super BddPath> action) {
+    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super BinaryPath> action) {
         assert isValidFunction(function);
 
         if (function == FALSE) {
             return;
         }
         if (function == TRUE || relevantSet.isEmpty()) {
-            action.accept(new BddPath(new BitSet(0), new BitSet(0)));
+            action.accept(new BinaryPath(new BitSet(0), new BitSet(0)));
             return;
         }
 
         int highestVariable = relevantSet.length() - 1;
-        BddPath path = new BddPath(new BitSet(highestVariable + 1), new BitSet(highestVariable + 1));
+        BinaryPath path = new BinaryPath(new BitSet(highestVariable + 1), new BitSet(highestVariable + 1));
         forEachPathRecursive(positive(function), relevantSet, highestVariable, path, action, isPositive(function));
     }
 
@@ -326,15 +336,15 @@ final class BddImpl extends BooleanBase<BitSet, BddPath> implements Bdd {
             int node,
             @Nullable BitSet support,
             int depthLimit,
-            BddPath path,
-            Consumer<? super BddPath> action,
+            BinaryPath path,
+            Consumer<? super BinaryPath> action,
             boolean lookingFor) {
         if (node == TRUE) {
             assert lookingFor;
             action.accept(path);
             return;
         }
-        assert table.isValidNode(node);
+        assert table.isValidDecisionNode(node);
         assert !isConstant(node);
 
         int variable = table.variable(node);
@@ -375,28 +385,28 @@ final class BddImpl extends BooleanBase<BitSet, BddPath> implements Bdd {
     }
 
     @Override
-    public boolean anyPathMatches(int function, Predicate<? super BddPath> predicate) {
+    public boolean anyPathMatches(int function, Predicate<? super BinaryPath> predicate) {
         assert isValidFunction(function);
 
         if (function == FALSE) {
             return false;
         }
         if (function == TRUE) {
-            return predicate.test(new BddPath(new BitSet(0), new BitSet(0)));
+            return predicate.test(new BinaryPath(new BitSet(0), new BitSet(0)));
         }
 
         int numberOfVariables = numberOfVariables();
-        BddPath path = new BddPath(new BitSet(numberOfVariables), new BitSet(numberOfVariables));
+        BinaryPath path = new BinaryPath(new BitSet(numberOfVariables), new BitSet(numberOfVariables));
         return anyPathMatchesRecursive(positive(function), path, predicate, isPositive(function));
     }
 
     private boolean anyPathMatchesRecursive(
-            int node, BddPath path, Predicate<? super BddPath> predicate, boolean lookingFor) {
+            int node, BinaryPath path, Predicate<? super BinaryPath> predicate, boolean lookingFor) {
         if (node == TRUE) {
             assert lookingFor;
             return predicate.test(path);
         }
-        assert table.isValidNode(node);
+        assert table.isValidDecisionNode(node);
         assert !isConstant(node);
 
         int variable = table.variable(node);
@@ -1110,7 +1120,7 @@ final class BddImpl extends BooleanBase<BitSet, BddPath> implements Bdd {
     }
 
     @Override
-    public int constrain(int function, int domain) {
+    public int simplify(int function, int domain) {
         assert isValidFunction(function) && isValidFunction(domain);
 
         if (domain == FALSE) {
@@ -1179,19 +1189,6 @@ final class BddImpl extends BooleanBase<BitSet, BddPath> implements Bdd {
         }
         cache.putConstrain(hash, functionNode, domain, result);
         return complementIf(result, func);
-    }
-
-    // MTBDD
-
-    @Override
-    public <V> MtBdd<V> createMtBdd(Class<V> clazz) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public <V> MtBdd<List<V>> intersect(List<MtBdd<? extends V>> mtBddList, Class<V> clazz) {
-        assert mtBddList.stream().allMatch(m -> clazz.isAssignableFrom(m.valueType()));
-        throw new UnsupportedOperationException();
     }
 
     // Statistics and Formatting
@@ -1400,27 +1397,140 @@ final class BddImpl extends BooleanBase<BitSet, BddPath> implements Bdd {
         }
     }
 
-    @SuppressWarnings("PMD")
-    abstract static class MtBddImpl<V> implements MtBdd<V> {
+    static final class BooleanFunctionPathIterator implements Iterator<BinaryPath> {
+        private static final int NON_PATH_NODE = NodeTable.PLACEHOLDER;
+
         private final BddImpl bdd;
-        private final Class<V> valueType;
-        private final List<V> values;
-        private final Map<V, Integer> valueToNode = new HashMap<>();
+        private final int variableCount;
+        private final BitSet assignment;
+        private final int[] path;
+        private final BitSet pathSupport;
+        private final boolean[] pathLookingFor;
+        private boolean firstRun = true;
+        private int highestSwitchableVariable = 0;
+        private int leafNodeVariable;
+        private boolean hasNextPath;
+        private final int rootVariable;
 
-        MtBddImpl(BddImpl bdd, Class<V> valueType) {
+        BooleanFunctionPathIterator(BddImpl bdd, int function) {
+            assert bdd.isValidNonConstantFunction(function);
+            variableCount = bdd.numberOfVariables();
+
             this.bdd = bdd;
-            this.valueType = valueType;
-            this.values = new ArrayList<>();
+            this.path = new int[variableCount];
+            this.pathLookingFor = new boolean[variableCount];
+            this.assignment = new BitSet(variableCount);
+            this.pathSupport = new BitSet(variableCount);
+            rootVariable = bdd.decisionVariable(function);
+
+            Arrays.fill(path, NON_PATH_NODE);
+            path[rootVariable] = positive(function);
+            pathSupport.set(rootVariable);
+            pathLookingFor[rootVariable] = bdd.isPositive(function);
+
+            leafNodeVariable = 0;
+            hasNextPath = true;
         }
 
         @Override
-        public Bdd bdd() {
-            return bdd;
+        public boolean hasNext() {
+            return hasNextPath;
         }
 
         @Override
-        public Class<V> valueType() {
-            return valueType;
+        public BinaryPath next() {
+            assert IntStream.range(0, variableCount).allMatch(i -> pathSupport.get(i) || path[i] == NON_PATH_NODE);
+
+            int currentNode;
+            boolean currentLookingFor;
+            if (firstRun) {
+                firstRun = false;
+                currentNode = path[rootVariable];
+                currentLookingFor = pathLookingFor[rootVariable];
+            } else {
+                assert IntStream.range(0, variableCount)
+                        .noneMatch(index -> path[index] == NON_PATH_NODE && assignment.get(index));
+                assert hasNextPath
+                        : "Expected another path after " + assignment + ", node:\n"
+                                + bdd.table.treeToString(path[rootVariable]);
+
+                // Backtrack on the current path until we find a node set to low and non-false high branch
+                // to find a new path in the BDD
+                // TODO Use highestLowVariableWithNonFalseHighBranch?
+                currentNode = path[leafNodeVariable];
+                currentLookingFor = pathLookingFor[leafNodeVariable];
+                int branchVar = leafNodeVariable;
+
+                while (assignment.get(branchVar) || isFalse(bdd.table.high(currentNode), currentLookingFor)) {
+                    // This node does not give us another branch, backtrack over the path until we get to
+                    // the next element of the path
+                    branchVar = pathSupport.previousSetBit(branchVar - 1);
+                    if (branchVar == -1) {
+                        throw new NoSuchElementException("No next element");
+                    }
+                    currentNode = path[branchVar];
+                    currentLookingFor = pathLookingFor[branchVar];
+                }
+                assert !assignment.get(branchVar) && bdd.table.high(currentNode) != FALSE;
+                assert leafNodeVariable >= highestSwitchableVariable;
+                assert bdd.decisionVariable(currentNode) == branchVar;
+                assert pathSupport.get(branchVar);
+
+                // currentNode is the lowest node we can switch high; set the value and descend the tree
+                assignment.clear(branchVar + 1, leafNodeVariable + 1);
+                Arrays.fill(path, branchVar + 1, leafNodeVariable + 1, NON_PATH_NODE);
+                pathSupport.clear(branchVar + 1, leafNodeVariable + 1);
+
+                assignment.set(branchVar);
+                assert path[branchVar] == currentNode;
+                currentNode = bdd.table.high(currentNode);
+                assert bdd.isPositive(currentNode);
+                assert !isFalse(currentNode, currentLookingFor);
+                leafNodeVariable = branchVar;
+
+                // We flipped the candidate for low->high transition, clear this information
+                if (highestSwitchableVariable == leafNodeVariable) {
+                    highestSwitchableVariable = -1;
+                }
+            }
+
+            // Situation: The currentNode valuation was just flipped to 1 or we are in initial state.
+            // Descend the tree, searching for a solution and determine if there is a next assignment.
+
+            // If there is a possible path higher up, there definitely are more solutions
+            hasNextPath = highestSwitchableVariable > -1 && highestSwitchableVariable < leafNodeVariable;
+
+            while (!isTrue(currentNode, currentLookingFor)) {
+                assert bdd.isPositive(currentNode) && !bdd.isConstant(currentNode);
+
+                leafNodeVariable = bdd.decisionVariable(currentNode);
+                path[leafNodeVariable] = currentNode;
+                pathSupport.set(leafNodeVariable);
+                pathLookingFor[leafNodeVariable] = currentLookingFor;
+
+                int low = bdd.table.low(currentNode);
+                if (isFalse(low, currentLookingFor)) {
+                    // Descend high path
+                    assignment.set(leafNodeVariable);
+                    currentNode = bdd.table.high(currentNode);
+                } else {
+                    // If there is a non-false high node, we will be able to swap this node later on, so we
+                    // definitely have a next assignment. On the other hand, if there is no such node, the
+                    // last possible assignment has been reached, as there are no more possible switches
+                    // higher up in the tree.
+                    if (!hasNextPath && !isFalse(bdd.table.high(currentNode), currentLookingFor)) {
+                        hasNextPath = true;
+                        highestSwitchableVariable = leafNodeVariable; // NOPMD
+                    }
+                    currentNode = positive(low);
+                    if (currentNode != low) {
+                        currentLookingFor = !currentLookingFor;
+                    }
+                }
+            }
+            assert bdd.evaluate(complementIf(path[rootVariable], !pathLookingFor[rootVariable]), assignment);
+
+            return new BinaryPath(assignment, pathSupport);
         }
     }
 
@@ -1433,7 +1543,7 @@ final class BddImpl extends BooleanBase<BitSet, BddPath> implements Bdd {
         }
 
         @Override
-        public boolean isConstantPointer(int pointer) {
+        public boolean isValidConstant(int pointer) {
             return bdd.isConstant(pointer);
         }
 
@@ -1457,6 +1567,11 @@ final class BddImpl extends BooleanBase<BitSet, BddPath> implements Bdd {
         }
 
         @Override
+        protected void markLeafNodeIfManaged(int node, boolean mark) {
+            // Nothing to do
+        }
+
+        @Override
         protected int recurseSetMarkBelow(int node, boolean mark) {
             int low = positive(low(node));
             int high = high(node);
@@ -1476,8 +1591,18 @@ final class BddImpl extends BooleanBase<BitSet, BddPath> implements Bdd {
         }
 
         @Override
-        public int nodeFor(int pointer) {
+        public int treeNodeFor(int pointer) {
             return bdd.nodeFor(pointer);
+        }
+
+        @Override
+        protected boolean isLeafNode(int node) {
+            return node == TRUE;
+        }
+
+        @Override
+        protected boolean isValidLeafNode(int node) {
+            return node == TRUE;
         }
 
         @Override
@@ -1515,6 +1640,26 @@ final class BddImpl extends BooleanBase<BitSet, BddPath> implements Bdd {
             table.grow((int) (currentSize * bdd.configuration.growthFactor()));
             bdd.cache.tableSizeChanged();
             assert bdd.check();
+            return true;
+        }
+
+        @Override
+        protected boolean anyManagedLeafMarked() {
+            return false;
+        }
+
+        @Override
+        protected void unmarkAllManagedLeafs() {
+            // Nothing to do
+        }
+
+        @Override
+        protected boolean isLeafNodeMarkedOrUnmanaged(int leaf) {
+            return true;
+        }
+
+        @Override
+        protected boolean isLeafUnmarkedOrUnmanaged(int leaf) {
             return true;
         }
 

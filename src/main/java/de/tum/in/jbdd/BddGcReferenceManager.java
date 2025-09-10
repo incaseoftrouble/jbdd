@@ -131,7 +131,7 @@ public class BddGcReferenceManager<V extends BddGcReferenceManager.BddContainer>
         }
     }
 
-    @SuppressWarnings("InterfaceMayBeAnnotatedFunctional")
+    @SuppressWarnings({"InterfaceMayBeAnnotatedFunctional", "PMD.ImplicitFunctionalInterface"})
     public interface BddContainer {
         int function();
     }

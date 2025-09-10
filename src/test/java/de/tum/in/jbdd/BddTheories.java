@@ -310,7 +310,7 @@ public class BddTheories {
         int[] composePlaceholderArray = new int[variableCount];
         for (int i = 0; i < variableCount; i++) { // NOPMD
             if (bdd.isVariable(composeArray[i]) && bdd.decisionVariable(composeArray[i]) == i) {
-                composePlaceholderArray[i] = NodeTable.PLACEHOLDER;
+                composePlaceholderArray[i] = bdd.placeholder();
             } else {
                 composePlaceholderArray[i] = composeArray[i];
             }
@@ -318,7 +318,7 @@ public class BddTheories {
 
         int[] composeCutoffArray = EMPTY_INTS;
         for (int i = composeArray.length - 1; i >= 0; i--) {
-            if (composePlaceholderArray[i] != NodeTable.PLACEHOLDER) {
+            if (composePlaceholderArray[i] != bdd.placeholder()) {
                 composeCutoffArray = Arrays.copyOf(composeArray, i + 1);
                 break;
             }
@@ -327,7 +327,7 @@ public class BddTheories {
         Map<Integer, SyntaxTree> replacementMap = new HashMap<>();
         for (int i = 0; i < composeArray.length; i++) {
             int variableReplacement = composeArray[i];
-            if (variableReplacement != NodeTable.PLACEHOLDER) {
+            if (variableReplacement != bdd.placeholder()) {
                 replacementMap.put(i, bddInfo.syntaxTreeMap.get(variableReplacement));
             }
         }
@@ -407,7 +407,7 @@ public class BddTheories {
         Map<Integer, SyntaxTree> replacementMap = new HashMap<>();
         for (int i = 0; i < composeArray.length; i++) {
             int variableReplacement = composeArray[i];
-            if (variableReplacement != NodeTable.PLACEHOLDER) {
+            if (variableReplacement != bdd.placeholder()) {
                 replacementMap.put(i, bddInfo.syntaxTreeMap.get(variableReplacement));
             }
         }
@@ -459,7 +459,7 @@ public class BddTheories {
         Map<Integer, SyntaxTree> replacementMap = new HashMap<>();
         for (int i = 0; i < composeArray.length; i++) {
             int variableReplacement = composeArray[i];
-            if (variableReplacement != NodeTable.PLACEHOLDER) {
+            if (variableReplacement != bdd.placeholder()) {
                 replacementMap.put(i, bddInfo.syntaxTreeMap.get(variableReplacement));
             }
         }
@@ -798,9 +798,9 @@ public class BddTheories {
 
         Set<BitSet> paths = new HashSet<>();
         bdd.forEachPartialPath(function, supportRestriction, path -> {
-            assertThat(BitSets.isSubset(path.viewSupport(), supportRestriction), is(true));
+            assertThat(BitSets.isSubset(path.support(), supportRestriction), is(true));
             paths.add(path.copyAssignment());
-            supportFromPathSupport.or(path.viewSupport());
+            supportFromPathSupport.or(path.support());
         });
         var supportCopy = BitSets.copyOf(support);
         supportCopy.and(supportRestriction);
@@ -836,13 +836,13 @@ public class BddTheories {
             minimalSolutions.add(path.copyAssignment());
             BitSet nonRelevantVariables = path.copySupport();
             nonRelevantVariables.flip(0, variableCount);
-            assertThat(nonRelevantVariables.intersects(path.viewAssignment()), is(false));
-            assertThat(bdd.evaluate(function, path.viewAssignment()), is(true));
+            assertThat(nonRelevantVariables.intersects(path.assignment()), is(false));
+            assertThat(bdd.evaluate(function, path.assignment()), is(true));
 
             Iterator<BitSet> iterator = BitSets.powerSetIterator(nonRelevantVariables);
             while (iterator.hasNext()) {
                 BitSet next = BitSets.copyOf(iterator.next());
-                next.or(path.viewAssignment());
+                next.or(path.assignment());
                 assertThat(bdd.evaluate(function, next), is(true));
             }
         });
@@ -850,6 +850,25 @@ public class BddTheories {
         List<BitSet> otherMinimalSolutions = new ArrayList<>();
         bdd.forEachPath(function, path -> otherMinimalSolutions.add(path.copyAssignment()));
         assertThat(minimalSolutions, is(otherMinimalSolutions));
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("unary")
+    public void testPathIterator(Generator.UnaryDataPoint<TestBdd> dataPoint) {
+        TestBdd bdd = dataPoint.bdd;
+        int function = dataPoint.function;
+        assumeTrue(bdd.isValidFunction(function));
+
+        BitSet support = bdd.support(function);
+        assumeTrue(support.cardinality() <= 7);
+
+        List<BinaryPath> paths = new ArrayList<>();
+        bdd.forEachPath(function, path -> paths.add(path.copy()));
+
+        List<BinaryPath> iteratorPaths = new ArrayList<>();
+        bdd.pathIterator(function).forEachRemaining(path -> iteratorPaths.add(path.copy()));
+
+        assertThat(iteratorPaths, is(paths));
     }
 
     @ParameterizedTest(name = "{index}")
@@ -1233,7 +1252,7 @@ public class BddTheories {
                         composeArray[j] = bdd.falseFunction();
                     }
                 } else {
-                    composeArray[j] = NodeTable.PLACEHOLDER;
+                    composeArray[j] = bdd.placeholder();
                 }
             }
 
@@ -1338,26 +1357,26 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
-    public void testConstrain(Generator.BinaryDataPoint<TestBdd> dataPoint) {
+    public void testSimplify(Generator.BinaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.left;
         int domain = dataPoint.right;
         assumeTrue(bdd.isValidFunction(function));
         assumeTrue(bdd.isValidFunction(domain));
 
-        int constrain = bdd.reference(bdd.constrain(function, domain));
+        int simplify = bdd.reference(bdd.simplify(function, domain));
 
         for (boolean[] valuation : valuations) {
             if (bdd.evaluate(domain, valuation)) {
-                assertThat(bdd.evaluate(constrain, valuation), is(bdd.evaluate(function, valuation)));
+                assertThat(bdd.evaluate(simplify, valuation), is(bdd.evaluate(function, valuation)));
             }
         }
 
-        int ifThenElse = bdd.reference(bdd.ifThenElse(domain, constrain, function));
+        int ifThenElse = bdd.reference(bdd.ifThenElse(domain, simplify, function));
         assertThat(ifThenElse, is(function));
         bdd.dereference(ifThenElse);
 
-        bdd.dereference(constrain);
+        bdd.dereference(simplify);
     }
 
     @ParameterizedTest(name = "{index}")
@@ -1568,7 +1587,6 @@ public class BddTheories {
         }
 
         @Override
-        @SuppressWarnings("PMD.MethodReturnsInternalArray")
         public boolean[] next() {
             if (!hasNext) {
                 throw new NoSuchElementException();
@@ -1612,7 +1630,6 @@ public class BddTheories {
         }
 
         @Override
-        @SuppressWarnings("PMD.MethodReturnsInternalArray")
         public boolean[] next() {
             if (!hasNext) {
                 throw new NoSuchElementException();

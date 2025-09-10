@@ -17,14 +17,8 @@
 package de.tum.in.jbdd;
 
 // Taken and adapted from Guava
-@SuppressWarnings({
-    "StandardVariableNames",
-    "MagicNumber",
-    "PMD.AvoidReassigningParameters",
-    "PMD.PrematureDeclaration",
-    "PMD.AssignmentInOperand"
-})
-final class Primes { // NOPMD
+@SuppressWarnings({"StandardVariableNames", "MagicNumber", "PMD.AvoidReassigningParameters", "PMD.AssignmentInOperand"})
+final class Primes {
     @SuppressWarnings("PMD.UseUnderscoresInNumericLiterals")
     static final long FLOOR_SQRT_MAX_LONG = 3037000499L;
 

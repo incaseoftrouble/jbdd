@@ -17,7 +17,6 @@
 package de.tum.in.jbdd;
 
 import java.util.BitSet;
-import java.util.List;
 
 /**
  * A binary decision diagram, representing boolean functions. Note that, together with a set of variables,
@@ -29,7 +28,8 @@ import java.util.List;
  * time after an invalid call.</p>
  */
 // TODO AndExists and similar (quantify + apply at the same time)
-public interface Bdd extends BooleanDecisionDiagram, BooleanTerminalDecisionDiagram<BitSet, BddPath> {
+// TODO AndSimplify and similar (perform operations with a restriction)
+public interface Bdd extends BooleanDecisionDiagram, BooleanTerminalDecisionDiagram<BitSet, BinaryPath> {
     /**
      * Creates a new variable and returns the BDD function representing it. The implementation guarantees that
      * variables are always allocated sequentially starting from 0, i.e. {@code
@@ -198,12 +198,6 @@ public interface Bdd extends BooleanDecisionDiagram, BooleanTerminalDecisionDiag
      * @return The disjunction of specified variables.
      */
     int disjunction(BitSet variables);
-
-    // MTBDD
-
-    <V> MtBdd<V> createMtBdd(Class<V> clazz);
-
-    <V> MtBdd<List<V>> intersect(List<MtBdd<? extends V>> mtBddList, Class<V> clazz);
 
     /**
      * Returns a string containing some statistics about the Bdd. The content and formatting of this
