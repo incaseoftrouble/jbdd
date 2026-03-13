@@ -21,10 +21,12 @@ import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Iterator;
+import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.Predicate;
 
+@EverythingIsNonnullByDefault
 class MddAsTestBdd implements TestBdd {
     private final MddImpl mdd;
     private static final int TRUE = 1;
@@ -179,6 +181,19 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
+    public Optional<BitSet> satisfyingAssignmentIn(int function, int domain) {
+        return mdd.satisfyingAssignmentIn(function, domain).map(values -> {
+            BitSet set = new BitSet(mdd.numberOfVariables());
+            for (int i = 0; i < values.length; i++) {
+                if (values[i] == TRUE) {
+                    set.set(i);
+                }
+            }
+            return set;
+        });
+    }
+
+    @Override
     public BigInteger countSatisfyingAssignments(int function) {
         return mdd.countSatisfyingAssignments(function);
     }
@@ -189,9 +204,15 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
+    public BigInteger countSatisfyingAssignmentsIn(int function, int domain) {
+        return mdd.countSatisfyingAssignmentsIn(function, domain);
+    }
+
+    @Override
     public Iterator<BitSet> solutionIterator(int function) {
         BitSet set = new BitSet(mdd.numberOfVariables());
         return Iterators.transform(mdd.solutionIterator(function), a -> {
+            //noinspection DataFlowIssue
             for (int i = 0; i < a.length; i++) {
                 assert a[i] == TRUE || a[i] == FALSE;
                 set.set(i, a[i] == TRUE);
@@ -204,6 +225,31 @@ class MddAsTestBdd implements TestBdd {
     public Iterator<BitSet> solutionIterator(int function, BitSet support) {
         BitSet set = new BitSet(mdd.numberOfVariables());
         return Iterators.transform(mdd.solutionIterator(function, support), a -> {
+            //noinspection DataFlowIssue
+            for (int i = 0; i < a.length; i++) {
+                assert a[i] == TRUE || a[i] == FALSE;
+                set.set(i, a[i] == TRUE);
+            }
+            return set;
+        });
+    }
+
+    @Override
+    public Iterator<BitSet> solutionIteratorIn(int function, int domain) {
+        BitSet set = new BitSet(mdd.numberOfVariables());
+        return Iterators.transform(mdd.solutionIteratorIn(function, domain), a -> {
+            for (int i = 0; i < a.length; i++) {
+                assert a[i] == TRUE || a[i] == FALSE;
+                set.set(i, a[i] == TRUE);
+            }
+            return set;
+        });
+    }
+
+    @Override
+    public Iterator<BitSet> solutionIteratorIn(int function, int domain, BitSet support) {
+        BitSet set = new BitSet(mdd.numberOfVariables());
+        return Iterators.transform(mdd.solutionIteratorIn(function, domain, support), a -> {
             for (int i = 0; i < a.length; i++) {
                 assert a[i] == TRUE || a[i] == FALSE;
                 set.set(i, a[i] == TRUE);
@@ -217,6 +263,26 @@ class MddAsTestBdd implements TestBdd {
         BitSet assignment = new BitSet(mdd.numberOfVariables());
         BitSet support = new BitSet(mdd.numberOfVariables());
         return Iterators.transform(mdd.pathIterator(function), a -> {
+            //noinspection DataFlowIssue
+            for (int i = 0; i < a.length; i++) {
+                assert a[i] == TRUE || a[i] == FALSE || a[i] == -1;
+                if (a[i] == -1) {
+                    support.clear(i);
+                    assignment.clear(i);
+                } else {
+                    support.set(i);
+                    assignment.set(i, a[i] == TRUE);
+                }
+            }
+            return new BinaryPath(assignment, support);
+        });
+    }
+
+    @Override
+    public Iterator<BinaryPath> pathIteratorIn(int function, int domain) {
+        BitSet assignment = new BitSet(mdd.numberOfVariables());
+        BitSet support = new BitSet(mdd.numberOfVariables());
+        return Iterators.transform(mdd.pathIteratorIn(function, domain), a -> {
             for (int i = 0; i < a.length; i++) {
                 assert a[i] == TRUE || a[i] == FALSE || a[i] == -1;
                 if (a[i] == -1) {
@@ -268,6 +334,27 @@ class MddAsTestBdd implements TestBdd {
         BitSet support = new BitSet(variables);
         BinaryPath bddPath = new BinaryPath(values, support);
         return mdd.anyPathMatches(function, path -> {
+            for (int var = 0; var < path.length; var++) {
+                assert path[var] == -1 || path[var] == TRUE || path[var] == FALSE;
+                if (path[var] == -1) {
+                    values.clear(var);
+                    support.clear(var);
+                } else {
+                    support.set(var);
+                    values.set(var, path[var] == TRUE);
+                }
+            }
+            return predicate.test(bddPath);
+        });
+    }
+
+    @Override
+    public boolean anyPathMatchesIn(int function, int domain, Predicate<? super BinaryPath> predicate) {
+        int variables = mdd.numberOfVariables();
+        BitSet values = new BitSet(variables);
+        BitSet support = new BitSet(variables);
+        BinaryPath bddPath = new BinaryPath(values, support);
+        return mdd.anyPathMatchesIn(function, domain, path -> {
             for (int var = 0; var < path.length; var++) {
                 assert path[var] == -1 || path[var] == TRUE || path[var] == FALSE;
                 if (path[var] == -1) {

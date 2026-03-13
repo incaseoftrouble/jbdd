@@ -39,7 +39,7 @@ final class BooleanCache {
     private final int placeholder;
     private final CacheAccessStatistics andAccessStatistics = new CacheAccessStatistics();
     private final CacheAccessStatistics xorAccessStatistics = new CacheAccessStatistics();
-    private final CacheAccessStatistics constrainAccessStatistics = new CacheAccessStatistics();
+    private final CacheAccessStatistics simplifyAccessStatistics = new CacheAccessStatistics();
     private final CacheAccessStatistics impliesAccessStatistics = new CacheAccessStatistics();
     private final CacheAccessStatistics intersectsAccessStatistics = new CacheAccessStatistics();
     private final CacheAccessStatistics satisfactionAccessStatistics = new CacheAccessStatistics();
@@ -56,8 +56,8 @@ final class BooleanCache {
     private int xorKeyCount = 0;
     private int[] xorCache = EMPTY_INT_ARRAY;
 
-    private int constrainKeyCount = 0;
-    private int[] constrainCache = EMPTY_INT_ARRAY;
+    private int simplifyKeyCount = 0;
+    private int[] simplifyCache = EMPTY_INT_ARRAY;
 
     private int impliesKeyCount = 0;
     private int[] impliesCache = EMPTY_INT_ARRAY;
@@ -148,14 +148,14 @@ final class BooleanCache {
         return (float) loadedXorBins / xorKeyCount();
     }
 
-    private float constrainLoadFactor() {
-        int loadedConstrainBins = 0;
-        for (int i = 0; i < constrainKeyCount(); i++) {
-            if (constrainCache[3 * i] != placeholder) {
-                loadedConstrainBins++;
+    private float simplifyLoadFactor() {
+        int loadedSimplifyBins = 0;
+        for (int i = 0; i < simplifyKeyCount(); i++) {
+            if (simplifyCache[3 * i] != placeholder) {
+                loadedSimplifyBins++;
             }
         }
-        return (float) loadedConstrainBins / constrainKeyCount();
+        return (float) loadedSimplifyBins / simplifyKeyCount();
     }
 
     private float impliesLoadFactor() {
@@ -238,13 +238,13 @@ final class BooleanCache {
         return xorKeyCount;
     }
 
-    private int constrainCachePosition(int hash) {
-        return mod(hash, constrainKeyCount());
+    private int simplifyCachePosition(int hash) {
+        return mod(hash, simplifyKeyCount());
     }
 
-    private int constrainKeyCount() {
-        assert constrainKeyCount == constrainCache.length / 3;
-        return constrainKeyCount;
+    private int simplifyKeyCount() {
+        assert simplifyKeyCount == simplifyCache.length / 3;
+        return simplifyKeyCount;
     }
 
     private int impliesCachePosition(int hash) {
@@ -307,7 +307,7 @@ final class BooleanCache {
         logger.log(Level.FINER, "Growing caches if necessary");
         growAnd();
         growXor();
-        growConstrain();
+        growSimplify();
         growImplies();
         growIntersects();
         growIte();
@@ -368,25 +368,25 @@ final class BooleanCache {
         }
     }
 
-    private void pruneConstrain() {
-        if (constrainAccessStatistics.putCountSinceInvalidation == 0) {
+    private void pruneSimplify() {
+        if (simplifyAccessStatistics.putCountSinceInvalidation == 0) {
             return;
         }
-        if (constrainAccessStatistics.putCountSinceInvalidation < constrainKeyCount / 2) {
-            constrainAccessStatistics.invalidation();
-            clearConstrain();
+        if (simplifyAccessStatistics.putCountSinceInvalidation < simplifyKeyCount / 2) {
+            simplifyAccessStatistics.invalidation();
+            clearSimplify();
             return;
         }
 
         BooleanBase<?, ?> bdd = associatedBdd;
-        constrainAccessStatistics.partialInvalidation();
-        int[] constrainCache = this.constrainCache;
-        for (int i = 0; i < constrainKeyCount(); i++) {
+        simplifyAccessStatistics.partialInvalidation();
+        int[] simplifyCache = this.simplifyCache;
+        for (int i = 0; i < simplifyKeyCount(); i++) {
             int binStart = 3 * i;
-            if (!(bdd.isValidNonConstantFunction(constrainCache[binStart])
-                    && bdd.isValidNonConstantFunction(constrainCache[binStart + 1])
-                    && bdd.isValidFunction(constrainCache[binStart + 2]))) {
-                constrainCache[binStart] = placeholder;
+            if (!(bdd.isValidNonConstantFunction(simplifyCache[binStart])
+                    && bdd.isValidNonConstantFunction(simplifyCache[binStart + 1])
+                    && bdd.isValidFunction(simplifyCache[binStart + 2]))) {
+                simplifyCache[binStart] = placeholder;
             }
         }
     }
@@ -550,7 +550,7 @@ final class BooleanCache {
         partialInvalidationCount += 1;
         pruneAnd();
         pruneXor();
-        pruneConstrain();
+        pruneSimplify();
         pruneImplies();
         pruneIntersects();
         pruneIte();
@@ -653,28 +653,28 @@ final class BooleanCache {
         }
     }
 
-    private void growConstrain() {
+    private void growSimplify() {
         BooleanBase<?, ?> bdd = associatedBdd;
         int size = bdd.tableSize() / bdd.configuration().cacheBinaryDivider();
-        if (size < 2 * constrainKeyCount()) {
-            pruneConstrain();
+        if (size < 2 * simplifyKeyCount()) {
+            pruneSimplify();
         } else {
             int keyCount = Primes.nextPrime(size);
-            int[] newConstrain = new int[keyCount * 3];
+            int[] newSimplify = new int[keyCount * 3];
 
             if (bdd.configuration().useCachePreserveOnGrow()
-                    && constrainAccessStatistics.putCountSinceInvalidation > constrainKeyCount / 4) {
-                for (int i = 0; i < constrainKeyCount; i++) {
+                    && simplifyAccessStatistics.putCountSinceInvalidation > simplifyKeyCount / 4) {
+                for (int i = 0; i < simplifyKeyCount; i++) {
                     int binStart = 3 * i;
-                    int input1 = constrainCache[binStart];
+                    int input1 = simplifyCache[binStart];
                     if (input1 == placeholder) {
                         if (placeholder != 0) {
-                            constrainCache[binStart] = placeholder;
+                            simplifyCache[binStart] = placeholder;
                         }
                         continue;
                     }
-                    int input2 = constrainCache[binStart + 1];
-                    int result = constrainCache[binStart + 2];
+                    int input2 = simplifyCache[binStart + 1];
+                    int result = simplifyCache[binStart + 2];
                     if (!(bdd.isValidNonConstantFunction(input1)
                             && bdd.isValidNonConstantFunction(input2)
                             && bdd.isValidFunction(result))) {
@@ -682,21 +682,21 @@ final class BooleanCache {
                     }
                     int newPosition = mod(HashUtil.hash(input1, input2), keyCount);
                     int newBinStart = 3 * newPosition;
-                    newConstrain[newBinStart] = input1;
-                    newConstrain[newBinStart + 1] = input2;
-                    newConstrain[newBinStart + 2] = result;
+                    newSimplify[newBinStart] = input1;
+                    newSimplify[newBinStart + 1] = input2;
+                    newSimplify[newBinStart + 2] = result;
                 }
             }
 
-            constrainCache = newConstrain;
-            constrainKeyCount = keyCount;
-            assert constrainKeyCount() == keyCount;
+            simplifyCache = newSimplify;
+            simplifyKeyCount = keyCount;
+            assert simplifyKeyCount() == keyCount;
         }
     }
 
-    private void clearConstrain() {
-        for (int i = 0; i < constrainCache.length; i += 3) {
-            constrainCache[i] = placeholder;
+    private void clearSimplify() {
+        for (int i = 0; i < simplifyCache.length; i += 3) {
+            simplifyCache[i] = placeholder;
         }
     }
 
@@ -950,20 +950,20 @@ final class BooleanCache {
         return false;
     }
 
-    boolean lookupConstrain(int function, int domain) {
+    boolean lookupSimplify(int function, int domain) {
         assert associatedBdd.isValidNonConstantFunction(function) && associatedBdd.isValidNonConstantFunction(domain);
 
         int hash = HashUtil.hash(function, domain);
         lookupHash = hash;
-        int cachePosition = constrainCachePosition(hash);
+        int cachePosition = simplifyCachePosition(hash);
 
         int binStart = 3 * cachePosition;
-        if (function == constrainCache[binStart] && domain == constrainCache[binStart + 1]) {
-            int result = constrainCache[binStart + 2];
+        if (function == simplifyCache[binStart] && domain == simplifyCache[binStart + 1]) {
+            int result = simplifyCache[binStart + 2];
             lookupResult = result;
 
             assert associatedBdd.isValidFunction(result);
-            constrainAccessStatistics.cacheHit();
+            simplifyAccessStatistics.cacheHit();
             return true;
         }
         return false;
@@ -1120,19 +1120,19 @@ final class BooleanCache {
         xorCache[binStart + 2] = result;
     }
 
-    void putConstrain(int hash, int function, int domain, int result) {
+    void putSimplify(int hash, int function, int domain, int result) {
         assert associatedBdd.isValidNonConstantFunction(function)
                 && associatedBdd.isValidNonConstantFunction(domain)
                 && associatedBdd.isValidFunction(result);
         assert hash == HashUtil.hash(function, domain);
 
-        int cachePosition = constrainCachePosition(hash);
-        constrainAccessStatistics.put();
+        int cachePosition = simplifyCachePosition(hash);
+        simplifyAccessStatistics.put();
 
         int binStart = 3 * cachePosition;
-        constrainCache[binStart] = function;
-        constrainCache[binStart + 1] = domain;
-        constrainCache[binStart + 2] = result;
+        simplifyCache[binStart] = function;
+        simplifyCache[binStart + 1] = domain;
+        simplifyCache[binStart + 2] = result;
     }
 
     void putImplies(int hash, int function1, int function2, boolean result) {
@@ -1223,7 +1223,7 @@ final class BooleanCache {
                 "Cache Statistics:\n" //
                         + "And: size: %d, load: %s\n %s\n"
                         + "Xor: size: %d, load: %s\n %s\n"
-                        + "Constrain: size: %d, load: %s\n %s\n"
+                        + "Simplify: size: %d, load: %s\n %s\n"
                         + "Ite: size: %d, load: %s\n %s\n"
                         + "Satisfaction: size: %d, load: %s\n %s\n"
                         + "Implies: size: %d, load: %s\n %s\n"
@@ -1237,9 +1237,9 @@ final class BooleanCache {
                 xorKeyCount(),
                 xorLoadFactor(),
                 xorAccessStatistics,
-                constrainKeyCount(),
-                constrainLoadFactor(),
-                constrainAccessStatistics,
+                simplifyKeyCount(),
+                simplifyLoadFactor(),
+                simplifyAccessStatistics,
                 iteKeyCount(),
                 iteLoadFactor(),
                 iteAccessStatistics,

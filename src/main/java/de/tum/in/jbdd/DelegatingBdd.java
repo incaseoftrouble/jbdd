@@ -19,6 +19,7 @@ package de.tum.in.jbdd;
 import java.math.BigInteger;
 import java.util.BitSet;
 import java.util.Iterator;
+import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.Predicate;
@@ -51,6 +52,10 @@ public class DelegatingBdd implements Bdd {
     private <V> V onExit(V value) {
         onExit();
         return value;
+    }
+
+    protected Bdd delegate() {
+        return delegate;
     }
 
     @Override
@@ -181,6 +186,12 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
+    public Optional<BitSet> satisfyingAssignmentIn(int function, int domain) {
+        onEnter("satisfyingAssignmentIn");
+        return onExit(delegate.satisfyingAssignmentIn(function, domain));
+    }
+
+    @Override
     public BigInteger countSatisfyingAssignments(int function) {
         onEnter("countSatisfyingAssignments");
         return onExit(delegate.countSatisfyingAssignments(function));
@@ -193,6 +204,12 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
+    public BigInteger countSatisfyingAssignmentsIn(int function, int domain) {
+        onEnter("countSatisfyingAssignmentsIn");
+        return onExit(delegate.countSatisfyingAssignmentsIn(function, domain));
+    }
+
+    @Override
     public Iterator<BitSet> solutionIterator(int function) {
         onEnter("solutionIterator");
         return onExit(delegate.solutionIterator(function));
@@ -202,6 +219,18 @@ public class DelegatingBdd implements Bdd {
     public Iterator<BitSet> solutionIterator(int function, BitSet support) {
         onEnter("solutionIterator");
         return onExit(delegate.solutionIterator(function, support));
+    }
+
+    @Override
+    public Iterator<BitSet> solutionIteratorIn(int function, int domain) {
+        onEnter("solutionIteratorIn");
+        return onExit(delegate.solutionIteratorIn(function, domain));
+    }
+
+    @Override
+    public Iterator<BitSet> solutionIteratorIn(int function, int domain, BitSet support) {
+        onEnter("solutionIteratorIn");
+        return onExit(delegate.solutionIteratorIn(function, domain, support));
     }
 
     @Override
@@ -219,9 +248,29 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
+    public void forEachSolutionIn(int function, int domain, Consumer<? super BitSet> action) {
+        onEnter("forEachSolution");
+        delegate.forEachSolutionIn(function, domain, action);
+        onExit();
+    }
+
+    @Override
+    public void forEachSolutionIn(int function, int domain, BitSet support, Consumer<? super BitSet> action) {
+        onEnter("forEachSolution");
+        delegate.forEachSolutionIn(function, domain, support, action);
+        onExit();
+    }
+
+    @Override
     public Iterator<BinaryPath> pathIterator(int function) {
         onEnter("pathIterator");
         return onExit(delegate.pathIterator(function));
+    }
+
+    @Override
+    public Iterator<BinaryPath> pathIteratorIn(int function, int domain) {
+        onEnter("pathIteratorIn");
+        return onExit(delegate.pathIteratorIn(function, domain));
     }
 
     @Override
@@ -242,6 +291,12 @@ public class DelegatingBdd implements Bdd {
     public boolean anyPathMatches(int function, Predicate<? super BinaryPath> predicate) {
         onEnter("anyPathMatches");
         return onExit(delegate.anyPathMatches(function, predicate));
+    }
+
+    @Override
+    public boolean anyPathMatchesIn(int function, int domain, Predicate<? super BinaryPath> predicate) {
+        onEnter("anyPathMatchesIn");
+        return onExit(delegate.anyPathMatchesIn(function, domain, predicate));
     }
 
     @Override
@@ -266,7 +321,7 @@ public class DelegatingBdd implements Bdd {
     @Override
     public BitSet supportFiltered(int function, BitSet filter) {
         onEnter("supportFiltered");
-        return onExit(delegate.supportTo(function, filter));
+        return onExit(delegate.supportFiltered(function, filter));
     }
 
     @Override
@@ -307,9 +362,21 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
+    public int andSimplify(int function1, int function2, int domain) {
+        onEnter("andSimplify");
+        return onExit(delegate.andSimplify(function1, function2, domain));
+    }
+
+    @Override
     public int andNot(int function1, int function2) {
         onEnter("andNot");
         return onExit(delegate.andNot(function1, function2));
+    }
+
+    @Override
+    public int andNotSimplify(int function1, int function2, int domain) {
+        onEnter("andNotSimplify");
+        return onExit(delegate.andNotSimplify(function1, function2, domain));
     }
 
     @Override
@@ -322,6 +389,12 @@ public class DelegatingBdd implements Bdd {
     public int equivalence(int function1, int function2) {
         onEnter("equivalence");
         return onExit(delegate.equivalence(function1, function2));
+    }
+
+    @Override
+    public int equivalenceSimplify(int function1, int function2, int domain) {
+        onEnter("equivalenceIn");
+        return onExit(delegate.equivalenceSimplify(function1, function2, domain));
     }
 
     @Override
@@ -343,6 +416,12 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
+    public int ifThenElseSimplify(int ifFunction, int thenFunction, int elseFunction, int domain) {
+        onEnter("ifThenElseSimplify");
+        return onExit(delegate.ifThenElseSimplify(ifFunction, thenFunction, elseFunction, domain));
+    }
+
+    @Override
     public int simplify(int function, int domain) {
         onEnter("constrain");
         return onExit(delegate.simplify(function, domain));
@@ -352,6 +431,12 @@ public class DelegatingBdd implements Bdd {
     public int implication(int function1, int function2) {
         onEnter("implication");
         return onExit(delegate.implication(function1, function2));
+    }
+
+    @Override
+    public int implicationSimplify(int function1, int function2, int domain) {
+        onEnter("implicationSimplify");
+        return onExit(delegate.implicationSimplify(function1, function2, domain));
     }
 
     @Override
@@ -373,15 +458,33 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
+    public int notSimplify(int function, int domain) {
+        onEnter("notSimplify");
+        return onExit(delegate.notSimplify(function, domain));
+    }
+
+    @Override
     public int notAnd(int function1, int function2) {
         onEnter("notAnd");
         return onExit(delegate.notAnd(function1, function2));
     }
 
     @Override
+    public int notAndSimplify(int function1, int function2, int domain) {
+        onEnter("notAndSimplify");
+        return onExit(delegate.notAndSimplify(function1, function2, domain));
+    }
+
+    @Override
     public int or(int function1, int function2) {
         onEnter("or");
         return onExit(delegate.or(function1, function2));
+    }
+
+    @Override
+    public int orSimplify(int function1, int function2, int domain) {
+        onEnter("orSimplify");
+        return onExit(delegate.orSimplify(function1, function2, domain));
     }
 
     @Override
@@ -394,6 +497,12 @@ public class DelegatingBdd implements Bdd {
     public int xor(int function1, int function2) {
         onEnter("xor");
         return onExit(delegate.xor(function1, function2));
+    }
+
+    @Override
+    public int xorSimplify(int function1, int function2, int domain) {
+        onEnter("xorSimplify");
+        return onExit(delegate.xorSimplify(function1, function2, domain));
     }
 
     @Override

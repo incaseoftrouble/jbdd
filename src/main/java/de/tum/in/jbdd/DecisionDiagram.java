@@ -94,9 +94,15 @@ public interface DecisionDiagram {
      * @return The given {@code result}.
      */
     default int consume(int result, int input1, int input2) {
-        reference(result);
-        dereference(input1);
-        dereference(input2);
+        if (result == input1) {
+            dereference(input2);
+        } else {
+            if (result != input2) {
+                reference(result);
+                dereference(input2);
+            }
+            dereference(input1);
+        }
         return result;
     }
 
@@ -112,8 +118,10 @@ public interface DecisionDiagram {
      * @return The given {@code result}.
      */
     default int updateWith(int result, int input) {
-        reference(result);
-        dereference(input);
+        if (result != input) {
+            reference(result);
+            dereference(input);
+        }
         return result;
     }
 

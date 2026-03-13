@@ -24,6 +24,7 @@ import java.util.BitSet;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.Predicate;
@@ -34,7 +35,7 @@ import javax.annotation.Nullable;
 
 @SuppressWarnings({"PMD.AvoidReassigningParameters", "AssignmentToMethodParameter", "DuplicatedCode"})
 final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
-    private static final Logger logger = Logger.getLogger(BddImpl.class.getName());
+    private static final Logger logger = Logger.getLogger(MddImpl.class.getName());
 
     private final BooleanCache cache;
     private int numberOfVariables;
@@ -165,6 +166,13 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         int[] path = new int[numberOfVariables];
+        satisfyingAssignment(function, path);
+        return path;
+    }
+
+    private boolean satisfyingAssignment(int function, int[] path) {
+        assert function != FALSE;
+
         int currentNode = positive(function);
         boolean lookingFor = currentNode == function;
 
@@ -177,12 +185,22 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
 
                     path[variable] = val;
                     currentNode = positive(child);
+                    if (currentNode != child) {
+                        lookingFor = !lookingFor;
+                    }
                     break;
                 }
             }
         }
         assert lookingFor;
-        return path;
+        return true;
+    }
+
+    @Override
+    public Optional<int[]> satisfyingAssignmentIn(int function, int domain) {
+        // TODO Native
+        int and = and(function, domain);
+        return and == FALSE ? Optional.empty() : Optional.of(satisfyingAssignment(and));
     }
 
     @Override
@@ -216,6 +234,18 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     }
 
     @Override
+    public Iterator<int[]> solutionIteratorIn(int function, int domain) {
+        // TODO Native
+        return solutionIterator(and(function, domain));
+    }
+
+    @Override
+    public Iterator<int[]> solutionIteratorIn(int function, int domain, BitSet support) {
+        // TODO Native
+        return solutionIterator(and(function, domain), support);
+    }
+
+    @Override
     public Iterator<int[]> pathIterator(int function) {
         assert isValidFunction(function);
 
@@ -229,6 +259,12 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         return new NodePathIterator(this, function);
+    }
+
+    @Override
+    public Iterator<int[]> pathIteratorIn(int function, int domain) {
+        // TODO Native
+        return pathIterator(and(function, domain));
     }
 
     @Override
@@ -355,6 +391,12 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     }
 
     @Override
+    public boolean anyPathMatchesIn(int function, int domain, Predicate<? super int[]> predicate) {
+        // TODO Native
+        return anyPathMatches(and(function, domain), predicate);
+    }
+
+    @Override
     public BigInteger countSatisfyingAssignments(int function) {
         if (function == FALSE) {
             return BigInteger.ZERO;
@@ -394,6 +436,12 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             base = base.multiply(BigInteger.valueOf(variableDomain[var]));
         }
         return countSatisfyingAssignments(function).divide(base);
+    }
+
+    @Override
+    public BigInteger countSatisfyingAssignmentsIn(int function, int domain) {
+        // TODO Native
+        return countSatisfyingAssignments(and(function, domain));
     }
 
     private BigInteger countSatisfyingAssignmentsRecursive(int node, boolean lookingFor) {
@@ -1049,7 +1097,7 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         int functionNode = positive(function);
         boolean func = functionNode != function;
 
-        if (cache.lookupConstrain(functionNode, domain)) {
+        if (cache.lookupSimplify(functionNode, domain)) {
             return complementIf(cache.lookupResult(), func);
         }
         int hash = cache.lookupHash();
@@ -1109,7 +1157,7 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             result = computeConstrain(functionNode, table.pushToWorkStack(disjunction));
             table.popFromWorkStack();
         }
-        cache.putConstrain(hash, functionNode, domain, result);
+        cache.putSimplify(hash, functionNode, domain, result);
         return complementIf(result, func);
     }
 

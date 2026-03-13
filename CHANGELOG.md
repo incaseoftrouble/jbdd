@@ -2,11 +2,11 @@
 
 ## 0.7 
 
-### 0.7.0 (2024-XX-XX)
+### 0.7.0 (2026-XX-XX)
 
 * Implemented complement edges
 * Implemented MDDs (Function with boolean values but n-valued domains for their variables)
-* Significant renaming / restructuring of the API: Distinguish between boolean function (what a BDD node abstracts) and internal structure (nodes) to prohibit careless mixing of these now different concepts
+* Significant renaming / restructuring of the API: Distinguish between boolean function (what a BDD node abstracts) and internal structure (nodes) to reduce mixing of these now different concepts
 * Remove iterative implementation: On some benchmarks about ~10% slower, tedious to maintain, and increasing stack size is cheap
 * Separate out the node table structure to have a unified base for BDDs, MTBDDs, MDDs, etc.
 * Slightly improved usability of automatic reference management
@@ -16,8 +16,10 @@
   * `forEachPath` now has a version with `support` as parameter (replacing the previous `highestVariable`)
   * `anyPathMatches`: check if any path matches a given predicate 
   * `intersects`: check if `and(f, g) != FALSE`
-  * `constrain`: reduce a function `f` to a given domain `d`, i.e. preserve the values of `f` where `d` is true but otherwise do whatever 
-* Significant improvement of `compose` / `ifThenElse` in certain cases
+  * `simplify`: (also called `constrain`) reduce a function `f` to a given domain `d`, i.e. preserve the values of `f` where `d` is true but otherwise do whatever
+  * `xyIn`: Perform operation `xy` relative to a given domain `d` (e.g.\ count satisfying assignments of `x` in `d`)
+  * `xySimplify`: Perform `simplify(xy(...), g)`, but potentially much faster (for now, these are only API and realised by naive implementations, but workloads can already switch to them)
+* Significant improvement of `compose` / `ifThenElse` in certain cases (e.g.\ identifying constant replacements)
 * Preserve cached values when possible (should provide notable improvements on some workloads)
 
 ## 0.6

@@ -19,6 +19,7 @@ package de.tum.in.jbdd;
 import java.math.BigInteger;
 import java.util.BitSet;
 import java.util.Iterator;
+import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
@@ -53,6 +54,8 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      */
     S satisfyingAssignment(int function);
 
+    Optional<S> satisfyingAssignmentIn(int function, int domain);
+
     /**
      * Counts the number of satisfying assignments for the given boolean {@code function}.
      */
@@ -63,6 +66,8 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      * {@code support}.
      */
     BigInteger countSatisfyingAssignments(int function, BitSet support);
+
+    BigInteger countSatisfyingAssignmentsIn(int function, int domain);
 
     /**
      * Returns an iterator over all satisfying assignments of the given boolean {@code function}. In other words,
@@ -78,14 +83,18 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      * }
      * where {@code valuations} is the set of all possible valuations.
      *
-     * <p>The solutions are generated in lexicographic ascending order.</p>
+     * <p>The assignments are generated in lexicographic ascending order.</p>
      *
-     * <p><b>Note:</b> The passed objects may be modified in-place. If all solutions should be gathered
+     * <p><b>Note:</b> The passed objects may be modified in-place. If all assignments should be gathered
      * into a set or similar, they have to be cloned after each call to {@link Iterator#next()}.</p>
      */
     Iterator<S> solutionIterator(int function);
 
     Iterator<S> solutionIterator(int function, BitSet support);
+
+    Iterator<S> solutionIteratorIn(int function, int domain);
+
+    Iterator<S> solutionIteratorIn(int function, int domain, BitSet support);
 
     /**
      * Executes the given action for each satisfying assignment of the given boolean {@code function}.
@@ -105,7 +114,17 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
         solutionIterator(function, support).forEachRemaining(action);
     }
 
+    default void forEachSolutionIn(int function, int domain, Consumer<? super S> action) {
+        solutionIteratorIn(function, domain).forEachRemaining(action);
+    }
+
+    default void forEachSolutionIn(int function, int domain, BitSet support, Consumer<? super S> action) {
+        solutionIteratorIn(function, domain, support).forEachRemaining(action);
+    }
+
     Iterator<P> pathIterator(int function);
+
+    Iterator<P> pathIteratorIn(int function, int domain);
 
     /**
      * Executes the given {@code action} for all <em>minimal</em> solutions of the given boolean {@code function}.
@@ -125,6 +144,8 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
     void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super P> action);
 
     boolean anyPathMatches(int function, Predicate<? super P> predicate);
+
+    boolean anyPathMatchesIn(int function, int domain, Predicate<? super P> predicate);
 
     /**
      * Checks whether the boolean {@code function1} implies {@code function2}, i.e. if every valuation under
@@ -147,15 +168,27 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      */
     int and(int function1, int function2);
 
+    default int andSimplify(int function1, int function2, int domain) {
+        return simplify(and(function1, function2), domain);
+    }
+
     /**
      * Constructs the boolean function {@code function1 AND NOT function2}.
      */
     int andNot(int function1, int function2);
 
+    default int andNotSimplify(int function1, int function2, int domain) {
+        return simplify(andNot(function1, function2), domain);
+    }
+
     /**
      * Constructs the boolean function {@code function1 EQUIVALENT function2}.
      */
     int equivalence(int function1, int function2);
+
+    default int equivalenceSimplify(int function1, int function2, int domain) {
+        return simplify(equivalence(function1, function2), domain);
+    }
 
     /**
      * Constructs the function obtained by existential quantification of the boolean {@code function} with all variables
@@ -192,30 +225,54 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      */
     int implication(int function1, int function2);
 
+    default int implicationSimplify(int function1, int function2, int domain) {
+        return simplify(implication(function1, function2), domain);
+    }
+
     /**
      * Constructs the boolean function {@code NOT {@code function}}.
      */
     int not(int function);
+
+    default int notSimplify(int function, int domain) {
+        return simplify(not(function), domain);
+    }
 
     /**
      * Constructs the boolean function {@code function1 NAND function2}.
      */
     int notAnd(int function1, int function2);
 
+    default int notAndSimplify(int function1, int function2, int domain) {
+        return simplify(notAnd(function1, function2), domain);
+    }
+
     /**
      * Constructs the boolean function {@code function1 OR function2}.
      */
     int or(int function1, int function2);
+
+    default int orSimplify(int function1, int function2, int domain) {
+        return simplify(or(function1, function2), domain);
+    }
 
     /**
      * Constructs the boolean function {@code function1 XOR function2}.
      */
     int xor(int function1, int function2);
 
+    default int xorSimplify(int function1, int function2, int domain) {
+        return simplify(xor(function1, function2), domain);
+    }
+
     /**
      * Constructs the boolean function {@code IF ifFunction THEN thenFunction ELSE elseFunction}.
      */
     int ifThenElse(int ifFunction, int thenFunction, int elseFunction);
+
+    default int ifThenElseSimplify(int ifFunction, int thenFunction, int elseFunction, int domain) {
+        return simplify(ifThenElse(ifFunction, thenFunction, elseFunction), domain);
+    }
 
     /**
      * Constructs a simplified version of the given {@code function} which is equivalent to it for all assignments

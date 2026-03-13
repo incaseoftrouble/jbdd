@@ -16,6 +16,9 @@
  */
 package de.tum.in.jbdd;
 
+import static de.tum.in.jbdd.BooleanBase.TWO;
+import static java.math.BigInteger.*;
+
 import java.math.BigInteger;
 import java.util.BitSet;
 import java.util.Iterator;
@@ -34,6 +37,8 @@ abstract class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     private final BddImpl bdd;
     private final MtBddTable table;
     private int[] valueReferenceCounts;
+    // Should be sparse bit set
+    private final BitSet allocatedValues = new BitSet();
     private int numberOfVariables = 0;
 
     MtBddImpl(BddImpl bdd) {
@@ -63,7 +68,10 @@ abstract class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     public int reference(int function) {
         assert isValidFunction(function);
         if (isConstant(function)) {
-            valueReferenceCounts[constantToValue(function)] += 1;
+            int value = constantToValue(function);
+            if (valueReferenceCounts[value] < Integer.MAX_VALUE) {
+                valueReferenceCounts[value] += 1;
+            }
         } else {
             table.referenceNode(function);
         }
@@ -74,7 +82,11 @@ abstract class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     public int dereference(int function) {
         assert isValidFunction(function);
         if (isConstant(function)) {
-            valueReferenceCounts[constantToValue(function)] -= 1;
+            int value = constantToValue(function);
+            assert valueReferenceCounts[value] > 0;
+            if (valueReferenceCounts[value] < Integer.MAX_VALUE) {
+                valueReferenceCounts[value] -= 1;
+            }
         } else {
             table.dereferenceNode(function);
         }
@@ -82,36 +94,20 @@ abstract class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     }
 
     @Override
-    public int updateWith(int result, int input) {
-        if (result != input) {
-            table.referenceNode(result);
-            table.dereferenceNode(input);
-        }
-        return result;
-    }
-
-    @Override
-    public int consume(int result, int input1, int input2) {
-        // result + 1, input1 - 1, input2 - 1
-        if (result == input1) {
-            table.dereferenceNode(input2);
-        } else {
-            if (result != input2) {
-                table.referenceNode(result);
-                table.dereferenceNode(input2);
-            }
-            table.dereferenceNode(input1);
-        }
-        return result;
-    }
-
-    @Override
     public int nodeReferenceCount(int node) {
+        if (isConstant(node)) {
+            int value = constantToValue(node);
+            int referenceCount = valueReferenceCounts[value];
+            return referenceCount == Integer.MAX_VALUE ? -1 : referenceCount;
+        }
         return table.nodeReferenceCount(node);
     }
 
     @Override
     public boolean isSaturatedNode(int node) {
+        if (isConstant(node)) {
+            return valueReferenceCounts[constantToValue(node)] == Integer.MAX_VALUE;
+        }
         return table.isSaturatedNode(node);
     }
 
@@ -147,11 +143,15 @@ abstract class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     }
 
     public boolean isValidFunction(int function) {
-        return function < 0 || table.isValidDecisionNode(function);
+        return function < 0 && isValidConstant(function) || table.isValidDecisionNode(function);
     }
 
     private boolean isValidNonConstantFunction(int function) {
         return function > 0 && table.isValidDecisionNode(function);
+    }
+
+    private boolean isValidConstant(int function) {
+        return allocatedValues.get(constantToValue(function));
     }
 
     @Override
@@ -226,12 +226,54 @@ abstract class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
 
     @Override
     public BigInteger countAssignments(int function, IntPredicate values) {
-        throw new UnsupportedOperationException();
+        assert isValidFunction(function);
+
+        if (isConstant(function)) {
+            return values.test(constantToValue(function)) ? TWO.pow(numberOfVariables) : ZERO;
+        }
+
+        int variable = decisionVariable(function);
+        BigInteger satisfyingBelow = countSatisfyingAssignmentsRecursive(function, values);
+        return TWO.pow(variable).multiply(satisfyingBelow);
     }
 
     @Override
     public BigInteger countAssignments(int function, IntPredicate values, BitSet support) {
-        throw new UnsupportedOperationException();
+        assert BitSets.isSubset(support(function), support);
+        return countAssignments(function, values).divide(TWO.pow(numberOfVariables - support.cardinality()));
+    }
+
+    private BigInteger countSatisfyingAssignmentsRecursive(int node, IntPredicate values) {
+        assert isValidFunction(node);
+
+        int nodeVar = table.variable(node);
+
+        /*
+        BigInteger cacheLookup = cache.lookupSatisfaction(node);
+        if (cacheLookup != null) {
+            return lookingFor
+                ? cacheLookup
+                : TWO.pow(numberOfVariables - nodeVar).subtract(cacheLookup);
+        }
+        int hash = cache.lookupHash();
+        */
+
+        BigInteger lowCount = doCountSatisfyingAssignments(table.low(node), nodeVar, values);
+        BigInteger highCount = doCountSatisfyingAssignments(table.high(node), nodeVar, values);
+        BigInteger result = lowCount.add(highCount);
+        /* cache.putSatisfaction(
+        hash,
+        node,
+        lookingFor ? result : TWO.pow(numberOfVariables - nodeVar).subtract(result)); */
+        return result;
+    }
+
+    private BigInteger doCountSatisfyingAssignments(int function, int previousVar, IntPredicate values) {
+        if (isConstant(function)) {
+            return values.test(constantToValue(function)) ? TWO.pow(numberOfVariables - previousVar - 1) : ZERO;
+        }
+        BigInteger multiplier = TWO.pow(decisionVariable(function) - previousVar - 1);
+        return multiplier.multiply(countSatisfyingAssignmentsRecursive(function, values));
     }
 
     @Override
@@ -252,6 +294,12 @@ abstract class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     @Override
     public void forEachPath(int function, BiConsumer<BinaryPath, Integer> action) {
         throw new UnsupportedOperationException();
+    }
+
+    String format(int reference) {
+        return isConstant(reference)
+                ? String.format("V%d", constantToValue(reference))
+                : String.format("N%d", reference);
     }
 
     private static final class MtBddTable extends NodeTable.Binary {
@@ -299,7 +347,8 @@ abstract class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
 
         @Override
         protected void markLeafNodeIfManaged(int node, boolean mark) {
-            throw new UnsupportedOperationException();
+            assert mtbdd.isValidConstant(node);
+            markedValues.set(node, mark);
         }
 
         @Override
@@ -334,17 +383,17 @@ abstract class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
 
         @Override
         public int treeNodeFor(int pointer) {
-            throw new UnsupportedOperationException();
+            return mtbdd.nodeFor(pointer);
         }
 
         @Override
         protected boolean isLeafNode(int node) {
-            throw new UnsupportedOperationException();
+            return mtbdd.isConstant(node);
         }
 
         @Override
         protected boolean isValidLeafNode(int node) {
-            throw new UnsupportedOperationException();
+            return mtbdd.isValidConstant(node);
         }
 
         @Override
@@ -388,25 +437,27 @@ abstract class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
 
         @Override
         protected boolean anyManagedLeafMarked() {
-            return false;
+            return !markedValues.isEmpty();
         }
 
         @Override
-        protected void unmarkAllManagedLeafs() {}
+        protected void unmarkAllManagedLeafs() {
+            markedValues.clear();
+        }
 
         @Override
         protected boolean isLeafNodeMarkedOrUnmanaged(int leaf) {
-            return false;
+            return markedValues.get(constantToValue(leaf));
         }
 
         @Override
         protected boolean isLeafUnmarkedOrUnmanaged(int leaf) {
-            return false;
+            return !markedValues.get(constantToValue(leaf));
         }
 
         @Override
         public String format(int pointer) {
-            throw new UnsupportedOperationException();
+            return mtbdd.format(pointer);
         }
     }
 

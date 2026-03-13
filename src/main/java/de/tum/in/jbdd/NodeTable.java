@@ -243,8 +243,8 @@ abstract class NodeTable {
     // Reference counting
 
     public int nodeReferenceCount(int node) {
-        assert isValidNodeOrPlaceholder(node);
-        return node == PLACEHOLDER ? -1 : dataGetReferenceCountOrSaturated(nodeData[node]);
+        assert isValidDecisionNode(node);
+        return dataGetReferenceCountOrSaturated(nodeData[node]);
     }
 
     public void referenceNode(int node) {

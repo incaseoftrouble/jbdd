@@ -20,6 +20,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
+import static org.junit.jupiter.api.Assertions.assertThrowsExactly;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -37,6 +38,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Optional;
+import java.util.Objects;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
@@ -70,10 +73,10 @@ public class BddTheories {
     private static final Map<TestBdd, ExtendedInfo> infoMap = new HashMap<>();
     private static final int SKIP_CHECK_RANDOM_BOUND = 500;
     private static final int binaryCount = 10_000;
-    private static final int ternaryCount = 5_000;
+    private static final int ternaryCount = 10_000;
+    private static final int unaryCount = 5_000;
     private static final int treeDepth = 20;
     private static final int treeWidth = 35;
-    private static final int unaryCount = 10_000;
     private static final int variableCount = 10;
     private static final int[] EMPTY_INTS = new int[0];
     private static final Iterable<boolean[]> valuations;
@@ -171,6 +174,7 @@ public class BddTheories {
         return unary.stream();
     }
 
+    @SuppressWarnings("unused")
     public static Collection<TestBdd> bdds() {
         return infoMap.keySet();
     }
@@ -207,13 +211,6 @@ public class BddTheories {
         if (skipCheckRandom.nextInt(SKIP_CHECK_RANDOM_BOUND) == 0) {
             doCheckInvariants();
         }
-        /*
-        infoMap.forEach((bdd, info) -> {
-          assertThat("Work stack not empty", bdd.isWorkStackEmpty(), is(true));
-          assertThat("Initial nodes mismatch", bdd.nodeCount(), is(info.initialNodeCount));
-          assertThat("Referenced nodes mismatch", bdd.referencedNodeCount(),
-              is(info.initialReferencedNodeCount));
-        }); */
     }
 
     @ParameterizedTest(name = "{index}")
@@ -567,8 +564,30 @@ public class BddTheories {
             }
         }
 
-        //noinspection MagicNumber
         assertThat(bdd.countSatisfyingAssignments(function).longValueExact(), is(satisfyingAssignments));
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("binary")
+    public void testCountSatisfyingAssignmentsIn(Generator.BinaryDataPoint<TestBdd> dataPoint) {
+        TestBdd bdd = dataPoint.bdd;
+        int function1 = dataPoint.left;
+        int function2 = dataPoint.right;
+        assumeTrue(bdd.isValidFunction(function1));
+        assumeTrue(bdd.isValidFunction(function2));
+
+        long satisfyingAssignments = 0L;
+        for (boolean[] valuation : valuations) {
+            if (bdd.evaluate(function2, valuation) && bdd.evaluate(function1, valuation)) {
+                satisfyingAssignments += 1L;
+            }
+        }
+
+        assertThat(bdd.countSatisfyingAssignmentsIn(function1, function2).longValueExact(), is(satisfyingAssignments));
+
+        int and = bdd.reference(bdd.and(function1, function2));
+        assertThat(bdd.countSatisfyingAssignmentsIn(function1, function2), is(bdd.countSatisfyingAssignments(and)));
+        bdd.dereference(and);
     }
 
     @ParameterizedTest(name = "{index}")
@@ -686,9 +705,9 @@ public class BddTheories {
 
         assertThat(
                 Iterators.all(BitSets.powerSetIterator(unquantifiedVariables), unquantifiedAssignment -> {
-                    boolean bddEvaluation = bdd.evaluate(exists, unquantifiedAssignment);
+                    boolean bddEvaluation = bdd.evaluate(exists, Objects.requireNonNull(unquantifiedAssignment));
                     boolean setEvaluation = Iterators.any(BitSets.powerSetIterator(quantificationBitSet), bitSet -> {
-                        BitSet actualBitSet = BitSets.copyOf(bitSet);
+                        BitSet actualBitSet = BitSets.copyOf(Objects.requireNonNull(bitSet));
                         actualBitSet.or(unquantifiedAssignment);
                         return bdd.evaluate(function, actualBitSet);
                     });
@@ -723,9 +742,9 @@ public class BddTheories {
 
         assertThat(
                 Iterators.all(BitSets.powerSetIterator(unquantifiedVariables), unquantifiedAssignment -> {
-                    boolean bddEvaluation = bdd.evaluate(forall, unquantifiedAssignment);
+                    boolean bddEvaluation = bdd.evaluate(forall, Objects.requireNonNull(unquantifiedAssignment));
                     boolean setEvaluation = Iterators.all(BitSets.powerSetIterator(quantificationBitSet), bitSet -> {
-                        BitSet actualBitSet = BitSets.copyOf(bitSet);
+                        BitSet actualBitSet = BitSets.copyOf(Objects.requireNonNull(bitSet));
                         actualBitSet.or(unquantifiedAssignment);
                         return bdd.evaluate(function, actualBitSet);
                     });
@@ -1272,6 +1291,41 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
+    public void testSatisfyingAssignment(Generator.UnaryDataPoint<TestBdd> dataPoint) {
+        TestBdd bdd = dataPoint.bdd;
+        int function = dataPoint.function;
+        assumeTrue(bdd.isValidFunction(function));
+
+        if (function == bdd.falseFunction()) {
+            assertThrowsExactly(NoSuchElementException.class, () -> bdd.satisfyingAssignment(function));
+        } else {
+            assertThat(bdd.evaluate(function, bdd.satisfyingAssignment(function)), is(true));
+        }
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("binary")
+    public void testSatisfyingAssignmentIn(Generator.BinaryDataPoint<TestBdd> dataPoint) {
+        TestBdd bdd = dataPoint.bdd;
+        int function1 = dataPoint.left;
+        int function2 = dataPoint.right;
+        assumeTrue(bdd.isValidFunction(function1));
+        assumeTrue(bdd.isValidFunction(function2));
+
+        int and = bdd.reference(bdd.and(function1, function2));
+
+        if (and == bdd.falseFunction()) {
+            assertThat(bdd.satisfyingAssignmentIn(function1, function2), is(Optional.empty()));
+        } else {
+            var assignment = bdd.satisfyingAssignmentIn(function1, function2);
+            assertThat(assignment.isPresent(), is(true));
+            assertThat(bdd.evaluate(function1, assignment.get()), is(true));
+            assertThat(bdd.evaluate(function2, assignment.get()), is(true));
+        }
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("unary")
     public void testSupportTree(Generator.UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
@@ -1375,6 +1429,16 @@ public class BddTheories {
         int ifThenElse = bdd.reference(bdd.ifThenElse(domain, simplify, function));
         assertThat(ifThenElse, is(function));
         bdd.dereference(ifThenElse);
+
+        // SIMPLIFY(f, g) & g == f & g
+        int simplifyAnd = bdd.reference(bdd.and(simplify, domain));
+        int and = bdd.reference(bdd.and(function, domain));
+        assertThat(simplifyAnd, is(and));
+        bdd.dereference(simplifyAnd, and);
+
+        // (SIMPLIFY(f, g) <-> f) & g == 0
+        int xor = bdd.reference(bdd.xor(simplify, function));
+        assertThat(bdd.intersects(domain, xor), is(false));
 
         bdd.dereference(simplify);
     }
