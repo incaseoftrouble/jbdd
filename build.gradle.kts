@@ -12,7 +12,7 @@ plugins {
   // https://plugins.gradle.org/plugin/io.github.gradle-nexus.publish-plugin
   id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
   // https://plugins.gradle.org/plugin/com.diffplug.spotless
-  id("com.diffplug.spotless") version "7.2.1"
+  id("com.diffplug.spotless") version "8.3.0"
   // https://plugins.gradle.org/plugin/me.champeau.jmh
   id("me.champeau.jmh") version "0.7.3"
 }
@@ -79,14 +79,15 @@ tasks.withType<JMHTask> { includeTests.set(true) }
 
 dependencies {
   compileOnly("com.google.code.findbugs:jsr305:3.0.2")
+  testCompileOnly("com.google.code.findbugs:jsr305:3.0.2")
 
   // https://mvnrepository.com/artifact/com.google.guava/guava
   testImplementation("com.google.guava:guava:33.4.8-jre")
   // https://mvnrepository.com/artifact/org.hamcrest/hamcrest
   testImplementation("org.hamcrest:hamcrest:2.2")
   // https://mvnrepository.com/artifact/org.junit.jupiter/junit-jupiter-api
-  testImplementation("org.junit.jupiter", "junit-jupiter", "5.13.4")
-  testRuntimeOnly("org.junit.platform", "junit-platform-launcher")
+  testImplementation("org.junit.jupiter:junit-jupiter:5.13.4")
+  testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
   // https://mvnrepository.com/artifact/org.immutables/value
   compileOnly("org.immutables:value:2.11.3:annotations")
