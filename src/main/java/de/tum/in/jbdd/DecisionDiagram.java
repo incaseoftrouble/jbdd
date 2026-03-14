@@ -179,6 +179,11 @@ public interface DecisionDiagram {
     void forEachSupportFiltered(int function, BitSet filter, IntConsumer action);
 
     /**
+     * Returns the number of nodes used to represent this function in the decision diagram
+     */
+    int size(int function);
+
+    /**
      * A wrapper class to guard some function in an area where exceptions can occur. It increases
      * the reference count of the given function and decreases it when it's closed.
      */

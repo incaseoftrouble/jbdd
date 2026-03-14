@@ -332,6 +332,12 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
+    public int size(int function) {
+        onEnter("size");
+        return onExit(delegate.size(function));
+    }
+
+    @Override
     public int conjunction(int... variables) {
         onEnter("conjunction");
         return onExit(delegate.conjunction(variables));

@@ -18,7 +18,7 @@
   * `intersects`: check if `and(f, g) != FALSE`
   * `simplify`: (also called `constrain`) reduce a function `f` to a given domain `d`, i.e. preserve the values of `f` where `d` is true but otherwise do whatever
   * `xyIn`: Perform operation `xy` relative to a given domain `d` (e.g.\ count satisfying assignments of `x` in `d`)
-  * `xySimplify`: Perform `simplify(xy(...), g)`, but potentially much faster (for now, these are only API and realised by naive implementations, but workloads can already switch to them)
+  * `xySimplify`: Perform `simplify(xy(...), g)`, but potentially much faster
 * Significant improvement of `compose` / `ifThenElse` in certain cases (e.g.\ identifying constant replacements)
 * Preserve cached values when possible (should provide notable improvements on some workloads)
 

@@ -38,7 +38,8 @@ import javax.annotation.Nullable;
     "PMD.AvoidReassigningParameters",
     "ReassignedVariable",
     "AssignmentToMethodParameter",
-    "SameParameterValue"
+    "SameParameterValue",
+    "DuplicatedCode"
 })
 final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     private static final Logger logger = Logger.getLogger(BddImpl.class.getName());
@@ -939,11 +940,9 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             return computeAnd(function1, function2);
         }
         if (domain == function1) {
-            assert computeSimplify(computeAnd(function1, function2), domain) == computeSimplify(function2, domain);
             return computeSimplify(function2, domain);
         }
         if (domain == function2) {
-            assert computeSimplify(computeAnd(function1, function2), domain) == computeSimplify(function1, domain);
             return computeSimplify(function1, domain);
         }
         if (domain == complement(function1) || domain == complement(function2)) {
@@ -963,11 +962,10 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             return computeSimplify(function1, domain);
         }
         if (function1 == complement(function2)) {
-            assert computeSimplify(computeAnd(function1, function2), domain) == FALSE;
             return FALSE;
         }
 
-        assert !isConstant(function1) && !isConstant(function2);
+        assert !isConstant(function1) && !isConstant(function2) && !isConstant(domain);
 
         int fun1var = decisionVariable(function1);
         int fun2var = decisionVariable(function2);
@@ -982,12 +980,11 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             fun2var = varSwap;
         }
 
-        /*
-        if (cache.lookupAnd(function1, function2)) {
-            return cache.lookupResult();
+        int lookup = cache.lookupAndSimplify(function1, function2, domain);
+        if (lookup != placeholder()) {
+            return lookup;
         }
         int hash = cache.lookupHash();
-         */
 
         boolean fun1c = isComplementFunction(function1);
         int node1 = complementIf(function1, fun1c);
@@ -1027,9 +1024,7 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             result = computeAndSimplifyInner(fun1var, fun2var, fun1low, fun1high, function2, domain, domain);
         }
 
-        // cache.putAnd(hash, function1, function2, result);
-        //        table.pushToWorkStack(result);
-        //        table.popFromWorkStack();
+        cache.putAndSimplify(hash, function1, function2, domain, result);
         return result;
     }
 
@@ -1069,23 +1064,28 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         return result;
     }
 
-    private int computeXor(int function1, int function2) {
-        if (function1 == function2) {
+    @Override
+    public int xorSimplify(int function1, int function2, int domain) {
+        assert isValidFunction(function1) && isValidFunction(function2) && isValidFunction(domain);
+
+        if (domain == FALSE) {
             return FALSE;
         }
-        if (function1 == complement(function2)) {
-            return TRUE;
-        }
 
-        if (isComplementFunction(function1)) {
-            function1 = positive(function1);
-            function2 = complement(function2);
-        }
-        // TODO Should be possible to exploit this knowledge a bit more
-        assert isPositive(function1);
+        assert table.isWorkStackEmpty();
+        table.pushToWorkStack(function1, function2, domain);
+        int result = computeXorSimplify(function1, function2, domain);
+        table.popFromWorkStack(3);
+        assert table.isWorkStackEmpty();
+        return result;
+    }
 
+    private int computeXor(int function1, int function2) {
         if (function1 == TRUE) {
             return complement(function2);
+        }
+        if (function1 == FALSE) {
+            return function2;
         }
         if (function2 == TRUE) {
             return complement(function1);
@@ -1093,24 +1093,24 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         if (function2 == FALSE) {
             return function1;
         }
+        if (function1 == function2) {
+            return FALSE;
+        }
+        if (function1 == complement(function2)) {
+            return TRUE;
+        }
 
-        int node1 = function1;
-        int node2 = positive(function2);
-        int node1var = decisionVariable(node1);
-        int node2var = decisionVariable(node2);
+        int fun1var = decisionVariable(function1);
+        int fun2var = decisionVariable(function2);
 
-        if (node2var < node1var || (node2var == node1var && function2 < function1)) {
+        if (fun2var < fun1var || (fun2var == fun1var && function2 < function1)) {
             int functionSwap = function1;
             function1 = function2;
             function2 = functionSwap;
 
-            int nodeSwap = node1;
-            node1 = node2;
-            node2 = nodeSwap;
-
-            int varSwap = node1var;
-            node1var = node2var;
-            node2var = varSwap;
+            int varSwap = fun1var;
+            fun1var = fun2var;
+            fun2var = varSwap;
         }
 
         int lookup = cache.lookupXor(function1, function2);
@@ -1119,22 +1119,145 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
         int hash = cache.lookupHash();
 
+        boolean fun1c = isComplementFunction(function1);
+        int node1 = complementIf(function1, fun1c);
+        int fun1low = complementIf(table.low(node1), fun1c);
+        int fun1high = complementIf(table.high(node1), fun1c);
+
         int lowNode;
         int highNode;
-        boolean node1c = function1 != node1;
-        if (node1var == node2var) {
-            boolean node2c = function2 != node2;
-            lowNode = table.pushToWorkStack(
-                    computeXor(complementIf(table.low(node1), node1c), complementIf(table.low(node2), node2c)));
-            highNode = table.pushToWorkStack(
-                    computeXor(complementIf(table.high(node1), node1c), complementIf(table.high(node2), node2c)));
-        } else { // node1var < node2var
-            lowNode = table.pushToWorkStack(computeXor(complementIf(table.low(node1), node1c), function2));
-            highNode = table.pushToWorkStack(computeXor(complementIf(table.high(node1), node1c), function2));
+        if (fun1var == fun2var) {
+            boolean fun2c = isComplementFunction(function2);
+            int node2 = positive(function2);
+            lowNode = table.pushToWorkStack(computeXor(fun1low, complementIf(table.low(node2), fun2c)));
+            highNode = table.pushToWorkStack(computeXor(fun1high, complementIf(table.high(node2), fun2c)));
+        } else { // fun1var < fun2var
+            lowNode = table.pushToWorkStack(computeXor(fun1low, function2));
+            highNode = table.pushToWorkStack(computeXor(fun1high, function2));
         }
-        int result = makeFunction(node1var, lowNode, highNode);
+        int result = makeFunction(fun1var, lowNode, highNode);
         table.popFromWorkStack(2);
         cache.putXor(hash, function1, function2, result);
+        return result;
+    }
+
+    private int computeXorSimplify(int function1, int function2, int domain) {
+        assert domain != FALSE;
+        if (domain == TRUE) {
+            return computeXor(function1, function2);
+        }
+        if (domain == function1) {
+            return computeSimplify(complement(function2), domain);
+        }
+        if (domain == function2) {
+            return computeSimplify(complement(function1), domain);
+        }
+        if (domain == complement(function1)) {
+            return computeSimplify(function2, domain);
+        }
+        if (domain == complement(function2)) {
+            return computeSimplify(function1, domain);
+        }
+
+        if (function1 == TRUE) {
+            return computeSimplify(complement(function2), domain);
+        }
+        if (function1 == FALSE) {
+            return computeSimplify(function2, domain);
+        }
+        if (function2 == TRUE) {
+            return computeSimplify(complement(function1), domain);
+        }
+        if (function2 == FALSE) {
+            return computeSimplify(function1, domain);
+        }
+        if (function1 == function2) {
+            return FALSE;
+        }
+        if (function1 == complement(function2)) {
+            return TRUE;
+        }
+
+        assert !isConstant(function1) && !isConstant(function2) && !isConstant(domain);
+
+        int fun1var = decisionVariable(function1);
+        int fun2var = decisionVariable(function2);
+
+        if (fun2var < fun1var || (fun2var == fun1var && function2 < function1)) {
+            int functionSwap = function1;
+            function1 = function2;
+            function2 = functionSwap;
+
+            int varSwap = fun1var;
+            fun1var = fun2var;
+            fun2var = varSwap;
+        }
+
+        int lookup = cache.lookupXorSimplify(function1, function2, domain);
+        if (lookup != placeholder()) {
+            return lookup;
+        }
+        int hash = cache.lookupHash();
+
+        boolean fun1c = isComplementFunction(function1);
+        int node1 = complementIf(function1, fun1c);
+        int fun1low = complementIf(table.low(node1), fun1c);
+        int fun1high = complementIf(table.high(node1), fun1c);
+
+        boolean domc = isComplementFunction(domain);
+        int domainNode = complementIf(domain, domc);
+        int domainVar = decisionVariable(domainNode);
+
+        int result;
+        if (domainVar < fun1var) {
+            int domainLow = complementIf(table.low(domainNode), domc);
+            int domainHigh = complementIf(table.high(domainNode), domc);
+            if (domainLow == FALSE) {
+                result = computeXorSimplify(function1, function2, domainHigh);
+            } else if (domainHigh == FALSE) {
+                result = computeXorSimplify(function1, function2, domainLow);
+            } else {
+                int lowNode = table.pushToWorkStack(computeXorSimplify(function1, function2, domainLow));
+                int highNode = table.pushToWorkStack(computeXorSimplify(function1, function2, domainHigh));
+                result = makeFunction(domainVar, lowNode, highNode);
+                table.popFromWorkStack(2);
+            }
+        } else if (domainVar == fun1var) {
+            int domainLow = complementIf(table.low(domainNode), domc);
+            int domainHigh = complementIf(table.high(domainNode), domc);
+
+            if (domainLow == FALSE) {
+                result = computeXorSimplify(fun1high, fun2var == fun1var ? highOf(function2) : function2, domainHigh);
+            } else if (domainHigh == FALSE) {
+                result = computeXorSimplify(fun1low, fun2var == fun1var ? lowOf(function2) : function2, domainLow);
+            } else {
+                result = computeXorSimplifyInner(fun1var, fun2var, fun1low, fun1high, function2, domainLow, domainHigh);
+            }
+        } else {
+            result = computeXorSimplifyInner(fun1var, fun2var, fun1low, fun1high, function2, domain, domain);
+        }
+        cache.putXorSimplify(hash, function1, function2, domain, result);
+        return result;
+    }
+
+    private int computeXorSimplifyInner(
+            int fun1var, int fun2var, int fun1low, int fun1high, int function2, int lowDomain, int highDomain) {
+        assert fun1var <= fun2var;
+        int lowNode;
+        int highNode;
+        if (fun1var == fun2var) {
+            boolean node2c = isComplementFunction(function2);
+            int node2 = complementIf(function2, node2c);
+            lowNode = table.pushToWorkStack(
+                    computeXorSimplify(fun1low, complementIf(table.low(node2), node2c), lowDomain));
+            highNode = table.pushToWorkStack(
+                    computeXorSimplify(fun1high, complementIf(table.high(node2), node2c), highDomain));
+        } else { // fun1var < fun2var
+            lowNode = table.pushToWorkStack(computeXor(fun1low, function2));
+            highNode = table.pushToWorkStack(computeXor(fun1high, function2));
+        }
+        int result = makeFunction(fun1var, lowNode, highNode);
+        table.popFromWorkStack(2);
         return result;
     }
 

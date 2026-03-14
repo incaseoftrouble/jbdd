@@ -215,9 +215,20 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
     }
 
     @Override
+    public int size(int function) {
+        return table().nodeCountBelow(nodeFor(function));
+    }
+
+    @Override
     public int andNot(int function1, int function2) {
         assert isValidFunction(function1) && isValidFunction(function2);
         return and(function1, complement(function2));
+    }
+
+    @Override
+    public int andNotSimplify(int function1, int function2, int domain) {
+        assert isValidFunction(function1) && isValidFunction(function2) && isValidFunction(domain);
+        return andSimplify(function1, complement(function2), domain);
     }
 
     @Override
@@ -227,14 +238,23 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
     }
 
     @Override
+    public int equivalenceSimplify(int function1, int function2, int domain) {
+        return complement(xorSimplify(function1, function2, domain));
+    }
+
+    @Override
     public int forall(int function, BitSet quantifiedVariables) {
-        assert isValidFunction(function);
         return complement(exists(complement(function), quantifiedVariables));
     }
 
     @Override
     public int implication(int function1, int function2) {
         return complement(and(function1, complement(function2)));
+    }
+
+    @Override
+    public int implicationSimplify(int function1, int function2, int domain) {
+        return complement(andSimplify(function1, complement(function2), domain));
     }
 
     @Override
@@ -245,14 +265,22 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
 
     @Override
     public int notAnd(int function1, int function2) {
-        assert isValidFunction(function1) && isValidFunction(function2);
         return complement(and(function1, function2));
     }
 
     @Override
+    public int notAndSimplify(int function1, int function2, int domain) {
+        return complement(andSimplify(function1, function2, domain));
+    }
+
+    @Override
     public int or(int function1, int function2) {
-        assert isValidFunction(function1) && isValidFunction(function2);
         return complement(and(complement(function1), complement(function2)));
+    }
+
+    @Override
+    public int orSimplify(int function1, int function2, int domain) {
+        return complement(andSimplify(complement(function1), complement(function2), domain));
     }
 
     String format(int reference) {

@@ -99,6 +99,10 @@ public interface Bdd extends BooleanDecisionDiagram, BooleanTerminalDecisionDiag
      */
     int compose(int function, int[] variableMapping);
 
+    default int composeSimplify(int function, int[] variableMapping, int domain) {
+        return simplify(compose(function, variableMapping), domain);
+    }
+
     /**
      * Computes the restriction of the given boolean {@code function}, where all variables specified by {@code
      * restrictedVariables} are replaced by the value given in {@code restrictedVariableValues}.

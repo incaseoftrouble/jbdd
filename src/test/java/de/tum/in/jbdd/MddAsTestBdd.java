@@ -375,6 +375,11 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
+    public int size(int function) {
+        return mdd.size(function);
+    }
+
+    @Override
     public int conjunction(BitSet variables) {
         int function = TRUE;
         for (int var = variables.nextSetBit(0); var >= 0; var = variables.nextSetBit(var + 1)) {

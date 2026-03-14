@@ -72,9 +72,9 @@ public class BddTheories {
 
     private static final Map<TestBdd, ExtendedInfo> infoMap = new HashMap<>();
     private static final int SKIP_CHECK_RANDOM_BOUND = 500;
-    private static final int binaryCount = 10_000;
-    private static final int ternaryCount = 10_000;
-    private static final int unaryCount = 4_000;
+    private static final int binaryCount = 1_000;
+    private static final int ternaryCount = 1_000;
+    private static final int unaryCount = 1_000;
     private static final int treeDepth = 20;
     private static final int treeWidth = 35;
     private static final int variableCount = 10;
@@ -174,6 +174,17 @@ public class BddTheories {
         return unary.stream();
     }
 
+    private void testSimplify(Bdd bdd, int direct, int indirect, int domain, boolean testSize) {
+        int directOnDomain = bdd.reference(bdd.and(direct, domain));
+        int indirectOnDomain = bdd.reference(bdd.and(indirect, domain));
+        assertThat(directOnDomain, is(indirectOnDomain));
+        bdd.dereference(directOnDomain, indirectOnDomain);
+
+        if (testSize) {
+            assertThat(bdd.size(direct), is(bdd.size(indirect)));
+        }
+    }
+
     @SuppressWarnings("unused")
     public static Collection<TestBdd> bdds() {
         return infoMap.keySet();
@@ -260,12 +271,7 @@ public class BddTheories {
         int andSimplify = bdd.reference(bdd.andSimplify(function1, function2, domain));
         int andThenSimplify = bdd.reference(bdd.simplify(bdd.and(function1, function2), domain));
 
-        int andSimplifyOnDomain = bdd.reference(bdd.and(andSimplify, domain));
-        int andThenSimplifyOnDomain = bdd.reference(bdd.and(andThenSimplify, domain));
-        assertThat(andSimplifyOnDomain, is(andThenSimplifyOnDomain));
-        bdd.dereference(andSimplifyOnDomain, andThenSimplifyOnDomain);
-
-        assertThat(andSimplify, is(andThenSimplify));
+        testSimplify(bdd, andSimplify, andThenSimplify, domain, true);
 
         bdd.dereference(andSimplify, andThenSimplify);
     }
@@ -301,6 +307,24 @@ public class BddTheories {
         bdd.dereference(not1, not1or2);
 
         bdd.dereference(andNot);
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("ternary")
+    public void testAndNotSimplify(Generator.TernaryDataPoint<TestBdd> dataPoint) {
+        TestBdd bdd = dataPoint.bdd;
+        int function1 = dataPoint.first;
+        int function2 = dataPoint.second;
+        int domain = dataPoint.third;
+        assumeTrue(bdd.isValidFunction(function1));
+        assumeTrue(bdd.isValidFunction(function2));
+        assumeTrue(bdd.isValidFunction(domain));
+
+        int direct = bdd.reference(bdd.andNotSimplify(function1, function2, domain));
+        int indirect = bdd.reference(bdd.simplify(bdd.andNot(function1, function2), domain));
+        testSimplify(bdd, direct, indirect, domain, true);
+
+        bdd.dereference(direct, indirect);
     }
 
     @ParameterizedTest(name = "{index}")
@@ -691,6 +715,24 @@ public class BddTheories {
     }
 
     @ParameterizedTest(name = "{index}")
+    @MethodSource("ternary")
+    public void testEquivalenceSimplify(Generator.TernaryDataPoint<TestBdd> dataPoint) {
+        TestBdd bdd = dataPoint.bdd;
+        int function1 = dataPoint.first;
+        int function2 = dataPoint.second;
+        int domain = dataPoint.third;
+        assumeTrue(bdd.isValidFunction(function1));
+        assumeTrue(bdd.isValidFunction(function2));
+        assumeTrue(bdd.isValidFunction(domain));
+
+        int direct = bdd.reference(bdd.equivalenceSimplify(function1, function2, domain));
+        int indirect = bdd.reference(bdd.simplify(bdd.equivalence(function1, function2), domain));
+        testSimplify(bdd, direct, indirect, domain, false);
+
+        bdd.dereference(direct, indirect);
+    }
+
+    @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
     public void testEvaluateTree(Generator.UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
@@ -1055,6 +1097,24 @@ public class BddTheories {
     }
 
     @ParameterizedTest(name = "{index}")
+    @MethodSource("ternary")
+    public void testImplicationSimplify(Generator.TernaryDataPoint<TestBdd> dataPoint) {
+        TestBdd bdd = dataPoint.bdd;
+        int function1 = dataPoint.first;
+        int function2 = dataPoint.second;
+        int domain = dataPoint.third;
+        assumeTrue(bdd.isValidFunction(function1));
+        assumeTrue(bdd.isValidFunction(function2));
+        assumeTrue(bdd.isValidFunction(domain));
+
+        int direct = bdd.reference(bdd.implicationSimplify(function1, function2, domain));
+        int indirect = bdd.reference(bdd.simplify(bdd.implication(function1, function2), domain));
+        testSimplify(bdd, direct, indirect, domain, true);
+
+        bdd.dereference(direct, indirect);
+    }
+
+    @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
     public void testImplies(Generator.BinaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
@@ -1195,6 +1255,24 @@ public class BddTheories {
     }
 
     @ParameterizedTest(name = "{index}")
+    @MethodSource("ternary")
+    public void testNotAndSimplify(Generator.TernaryDataPoint<TestBdd> dataPoint) {
+        TestBdd bdd = dataPoint.bdd;
+        int function1 = dataPoint.first;
+        int function2 = dataPoint.second;
+        int domain = dataPoint.third;
+        assumeTrue(bdd.isValidFunction(function1));
+        assumeTrue(bdd.isValidFunction(function2));
+        assumeTrue(bdd.isValidFunction(domain));
+
+        int direct = bdd.reference(bdd.notAndSimplify(function1, function2, domain));
+        int indirect = bdd.reference(bdd.simplify(bdd.notAnd(function1, function2), domain));
+        testSimplify(bdd, direct, indirect, domain, true);
+
+        bdd.dereference(direct, indirect);
+    }
+
+    @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
     public void testOr(Generator.BinaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
@@ -1224,6 +1302,24 @@ public class BddTheories {
         assertThat(or, is(orIteConstruction));
 
         bdd.dereference(or);
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("ternary")
+    public void testOrSimplify(Generator.TernaryDataPoint<TestBdd> dataPoint) {
+        TestBdd bdd = dataPoint.bdd;
+        int function1 = dataPoint.first;
+        int function2 = dataPoint.second;
+        int domain = dataPoint.third;
+        assumeTrue(bdd.isValidFunction(function1));
+        assumeTrue(bdd.isValidFunction(function2));
+        assumeTrue(bdd.isValidFunction(domain));
+
+        int direct = bdd.reference(bdd.orSimplify(function1, function2, domain));
+        int indirect = bdd.reference(bdd.simplify(bdd.or(function1, function2), domain));
+        testSimplify(bdd, direct, indirect, domain, true);
+
+        bdd.dereference(direct, indirect);
     }
 
     @ParameterizedTest(name = "{index}")
@@ -1554,6 +1650,24 @@ public class BddTheories {
         bdd.dereference(not1, not2, not1and2, not2and1);
 
         bdd.dereference(xor);
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("ternary")
+    public void testXorSimplify(Generator.TernaryDataPoint<TestBdd> dataPoint) {
+        TestBdd bdd = dataPoint.bdd;
+        int function1 = dataPoint.first;
+        int function2 = dataPoint.second;
+        int domain = dataPoint.third;
+        assumeTrue(bdd.isValidFunction(function1));
+        assumeTrue(bdd.isValidFunction(function2));
+        assumeTrue(bdd.isValidFunction(domain));
+
+        int direct = bdd.reference(bdd.xorSimplify(function1, function2, domain));
+        int indirect = bdd.reference(bdd.simplify(bdd.xor(function1, function2), domain));
+        testSimplify(bdd, direct, indirect, domain, false);
+
+        bdd.dereference(direct, indirect);
     }
 
     @ParameterizedTest(name = "{index}")

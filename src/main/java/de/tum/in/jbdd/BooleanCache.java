@@ -43,7 +43,9 @@ final class BooleanCache {
     private int partialInvalidationCount = 0;
 
     private final BinaryToIntCache andCache = new BinaryToIntCache();
+    private final TernaryToIntCache andSimplifyCache = new TernaryToIntCache();
     private final BinaryToIntCache xorCache = new BinaryToIntCache();
+    private final TernaryToIntCache xorSimplifyCache = new TernaryToIntCache();
     private final BinaryToIntCache simplifyCache = new BinaryToIntCache();
     private final BinaryToBooleanCache impliesCache = new BinaryToBooleanCache();
     private final BinaryToBooleanCache intersectsCache = new BinaryToBooleanCache();
@@ -115,6 +117,8 @@ final class BooleanCache {
         intersectsCache.grow(binarySize);
 
         int ternarySize = bdd.tableSize() / configuration.cacheTernaryDivider();
+        andSimplifyCache.grow(ternarySize);
+        xorSimplifyCache.grow(ternarySize);
         iteCache.grow(ternarySize);
 
         int ephemeralSize = bdd.tableSize() / configuration.cacheEphemeralMultiplier();
@@ -135,7 +139,9 @@ final class BooleanCache {
     public void partialInvalidate() {
         partialInvalidationCount += 1;
         andCache.prune();
+        andSimplifyCache.prune();
         xorCache.prune();
+        xorSimplifyCache.prune();
         simplifyCache.prune();
         impliesCache.prune();
         intersectsCache.prune();
@@ -173,9 +179,19 @@ final class BooleanCache {
         return andCache.lookup(function1, function2);
     }
 
+    int lookupAndSimplify(int function1, int function2, int domain) {
+        assert binarySymmetricWellOrdered(function1, function2);
+        return andSimplifyCache.lookup(function1, function2, domain);
+    }
+
     int lookupXor(int function1, int function2) {
         assert binarySymmetricWellOrdered(function1, function2);
         return xorCache.lookup(function1, function2);
+    }
+
+    int lookupXorSimplify(int function1, int function2, int domain) {
+        assert binarySymmetricWellOrdered(function1, function2);
+        return xorSimplifyCache.lookup(function1, function2, domain);
     }
 
     int lookupSimplify(int function, int domain) {
@@ -215,9 +231,19 @@ final class BooleanCache {
         andCache.put(hash, function1, function2, result);
     }
 
+    void putAndSimplify(int hash, int function1, int function2, int domain, int result) {
+        assert binarySymmetricWellOrdered(function1, function2);
+        andSimplifyCache.put(hash, function1, function2, domain, result);
+    }
+
     void putXor(int hash, int function1, int function2, int result) {
         assert binarySymmetricWellOrdered(function1, function2);
         xorCache.put(hash, function1, function2, result);
+    }
+
+    void putXorSimplify(int hash, int function1, int function2, int domain, int result) {
+        assert binarySymmetricWellOrdered(function1, function2);
+        xorSimplifyCache.put(hash, function1, function2, domain, result);
     }
 
     void putSimplify(int hash, int function, int domain, int result) {
@@ -258,7 +284,9 @@ final class BooleanCache {
         return String.format(
                 "Cache Statistics:\n" //
                         + "And: size: %d, load: %s\n %s\n"
+                        + "AndSimplify: size: %d, load: %s\n %s\n"
                         + "Xor: size: %d, load: %s\n %s\n"
+                        + "XorSimplify: size: %d, load: %s\n %s\n"
                         + "Simplify: size: %d, load: %s\n %s\n"
                         + "Ite: size: %d, load: %s\n %s\n"
                         + "Satisfaction: size: %d, load: %s\n %s\n"
@@ -270,9 +298,15 @@ final class BooleanCache {
                 andCache.size(),
                 andCache.loadFactor(),
                 andCache.statistics,
+                andSimplifyCache.size(),
+                andSimplifyCache.loadFactor(),
+                andSimplifyCache.statistics,
                 xorCache.size(),
                 xorCache.loadFactor(),
                 xorCache.statistics,
+                xorSimplifyCache.size(),
+                xorSimplifyCache.loadFactor(),
+                xorSimplifyCache.statistics,
                 simplifyCache.size(),
                 simplifyCache.loadFactor(),
                 simplifyCache.statistics,
