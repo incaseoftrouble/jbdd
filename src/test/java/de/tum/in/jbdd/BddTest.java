@@ -73,7 +73,7 @@ public class BddTest {
         int v3 = bdd.createVariable();
         int v4 = bdd.createVariable();
 
-        // check deadnodes counter
+        // check dead nodes counter
         int dum = bdd.reference(bdd.and(v3, v2));
         assertThat(table.approximateDeadNodeCount(), is(0));
         bdd.dereference(dum);
@@ -206,7 +206,6 @@ public class BddTest {
         assertThat(bdd.evaluate(p4, valuation), is(false));
     }
 
-    @SuppressWarnings("UseOfClone")
     @Test
     public void testMinimalSolutionsForConstants() {
         BddImpl bdd = new BddImpl(config);

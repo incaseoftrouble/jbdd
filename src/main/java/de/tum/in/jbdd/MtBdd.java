@@ -244,7 +244,7 @@ public interface MtBdd extends BooleanDecisionDiagram {
     default Product cartesianProduct(int[] functions) {
         Map<int[], Integer> product = new HashMap<>();
         int function = apply(functions, values -> product.computeIfAbsent(values, k -> product.size()));
-        Map<Integer, int[]> results  = new HashMap<>();
+        Map<Integer, int[]> results = new HashMap<>();
         product.forEach((k, v) -> results.put(v, k));
 
         return new Product() {

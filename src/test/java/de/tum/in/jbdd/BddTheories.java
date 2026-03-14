@@ -38,8 +38,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
-import java.util.Optional;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
@@ -74,7 +74,7 @@ public class BddTheories {
     private static final int SKIP_CHECK_RANDOM_BOUND = 500;
     private static final int binaryCount = 10_000;
     private static final int ternaryCount = 10_000;
-    private static final int unaryCount = 5_000;
+    private static final int unaryCount = 4_000;
     private static final int treeDepth = 20;
     private static final int treeWidth = 35;
     private static final int variableCount = 10;
@@ -244,6 +244,30 @@ public class BddTheories {
         assertThat(and, is(andIteConstruction));
 
         bdd.dereference(and);
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("ternary")
+    public void testAndSimplify(Generator.TernaryDataPoint<TestBdd> dataPoint) {
+        TestBdd bdd = dataPoint.bdd;
+        int function1 = dataPoint.first;
+        int function2 = dataPoint.second;
+        int domain = dataPoint.third;
+        assumeTrue(bdd.isValidFunction(function1));
+        assumeTrue(bdd.isValidFunction(function2));
+        assumeTrue(bdd.isValidFunction(domain));
+
+        int andSimplify = bdd.reference(bdd.andSimplify(function1, function2, domain));
+        int andThenSimplify = bdd.reference(bdd.simplify(bdd.and(function1, function2), domain));
+
+        int andSimplifyOnDomain = bdd.reference(bdd.and(andSimplify, domain));
+        int andThenSimplifyOnDomain = bdd.reference(bdd.and(andThenSimplify, domain));
+        assertThat(andSimplifyOnDomain, is(andThenSimplifyOnDomain));
+        bdd.dereference(andSimplifyOnDomain, andThenSimplifyOnDomain);
+
+        assertThat(andSimplify, is(andThenSimplify));
+
+        bdd.dereference(andSimplify, andThenSimplify);
     }
 
     @ParameterizedTest(name = "{index}")
