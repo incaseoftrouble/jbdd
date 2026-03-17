@@ -287,11 +287,6 @@ abstract class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     }
 
     @Override
-    public Product cartesianProduct(int[] functions) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void forEachPath(int function, BiConsumer<BinaryPath, Integer> action) {
         throw new UnsupportedOperationException();
     }

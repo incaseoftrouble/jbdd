@@ -27,10 +27,7 @@ public class BddState {
     @Param({"1"})
     private float cacheSizeFactor;
 
-    @Param({"true"})
-    private boolean partialInvalidation;
-
-    @Param({"true"})
+    @Param({"true", "false"})
     private boolean preserveCache;
 
     @Param({"false"})
@@ -46,8 +43,7 @@ public class BddState {
                 .cacheBinaryDivider((int) (BddConfiguration.DEFAULT_CACHE_BINARY_DIVIDER / cacheSizeFactor))
                 .cacheTernaryDivider((int) (BddConfiguration.DEFAULT_CACHE_TERNARY_DIVIDER / cacheSizeFactor))
                 .cacheEphemeralMultiplier((int) (BddConfiguration.DEFAULT_CACHE_EPHEMERAL_MULTIPLIER * cacheSizeFactor))
-                .useCachePartialInvalidate(partialInvalidation)
-                .useCachePreserveOnGrow(preserveCache)
+                .useCachePreserve(preserveCache)
                 .build();
         bdd = emulateMdd ? new MddAsTestBdd(new MddImpl(configuration)) : BddFactory.buildBdd(configuration);
     }

@@ -16,13 +16,16 @@
  */
 package de.tum.in.jbdd;
 
-import static de.tum.in.jbdd.Preconditions.*;
+import static de.tum.in.jbdd.Preconditions.checkState;
+import static java.lang.String.valueOf;
+import static java.util.Map.entry;
 
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Deque;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.IntConsumer;
 import java.util.function.IntPredicate;
@@ -1044,7 +1047,7 @@ abstract class NodeTable {
 
     // Statistics
 
-    public String getStatistics() {
+    public Map<String, String> getStatistics() {
         int childrenCount = 0;
         int saturatedNodes = 0;
         int referencedNodes = 0;
@@ -1100,42 +1103,36 @@ abstract class NodeTable {
             }
         }
 
-        int sum = 0;
-        int max = 0;
+        int chainLenghtSum = 0;
+        int maximumChainLength = 0;
         for (int length : chainLength) {
             if (length == 0) {
                 continue;
             }
-            sum += 1;
-            if (max < length) {
-                max = length;
+            chainLenghtSum += 1;
+            if (maximumChainLength < length) {
+                maximumChainLength = length;
             }
         }
 
-        return String.format(
-                "Node table statistics:%n"
-                        + "Table Size: %1$d, (largest ref: %2$d), %3$d created nodes%n"
-                        + "%4$d valid nodes, %5$d referenced (%6$d saturated), %7$d children%n"
-                        + "Hash table: %8$d chains %9$.2f load, %10$.2f avg, %11$d max; "
-                        + "%12$d lookups, %13$.2f avg. len%n"
-                        + "%14$d GC runs (%15$.2f s), %16$d freed, %17$d grows",
-                size(),
-                biggestReferencedNode,
-                createdNodes,
-                validNodes,
-                referencedNodes,
-                saturatedNodes,
-                childrenCount,
-                distinctChains,
-                sum * 1.0 / size(),
-                sum * 1.0 / distinctChains,
-                max,
-                hashChainLookups,
-                hashChainLookupLength * 1.0 / hashChainLookups,
-                garbageCollectionCount,
-                garbageCollectionTime / 1000.0,
-                garbageCollectedNodeCount,
-                growCount);
+        return Map.ofEntries(
+                entry("node_table_size", valueOf(size())),
+                entry("biggest_referenced_node", valueOf(biggestReferencedNode)),
+                entry("created_nodes", valueOf(createdNodes)),
+                entry("valid_nodes", valueOf(validNodes)),
+                entry("referenced_nodes", valueOf(referencedNodes)),
+                entry("saturated_nodes", valueOf(saturatedNodes)),
+                entry("children_count", valueOf(childrenCount)),
+                entry("hash_table_load_factor", valueOf(chainLenghtSum * 1.0 / size())),
+                entry("hash_table_distinct_chains", valueOf(distinctChains)),
+                entry("hash_table_average_chain_length", valueOf(chainLenghtSum * 1.0 / distinctChains)),
+                entry("hash_table_longest_chain", valueOf(maximumChainLength)),
+                entry("hash_table_lookups", valueOf(hashChainLookups)),
+                entry("hash_table_lookup_average_length", valueOf(hashChainLookupLength * 1.0 / hashChainLookups)),
+                entry("node_table_gc_count", valueOf(garbageCollectionCount)),
+                entry("node_table_gc_time_milliseconds", valueOf(garbageCollectionTime)),
+                entry("node_table_gc_collected_nodes", valueOf(garbageCollectedNodeCount)),
+                entry("node_table_grow_count", valueOf(growCount)));
     }
 
     private static final class FunctionToStringSupplier {

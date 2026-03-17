@@ -56,24 +56,15 @@ public class BddGcReferenceManager<V extends BddGcReferenceManager.BddContainer>
 
         // Constants and variables are exempt from GC but still canonical
         if (bdd.isConstant(function) || bdd.isVariableOrNegated(function)) {
-            // assert bdd.nodeReferenceCount(node) == -1 : reportReferenceCountMismatch(-1,
-            // bdd.nodeReferenceCount(node));
-
             return nonGcObjects.merge(function, container, (oldW, newW) -> oldW);
         }
 
         BddReference<V> canonicalReference = gcObjects.get(function);
         if (canonicalReference == null) {
             // The BDD was created and needs a reference to be protected.
-            // assert bdd.nodeReferenceCount(function) == 0 : reportReferenceCountMismatch(0,
-            // bdd.nodeReferenceCount(function));
-
             bdd.reference(function);
         } else {
             // The BDD already existed -- Can have a reference for the BDD and its negation
-            // assert bdd.nodeReferenceCount(function) <= 2 : reportReferenceCountMismatch(1,
-            // bdd.nodeReferenceCount(function));
-
             V canonicalNode = canonicalReference.get();
             if (canonicalNode == null) {
                 // This object was GC'ed since the last run of clear(), but potentially wasn't added to the
@@ -86,13 +77,11 @@ public class BddGcReferenceManager<V extends BddGcReferenceManager.BddContainer>
             }
         }
 
-        // assert bdd.nodeReferenceCount(function) == 1 || bdd.nodeReferenceCount(function) == 2;
         // Remove queued BDDs from the mapping.
         processReferenceQueue(function);
 
         // Insert BDD into mapping.
         gcObjects.put(function, new BddReference<>(container, queue));
-        // assert bdd.nodeReferenceCount(function) == 1 || bdd.nodeReferenceCount(function) == 2;
         return container;
     }
 
@@ -134,9 +123,5 @@ public class BddGcReferenceManager<V extends BddGcReferenceManager.BddContainer>
     @SuppressWarnings({"InterfaceMayBeAnnotatedFunctional", "PMD.ImplicitFunctionalInterface"})
     public interface BddContainer {
         int function();
-    }
-
-    private static String reportReferenceCountMismatch(int expected, int actual) { // NOPMD
-        return String.format("Expected reference count {%d}, but actual count is {%d}.", expected, actual);
     }
 }

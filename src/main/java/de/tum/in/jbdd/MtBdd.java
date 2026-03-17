@@ -214,7 +214,7 @@ public interface MtBdd extends BooleanDecisionDiagram {
 
     /**
      * Creates the boolean function representing all assignments under which the given {@code function}
-     * evaluates to the given {@code values}.
+     * evaluates to the given {@code values} in the underlying {@link #bdd() Bdd}.
      *
      * @see #agreement(int, int)
      */

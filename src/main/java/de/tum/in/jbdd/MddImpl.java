@@ -23,6 +23,7 @@ import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -30,7 +31,9 @@ import java.util.function.IntConsumer;
 import java.util.function.Predicate;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 import javax.annotation.Nullable;
 
 @SuppressWarnings({"PMD.AvoidReassigningParameters", "AssignmentToMethodParameter", "DuplicatedCode"})
@@ -1070,13 +1073,13 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
 
         assert table.isWorkStackEmpty();
         table.pushToWorkStack(function, domain);
-        int result = computeConstrain(function, domain);
+        int result = computeSimplify(function, domain);
         table.popFromWorkStack(2);
         assert table.isWorkStackEmpty();
         return result;
     }
 
-    private int computeConstrain(int function, int domain) {
+    private int computeSimplify(int function, int domain) {
         assert domain != FALSE;
         if (function == TRUE || function == FALSE || domain == TRUE) {
             return function;
@@ -1121,7 +1124,7 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
                     } else {
                         firstDecision = -2;
                     }
-                    resultChildren[val] = table.pushToWorkStack(computeConstrain(functionChildren[val], domainChild));
+                    resultChildren[val] = table.pushToWorkStack(computeSimplify(functionChildren[val], domainChild));
                     workStack += 1;
                 }
             }
@@ -1137,7 +1140,7 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             int variableDomainSize = functionChildren.length;
             int[] resultChildren = new int[variableDomainSize];
             for (int i = 0; i < variableDomainSize; i++) {
-                resultChildren[i] = table.pushToWorkStack(computeConstrain(functionChildren[i], domain));
+                resultChildren[i] = table.pushToWorkStack(computeSimplify(functionChildren[i], domain));
             }
             result = makeFunction(functionVar, resultChildren);
             table.popFromWorkStack(variableDomainSize);
@@ -1149,7 +1152,7 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
                 disjunction = computeOr(disjunction, complementIf(domainChildren[i], domc));
                 table.popFromWorkStack();
             }
-            result = computeConstrain(node, table.pushToWorkStack(disjunction));
+            result = computeSimplify(node, table.pushToWorkStack(disjunction));
             table.popFromWorkStack();
         }
         cache.putSimplify(hash, node, domain, result);
@@ -1165,7 +1168,10 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
 
     @Override
     public String statistics() {
-        return table.getStatistics() + '\n' + cache.getStatistics();
+        return Stream.concat(table.getStatistics().entrySet().stream(), cache.getStatistics().entrySet().stream())
+                .sorted(Map.Entry.comparingByKey())
+                .map(e -> String.format("%s=%s", e.getKey(), e.getValue()))
+                .collect(Collectors.joining("\n"));
     }
 
     // Utility
@@ -1667,6 +1673,7 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             NodeTable table = mdd.table;
             int currentSize = table.size();
             int approximateDeadNodeCount = table.approximateDeadNodeCount();
+            boolean nodesInvalidated;
             if (mdd.configuration.useGarbageCollection() && approximateDeadNodeCount > 0) {
                 logger.log(Level.FINE, "Running GC on {0} has size {1} and approximately {2} dead nodes", new Object[] {
                     this, currentSize, approximateDeadNodeCount
@@ -1681,17 +1688,20 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
                 if (referencedNodes <= maximumReferencedNodes) {
                     int reclaimedNodes = table.reclaimUnmarkedNodes();
                     logger.log(Level.FINE, "Collected {0} nodes", reclaimedNodes);
-                    mdd.clearCacheAfterGC(reclaimedNodes);
+                    mdd.pruneCacheAfterGC(reclaimedNodes);
                     assert mdd.check();
                     return false;
                 }
 
                 logger.log(Level.FINER, "Not enough free nodes");
                 table.invalidateUnmarkedNodes();
+                nodesInvalidated = true;
+            } else {
+                nodesInvalidated = false;
             }
             //noinspection NumericCastThatLosesPrecision
             table.grow((int) (currentSize * mdd.configuration.growthFactor()));
-            mdd.cache.tableSizeChanged();
+            mdd.afterTableGrow(nodesInvalidated);
             assert mdd.check();
             return true;
         }

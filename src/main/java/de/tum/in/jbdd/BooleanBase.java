@@ -41,17 +41,13 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
     }
 
     void invalidateCache() {
-        cache().tableSizeChanged();
+        cache().invalidate();
     }
 
-    void clearCacheAfterGC(int reclaimedNodes) {
+    void pruneCacheAfterGC(int reclaimedNodes) {
         // Delete cache entries which are no longer valid
         // If we reclaimed a lot of nodes, we won't be able to save much
-        if (configuration().useCachePartialInvalidate() && reclaimedNodes < tableSize() / 2) {
-            cache().partialInvalidate();
-        } else {
-            cache().tableSizeChanged();
-        }
+        cache().clearInvalidNodes(reclaimedNodes < tableSize() / 2);
     }
 
     /**
@@ -62,9 +58,17 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
     public int forceGc() {
         table().markAllReferencedNodes();
         int reclaimedNodes = table().reclaimUnmarkedNodes();
-        cache().partialInvalidate();
+        pruneCacheAfterGC(reclaimedNodes);
         assert table().isNoneMarked();
         return reclaimedNodes;
+    }
+
+    public void afterTableGrow(boolean someNodesInvalidated) {
+        cache().tableSizeChanged();
+        if (someNodesInvalidated) {
+            // We only grow the table if most current nodes are valid
+            cache().clearInvalidNodes(true);
+        }
     }
 
     boolean isValidNonConstantFunction(int function) {

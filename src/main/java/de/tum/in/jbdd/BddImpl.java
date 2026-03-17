@@ -21,6 +21,7 @@ import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -28,7 +29,9 @@ import java.util.function.IntConsumer;
 import java.util.function.Predicate;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 import javax.annotation.Nullable;
 
 /* Implementation notes:
@@ -313,27 +316,27 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
 
         boolean fun1c = isComplementFunction(function1);
         int node1 = complementIf(function1, fun1c);
+        int fun1low = complementIf(table.low(node1), fun1c);
+        int fun1high = complementIf(table.high(node1), fun1c);
 
         if (fun1var == fun2var) {
             boolean fun2c = isComplementFunction(function2);
             int node2 = positive(function2);
-            if (satisfyingAssignmentInRecursive(
-                    complementIf(table.low(node1), fun1c), complementIf(table.low(node2), fun2c), path)) {
+            if (satisfyingAssignmentInRecursive(fun1low, complementIf(table.low(node2), fun2c), path)) {
                 path.clear(fun1var);
                 return true;
             }
             path.set(fun1var);
-            return satisfyingAssignmentInRecursive(
-                    complementIf(table.high(node1), fun1c), complementIf(table.high(node2), fun2c), path);
+            return satisfyingAssignmentInRecursive(fun1high, complementIf(table.high(node2), fun2c), path);
         }
         // fun1var < fun2var
 
-        if (satisfyingAssignmentInRecursive(complementIf(table.low(node1), fun1c), function2, path)) {
+        if (satisfyingAssignmentInRecursive(fun1low, function2, path)) {
             path.clear(fun1var);
             return true;
         }
         path.set(fun1var);
-        return satisfyingAssignmentInRecursive(complementIf(table.high(node1), fun1c), function2, path);
+        return satisfyingAssignmentInRecursive(fun1high, function2, path);
     }
 
     @Override
@@ -624,12 +627,17 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             fun2var = varSwap;
         }
 
+        BigInteger cacheLookup = cache.lookupSatisfactionIn(function1, function2);
+        if (cacheLookup != null) {
+            return cacheLookup.shiftLeft(fun1var - previousVar - 1);
+        }
+        int hash = cache.lookupHash();
+
         boolean fun1c = isComplementFunction(function1);
         int node1 = complementIf(function1, fun1c);
         int fun1low = complementIf(table.low(node1), fun1c);
         int fun1high = complementIf(table.high(node1), fun1c);
 
-        // TODO Cache
         BigInteger result;
         if (fun1var == fun2var) {
             boolean fun2c = isComplementFunction(function2);
@@ -641,8 +649,8 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             result = countSatisfyingAssignmentsInRecursive(fun1low, function2, fun1var)
                     .add(countSatisfyingAssignmentsInRecursive(fun1high, function2, fun1var));
         }
+        cache.putSatisfactionIn(hash, function1, function2, result);
         result = result.shiftLeft(fun1var - previousVar - 1);
-        // cache.putAnd(hash, function1, function2, result);
         assert result.compareTo(BigInteger.ZERO) >= 0;
         return result;
     }
@@ -729,23 +737,21 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     }
 
     private int computeCompose(int function, int[] variableNodes, int highestReplacedVariable) {
-        assert isValidFunction(function);
+        boolean func = isComplementFunction(function);
+        int node = complementIf(function, func);
 
-        if (isConstant(function)) {
+        if (node == TRUE) {
             return function;
         }
 
-        int variable = decisionVariable(function);
+        int variable = table().variable(node);
         if (variable > highestReplacedVariable) {
             return function;
         }
 
-        int node = positive(function);
-        boolean isComplemented = node != function;
-
         int lookup = cache.lookupCompose(node);
         if (lookup != placeholder()) {
-            return complementIf(lookup, isComplemented);
+            return complementIf(lookup, func);
         }
         int hash = cache.lookupHash();
 
@@ -765,7 +771,7 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             table.popFromWorkStack(2);
         }
         cache.putCompose(hash, node, result);
-        return complementIf(result, isComplemented);
+        return complementIf(result, func);
     }
 
     @Override
@@ -1609,10 +1615,10 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
         int hash = cache.lookupHash();
 
-        int domainNode = positive(domain);
-        boolean domc = domainNode != domain;
-        int functionVar = decisionVariable(node);
-        int domainVar = decisionVariable(domainNode);
+        boolean domc = isComplementFunction(domain);
+        int domainNode = complementIf(domain, domc);
+        int functionVar = table.variable(node);
+        int domainVar = table.variable(domainNode);
 
         int result;
         if (functionVar == domainVar) {
@@ -1660,7 +1666,10 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
 
     @Override
     public String statistics() {
-        return table.getStatistics() + '\n' + cache.getStatistics();
+        return Stream.concat(table.getStatistics().entrySet().stream(), cache.getStatistics().entrySet().stream())
+                .sorted(Map.Entry.comparingByKey())
+                .map(e -> String.format("%s=%s", e.getKey(), e.getValue()))
+                .collect(Collectors.joining("\n"));
     }
 
     // Utility
@@ -2074,6 +2083,7 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             NodeTable table = bdd.table;
             int currentSize = table.size();
             int approximateDeadNodeCount = table.approximateDeadNodeCount();
+            boolean nodesInvalidated;
             if (bdd.configuration.useGarbageCollection() && approximateDeadNodeCount > 0) {
                 logger.log(Level.FINE, "Running GC on {0} has size {1} and approximately {2} dead nodes", new Object[] {
                     this, currentSize, approximateDeadNodeCount
@@ -2088,17 +2098,20 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
                 if (referencedNodes <= maximumReferencedNodes) {
                     int reclaimedNodes = table.reclaimUnmarkedNodes();
                     logger.log(Level.FINE, "Collected {0} nodes", reclaimedNodes);
-                    bdd.clearCacheAfterGC(reclaimedNodes);
+                    bdd.pruneCacheAfterGC(reclaimedNodes);
                     assert bdd.check();
                     return false;
                 }
 
                 logger.log(Level.FINER, "Not enough free nodes");
                 table.invalidateUnmarkedNodes();
+                nodesInvalidated = true;
+            } else {
+                nodesInvalidated = false;
             }
             //noinspection NumericCastThatLosesPrecision
             table.grow((int) (currentSize * bdd.configuration.growthFactor()));
-            bdd.cache.tableSizeChanged();
+            bdd.afterTableGrow(nodesInvalidated);
             assert bdd.check();
             return true;
         }
