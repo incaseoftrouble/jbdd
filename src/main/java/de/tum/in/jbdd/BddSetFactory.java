@@ -17,6 +17,7 @@
 package de.tum.in.jbdd;
 
 import java.util.BitSet;
+import java.util.Map;
 
 public interface BddSetFactory {
     static BddSetFactory create() {
@@ -59,5 +60,5 @@ public interface BddSetFactory {
         return set;
     }
 
-    String statistics();
+    Map<String, Object> statistics();
 }

@@ -202,10 +202,4 @@ public interface Bdd extends BooleanDecisionDiagram, BooleanTerminalDecisionDiag
      * @return The disjunction of specified variables.
      */
     int disjunction(BitSet variables);
-
-    /**
-     * Returns a string containing some statistics about the Bdd. The content and formatting of this
-     * string may change drastically and are only intended as human-readable output.
-     */
-    String statistics();
 }

@@ -20,6 +20,7 @@ import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.IntFunction;
@@ -86,7 +87,7 @@ final class BddSetFactoryImpl extends BddGcReferenceManager<BddSetFactoryImpl.Bd
     }
 
     @Override
-    public String statistics() {
+    public Map<String, Object> statistics() {
         return bdd.statistics();
     }
 

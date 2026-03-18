@@ -19,6 +19,7 @@ package de.tum.in.jbdd;
 import java.math.BigInteger;
 import java.util.BitSet;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
@@ -428,8 +429,14 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
-    public int simplify(int function, int domain) {
+    public int constrain(int function, int domain) {
         onEnter("constrain");
+        return onExit(delegate.constrain(function, domain));
+    }
+
+    @Override
+    public int simplify(int function, int domain) {
+        onEnter("simplify");
         return onExit(delegate.simplify(function, domain));
     }
 
@@ -512,7 +519,7 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
-    public String statistics() {
+    public Map<String, Object> statistics() {
         onEnter("statistics");
         return onExit(delegate.statistics());
     }

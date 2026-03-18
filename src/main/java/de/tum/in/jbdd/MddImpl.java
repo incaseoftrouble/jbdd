@@ -754,78 +754,8 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         assert isValidFunction(function1) && isValidFunction(function2);
 
         assert table.isWorkStackEmpty();
-        boolean result = impliesRecursive(function1, function2);
+        boolean result = !intersectsRecursive(function1, complement(function2));
         assert table.isWorkStackEmpty();
-        return result;
-    }
-
-    private boolean impliesRecursive(int function1, int function2) {
-        if (function1 == FALSE) {
-            // False implies anything
-            return true;
-        }
-        if (function2 == FALSE) {
-            // function1 != FALSE_NODE
-            return false;
-        }
-        if (function2 == TRUE) {
-            // function1 != FALSE_NODE
-            return true;
-        }
-        if (function1 == TRUE) {
-            // function2 != TRUE_NODE
-            return false;
-        }
-        if (function1 == function2) {
-            // Trivial implication
-            return true;
-        }
-        if (function1 == complement(function2)) {
-            return false;
-        }
-
-        int lookup = cache.lookupImplies(function1, function2);
-        if (lookup != placeholder()) {
-            return lookup == TRUE;
-        }
-        int hash = cache.lookupHash();
-
-        int node1 = positive(function1);
-        int node2 = positive(function2);
-        boolean fun1c = function1 != node1;
-        boolean fun2c = function2 != node2;
-        int node1var = decisionVariable(node1);
-        int node2var = decisionVariable(node2);
-
-        boolean result = true;
-        if (node1var == node2var) {
-            int[] node1children = table.children(node1);
-            int[] node2children = table.children(node2);
-            for (int val = 0; val < node1children.length; val++) {
-                if (!impliesRecursive(
-                        complementIf(node1children[val], fun1c), complementIf(node2children[val], fun2c))) {
-                    result = false;
-                    break;
-                }
-            }
-        } else if (node1var < node2var) {
-            int[] node1children = table.children(node1);
-            for (int node1child : node1children) {
-                if (!impliesRecursive(complementIf(node1child, fun1c), function2)) {
-                    result = false;
-                    break;
-                }
-            }
-        } else {
-            int[] node2children = table.children(node2);
-            for (int node2child : node2children) {
-                if (!impliesRecursive(function1, complementIf(node2child, fun2c))) {
-                    result = false;
-                    break;
-                }
-            }
-        }
-        cache.putImplies(hash, function1, function2, result);
         return result;
     }
 
@@ -1064,6 +994,22 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     }
 
     @Override
+    public int constrain(int function, int domain) {
+        assert isValidFunction(function) && isValidFunction(domain);
+
+        if (domain == FALSE) {
+            return FALSE;
+        }
+
+        assert table.isWorkStackEmpty();
+        table.pushToWorkStack(function, domain);
+        int result = computeConstrainSimplify(function, domain, true);
+        table.popFromWorkStack(2);
+        assert table.isWorkStackEmpty();
+        return result;
+    }
+
+    @Override
     public int simplify(int function, int domain) {
         assert isValidFunction(function) && isValidFunction(domain);
 
@@ -1073,13 +1019,13 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
 
         assert table.isWorkStackEmpty();
         table.pushToWorkStack(function, domain);
-        int result = computeSimplify(function, domain);
+        int result = computeConstrainSimplify(function, domain, false);
         table.popFromWorkStack(2);
         assert table.isWorkStackEmpty();
         return result;
     }
 
-    private int computeSimplify(int function, int domain) {
+    private int computeConstrainSimplify(int function, int domain, boolean constrain) {
         assert domain != FALSE;
         if (function == TRUE || function == FALSE || domain == TRUE) {
             return function;
@@ -1094,7 +1040,7 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         int node = positive(function);
         boolean func = node != function;
 
-        int lookup = cache.lookupSimplify(node, domain);
+        int lookup = constrain ? cache.lookupConstrain(node, domain) : cache.lookupSimplify(node, domain);
         if (lookup != placeholder()) {
             return complementIf(lookup, func);
         }
@@ -1124,7 +1070,8 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
                     } else {
                         firstDecision = -2;
                     }
-                    resultChildren[val] = table.pushToWorkStack(computeSimplify(functionChildren[val], domainChild));
+                    resultChildren[val] = table.pushToWorkStack(
+                            computeConstrainSimplify(functionChildren[val], domainChild, constrain));
                     workStack += 1;
                 }
             }
@@ -1140,7 +1087,8 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             int variableDomainSize = functionChildren.length;
             int[] resultChildren = new int[variableDomainSize];
             for (int i = 0; i < variableDomainSize; i++) {
-                resultChildren[i] = table.pushToWorkStack(computeSimplify(functionChildren[i], domain));
+                resultChildren[i] =
+                        table.pushToWorkStack(computeConstrainSimplify(functionChildren[i], domain, constrain));
             }
             result = makeFunction(functionVar, resultChildren);
             table.popFromWorkStack(variableDomainSize);
@@ -1152,7 +1100,7 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
                 disjunction = computeOr(disjunction, complementIf(domainChildren[i], domc));
                 table.popFromWorkStack();
             }
-            result = computeSimplify(node, table.pushToWorkStack(disjunction));
+            result = computeConstrainSimplify(node, table.pushToWorkStack(disjunction), true);
             table.popFromWorkStack();
         }
         cache.putSimplify(hash, node, domain, result);
@@ -1167,11 +1115,9 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     }
 
     @Override
-    public String statistics() {
-        return Stream.concat(table.getStatistics().entrySet().stream(), cache.getStatistics().entrySet().stream())
-                .sorted(Map.Entry.comparingByKey())
-                .map(e -> String.format("%s=%s", e.getKey(), e.getValue()))
-                .collect(Collectors.joining("\n"));
+    public Map<String, Object> statistics() {
+        return Stream.concat(table.statistics().entrySet().stream(), cache.statistics().entrySet().stream())
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
     // Utility

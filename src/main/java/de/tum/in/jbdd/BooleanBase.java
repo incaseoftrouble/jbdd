@@ -320,6 +320,4 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
     static boolean isFalse(int function, boolean lookingFor) {
         return lookingFor ? (function == FALSE) : (function == TRUE);
     }
-
-    public abstract String statistics();
 }

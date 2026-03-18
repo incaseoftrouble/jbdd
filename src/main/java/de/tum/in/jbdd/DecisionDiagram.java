@@ -17,7 +17,9 @@
 package de.tum.in.jbdd;
 
 import java.util.BitSet;
+import java.util.Map;
 import java.util.function.IntConsumer;
+import java.util.stream.Collectors;
 
 /**
  * Generic interface for (binary) decision diagrams, i.e. a data structure that represents functions mapping
@@ -182,6 +184,19 @@ public interface DecisionDiagram {
      * Returns the number of nodes used to represent this function in the decision diagram
      */
     int size(int function);
+
+    /**
+     * Returns a map containing some statistics about the Bdd. The content of this map
+     * may change and is only intended as a snapshot. The values of the map are primitives.
+     */
+    Map<String, Object> statistics();
+
+    static String formatStatistics(Map<String, Object> statistics) {
+        return statistics.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(e -> String.format("%s=%s", e.getKey(), e.getValue()))
+                .collect(Collectors.joining("\n"));
+    }
 
     /**
      * A wrapper class to guard some function in an area where exceptions can occur. It increases

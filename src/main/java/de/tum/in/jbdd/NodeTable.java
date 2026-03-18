@@ -225,7 +225,7 @@ abstract class NodeTable {
     }
 
     protected int allocateNode(int variable, int modHash) {
-        // Take next free node
+        // Take the next free node
         assert freeNodeCount > 0;
         createdNodes += 1;
         int freeNode = firstFreeNode;
@@ -449,6 +449,19 @@ abstract class NodeTable {
         workStack[workStackIndex + 1] = pointer2;
         workStack[workStackIndex + 2] = pointer3;
         workStackIndex += 3;
+    }
+
+    void pushToWorkStack(int pointer1, int pointer2, int pointer3, int pointer4) {
+        assert isValidPointer(pointer1)
+                && isValidPointer(pointer2)
+                && isValidPointer(pointer3)
+                && isValidPointer(pointer4);
+        ensureWorkStackSize(workStackIndex + 3);
+        workStack[workStackIndex] = pointer1;
+        workStack[workStackIndex + 1] = pointer2;
+        workStack[workStackIndex + 2] = pointer3;
+        workStack[workStackIndex + 3] = pointer4;
+        workStackIndex += 4;
     }
 
     // Memory management
@@ -1047,7 +1060,11 @@ abstract class NodeTable {
 
     // Statistics
 
-    public Map<String, String> getStatistics() {
+    public long createdNodeCount() {
+        return createdNodes;
+    }
+
+    public Map<String, Object> statistics() {
         int childrenCount = 0;
         int saturatedNodes = 0;
         int referencedNodes = 0;

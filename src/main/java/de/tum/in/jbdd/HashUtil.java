@@ -23,6 +23,7 @@ final class HashUtil {
     static final int P1 = 6291469; // NOPMD
     static final int P2 = 12582917; // NOPMD
     static final int P3 = 25165843; // NOPMD
+    static final int P4 = 50331653; // NOPMD
 
     private HashUtil() {}
 
@@ -33,6 +34,11 @@ final class HashUtil {
     static int hash(int firstKey, int secondKey, int thirdKey) {
         // return firstKey + P1 * secondKey + thirdKey;
         return P3 * (P2 * (P1 * firstKey + secondKey) + thirdKey);
+    }
+
+    static int hash(int firstKey, int secondKey, int thirdKey, int fourthKey) {
+        // return firstKey + P1 * secondKey + thirdKey;
+        return P4 * (P3 * (P2 * (P1 * firstKey + secondKey) + thirdKey) + fourthKey);
     }
 
     static int hash(byte primeKey, int secondKey, int thirdKey) {

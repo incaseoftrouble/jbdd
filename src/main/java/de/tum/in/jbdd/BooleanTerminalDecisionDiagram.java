@@ -275,9 +275,16 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
     }
 
     /**
+     * Constructs the generalized cofactor of {@code function} w.r.t. {@code domain}, also written {@code f @ g}.
+     */
+    int constrain(int function, int domain);
+
+    /**
      * Constructs a simplified version of the given {@code function} which is equivalent to it for all assignments
      * where {@code domain} is true. This is equivalent to {@code IF domain THEN function ELSE x} where {@code x}
      * is any function.
      */
-    int simplify(int function, int domain);
+    default int simplify(int function, int domain) {
+        return constrain(function, domain);
+    }
 }

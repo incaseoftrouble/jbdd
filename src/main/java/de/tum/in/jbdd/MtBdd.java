@@ -129,12 +129,16 @@ public interface MtBdd extends BooleanDecisionDiagram {
     /**
      * Determines whether all values in the co-domain of the given {@code function} match the {@code predicate}.
      */
-    boolean allValuesMatch(int function, IntPredicate predicate);
+    default boolean allValuesMatch(int function, IntPredicate predicate) {
+        return valuesOf(function).stream().allMatch(predicate);
+    }
 
     /**
      * Determines whether any value in the co-domain of the given {@code function} matches the {@code predicate}.
      */
-    boolean anyValueMatches(int function, IntPredicate predicate);
+    default boolean anyValueMatches(int function, IntPredicate predicate) {
+        return !allValuesMatch(function, predicate.negate());
+    }
 
     /**
      * Calls the given {@code action} for each value in the co-domain of the given {@code function}
@@ -262,8 +266,7 @@ public interface MtBdd extends BooleanDecisionDiagram {
 
     /**
      * Constructs a simplified version of the given {@code function} which is equivalent to it for all assignments
-     * where {@code domain} is true. This is equivalent to {@code IF domain THEN function ELSE x} where {@code x}
-     * is any function.
+     * where {@code domain} is true.
      *
      * @param function A function in this MTBDD
      * @param domain A function in the underlying BDD

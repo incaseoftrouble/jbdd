@@ -155,7 +155,7 @@ public class BddTest {
         int v1andv2orv3 = bdd.and(v1, bdd.reference(v2orv3));
         int nv1andv2orv3 = bdd.and(nv1, bdd.reference(v2orv3));
 
-        int composition = bdd.compose(v1andv2, new int[] {v1, v2, v3});
+        int composition = bdd.reference(bdd.compose(v1andv2, new int[] {v1, v2, v3}));
         assertThat(v1andv2, is(composition));
         composition = bdd.compose(v1andv2, new int[] {v1, v2orv3, v3});
         assertThat(composition, is(v1andv2orv3));
@@ -165,6 +165,7 @@ public class BddTest {
         assertThat(composition, is(v1andv2orv3));
         composition = bdd.compose(v1andv2, new int[] {v2, v2});
         assertThat(composition, is(v2));
+        bdd.dereference(composition);
     }
 
     @Test
