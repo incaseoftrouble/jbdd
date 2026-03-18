@@ -28,7 +28,7 @@ import java.util.BitSet;
  * time after an invalid call.</p>
  */
 // TODO AndExists and similar (quantify + apply at the same time)
-// TODO AndSimplify and similar (perform operations with a restriction)
+// TODO Register caches for compose / simplify arrays
 public interface Bdd extends BooleanDecisionDiagram, BooleanTerminalDecisionDiagram<BitSet, BinaryPath> {
     /**
      * Creates a new variable and returns the BDD function representing it. The implementation guarantees that
@@ -98,6 +98,10 @@ public interface Bdd extends BooleanDecisionDiagram, BooleanTerminalDecisionDiag
      * @return The composed function.
      */
     int compose(int function, int[] variableMapping);
+
+    default int composeSimplify(int function, int[] variableMapping, int domain) {
+        return simplify(compose(function, variableMapping), domain);
+    }
 
     /**
      * Computes the restriction of the given boolean {@code function}, where all variables specified by {@code
@@ -198,10 +202,4 @@ public interface Bdd extends BooleanDecisionDiagram, BooleanTerminalDecisionDiag
      * @return The disjunction of specified variables.
      */
     int disjunction(BitSet variables);
-
-    /**
-     * Returns a string containing some statistics about the Bdd. The content and formatting of this
-     * string may change drastically and are only intended as human-readable output.
-     */
-    String statistics();
 }

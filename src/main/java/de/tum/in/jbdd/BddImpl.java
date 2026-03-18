@@ -21,24 +21,28 @@ import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.Predicate;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 import javax.annotation.Nullable;
 
 /* Implementation notes:
- * - Due to the implementation of all operations, variable numbers increase while descending the
- *   tree of a particular node.
+ * - Variable numbers increase while descending the tree of a particular node.
  */
 @SuppressWarnings({
     "PMD.AvoidReassigningParameters",
     "ReassignedVariable",
     "AssignmentToMethodParameter",
-    "SameParameterValue"
+    "SameParameterValue",
+    "DuplicatedCode"
 })
 final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     private static final Logger logger = Logger.getLogger(BddImpl.class.getName());
@@ -212,9 +216,9 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             if (assignment.get(table.variable(currentNode))) {
                 currentNode = table.high(currentNode);
             } else {
-                int lowNode = table.low(currentNode);
-                currentNode = positive(lowNode);
-                if (currentNode != lowNode) {
+                int low = table.low(currentNode);
+                currentNode = positive(low);
+                if (currentNode != low) {
                     lookingFor = !lookingFor;
                 }
             }
@@ -231,6 +235,25 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
 
         BitSet path = new BitSet(numberOfVariables);
+        satisfyingAssignment(function, path);
+        return path;
+    }
+
+    @Override
+    public Optional<BitSet> satisfyingAssignmentIn(int function, int domain) {
+        assert isValidFunction(function);
+
+        if (function == FALSE || domain == FALSE) {
+            return Optional.empty();
+        }
+
+        BitSet path = new BitSet(numberOfVariables);
+        return satisfyingAssignmentInRecursive(function, domain, path) ? Optional.of(path) : Optional.empty();
+    }
+
+    private boolean satisfyingAssignment(int function, BitSet path) {
+        assert function != FALSE;
+
         int currentNode = positive(function);
         boolean lookingFor = currentNode == function;
 
@@ -250,7 +273,70 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             }
         }
         assert lookingFor;
-        return path;
+        return true;
+    }
+
+    private boolean satisfyingAssignmentInRecursive(int function1, int function2, BitSet path) {
+        if (function1 == FALSE || function2 == FALSE) {
+            return false;
+        }
+        if (function1 == TRUE) {
+            if (function2 == TRUE) {
+                return true;
+            }
+            path.clear(decisionVariable(function2), numberOfVariables);
+            return satisfyingAssignment(function2, path);
+        }
+        if (function2 == TRUE) {
+            path.clear(decisionVariable(function1), numberOfVariables);
+            return satisfyingAssignment(function1, path);
+        }
+        if (function1 == function2) {
+            path.clear(decisionVariable(function1), numberOfVariables);
+            return satisfyingAssignment(function1, path);
+        }
+        if (function1 == complement(function2)) {
+            return false;
+        }
+
+        assert !isConstant(function1) && !isConstant(function2);
+
+        int fun1var = decisionVariable(function1);
+        int fun2var = decisionVariable(function2);
+
+        if (fun2var < fun1var || (fun2var == fun1var && function2 < function1)) {
+            int nodeSwap = function1;
+            function1 = function2;
+            function2 = nodeSwap;
+
+            int varSwap = fun1var;
+            fun1var = fun2var;
+            fun2var = varSwap;
+        }
+
+        boolean fun1c = isComplementFunction(function1);
+        int node1 = complementIf(function1, fun1c);
+        int fun1low = complementIf(table.low(node1), fun1c);
+        int fun1high = complementIf(table.high(node1), fun1c);
+
+        if (fun1var == fun2var) {
+            boolean fun2c = isComplementFunction(function2);
+            int node2 = positive(function2);
+            if (satisfyingAssignmentInRecursive(fun1low, complementIf(table.low(node2), fun2c), path)) {
+                path.clear(fun1var);
+                return true;
+            }
+            path.set(fun1var);
+            return satisfyingAssignmentInRecursive(fun1high, complementIf(table.high(node2), fun2c), path);
+        }
+        // fun1var < fun2var
+
+        if (satisfyingAssignmentInRecursive(fun1low, function2, path)) {
+            path.clear(fun1var);
+            return true;
+        }
+        path.set(fun1var);
+        return satisfyingAssignmentInRecursive(fun1high, function2, path);
     }
 
     @Override
@@ -284,6 +370,18 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     }
 
     @Override
+    public Iterator<BitSet> solutionIteratorIn(int function, int domain) {
+        // TODO Native
+        return solutionIterator(and(function, domain));
+    }
+
+    @Override
+    public Iterator<BitSet> solutionIteratorIn(int function, int domain, BitSet support) {
+        // TODO Native
+        return solutionIterator(and(function, domain), support);
+    }
+
+    @Override
     public Iterator<BinaryPath> pathIterator(int function) {
         assert isValidFunction(function);
 
@@ -296,6 +394,12 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
 
         return new BooleanFunctionPathIterator(this, function);
+    }
+
+    @Override
+    public Iterator<BinaryPath> pathIteratorIn(int function, int domain) {
+        // TODO Native
+        return pathIterator(and(function, domain));
     }
 
     @Override
@@ -433,19 +537,16 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     }
 
     @Override
+    public boolean anyPathMatchesIn(int function, int domain, Predicate<? super BinaryPath> predicate) {
+        // TODO Native
+        return anyPathMatches(and(function, domain), predicate);
+    }
+
+    @Override
     public BigInteger countSatisfyingAssignments(int function) {
         assert isValidFunction(function);
 
-        if (function == FALSE) {
-            return BigInteger.ZERO;
-        }
-        if (function == TRUE) {
-            return TWO.pow(numberOfVariables);
-        }
-
-        int variable = decisionVariable(function);
-        BigInteger satisfyingBelow = countSatisfyingAssignmentsRecursive(positive(function), isPositive(function));
-        return TWO.pow(variable).multiply(satisfyingBelow);
+        return countSatisfyingAssignmentsRecursive(function, -1);
     }
 
     @Override
@@ -454,132 +555,273 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         return countSatisfyingAssignments(function).divide(TWO.pow(numberOfVariables - support.cardinality()));
     }
 
-    private BigInteger countSatisfyingAssignmentsRecursive(int node, boolean lookingFor) {
-        assert isValidFunction(node);
+    @Override
+    public BigInteger countSatisfyingAssignmentsIn(int function, int domain) {
+        assert isValidFunction(function) && isValidFunction(domain);
 
-        int nodeVar = table.variable(node);
+        return countSatisfyingAssignmentsInRecursive(function, domain, -1);
+    }
+
+    private BigInteger countSatisfyingAssignmentsRecursive(int function, int previousVar) {
+        assert isValidFunction(function);
+
+        if (function == TRUE) {
+            return TWO.pow(numberOfVariables - previousVar - 1);
+        }
+        if (function == FALSE) {
+            return BigInteger.ZERO;
+        }
+
+        int node = positive(function);
+        int decisionVar = table.variable(node);
+        boolean complement = function != node;
 
         BigInteger cacheLookup = cache.lookupSatisfaction(node);
         if (cacheLookup != null) {
-            return lookingFor
-                    ? cacheLookup
-                    : TWO.pow(numberOfVariables - nodeVar).subtract(cacheLookup);
+            return (complement ? TWO.pow(numberOfVariables - decisionVar).subtract(cacheLookup) : cacheLookup)
+                    .shiftLeft(decisionVar - previousVar - 1);
         }
         int hash = cache.lookupHash();
 
-        int lowEdge = table.low(node);
-        BigInteger lowCount =
-                doCountSatisfyingAssignments(positive(lowEdge), nodeVar, isPositive(lowEdge) == lookingFor);
-        BigInteger highCount = doCountSatisfyingAssignments(table.high(node), nodeVar, lookingFor);
+        int low = complementIf(table.low(node), complement);
+        int high = complementIf(table.high(node), complement);
+        BigInteger result = countSatisfyingAssignmentsRecursive(low, decisionVar)
+                .add(countSatisfyingAssignmentsRecursive(high, decisionVar));
 
-        BigInteger result = lowCount.add(highCount);
         cache.putSatisfaction(
                 hash,
                 node,
-                lookingFor ? result : TWO.pow(numberOfVariables - nodeVar).subtract(result));
-        return result;
+                complement ? TWO.pow(numberOfVariables - decisionVar).subtract(result) : result);
+        return result.shiftLeft(decisionVar - previousVar - 1);
     }
 
-    private BigInteger doCountSatisfyingAssignments(int node, int previousVar, boolean lookingFor) {
-        if (isFalse(node, lookingFor)) {
+    private BigInteger countSatisfyingAssignmentsInRecursive(int function1, int function2, int previousVar) {
+        if (function1 == TRUE) {
+            return countSatisfyingAssignmentsRecursive(function2, previousVar);
+        }
+        if (function2 == TRUE) {
+            return countSatisfyingAssignmentsRecursive(function1, previousVar);
+        }
+        if (function1 == FALSE || function2 == FALSE) {
             return BigInteger.ZERO;
         }
-        if (isTrue(node, lookingFor)) {
-            return TWO.pow(numberOfVariables - previousVar - 1);
+        if (function1 == function2) {
+            return countSatisfyingAssignmentsRecursive(function1, previousVar);
         }
-        BigInteger multiplier = TWO.pow(decisionVariable(node) - previousVar - 1);
-        return multiplier.multiply(countSatisfyingAssignmentsRecursive(node, lookingFor));
+        if (function1 == complement(function2)) {
+            return BigInteger.ZERO;
+        }
+
+        assert !isConstant(function1) && !isConstant(function2);
+
+        int fun1var = decisionVariable(function1);
+        int fun2var = decisionVariable(function2);
+
+        if (fun2var < fun1var || (fun2var == fun1var && function2 < function1)) {
+            int nodeSwap = function1;
+            function1 = function2;
+            function2 = nodeSwap;
+
+            int varSwap = fun1var;
+            fun1var = fun2var;
+            fun2var = varSwap;
+        }
+
+        BigInteger cacheLookup = cache.lookupSatisfactionIn(function1, function2);
+        if (cacheLookup != null) {
+            return cacheLookup.shiftLeft(fun1var - previousVar - 1);
+        }
+        int hash = cache.lookupHash();
+
+        boolean fun1c = isComplementFunction(function1);
+        int node1 = complementIf(function1, fun1c);
+        int fun1low = complementIf(table.low(node1), fun1c);
+        int fun1high = complementIf(table.high(node1), fun1c);
+
+        BigInteger result;
+        if (fun1var == fun2var) {
+            boolean fun2c = isComplementFunction(function2);
+            int node2 = positive(function2);
+            result = countSatisfyingAssignmentsInRecursive(fun1low, complementIf(table.low(node2), fun2c), fun1var)
+                    .add(countSatisfyingAssignmentsInRecursive(
+                            fun1high, complementIf(table.high(node2), fun2c), fun1var));
+        } else { // fun1var < fun2var
+            result = countSatisfyingAssignmentsInRecursive(fun1low, function2, fun1var)
+                    .add(countSatisfyingAssignmentsInRecursive(fun1high, function2, fun1var));
+        }
+        cache.putSatisfactionIn(hash, function1, function2, result);
+        result = result.shiftLeft(fun1var - previousVar - 1);
+        assert result.compareTo(BigInteger.ZERO) >= 0;
+        return result;
     }
 
     // General operations
 
-    // TODO Dedicated cache for compose
-
     @Override
     public int compose(int function, int[] variableMapping) {
-        assert isValidFunction(function);
+        return composeSimplify(function, variableMapping, TRUE);
+    }
+
+    @Override
+    public int composeSimplify(int function, int[] variableMapping, int domain) {
+        assert isValidFunction(function) && isValidFunction(domain);
         assert variableMapping.length <= numberOfVariables;
 
         if (isConstant(function)) {
             return function;
         }
+        if (domain == FALSE) {
+            return FALSE;
+        }
 
         assert table.isWorkStackEmpty();
-        // Guard the elements and replace placeholder by actual variable reference
-        table.pushToWorkStack(function);
-        int workStackCount = 1;
+
+        int highestReplacedVariable = -1;
+
+        // Canonicalize the replacement array and find the largest changed variable
         for (int i = 0; i < variableMapping.length; i++) {
             if (variableMapping[i] == placeholder()) {
                 variableMapping[i] = this.variableNodes[i];
-            } else {
-                assert isValidFunction(variableMapping[i]);
-                int node = positive(variableMapping[i]);
-                if (node != TRUE && !table.isSaturatedNode(node)) {
-                    table.pushToWorkStack(variableMapping[i]);
-                    workStackCount++;
+            } else if (variableMapping[i] != this.variableNodes[i]) {
+                highestReplacedVariable = i;
+            }
+        }
+        // The mapping is identity
+        if (highestReplacedVariable == -1) {
+            return simplify(function, domain);
+        }
+
+        // Detect simple cases where everything is identity or true / false
+        // Primary advantage: Delegate to simpler caches, the effective code paths are pretty similar
+        boolean isRestrict = true;
+        boolean isConstant = true;
+        for (int i = 0; i < variableMapping.length; i++) {
+            if (!isConstant(variableMapping[i])) {
+                isConstant = false;
+                if (variableMapping[i] != this.variableNodes[i]) {
+                    isRestrict = false;
+                    break;
                 }
             }
         }
+        if (isConstant) {
+            BitSet constantValues = new BitSet(variableMapping.length + 1);
+            for (int i = 0; i < variableMapping.length; i++) {
+                assert isConstant(variableMapping[i]);
+                constantValues.set(i, variableMapping[i] == TRUE);
+            }
+            return evaluate(function, constantValues) ? TRUE : FALSE;
+        }
+        if (isRestrict) {
+            BitSet restrictValues = new BitSet(variableMapping.length + 1);
+            BitSet restrictSupport = new BitSet(variableMapping.length + 1);
+            for (int i = 0; i < variableMapping.length; i++) {
+                if (isConstant(variableMapping[i])) {
+                    restrictSupport.set(i);
+                    restrictValues.set(i, variableMapping[i] == TRUE);
+                }
+            }
+            // TODO Native
+            return simplify(restrict(function, restrictSupport, restrictValues), domain);
+        }
 
-        int highestReplacedVariable = variableMapping.length - 1;
-        // Optimise the replacement array
-        // Note: Could also detect the case that everything is identity or true / false; which would be "restrict"
-        for (int i = variableMapping.length - 1; i >= 0; i--) {
-            if (variableMapping[i] != this.variableNodes[i]) {
-                highestReplacedVariable = i;
-                break;
+        // Guard the elements
+        table.pushToWorkStack(function);
+        int workStackCount = 1;
+        for (int j : variableMapping) {
+            assert isValidFunction(j);
+            int node = positive(j);
+            if (node != TRUE && !table.isSaturatedNode(node)) {
+                table.pushToWorkStack(j);
+                workStackCount++;
             }
         }
-        if (highestReplacedVariable == -1) {
-            table.popFromWorkStack(workStackCount);
-            assert table.isWorkStackEmpty();
-            return function;
+        if (domain != TRUE) {
+            table.pushToWorkStack(domain);
+            workStackCount++;
         }
 
+        // Main recursion
         cache.initCompose(variableMapping, highestReplacedVariable);
-        int result = computeCompose(function, variableMapping, highestReplacedVariable);
+        int result = computeComposeSimplify(function, variableMapping, highestReplacedVariable, domain);
         table.popFromWorkStack(workStackCount);
         assert table.isWorkStackEmpty();
         return result;
     }
 
-    private int computeCompose(int function, int[] variableNodes, int highestReplacedVariable) {
-        assert isValidFunction(function);
+    // simplify is integrated directly due to most code path being shared
+    private int computeComposeSimplify(int function, int[] variableNodes, int highestReplacedVariable, int domain) {
+        assert domain != FALSE;
 
-        if (isConstant(function)) {
+        boolean func = isComplementFunction(function);
+        int node = complementIf(function, func);
+
+        if (node == TRUE) {
             return function;
         }
 
-        int variable = decisionVariable(function);
+        int variable = table.variable(node);
         if (variable > highestReplacedVariable) {
-            return function;
+            return computeSimplify(function, domain);
         }
 
-        int node = positive(function);
-        boolean isComplemented = node != function;
-
-        if (cache.lookupCompose(node)) {
-            return complementIf(cache.lookupResult(), isComplemented);
+        int lookup = domain == TRUE ? cache.lookupCompose(node) : cache.lookupComposeSimplify(node, domain);
+        if (lookup != placeholder()) {
+            return complementIf(lookup, func);
         }
         int hash = cache.lookupHash();
 
-        int variableReplacementNode = variableNodes[variable];
+        boolean domc = isComplementFunction(domain);
+        int domainNode = complementIf(domain, domc);
+        int domainVar = domain == TRUE ? Integer.MAX_VALUE : table.variable(domainNode);
+        int domainLow = domainVar <= variable ? complementIf(table.low(domainNode), domc) : domain;
+        int domainHigh = domainVar <= variable ? complementIf(table.high(domainNode), domc) : domain;
+
         int result;
-        // Short-circuit constant replacements.
-        if (variableReplacementNode == TRUE) {
-            result = computeCompose(table.high(node), variableNodes, highestReplacedVariable);
-        } else if (variableReplacementNode == FALSE) {
-            result = computeCompose(table.low(node), variableNodes, highestReplacedVariable);
+        if (domainVar < variable) {
+            if (domainLow == FALSE) {
+                result = computeComposeSimplify(node, variableNodes, highestReplacedVariable, domainHigh);
+            } else if (domainHigh == FALSE) {
+                result = computeComposeSimplify(node, variableNodes, highestReplacedVariable, domainLow);
+            } else {
+                result = computeComposeSimplify(
+                        node,
+                        variableNodes,
+                        highestReplacedVariable,
+                        table.pushToWorkStack(computeOr(domainLow, domainHigh)));
+                table.popFromWorkStack();
+            }
         } else {
-            int lowCompose =
-                    table.pushToWorkStack(computeCompose(table.low(node), variableNodes, highestReplacedVariable));
-            int highCompose =
-                    table.pushToWorkStack(computeCompose(table.high(node), variableNodes, highestReplacedVariable));
-            result = computeIfThenElse(variableReplacementNode, highCompose, lowCompose);
-            table.popFromWorkStack(2);
+            int variableReplacementNode = variableNodes[variable];
+            // Short-circuit constant replacements.
+
+            if (variableReplacementNode == TRUE) {
+                result = computeComposeSimplify(table.high(node), variableNodes, highestReplacedVariable, domain);
+            } else if (variableReplacementNode == FALSE) {
+                result = computeComposeSimplify(table.low(node), variableNodes, highestReplacedVariable, domain);
+            } else {
+                // Simplify even if the domain is TRUE -- we only care about low / high values when the IF branch is
+                // false / true
+                int low = table.pushToWorkStack(computeComposeSimplify(
+                        table.low(node),
+                        variableNodes,
+                        highestReplacedVariable,
+                        domain == TRUE ? complement(variableReplacementNode) : domain));
+                int high = table.pushToWorkStack(computeComposeSimplify(
+                        table.high(node),
+                        variableNodes,
+                        highestReplacedVariable,
+                        domain == TRUE ? variableReplacementNode : domain));
+                result = computeIfThenElseSimplify(variableReplacementNode, high, low, domain);
+                table.popFromWorkStack(2);
+            }
         }
-        cache.putCompose(hash, node, result);
-        return complementIf(result, isComplemented);
+        if (domain == TRUE) {
+            cache.putCompose(hash, node, result);
+        } else {
+            cache.putComposeSimplify(hash, node, domain, result);
+        }
+        return complementIf(result, func);
     }
 
     @Override
@@ -604,9 +846,10 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             }
         }
 
+        // TODO Dedicated function
         table.pushToWorkStack(function);
         cache.initCompose(composeArray, highestReplacement);
-        int result = computeCompose(function, composeArray, highestReplacement);
+        int result = computeComposeSimplify(function, composeArray, highestReplacement, TRUE);
         table.popFromWorkStack();
         assert table.isWorkStackEmpty();
         return result;
@@ -672,6 +915,22 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         return result;
     }
 
+    @Override
+    public int andSimplify(int function1, int function2, int domain) {
+        assert isValidFunction(function1) && isValidFunction(function2) && isValidFunction(domain);
+
+        if (domain == FALSE) {
+            return FALSE;
+        }
+
+        assert table.isWorkStackEmpty();
+        table.pushToWorkStack(function1, function2, domain);
+        int result = computeAndSimplify(function1, function2, domain);
+        table.popFromWorkStack(3);
+        assert table.isWorkStackEmpty();
+        return result;
+    }
+
     private int computeAnd(int function1, int function2) {
         if (function1 == TRUE) {
             return function2;
@@ -704,8 +963,9 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             fun2var = varSwap;
         }
 
-        if (cache.lookupAnd(function1, function2)) {
-            return cache.lookupResult();
+        int lookup = cache.lookupAnd(function1, function2);
+        if (lookup != placeholder()) {
+            return lookup;
         }
         int hash = cache.lookupHash();
 
@@ -714,25 +974,142 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         int fun1low = complementIf(table.low(node1), fun1c);
         int fun1high = complementIf(table.high(node1), fun1c);
 
-        int lowNode;
-        int highNode;
+        int low;
+        int high;
         if (fun1var == fun2var) {
             boolean fun2c = isComplementFunction(function2);
             int node2 = positive(function2);
-            lowNode = table.pushToWorkStack(computeAnd(fun1low, complementIf(table.low(node2), fun2c)));
-            highNode = table.pushToWorkStack(computeAnd(fun1high, complementIf(table.high(node2), fun2c)));
+            low = table.pushToWorkStack(computeAnd(fun1low, complementIf(table.low(node2), fun2c)));
+            high = table.pushToWorkStack(computeAnd(fun1high, complementIf(table.high(node2), fun2c)));
         } else { // fun1var < fun2var
-            lowNode = table.pushToWorkStack(computeAnd(fun1low, function2));
-            highNode = table.pushToWorkStack(computeAnd(fun1high, function2));
+            low = table.pushToWorkStack(computeAnd(fun1low, function2));
+            high = table.pushToWorkStack(computeAnd(fun1high, function2));
         }
-        int result = makeFunction(fun1var, lowNode, highNode);
+        int result = makeFunction(fun1var, low, high);
         table.popFromWorkStack(2);
         cache.putAnd(hash, function1, function2, result);
         return result;
     }
 
+    private int computeAndSimplify(int function1, int function2, int domain) {
+        assert domain != FALSE;
+        if (domain == TRUE) {
+            return computeAnd(function1, function2);
+        }
+        if (domain == function1) {
+            return computeSimplify(function2, domain);
+        }
+        if (domain == function2) {
+            return computeSimplify(function1, domain);
+        }
+        if (domain == complement(function1) || domain == complement(function2)) {
+            return FALSE;
+        }
+
+        if (function1 == TRUE) {
+            return computeSimplify(function2, domain);
+        }
+        if (function2 == TRUE) {
+            return computeSimplify(function1, domain);
+        }
+        if (function1 == FALSE || function2 == FALSE) {
+            return FALSE;
+        }
+        if (function1 == function2) {
+            return computeSimplify(function1, domain);
+        }
+        if (function1 == complement(function2)) {
+            return FALSE;
+        }
+
+        assert !isConstant(function1) && !isConstant(function2) && !isConstant(domain);
+
+        int fun1var = decisionVariable(function1);
+        int fun2var = decisionVariable(function2);
+
+        if (fun2var < fun1var || (fun2var == fun1var && function2 < function1)) {
+            int nodeSwap = function1;
+            function1 = function2;
+            function2 = nodeSwap;
+
+            int varSwap = fun1var;
+            fun1var = fun2var;
+            fun2var = varSwap;
+        }
+
+        int lookup = cache.lookupAndSimplify(function1, function2, domain);
+        if (lookup != placeholder()) {
+            return lookup;
+        }
+        int hash = cache.lookupHash();
+
+        boolean fun1c = isComplementFunction(function1);
+        int node1 = complementIf(function1, fun1c);
+        int fun1low = complementIf(table.low(node1), fun1c);
+        int fun1high = complementIf(table.high(node1), fun1c);
+
+        boolean domc = isComplementFunction(domain);
+        int domainNode = complementIf(domain, domc);
+        int domainVar = decisionVariable(domainNode);
+
+        int result;
+        if (domainVar < fun1var) {
+            int domainLow = complementIf(table.low(domainNode), domc);
+            int domainHigh = complementIf(table.high(domainNode), domc);
+            if (domainLow == FALSE) {
+                result = computeAndSimplify(function1, function2, domainHigh);
+            } else if (domainHigh == FALSE) {
+                result = computeAndSimplify(function1, function2, domainLow);
+            } else {
+                result = computeAndSimplify(
+                        function1, function2, table.pushToWorkStack(computeOr(domainLow, domainHigh)));
+                table.popFromWorkStack();
+            }
+        } else if (domainVar == fun1var) {
+            int domainLow = complementIf(table.low(domainNode), domc);
+            int domainHigh = complementIf(table.high(domainNode), domc);
+
+            if (domainLow == FALSE) {
+                result = computeAndSimplify(fun1high, fun2var == fun1var ? highOf(function2) : function2, domainHigh);
+            } else if (domainHigh == FALSE) {
+                result = computeAndSimplify(fun1low, fun2var == fun1var ? lowOf(function2) : function2, domainLow);
+            } else {
+                result = computeAndSimplifyInner(fun1var, fun2var, fun1low, fun1high, function2, domainLow, domainHigh);
+            }
+        } else {
+            result = computeAndSimplifyInner(fun1var, fun2var, fun1low, fun1high, function2, domain, domain);
+        }
+
+        cache.putAndSimplify(hash, function1, function2, domain, result);
+        return result;
+    }
+
+    private int computeAndSimplifyInner(
+            int fun1var, int fun2var, int fun1low, int fun1high, int function2, int lowDomain, int highDomain) {
+        assert fun1var <= fun2var;
+        int low;
+        int high;
+        if (fun1var == fun2var) {
+            boolean fun2c = isComplementFunction(function2);
+            int node2 = positive(function2);
+            low = table.pushToWorkStack(computeAndSimplify(fun1low, complementIf(table.low(node2), fun2c), lowDomain));
+            high = table.pushToWorkStack(
+                    computeAndSimplify(fun1high, complementIf(table.high(node2), fun2c), highDomain));
+        } else { // fun1var < fun2var
+            low = table.pushToWorkStack(computeAndSimplify(fun1low, function2, lowDomain));
+            high = table.pushToWorkStack(computeAndSimplify(fun1high, function2, highDomain));
+        }
+        int result = makeFunction(fun1var, low, high);
+        table.popFromWorkStack(2);
+        return result;
+    }
+
     private int computeOr(int function1, int function2) {
         return complement(computeAnd(complement(function1), complement(function2)));
+    }
+
+    private int computeOrSimplify(int function1, int function2, int domain) {
+        return complement(computeAndSimplify(complement(function1), complement(function2), domain));
     }
 
     @Override
@@ -746,23 +1123,28 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         return result;
     }
 
-    private int computeXor(int function1, int function2) {
-        if (function1 == function2) {
+    @Override
+    public int xorSimplify(int function1, int function2, int domain) {
+        assert isValidFunction(function1) && isValidFunction(function2) && isValidFunction(domain);
+
+        if (domain == FALSE) {
             return FALSE;
         }
-        if (function1 == complement(function2)) {
-            return TRUE;
-        }
 
-        if (isComplementFunction(function1)) {
-            function1 = positive(function1);
-            function2 = complement(function2);
-        }
-        // TODO Should be possible to exploit this knowledge a bit more
-        assert isPositive(function1);
+        assert table.isWorkStackEmpty();
+        table.pushToWorkStack(function1, function2, domain);
+        int result = computeXorSimplify(function1, function2, domain);
+        table.popFromWorkStack(3);
+        assert table.isWorkStackEmpty();
+        return result;
+    }
 
+    private int computeXor(int function1, int function2) {
         if (function1 == TRUE) {
             return complement(function2);
+        }
+        if (function1 == FALSE) {
+            return function2;
         }
         if (function2 == TRUE) {
             return complement(function1);
@@ -770,47 +1152,169 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         if (function2 == FALSE) {
             return function1;
         }
+        if (function1 == function2) {
+            return FALSE;
+        }
+        if (function1 == complement(function2)) {
+            return TRUE;
+        }
 
-        int node1 = function1;
-        int node2 = positive(function2);
-        int node1var = decisionVariable(node1);
-        int node2var = decisionVariable(node2);
+        int fun1var = decisionVariable(function1);
+        int fun2var = decisionVariable(function2);
 
-        if (node2var < node1var || (node2var == node1var && function2 < function1)) {
+        if (fun2var < fun1var || (fun2var == fun1var && function2 < function1)) {
             int functionSwap = function1;
             function1 = function2;
             function2 = functionSwap;
 
-            int nodeSwap = node1;
-            node1 = node2;
-            node2 = nodeSwap;
-
-            int varSwap = node1var;
-            node1var = node2var;
-            node2var = varSwap;
+            int varSwap = fun1var;
+            fun1var = fun2var;
+            fun2var = varSwap;
         }
 
-        if (cache.lookupXor(function1, function2)) {
-            return cache.lookupResult();
+        int lookup = cache.lookupXor(function1, function2);
+        if (lookup != placeholder()) {
+            return lookup;
         }
         int hash = cache.lookupHash();
 
-        int lowNode;
-        int highNode;
-        boolean node1c = function1 != node1;
-        if (node1var == node2var) {
-            boolean node2c = function2 != node2;
-            lowNode = table.pushToWorkStack(
-                    computeXor(complementIf(table.low(node1), node1c), complementIf(table.low(node2), node2c)));
-            highNode = table.pushToWorkStack(
-                    computeXor(complementIf(table.high(node1), node1c), complementIf(table.high(node2), node2c)));
-        } else { // node1var < node2var
-            lowNode = table.pushToWorkStack(computeXor(complementIf(table.low(node1), node1c), function2));
-            highNode = table.pushToWorkStack(computeXor(complementIf(table.high(node1), node1c), function2));
+        boolean fun1c = isComplementFunction(function1);
+        int node1 = complementIf(function1, fun1c);
+        int fun1low = complementIf(table.low(node1), fun1c);
+        int fun1high = complementIf(table.high(node1), fun1c);
+
+        int low;
+        int high;
+        if (fun1var == fun2var) {
+            boolean fun2c = isComplementFunction(function2);
+            int node2 = positive(function2);
+            low = table.pushToWorkStack(computeXor(fun1low, complementIf(table.low(node2), fun2c)));
+            high = table.pushToWorkStack(computeXor(fun1high, complementIf(table.high(node2), fun2c)));
+        } else { // fun1var < fun2var
+            low = table.pushToWorkStack(computeXor(fun1low, function2));
+            high = table.pushToWorkStack(computeXor(fun1high, function2));
         }
-        int result = makeFunction(node1var, lowNode, highNode);
+        int result = makeFunction(fun1var, low, high);
         table.popFromWorkStack(2);
         cache.putXor(hash, function1, function2, result);
+        return result;
+    }
+
+    private int computeXorSimplify(int function1, int function2, int domain) {
+        assert domain != FALSE;
+        if (domain == TRUE) {
+            return computeXor(function1, function2);
+        }
+        if (domain == function1) {
+            return computeSimplify(complement(function2), domain);
+        }
+        if (domain == function2) {
+            return computeSimplify(complement(function1), domain);
+        }
+        if (domain == complement(function1)) {
+            return computeSimplify(function2, domain);
+        }
+        if (domain == complement(function2)) {
+            return computeSimplify(function1, domain);
+        }
+
+        if (function1 == TRUE) {
+            return computeSimplify(complement(function2), domain);
+        }
+        if (function1 == FALSE) {
+            return computeSimplify(function2, domain);
+        }
+        if (function2 == TRUE) {
+            return computeSimplify(complement(function1), domain);
+        }
+        if (function2 == FALSE) {
+            return computeSimplify(function1, domain);
+        }
+        if (function1 == function2) {
+            return FALSE;
+        }
+        if (function1 == complement(function2)) {
+            return TRUE;
+        }
+
+        assert !isConstant(function1) && !isConstant(function2) && !isConstant(domain);
+
+        int fun1var = decisionVariable(function1);
+        int fun2var = decisionVariable(function2);
+
+        if (fun2var < fun1var || (fun2var == fun1var && function2 < function1)) {
+            int functionSwap = function1;
+            function1 = function2;
+            function2 = functionSwap;
+
+            int varSwap = fun1var;
+            fun1var = fun2var;
+            fun2var = varSwap;
+        }
+
+        int lookup = cache.lookupXorSimplify(function1, function2, domain);
+        if (lookup != placeholder()) {
+            return lookup;
+        }
+        int hash = cache.lookupHash();
+
+        boolean fun1c = isComplementFunction(function1);
+        int node1 = complementIf(function1, fun1c);
+        int fun1low = complementIf(table.low(node1), fun1c);
+        int fun1high = complementIf(table.high(node1), fun1c);
+
+        boolean domc = isComplementFunction(domain);
+        int domainNode = complementIf(domain, domc);
+        int domainVar = decisionVariable(domainNode);
+
+        int result;
+        if (domainVar < fun1var) {
+            int domainLow = complementIf(table.low(domainNode), domc);
+            int domainHigh = complementIf(table.high(domainNode), domc);
+            if (domainLow == FALSE) {
+                result = computeXorSimplify(function1, function2, domainHigh);
+            } else if (domainHigh == FALSE) {
+                result = computeXorSimplify(function1, function2, domainLow);
+            } else {
+                result = computeXorSimplify(
+                        function1, function2, table.pushToWorkStack(computeOr(domainLow, domainHigh)));
+                table.popFromWorkStack();
+            }
+        } else if (domainVar == fun1var) {
+            int domainLow = complementIf(table.low(domainNode), domc);
+            int domainHigh = complementIf(table.high(domainNode), domc);
+
+            if (domainLow == FALSE) {
+                result = computeXorSimplify(fun1high, fun2var == fun1var ? highOf(function2) : function2, domainHigh);
+            } else if (domainHigh == FALSE) {
+                result = computeXorSimplify(fun1low, fun2var == fun1var ? lowOf(function2) : function2, domainLow);
+            } else {
+                result = computeXorSimplifyInner(fun1var, fun2var, fun1low, fun1high, function2, domainLow, domainHigh);
+            }
+        } else {
+            result = computeXorSimplifyInner(fun1var, fun2var, fun1low, fun1high, function2, domain, domain);
+        }
+        cache.putXorSimplify(hash, function1, function2, domain, result);
+        return result;
+    }
+
+    private int computeXorSimplifyInner(
+            int fun1var, int fun2var, int fun1low, int fun1high, int function2, int lowDomain, int highDomain) {
+        assert fun1var <= fun2var;
+        int low;
+        int high;
+        if (fun1var == fun2var) {
+            boolean node2c = isComplementFunction(function2);
+            int node2 = complementIf(function2, node2c);
+            low = table.pushToWorkStack(computeXorSimplify(fun1low, complementIf(table.low(node2), node2c), lowDomain));
+            high = table.pushToWorkStack(
+                    computeXorSimplify(fun1high, complementIf(table.high(node2), node2c), highDomain));
+        } else { // fun1var < fun2var
+            low = table.pushToWorkStack(computeXor(fun1low, function2));
+            high = table.pushToWorkStack(computeXor(fun1high, function2));
+        }
+        int result = makeFunction(fun1var, low, high);
+        table.popFromWorkStack(2);
         return result;
     }
 
@@ -827,57 +1331,57 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
 
         assert table.isWorkStackEmpty();
-        cache.initQuantification(quantifiedVariables);
-        boolean complemented = isComplementFunction(function);
+        cache.initExists(quantifiedVariables);
         table.pushToWorkStack(function);
-        int result = quantifyRecursive(positive(function), quantifiedVariables, !complemented);
+        int result = existsRecursive(function, quantifiedVariables);
         table.popFromWorkStack();
         assert table.isWorkStackEmpty();
-        return complementIf(result, complemented);
+        return result;
     }
 
-    private int quantifyRecursive(int function, BitSet quantifiedVariables, boolean exists) {
+    private int existsRecursive(int function, BitSet quantifiedVariables) {
         assert isValidFunction(function);
 
         if (isConstant(function)) {
             return function;
         }
 
-        int node = positive(function);
+        boolean func = isComplementFunction(function);
+        int node = complementIf(function, func);
         int variable = table.variable(node);
-        int currentCubeNodeVariable = quantifiedVariables.nextSetBit(variable);
-        if (currentCubeNodeVariable == -1) {
+        int nextQuantifiedVariable = quantifiedVariables.nextSetBit(variable);
+        if (nextQuantifiedVariable == -1) {
             return function;
         }
         if (isVariableOrNegated(function)) {
-            if (variable == currentCubeNodeVariable) {
-                return exists ? TRUE : FALSE;
+            if (variable == nextQuantifiedVariable) {
+                return TRUE;
             }
             return function;
         }
 
-        if (cache.lookupQuantification(function, exists)) {
-            return cache.lookupResult();
+        int lookup = cache.lookupExists(function);
+        if (lookup != placeholder()) {
+            return lookup;
         }
         int hash = cache.lookupHash();
 
-        boolean isComplement = node != function;
-        int lowExists = table.pushToWorkStack(complementIf(
-                quantifyRecursive(table.low(node), quantifiedVariables, isComplement != exists), isComplement));
-        int highExists = table.pushToWorkStack(complementIf(
-                quantifyRecursive(table.high(node), quantifiedVariables, isComplement != exists), isComplement));
+        int lowExists =
+                table.pushToWorkStack(existsRecursive(complementIf(table.low(node), func), quantifiedVariables));
+        int highExists =
+                table.pushToWorkStack(existsRecursive(complementIf(table.high(node), func), quantifiedVariables));
         int result;
-        if (currentCubeNodeVariable > variable) {
+        if (nextQuantifiedVariable > variable) {
             // The variable of this node is smaller than the variable looked for - only propagate the
             // quantification downward
             result = makeFunction(variable, lowExists, highExists);
         } else {
             // variable == nextVariable, i.e. "quantify out" the current node.
-            result = exists ? computeOr(lowExists, highExists) : computeAnd(lowExists, highExists);
+            result = computeOr(lowExists, highExists);
         }
 
         table.popFromWorkStack(2);
-        cache.putQuantification(hash, function, exists, result);
+        cache.putExists(hash, function, result);
         return result;
     }
 
@@ -889,6 +1393,25 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         table.pushToWorkStack(ifFunction, thenFunction, elseFunction);
         int result = computeIfThenElse(ifFunction, thenFunction, elseFunction);
         table.popFromWorkStack(3);
+        assert table.isWorkStackEmpty();
+        return result;
+    }
+
+    @Override
+    public int ifThenElseSimplify(int ifFunction, int thenFunction, int elseFunction, int domain) {
+        assert isValidFunction(ifFunction)
+                && isValidFunction(thenFunction)
+                && isValidFunction(elseFunction)
+                && isValidFunction(domain);
+
+        if (domain == FALSE) {
+            return FALSE;
+        }
+
+        assert table.isWorkStackEmpty();
+        table.pushToWorkStack(ifFunction, thenFunction, elseFunction, domain);
+        int result = computeIfThenElseSimplify(ifFunction, thenFunction, elseFunction, domain);
+        table.popFromWorkStack(4);
         assert table.isWorkStackEmpty();
         return result;
     }
@@ -945,8 +1468,9 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
         assert isPositive(ifNormalized) && isPositive(thenNormalized);
 
-        if (cache.lookupIfThenElse(ifNormalized, thenNormalized, elseNormalized)) {
-            return complementIf(cache.lookupResult(), complement);
+        int lookup = cache.lookupIfThenElse(ifNormalized, thenNormalized, elseNormalized);
+        if (lookup != placeholder()) {
+            return complementIf(lookup, complement);
         }
         int hash = cache.lookupHash();
         int ifVar = table.variable(ifNormalized);
@@ -955,43 +1479,191 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         int elseVar = table.variable(elseNode);
 
         int minVar = Math.min(ifVar, Math.min(thenVar, elseVar));
-        int ifLowNode;
-        int ifHighNode;
+        int ifLow;
+        int ifHigh;
 
         if (ifVar == minVar) {
-            ifLowNode = table.low(ifNormalized);
-            ifHighNode = table.high(ifNormalized);
+            ifLow = table.low(ifNormalized);
+            ifHigh = table.high(ifNormalized);
         } else {
-            ifLowNode = ifNormalized;
-            ifHighNode = ifNormalized;
+            ifLow = ifNormalized;
+            ifHigh = ifNormalized;
         }
 
-        int thenHighNode;
-        int thenLowNode;
+        int thenHigh;
+        int thenLow;
         if (thenVar == minVar) {
-            thenLowNode = table.low(thenNormalized);
-            thenHighNode = table.high(thenNormalized);
+            thenLow = table.low(thenNormalized);
+            thenHigh = table.high(thenNormalized);
         } else {
-            thenLowNode = thenNormalized;
-            thenHighNode = thenNormalized;
+            thenLow = thenNormalized;
+            thenHigh = thenNormalized;
         }
 
-        int elseHighNode;
-        int elseLowNode;
+        int elseHigh;
+        int elseLow;
         if (elseVar == minVar) {
             boolean elsec = elseNode != elseNormalized;
-            elseLowNode = complementIf(table.low(elseNode), elsec);
-            elseHighNode = complementIf(table.high(elseNode), elsec);
+            elseLow = complementIf(table.low(elseNode), elsec);
+            elseHigh = complementIf(table.high(elseNode), elsec);
         } else {
-            elseLowNode = elseNormalized;
-            elseHighNode = elseNormalized;
+            elseLow = elseNormalized;
+            elseHigh = elseNormalized;
         }
 
-        int lowNode = table.pushToWorkStack(computeIfThenElse(ifLowNode, thenLowNode, elseLowNode));
-        int highNode = table.pushToWorkStack(computeIfThenElse(ifHighNode, thenHighNode, elseHighNode));
-        int result = makeFunction(minVar, lowNode, highNode);
+        int low = table.pushToWorkStack(computeIfThenElse(ifLow, thenLow, elseLow));
+        int high = table.pushToWorkStack(computeIfThenElse(ifHigh, thenHigh, elseHigh));
+        int result = makeFunction(minVar, low, high);
         table.popFromWorkStack(2);
         cache.putIfThenElse(hash, ifNormalized, thenNormalized, elseNormalized, result);
+        return complementIf(result, complement);
+    }
+
+    private int computeIfThenElseSimplify(int ifFunction, int thenFunction, int elseFunction, int domain) {
+        assert domain != FALSE;
+        if (domain == TRUE) {
+            return computeIfThenElse(ifFunction, thenFunction, elseFunction);
+        }
+        if (domain == ifFunction) {
+            return computeSimplify(thenFunction, domain);
+        }
+        if (domain == complement(ifFunction)) {
+            return computeSimplify(elseFunction, domain);
+        }
+
+        if (ifFunction == TRUE) {
+            return computeSimplify(thenFunction, domain);
+        }
+        if (ifFunction == FALSE) {
+            return computeSimplify(elseFunction, domain);
+        }
+
+        if (thenFunction == TRUE || thenFunction == ifFunction || thenFunction == domain) {
+            return computeOrSimplify(ifFunction, elseFunction, domain);
+        }
+        if (thenFunction == FALSE || thenFunction == complement(ifFunction) || thenFunction == complement(domain)) {
+            return computeAndSimplify(complement(ifFunction), elseFunction, domain);
+        }
+
+        if (elseFunction == TRUE || elseFunction == complement(ifFunction) || elseFunction == domain) {
+            return complement(computeAndSimplify(ifFunction, complement(thenFunction), domain));
+        }
+        if (elseFunction == FALSE || ifFunction == elseFunction || elseFunction == complement(domain)) {
+            return computeAndSimplify(ifFunction, thenFunction, domain);
+        }
+
+        if (thenFunction == elseFunction) {
+            return computeSimplify(thenFunction, domain);
+        }
+        if (thenFunction == complement(elseFunction)) {
+            return computeXorSimplify(ifFunction, elseFunction, domain);
+        }
+
+        // Normalize so that at most else is complemented
+        int ifNormalized = positive(ifFunction);
+        int thenSwap;
+        int elseSwap;
+        if (ifNormalized == ifFunction) {
+            thenSwap = thenFunction;
+            elseSwap = elseFunction;
+        } else {
+            thenSwap = elseFunction;
+            elseSwap = thenFunction;
+        }
+
+        boolean complement = false;
+        int thenNormalized = positive(thenSwap);
+        int elseNormalized;
+        if (thenNormalized == thenSwap) {
+            elseNormalized = elseSwap;
+        } else {
+            elseNormalized = complement(elseSwap);
+            complement = true;
+        }
+        assert isPositive(ifNormalized) && isPositive(thenNormalized);
+
+        int lookup = cache.lookupIfThenElseSimplify(ifNormalized, thenNormalized, elseNormalized, domain);
+        if (lookup != placeholder()) {
+            return complementIf(lookup, complement);
+        }
+        int hash = cache.lookupHash();
+
+        int ifVar = table.variable(ifNormalized);
+        int thenVar = table.variable(thenNormalized);
+        int elseNode = positive(elseNormalized);
+        int elseVar = table.variable(elseNode);
+
+        boolean domc = isComplementFunction(domain);
+        int domainNode = complementIf(domain, domc);
+        int domainVar = decisionVariable(domainNode);
+
+        int minDecisionVar = Math.min(ifVar, Math.min(thenVar, elseVar));
+        int minVar = Math.min(domainVar, minDecisionVar);
+        int ifLow;
+        int ifHigh;
+
+        if (ifVar == minVar) {
+            ifLow = table.low(ifNormalized);
+            ifHigh = table.high(ifNormalized);
+        } else {
+            ifLow = ifNormalized;
+            ifHigh = ifNormalized;
+        }
+
+        int thenHigh;
+        int thenLow;
+        if (thenVar == minVar) {
+            thenLow = table.low(thenNormalized);
+            thenHigh = table.high(thenNormalized);
+        } else {
+            thenLow = thenNormalized;
+            thenHigh = thenNormalized;
+        }
+
+        int elseHigh;
+        int elseLow;
+        if (elseVar == minVar) {
+            boolean elsec = elseNode != elseNormalized;
+            elseLow = complementIf(table.low(elseNode), elsec);
+            elseHigh = complementIf(table.high(elseNode), elsec);
+        } else {
+            elseLow = elseNormalized;
+            elseHigh = elseNormalized;
+        }
+
+        int domainLow = domainVar == minVar ? complementIf(table.low(domainNode), domc) : domain;
+        int domainHigh = domainVar == minVar ? complementIf(table.high(domainNode), domc) : domain;
+
+        int result;
+        if (domainVar < minDecisionVar) {
+            if (domainLow == FALSE) {
+                result = computeIfThenElseSimplify(ifHigh, thenHigh, elseHigh, domainHigh);
+            } else if (domainHigh == FALSE) {
+                result = computeIfThenElseSimplify(ifLow, thenLow, elseLow, domainLow);
+            } else {
+                result = computeIfThenElseSimplify(
+                        ifLow, thenLow, elseLow, table.pushToWorkStack(computeOr(domainLow, domainHigh)));
+                table.popFromWorkStack();
+            }
+        } else if (domainVar == minVar) {
+            if (domainLow == FALSE) {
+                result = computeIfThenElseSimplify(ifHigh, thenHigh, elseHigh, domainHigh);
+            } else if (domainHigh == FALSE) {
+                result = computeIfThenElseSimplify(ifLow, thenLow, elseLow, domainLow);
+            } else {
+                int low = table.pushToWorkStack(computeIfThenElseSimplify(ifLow, thenLow, elseLow, domainLow));
+                int high = table.pushToWorkStack(computeIfThenElseSimplify(ifHigh, thenHigh, elseHigh, domainHigh));
+                result = makeFunction(minVar, low, high);
+                table.popFromWorkStack(2);
+            }
+        } else {
+            int low = table.pushToWorkStack(computeIfThenElseSimplify(ifLow, thenLow, elseLow, domain));
+            int high = table.pushToWorkStack(computeIfThenElseSimplify(ifHigh, thenHigh, elseHigh, domain));
+            result = makeFunction(minVar, low, high);
+            table.popFromWorkStack(2);
+        }
+
+        cache.putIfThenElseSimplify(hash, ifNormalized, thenNormalized, elseNormalized, domain, result);
         return complementIf(result, complement);
     }
 
@@ -1000,60 +1672,8 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         assert isValidFunction(function1) && isValidFunction(function2);
 
         assert table.isWorkStackEmpty();
-        boolean result = impliesRecursive(function1, function2);
+        boolean result = !intersectsRecursive(function1, complement(function2));
         assert table.isWorkStackEmpty();
-        return result;
-    }
-
-    private boolean impliesRecursive(int function1, int function2) {
-        if (function1 == FALSE) {
-            // False implies anything
-            return true;
-        }
-        if (function2 == FALSE) {
-            // function1 != FALSE_NODE
-            return false;
-        }
-        if (function2 == TRUE) {
-            // function1 != FALSE_NODE
-            return true;
-        }
-        if (function1 == TRUE) {
-            // function2 != TRUE_NODE
-            return false;
-        }
-        if (function1 == function2) {
-            // Trivial implication
-            return true;
-        }
-        if (function1 == complement(function2)) {
-            return false;
-        }
-
-        if (cache.lookupImplies(function1, function2)) {
-            return cache.lookupResult() == TRUE;
-        }
-        int hash = cache.lookupHash();
-
-        int node1 = positive(function1);
-        int node2 = positive(function2);
-        boolean fun1c = function1 != node1;
-        boolean fun2c = function2 != node2;
-        int node1var = decisionVariable(node1);
-        int node2var = decisionVariable(node2);
-
-        boolean result;
-        if (node1var == node2var) {
-            result = impliesRecursive(complementIf(table.low(node1), fun1c), complementIf(table.low(node2), fun2c))
-                    && impliesRecursive(complementIf(table.high(node1), fun1c), complementIf(table.high(node2), fun2c));
-        } else if (node1var < node2var) {
-            result = impliesRecursive(complementIf(table.low(node1), fun1c), function2)
-                    && impliesRecursive(complementIf(table.high(node1), fun1c), function2);
-        } else {
-            result = impliesRecursive(function1, complementIf(table.low(node2), fun2c))
-                    && impliesRecursive(function1, complementIf(table.high(node2), fun2c));
-        }
-        cache.putImplies(hash, function1, function2, result);
         return result;
     }
 
@@ -1096,8 +1716,9 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             fun2var = varSwap;
         }
 
-        if (cache.lookupIntersects(function1, function2)) {
-            return cache.lookupResult() == TRUE;
+        int lookup = cache.lookupIntersects(function1, function2);
+        if (lookup != placeholder()) {
+            return lookup == TRUE;
         }
         int hash = cache.lookupHash();
 
@@ -1120,22 +1741,48 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     }
 
     @Override
+    public int constrain(int function, int domain) {
+        assert isValidFunction(function) && isValidFunction(domain);
+
+        if (domain == FALSE) {
+            return FALSE;
+        }
+        if (domain == TRUE) {
+            return function;
+        }
+
+        assert table.isWorkStackEmpty();
+        table.pushToWorkStack(function, domain);
+        int result = computeConstrainSimplify(function, domain, true);
+        table.popFromWorkStack(2);
+        assert table.isWorkStackEmpty();
+        return result;
+    }
+
+    @Override
     public int simplify(int function, int domain) {
         assert isValidFunction(function) && isValidFunction(domain);
 
         if (domain == FALSE) {
             return FALSE;
         }
+        if (domain == TRUE) {
+            return function;
+        }
 
         assert table.isWorkStackEmpty();
         table.pushToWorkStack(function, domain);
-        int result = computeConstrain(function, domain);
+        int result = computeConstrainSimplify(function, domain, false);
         table.popFromWorkStack(2);
         assert table.isWorkStackEmpty();
         return result;
     }
 
-    private int computeConstrain(int function, int domain) {
+    private int computeSimplify(int function, int domain) {
+        return computeConstrainSimplify(function, domain, false);
+    }
+
+    private int computeConstrainSimplify(int function, int domain, boolean constrain) {
         assert domain != FALSE;
         if (function == TRUE || function == FALSE || domain == TRUE) {
             return function;
@@ -1147,47 +1794,61 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             return FALSE;
         }
 
-        int functionNode = positive(function);
-        boolean func = functionNode != function;
+        boolean func = isComplementFunction(function);
+        int node = complementIf(function, func);
 
-        if (cache.lookupConstrain(functionNode, domain)) {
-            return complementIf(cache.lookupResult(), func);
+        int lookup = constrain ? cache.lookupConstrain(node, domain) : cache.lookupSimplify(node, domain);
+        if (lookup != placeholder()) {
+            return complementIf(lookup, func);
         }
         int hash = cache.lookupHash();
 
-        int domainNode = positive(domain);
-        boolean domc = domainNode != domain;
-        int functionVar = decisionVariable(functionNode);
-        int domainVar = decisionVariable(domainNode);
+        boolean domc = isComplementFunction(domain);
+        int domainNode = complementIf(domain, domc);
+        int functionVar = table.variable(node);
+        int domainVar = table.variable(domainNode);
+
+        int domainLow = domainVar <= functionVar ? complementIf(table.low(domainNode), domc) : domain;
+        int domainHigh = domainVar <= functionVar ? complementIf(table.high(domainNode), domc) : domain;
 
         int result;
-        if (functionVar == domainVar) {
-            int domainLow = complementIf(table.low(domainNode), domc);
-            int domainHigh = complementIf(table.high(domainNode), domc);
+        if (domainVar < functionVar) {
             if (domainLow == FALSE) {
-                result = computeConstrain(table.high(functionNode), domainHigh);
+                result = computeConstrainSimplify(node, domainHigh, constrain);
             } else if (domainHigh == FALSE) {
-                result = computeConstrain(table.low(functionNode), domainLow);
+                result = computeConstrainSimplify(node, domainLow, constrain);
             } else {
-                int lowNode = table.pushToWorkStack(computeConstrain(table.low(functionNode), domainLow));
-                int highNode = table.pushToWorkStack(computeConstrain(table.high(functionNode), domainHigh));
-                result = makeFunction(functionVar, lowNode, highNode);
-                table.popFromWorkStack(2);
-                cache.putConstrain(hash, functionNode, domain, result);
+                if (constrain) {
+                    int low = table.pushToWorkStack(computeConstrainSimplify(node, domainLow, true));
+                    int high = table.pushToWorkStack(computeConstrainSimplify(node, domainHigh, true));
+                    result = makeFunction(domainVar, low, high);
+                    table.popFromWorkStack(2);
+                } else {
+                    // TODO "greedyOr" -> "greedyAnd" which underapproximates the intersection
+                    //   Instead of computing and precisely, we can just pick one of the two branches
+                    //   and set the other to FALSE
+                    result = computeConstrainSimplify(
+                            node, table.pushToWorkStack(computeOr(domainLow, domainHigh)), false);
+                    table.popFromWorkStack();
+                }
             }
-        } else if (functionVar < domainVar) {
-            int lowNode = table.pushToWorkStack(computeConstrain(table.low(functionNode), domain));
-            int highNode = table.pushToWorkStack(computeConstrain(table.high(functionNode), domain));
-            result = makeFunction(functionVar, lowNode, highNode);
-            table.popFromWorkStack(2);
         } else {
-            // TODO It might not be necessary to compute the OR here, but rather only track where we are
-            int domainLow = complementIf(table.low(domainNode), domc);
-            int domainHigh = complementIf(table.high(domainNode), domc);
-            result = computeConstrain(functionNode, table.pushToWorkStack(computeOr(domainLow, domainHigh)));
-            table.popFromWorkStack();
+            if (domainLow == FALSE) {
+                result = computeConstrainSimplify(table.high(node), domainHigh, constrain);
+            } else if (domainHigh == FALSE) {
+                result = computeConstrainSimplify(table.low(node), domainLow, constrain);
+            } else {
+                int low = table.pushToWorkStack(computeConstrainSimplify(table.low(node), domainLow, constrain));
+                int high = table.pushToWorkStack(computeConstrainSimplify(table.high(node), domainHigh, constrain));
+                result = makeFunction(functionVar, low, high);
+                table.popFromWorkStack(2);
+            }
         }
-        cache.putConstrain(hash, functionNode, domain, result);
+        if (constrain) {
+            cache.putConstrain(hash, node, domain, result);
+        } else {
+            cache.putSimplify(hash, node, domain, result);
+        }
         return complementIf(result, func);
     }
 
@@ -1199,8 +1860,9 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     }
 
     @Override
-    public String statistics() {
-        return table.getStatistics() + '\n' + cache.getStatistics();
+    public Map<String, Object> statistics() {
+        return Stream.concat(table.statistics().entrySet().stream(), cache.statistics().entrySet().stream())
+                .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
     // Utility
@@ -1614,6 +2276,7 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             NodeTable table = bdd.table;
             int currentSize = table.size();
             int approximateDeadNodeCount = table.approximateDeadNodeCount();
+            boolean nodesInvalidated;
             if (bdd.configuration.useGarbageCollection() && approximateDeadNodeCount > 0) {
                 logger.log(Level.FINE, "Running GC on {0} has size {1} and approximately {2} dead nodes", new Object[] {
                     this, currentSize, approximateDeadNodeCount
@@ -1628,17 +2291,20 @@ final class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
                 if (referencedNodes <= maximumReferencedNodes) {
                     int reclaimedNodes = table.reclaimUnmarkedNodes();
                     logger.log(Level.FINE, "Collected {0} nodes", reclaimedNodes);
-                    bdd.clearCacheAfterGC(reclaimedNodes);
+                    bdd.pruneCacheAfterGC(reclaimedNodes);
                     assert bdd.check();
                     return false;
                 }
 
                 logger.log(Level.FINER, "Not enough free nodes");
                 table.invalidateUnmarkedNodes();
+                nodesInvalidated = true;
+            } else {
+                nodesInvalidated = false;
             }
             //noinspection NumericCastThatLosesPrecision
             table.grow((int) (currentSize * bdd.configuration.growthFactor()));
-            bdd.cache.tableSizeChanged();
+            bdd.afterTableGrow(nodesInvalidated);
             assert bdd.check();
             return true;
         }

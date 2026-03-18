@@ -17,7 +17,9 @@
 package de.tum.in.jbdd;
 
 import java.util.BitSet;
+import java.util.Map;
 import java.util.function.IntConsumer;
+import java.util.stream.Collectors;
 
 /**
  * Generic interface for (binary) decision diagrams, i.e. a data structure that represents functions mapping
@@ -94,9 +96,15 @@ public interface DecisionDiagram {
      * @return The given {@code result}.
      */
     default int consume(int result, int input1, int input2) {
-        reference(result);
-        dereference(input1);
-        dereference(input2);
+        if (result == input1) {
+            dereference(input2);
+        } else {
+            if (result != input2) {
+                reference(result);
+                dereference(input2);
+            }
+            dereference(input1);
+        }
         return result;
     }
 
@@ -112,8 +120,10 @@ public interface DecisionDiagram {
      * @return The given {@code result}.
      */
     default int updateWith(int result, int input) {
-        reference(result);
-        dereference(input);
+        if (result != input) {
+            reference(result);
+            dereference(input);
+        }
         return result;
     }
 
@@ -169,6 +179,24 @@ public interface DecisionDiagram {
      * @see #forEachSupportVariable(int, IntConsumer)
      */
     void forEachSupportFiltered(int function, BitSet filter, IntConsumer action);
+
+    /**
+     * Returns the number of nodes used to represent this function in the decision diagram
+     */
+    int size(int function);
+
+    /**
+     * Returns a map containing some statistics about the Bdd. The content of this map
+     * may change and is only intended as a snapshot. The values of the map are primitives.
+     */
+    Map<String, Object> statistics();
+
+    static String formatStatistics(Map<String, Object> statistics) {
+        return statistics.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(e -> String.format("%s=%s", e.getKey(), e.getValue()))
+                .collect(Collectors.joining("\n"));
+    }
 
     /**
      * A wrapper class to guard some function in an area where exceptions can occur. It increases

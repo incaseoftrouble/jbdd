@@ -18,6 +18,7 @@ package de.tum.in.jbdd;
 
 import java.math.BigInteger;
 import java.util.BitSet;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Optional;
@@ -27,6 +28,7 @@ import java.util.function.IntBinaryOperator;
 import java.util.function.IntConsumer;
 import java.util.function.IntPredicate;
 import java.util.function.IntUnaryOperator;
+import java.util.function.ToIntFunction;
 
 public interface MtBdd extends BooleanDecisionDiagram {
     /**
@@ -127,12 +129,16 @@ public interface MtBdd extends BooleanDecisionDiagram {
     /**
      * Determines whether all values in the co-domain of the given {@code function} match the {@code predicate}.
      */
-    boolean allValuesMatch(int function, IntPredicate predicate);
+    default boolean allValuesMatch(int function, IntPredicate predicate) {
+        return valuesOf(function).stream().allMatch(predicate);
+    }
 
     /**
      * Determines whether any value in the co-domain of the given {@code function} matches the {@code predicate}.
      */
-    boolean anyValueMatches(int function, IntPredicate predicate);
+    default boolean anyValueMatches(int function, IntPredicate predicate) {
+        return !allValuesMatch(function, predicate.negate());
+    }
 
     /**
      * Calls the given {@code action} for each value in the co-domain of the given {@code function}
@@ -192,20 +198,27 @@ public interface MtBdd extends BooleanDecisionDiagram {
     int apply(int function1, int function2, IntBinaryOperator map);
 
     /**
+     * Compute the function that for each assignment {@code a} evaluates to {@code map(f_1(a), ..., f_m(a))}.
+     */
+    int apply(int[] functions, ToIntFunction<int[]> map);
+
+    /**
      * Constructs the function obtained by composing the given {@code function} with {@code map}, i.e.
      * {@code map(function(input))}.
      */
-    int map(int function, IntUnaryOperator map);
+    default int map(int function, IntUnaryOperator map) {
+        return apply(new int[] {function}, a -> map.applyAsInt(a[0]));
+    }
 
     /**
      * Constructs the boolean function in the associated BDD which evaluates to true exactly for those
-     * valuations on which the given functions agree.
+     * valuations on which the given functions yield the same value.
      */
     int agreement(int function1, int function2);
 
     /**
      * Creates the boolean function representing all assignments under which the given {@code function}
-     * evaluates to the given {@code values}.
+     * evaluates to the given {@code values} in the underlying {@link #bdd() Bdd}.
      *
      * @see #agreement(int, int)
      */
@@ -232,12 +245,28 @@ public interface MtBdd extends BooleanDecisionDiagram {
      * then their product is a function {@code f(x)} that yields {@code [f_1(x), ..., f_m(x)]}. The returned
      * function indexes the {@code values} map. The outputs of {@code f} do not need to be dense.
      */
-    Product cartesianProduct(int[] functions);
+    default Product cartesianProduct(int[] functions) {
+        Map<int[], Integer> product = new HashMap<>();
+        int function = apply(functions, values -> product.computeIfAbsent(values, k -> product.size()));
+        Map<Integer, int[]> results = new HashMap<>();
+        product.forEach((k, v) -> results.put(v, k));
+
+        return new Product() {
+            @Override
+            public int function() {
+                return function;
+            }
+
+            @Override
+            public Map<Integer, int[]> values() {
+                return results;
+            }
+        };
+    }
 
     /**
      * Constructs a simplified version of the given {@code function} which is equivalent to it for all assignments
-     * where {@code domain} is true. This is equivalent to {@code IF domain THEN function ELSE x} where {@code x}
-     * is any function.
+     * where {@code domain} is true.
      *
      * @param function A function in this MTBDD
      * @param domain A function in the underlying BDD

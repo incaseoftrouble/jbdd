@@ -190,7 +190,7 @@ public class RandomBenchmark extends BaseBddBenchmark {
                 .build());
         var nodes = new BddNodes(bdd, new Random(1234));
         nodes.createVariables(64);
-        for (BddOperation operation : makeOperations(20_000, new Random(1234))) {
+        for (BddOperation operation : makeOperations(10_000, new Random(1234))) {
             operation.run(nodes);
         }
         System.out.println(bdd.statistics()); // NOPMD

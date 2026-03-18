@@ -23,18 +23,22 @@ import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.Predicate;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 import javax.annotation.Nullable;
 
 @SuppressWarnings({"PMD.AvoidReassigningParameters", "AssignmentToMethodParameter", "DuplicatedCode"})
 final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
-    private static final Logger logger = Logger.getLogger(BddImpl.class.getName());
+    private static final Logger logger = Logger.getLogger(MddImpl.class.getName());
 
     private final BooleanCache cache;
     private int numberOfVariables;
@@ -165,6 +169,13 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         int[] path = new int[numberOfVariables];
+        satisfyingAssignment(function, path);
+        return path;
+    }
+
+    private boolean satisfyingAssignment(int function, int[] path) {
+        assert function != FALSE;
+
         int currentNode = positive(function);
         boolean lookingFor = currentNode == function;
 
@@ -177,12 +188,22 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
 
                     path[variable] = val;
                     currentNode = positive(child);
+                    if (currentNode != child) {
+                        lookingFor = !lookingFor;
+                    }
                     break;
                 }
             }
         }
         assert lookingFor;
-        return path;
+        return true;
+    }
+
+    @Override
+    public Optional<int[]> satisfyingAssignmentIn(int function, int domain) {
+        // TODO Native
+        int and = and(function, domain);
+        return and == FALSE ? Optional.empty() : Optional.of(satisfyingAssignment(and));
     }
 
     @Override
@@ -216,6 +237,18 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     }
 
     @Override
+    public Iterator<int[]> solutionIteratorIn(int function, int domain) {
+        // TODO Native
+        return solutionIterator(and(function, domain));
+    }
+
+    @Override
+    public Iterator<int[]> solutionIteratorIn(int function, int domain, BitSet support) {
+        // TODO Native
+        return solutionIterator(and(function, domain), support);
+    }
+
+    @Override
     public Iterator<int[]> pathIterator(int function) {
         assert isValidFunction(function);
 
@@ -229,6 +262,12 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         return new NodePathIterator(this, function);
+    }
+
+    @Override
+    public Iterator<int[]> pathIteratorIn(int function, int domain) {
+        // TODO Native
+        return pathIterator(and(function, domain));
     }
 
     @Override
@@ -355,6 +394,12 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     }
 
     @Override
+    public boolean anyPathMatchesIn(int function, int domain, Predicate<? super int[]> predicate) {
+        // TODO Native
+        return anyPathMatches(and(function, domain), predicate);
+    }
+
+    @Override
     public BigInteger countSatisfyingAssignments(int function) {
         if (function == FALSE) {
             return BigInteger.ZERO;
@@ -394,6 +439,12 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             base = base.multiply(BigInteger.valueOf(variableDomain[var]));
         }
         return countSatisfyingAssignments(function).divide(base);
+    }
+
+    @Override
+    public BigInteger countSatisfyingAssignmentsIn(int function, int domain) {
+        // TODO Native
+        return countSatisfyingAssignments(and(function, domain));
     }
 
     private BigInteger countSatisfyingAssignmentsRecursive(int node, boolean lookingFor) {
@@ -498,8 +549,9 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             fun2var = varSwap;
         }
 
-        if (cache.lookupAnd(function1, function2)) {
-            return cache.lookupResult();
+        int lookup = cache.lookupAnd(function1, function2);
+        if (lookup != placeholder()) {
+            return lookup;
         }
         int hash = cache.lookupHash();
 
@@ -587,8 +639,9 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             node2var = varSwap;
         }
 
-        if (cache.lookupXor(function1, function2)) {
-            return cache.lookupResult();
+        int lookup = cache.lookupXor(function1, function2);
+        if (lookup != placeholder()) {
+            return lookup;
         }
         int hash = cache.lookupHash();
 
@@ -628,67 +681,56 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         assert table.isWorkStackEmpty();
-        cache.initQuantification(quantifiedVariables);
-        boolean complemented = isComplementFunction(function);
+        cache.initExists(quantifiedVariables);
         table.pushToWorkStack(function);
-        int result = quantifyRecursive(positive(function), quantifiedVariables, !complemented);
+        int result = existsRecursive(function, quantifiedVariables);
         table.popFromWorkStack();
         assert table.isWorkStackEmpty();
-        return complementIf(result, complemented);
+        return result;
     }
 
-    private int quantifyRecursive(int function, BitSet quantifiedVariables, boolean exists) {
+    private int existsRecursive(int function, BitSet quantifiedVariables) {
         assert isValidFunction(function);
 
         if (isConstant(function)) {
             return function;
         }
 
-        int node = positive(function);
+        boolean func = isComplementFunction(function);
+        int node = complementIf(function, func);
         int variable = table.variable(node);
         int currentCubeNodeVariable = quantifiedVariables.nextSetBit(variable);
         if (currentCubeNodeVariable == -1) {
             return function;
         }
 
-        boolean isComplement = node != function;
         int[] children = table.children(node);
         boolean currentVariableIsQuantified = variable == currentCubeNodeVariable;
 
         if (currentVariableIsQuantified) {
             for (int child : children) {
-                if (isTrue(child, !isComplement == exists)) {
-                    return exists ? TRUE : FALSE;
+                if (isTrue(child, !func)) {
+                    return TRUE;
                 }
             }
         }
 
-        if (cache.lookupQuantification(function, exists)) {
-            return cache.lookupResult();
+        int lookup = cache.lookupExists(function);
+        if (lookup != placeholder()) {
+            return lookup;
         }
         int hash = cache.lookupHash();
 
         int domain = children.length;
         int resultNode;
         if (currentVariableIsQuantified) {
-            if (exists) {
-                resultNode = falseFunction();
-                for (int child : children) {
-                    table.pushToWorkStack(resultNode);
-                    int quantifiedBranch = table.pushToWorkStack(
-                            complementIf(quantifyRecursive(child, quantifiedVariables, !isComplement), isComplement));
-                    resultNode = computeOr(resultNode, quantifiedBranch);
-                    table.popFromWorkStack(2);
-                }
-            } else {
-                resultNode = trueFunction();
-                for (int child : children) {
-                    table.pushToWorkStack(resultNode);
-                    int quantifiedBranch = table.pushToWorkStack(
-                            complementIf(quantifyRecursive(child, quantifiedVariables, isComplement), isComplement));
-                    resultNode = computeAnd(resultNode, quantifiedBranch);
-                    table.popFromWorkStack(2);
-                }
+            resultNode = falseFunction();
+            for (int child : children) {
+                table.pushToWorkStack(resultNode);
+                int quantifiedBranch =
+                        table.pushToWorkStack(existsRecursive(complementIf(child, func), quantifiedVariables));
+                resultNode = computeOr(resultNode, quantifiedBranch);
+                table.popFromWorkStack(2);
             }
         } else {
             assert currentCubeNodeVariable > variable;
@@ -697,13 +739,13 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
 
             int[] resultChildren = new int[domain];
             for (int val = 0; val < domain; val++) {
-                resultChildren[val] = table.pushToWorkStack(complementIf(
-                        quantifyRecursive(children[val], quantifiedVariables, isComplement != exists), isComplement));
+                resultChildren[val] =
+                        table.pushToWorkStack(existsRecursive(complementIf(children[val], func), quantifiedVariables));
             }
             resultNode = makeFunction(variable, resultChildren);
             table.popFromWorkStack(domain);
         }
-        cache.putQuantification(hash, function, exists, resultNode);
+        cache.putExists(hash, function, resultNode);
         return resultNode;
     }
 
@@ -712,77 +754,8 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         assert isValidFunction(function1) && isValidFunction(function2);
 
         assert table.isWorkStackEmpty();
-        boolean result = impliesRecursive(function1, function2);
+        boolean result = !intersectsRecursive(function1, complement(function2));
         assert table.isWorkStackEmpty();
-        return result;
-    }
-
-    private boolean impliesRecursive(int function1, int function2) {
-        if (function1 == FALSE) {
-            // False implies anything
-            return true;
-        }
-        if (function2 == FALSE) {
-            // function1 != FALSE_NODE
-            return false;
-        }
-        if (function2 == TRUE) {
-            // function1 != FALSE_NODE
-            return true;
-        }
-        if (function1 == TRUE) {
-            // function2 != TRUE_NODE
-            return false;
-        }
-        if (function1 == function2) {
-            // Trivial implication
-            return true;
-        }
-        if (function1 == complement(function2)) {
-            return false;
-        }
-
-        if (cache.lookupImplies(function1, function2)) {
-            return cache.lookupResult() == TRUE;
-        }
-        int hash = cache.lookupHash();
-
-        int node1 = positive(function1);
-        int node2 = positive(function2);
-        boolean fun1c = function1 != node1;
-        boolean fun2c = function2 != node2;
-        int node1var = decisionVariable(node1);
-        int node2var = decisionVariable(node2);
-
-        boolean result = true;
-        if (node1var == node2var) {
-            int[] node1children = table.children(node1);
-            int[] node2children = table.children(node2);
-            for (int val = 0; val < node1children.length; val++) {
-                if (!impliesRecursive(
-                        complementIf(node1children[val], fun1c), complementIf(node2children[val], fun2c))) {
-                    result = false;
-                    break;
-                }
-            }
-        } else if (node1var < node2var) {
-            int[] node1children = table.children(node1);
-            for (int node1child : node1children) {
-                if (!impliesRecursive(complementIf(node1child, fun1c), function2)) {
-                    result = false;
-                    break;
-                }
-            }
-        } else {
-            int[] node2children = table.children(node2);
-            for (int node2child : node2children) {
-                if (!impliesRecursive(function1, complementIf(node2child, fun2c))) {
-                    result = false;
-                    break;
-                }
-            }
-        }
-        cache.putImplies(hash, function1, function2, result);
         return result;
     }
 
@@ -825,8 +798,9 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             fun2var = varSwap;
         }
 
-        if (cache.lookupIntersects(function1, function2)) {
-            return cache.lookupResult() == TRUE;
+        int lookup = cache.lookupIntersects(function1, function2);
+        if (lookup != placeholder()) {
+            return lookup == TRUE;
         }
         int hash = cache.lookupHash();
 
@@ -989,8 +963,9 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
         assert isPositive(ifNormalized) && isPositive(thenNormalized);
 
-        if (cache.lookupIfThenElse(ifNormalized, thenNormalized, elseNormalized)) {
-            return complementIf(cache.lookupResult(), complement);
+        int lookup = cache.lookupIfThenElse(ifNormalized, thenNormalized, elseNormalized);
+        if (lookup != placeholder()) {
+            return complementIf(lookup, complement);
         }
         int hash = cache.lookupHash();
         int ifVar = table.variable(ifNormalized);
@@ -1019,6 +994,22 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     }
 
     @Override
+    public int constrain(int function, int domain) {
+        assert isValidFunction(function) && isValidFunction(domain);
+
+        if (domain == FALSE) {
+            return FALSE;
+        }
+
+        assert table.isWorkStackEmpty();
+        table.pushToWorkStack(function, domain);
+        int result = computeConstrainSimplify(function, domain, true);
+        table.popFromWorkStack(2);
+        assert table.isWorkStackEmpty();
+        return result;
+    }
+
+    @Override
     public int simplify(int function, int domain) {
         assert isValidFunction(function) && isValidFunction(domain);
 
@@ -1028,13 +1019,13 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
 
         assert table.isWorkStackEmpty();
         table.pushToWorkStack(function, domain);
-        int result = computeConstrain(function, domain);
+        int result = computeConstrainSimplify(function, domain, false);
         table.popFromWorkStack(2);
         assert table.isWorkStackEmpty();
         return result;
     }
 
-    private int computeConstrain(int function, int domain) {
+    private int computeConstrainSimplify(int function, int domain, boolean constrain) {
         assert domain != FALSE;
         if (function == TRUE || function == FALSE || domain == TRUE) {
             return function;
@@ -1046,22 +1037,23 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             return FALSE;
         }
 
-        int functionNode = positive(function);
-        boolean func = functionNode != function;
+        int node = positive(function);
+        boolean func = node != function;
 
-        if (cache.lookupConstrain(functionNode, domain)) {
-            return complementIf(cache.lookupResult(), func);
+        int lookup = constrain ? cache.lookupConstrain(node, domain) : cache.lookupSimplify(node, domain);
+        if (lookup != placeholder()) {
+            return complementIf(lookup, func);
         }
         int hash = cache.lookupHash();
 
         int domainNode = positive(domain);
         boolean domc = domainNode != domain;
-        int functionVar = decisionVariable(functionNode);
+        int functionVar = decisionVariable(node);
         int domainVar = decisionVariable(domainNode);
 
         int result;
         if (functionVar == domainVar) {
-            int[] functionChildren = table.children(functionNode);
+            int[] functionChildren = table.children(node);
             int[] domainChildren = table.children(domainNode);
             int variableDomainSize = functionChildren.length;
 
@@ -1078,7 +1070,8 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
                     } else {
                         firstDecision = -2;
                     }
-                    resultChildren[val] = table.pushToWorkStack(computeConstrain(functionChildren[val], domainChild));
+                    resultChildren[val] = table.pushToWorkStack(
+                            computeConstrainSimplify(functionChildren[val], domainChild, constrain));
                     workStack += 1;
                 }
             }
@@ -1090,11 +1083,12 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             }
             table.popFromWorkStack(workStack);
         } else if (functionVar < domainVar) {
-            int[] functionChildren = table.children(functionNode);
+            int[] functionChildren = table.children(node);
             int variableDomainSize = functionChildren.length;
             int[] resultChildren = new int[variableDomainSize];
             for (int i = 0; i < variableDomainSize; i++) {
-                resultChildren[i] = table.pushToWorkStack(computeConstrain(functionChildren[i], domain));
+                resultChildren[i] =
+                        table.pushToWorkStack(computeConstrainSimplify(functionChildren[i], domain, constrain));
             }
             result = makeFunction(functionVar, resultChildren);
             table.popFromWorkStack(variableDomainSize);
@@ -1106,10 +1100,10 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
                 disjunction = computeOr(disjunction, complementIf(domainChildren[i], domc));
                 table.popFromWorkStack();
             }
-            result = computeConstrain(functionNode, table.pushToWorkStack(disjunction));
+            result = computeConstrainSimplify(node, table.pushToWorkStack(disjunction), true);
             table.popFromWorkStack();
         }
-        cache.putConstrain(hash, functionNode, domain, result);
+        cache.putSimplify(hash, node, domain, result);
         return complementIf(result, func);
     }
 
@@ -1121,8 +1115,9 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     }
 
     @Override
-    public String statistics() {
-        return table.getStatistics() + '\n' + cache.getStatistics();
+    public Map<String, Object> statistics() {
+        return Stream.concat(table.statistics().entrySet().stream(), cache.statistics().entrySet().stream())
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
     // Utility
@@ -1624,6 +1619,7 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             NodeTable table = mdd.table;
             int currentSize = table.size();
             int approximateDeadNodeCount = table.approximateDeadNodeCount();
+            boolean nodesInvalidated;
             if (mdd.configuration.useGarbageCollection() && approximateDeadNodeCount > 0) {
                 logger.log(Level.FINE, "Running GC on {0} has size {1} and approximately {2} dead nodes", new Object[] {
                     this, currentSize, approximateDeadNodeCount
@@ -1638,17 +1634,20 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
                 if (referencedNodes <= maximumReferencedNodes) {
                     int reclaimedNodes = table.reclaimUnmarkedNodes();
                     logger.log(Level.FINE, "Collected {0} nodes", reclaimedNodes);
-                    mdd.clearCacheAfterGC(reclaimedNodes);
+                    mdd.pruneCacheAfterGC(reclaimedNodes);
                     assert mdd.check();
                     return false;
                 }
 
                 logger.log(Level.FINER, "Not enough free nodes");
                 table.invalidateUnmarkedNodes();
+                nodesInvalidated = true;
+            } else {
+                nodesInvalidated = false;
             }
             //noinspection NumericCastThatLosesPrecision
             table.grow((int) (currentSize * mdd.configuration.growthFactor()));
-            mdd.cache.tableSizeChanged();
+            mdd.afterTableGrow(nodesInvalidated);
             assert mdd.check();
             return true;
         }

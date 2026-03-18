@@ -68,12 +68,7 @@ public class BddConfiguration {
     }
 
     @Value.Default
-    public boolean useCachePartialInvalidate() {
-        return true;
-    }
-
-    @Value.Default
-    public boolean useCachePreserveOnGrow() {
+    public boolean useCachePreserve() {
         return true;
     }
 

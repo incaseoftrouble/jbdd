@@ -41,17 +41,13 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
     }
 
     void invalidateCache() {
-        cache().tableSizeChanged();
+        cache().invalidate();
     }
 
-    void clearCacheAfterGC(int reclaimedNodes) {
+    void pruneCacheAfterGC(int reclaimedNodes) {
         // Delete cache entries which are no longer valid
         // If we reclaimed a lot of nodes, we won't be able to save much
-        if (configuration().useCachePartialInvalidate() && reclaimedNodes < tableSize() / 2) {
-            cache().partialInvalidate();
-        } else {
-            cache().tableSizeChanged();
-        }
+        cache().clearInvalidNodes(reclaimedNodes < tableSize() / 2);
     }
 
     /**
@@ -62,9 +58,17 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
     public int forceGc() {
         table().markAllReferencedNodes();
         int reclaimedNodes = table().reclaimUnmarkedNodes();
-        cache().partialInvalidate();
+        pruneCacheAfterGC(reclaimedNodes);
         assert table().isNoneMarked();
         return reclaimedNodes;
+    }
+
+    public void afterTableGrow(boolean someNodesInvalidated) {
+        cache().tableSizeChanged();
+        if (someNodesInvalidated) {
+            // We only grow the table if most current nodes are valid
+            cache().clearInvalidNodes(true);
+        }
     }
 
     boolean isValidNonConstantFunction(int function) {
@@ -215,9 +219,20 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
     }
 
     @Override
+    public int size(int function) {
+        return table().nodeCountBelow(nodeFor(function));
+    }
+
+    @Override
     public int andNot(int function1, int function2) {
         assert isValidFunction(function1) && isValidFunction(function2);
         return and(function1, complement(function2));
+    }
+
+    @Override
+    public int andNotSimplify(int function1, int function2, int domain) {
+        assert isValidFunction(function1) && isValidFunction(function2) && isValidFunction(domain);
+        return andSimplify(function1, complement(function2), domain);
     }
 
     @Override
@@ -227,14 +242,23 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
     }
 
     @Override
+    public int equivalenceSimplify(int function1, int function2, int domain) {
+        return complement(xorSimplify(function1, function2, domain));
+    }
+
+    @Override
     public int forall(int function, BitSet quantifiedVariables) {
-        assert isValidFunction(function);
         return complement(exists(complement(function), quantifiedVariables));
     }
 
     @Override
     public int implication(int function1, int function2) {
         return complement(and(function1, complement(function2)));
+    }
+
+    @Override
+    public int implicationSimplify(int function1, int function2, int domain) {
+        return complement(andSimplify(function1, complement(function2), domain));
     }
 
     @Override
@@ -245,14 +269,22 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
 
     @Override
     public int notAnd(int function1, int function2) {
-        assert isValidFunction(function1) && isValidFunction(function2);
         return complement(and(function1, function2));
     }
 
     @Override
+    public int notAndSimplify(int function1, int function2, int domain) {
+        return complement(andSimplify(function1, function2, domain));
+    }
+
+    @Override
     public int or(int function1, int function2) {
-        assert isValidFunction(function1) && isValidFunction(function2);
         return complement(and(complement(function1), complement(function2)));
+    }
+
+    @Override
+    public int orSimplify(int function1, int function2, int domain) {
+        return complement(andSimplify(complement(function1), complement(function2), domain));
     }
 
     String format(int reference) {
@@ -288,6 +320,4 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
     static boolean isFalse(int function, boolean lookingFor) {
         return lookingFor ? (function == FALSE) : (function == TRUE);
     }
-
-    public abstract String statistics();
 }
