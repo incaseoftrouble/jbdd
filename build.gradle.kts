@@ -82,16 +82,16 @@ dependencies {
   testCompileOnly("com.google.code.findbugs:jsr305:3.0.2")
 
   // https://mvnrepository.com/artifact/com.google.guava/guava
-  testImplementation("com.google.guava:guava:33.4.8-jre")
+  testImplementation("com.google.guava:guava:33.6.0-jre")
   // https://mvnrepository.com/artifact/org.hamcrest/hamcrest
-  testImplementation("org.hamcrest:hamcrest:2.2")
+  testImplementation("org.hamcrest:hamcrest:3.0")
   // https://mvnrepository.com/artifact/org.junit.jupiter/junit-jupiter-api
-  testImplementation("org.junit.jupiter:junit-jupiter:5.13.4")
+  testImplementation("org.junit.jupiter:junit-jupiter:5.14.4")
   testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
   // https://mvnrepository.com/artifact/org.immutables/value
-  compileOnly("org.immutables:value:2.11.3:annotations")
-  annotationProcessor("org.immutables:value:2.11.3")
+  compileOnly("org.immutables:value:2.12.2:annotations")
+  annotationProcessor("org.immutables:value:2.12.2")
 
   // https://mvnrepository.com/artifact/org.openjdk.jmh/jmh-generator-annprocess
   jmhImplementation("org.openjdk.jmh:jmh-core:1.37")
