@@ -50,7 +50,7 @@ public interface DecisionDiagram {
     int numberOfVariables();
 
     /**
-     * Gets the topmost decision variable of the given {@code function}.
+     * Gets the topmost decision variable of the given (non-constant) {@code function}.
      */
     int decisionVariable(int function);
 
@@ -162,12 +162,12 @@ public interface DecisionDiagram {
     default void forEachSupportVariable(int function, IntConsumer action) {
         BitSet filter = new BitSet(numberOfVariables());
         filter.set(0, numberOfVariables());
-        forEachSupportFiltered(function, filter, action);
+        forEachSupportVariableFiltered(function, filter, action);
     }
 
     default BitSet supportFiltered(int function, BitSet filter) {
         BitSet bitSet = new BitSet(numberOfVariables());
-        forEachSupportFiltered(function, filter, bitSet::set);
+        forEachSupportVariableFiltered(function, filter, bitSet::set);
         return bitSet;
     }
 
@@ -178,10 +178,10 @@ public interface DecisionDiagram {
      * @param function The function whose support should be computed.
      * @see #forEachSupportVariable(int, IntConsumer)
      */
-    void forEachSupportFiltered(int function, BitSet filter, IntConsumer action);
+    void forEachSupportVariableFiltered(int function, BitSet filter, IntConsumer action);
 
     /**
-     * Returns the number of nodes used to represent this function in the decision diagram
+     * Returns the number of decision nodes used to represent this function in the decision diagram
      */
     int size(int function);
 

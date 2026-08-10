@@ -31,9 +31,9 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
-@SuppressWarnings({"PMD.CouplingBetweenObjects"})
+@SuppressWarnings("PMD.CouplingBetweenObjects")
 final class BooleanCache {
     private static final Logger logger = Logger.getLogger(BooleanCache.class.getName());
 
@@ -47,6 +47,7 @@ final class BooleanCache {
     private final int placeholder;
     private int composeReuseCount = 0;
     private int existsReuseCount = 0;
+    private int restrictReuseCount = 0;
     private int validityChecks = 0;
 
     private final BinaryToIntCache andCache = new BinaryToIntCache();
@@ -65,6 +66,9 @@ final class BooleanCache {
     private final UnaryToIntCache composeCache;
     private final BinaryToIntCache composeSimplifyCache;
     private int[] composeArray = EMPTY_INT_ARRAY;
+    private final UnaryToIntCache restrictCache = new UnaryToIntCache();
+    private BitSet restrictVariables = new BitSet(0);
+    private BitSet restrictValues = new BitSet(0);
     private final Map<String, IntCache> caches;
 
     private int lookupHash;
@@ -98,7 +102,8 @@ final class BooleanCache {
                 entry("constrain", constrainCache),
                 entry("compose", composeCache),
                 entry("compose_simplify", composeSimplifyCache),
-                entry("exists", existsCache));
+                entry("exists", existsCache),
+                entry("restrict", restrictCache));
 
         BddConfiguration configuration = bdd.configuration();
         tableSizeChanged();
@@ -156,6 +161,7 @@ final class BooleanCache {
         existsCache.grow(ephemeralSize);
         composeCache.grow(ephemeralSize);
         composeSimplifyCache.grow(ephemeralSize);
+        restrictCache.grow(ephemeralSize);
     }
 
     public void variablesChanged() {
@@ -167,6 +173,7 @@ final class BooleanCache {
         existsCache.grow(ephemeralSize);
         composeCache.grow(ephemeralSize);
         composeSimplifyCache.grow(ephemeralSize);
+        restrictCache.grow(ephemeralSize);
     }
 
     private Collection<IntCache> caches() {
@@ -206,6 +213,17 @@ final class BooleanCache {
         }
         this.existsVariables = quantifiedVariables;
         existsCache.invalidate();
+    }
+
+    void initRestrict(BitSet restrictedVariables, BitSet restrictedVariableValues) {
+        if (restrictedVariables.equals(this.restrictVariables)
+                && restrictedVariableValues.equals(this.restrictValues)) {
+            restrictReuseCount += 1;
+            return;
+        }
+        this.restrictVariables = BitSets.copyOf(restrictedVariables);
+        this.restrictValues = BitSets.copyOf(restrictedVariableValues);
+        restrictCache.invalidate();
     }
 
     int lookupAnd(int function1, int function2) {
@@ -297,6 +315,11 @@ final class BooleanCache {
                 && bdd.isPositive(function)
                 && bdd.isValidNonConstantFunction(domain);
         return composeSimplifyCache.lookup(function, domain);
+    }
+
+    int lookupRestrict(int function) {
+        assert bdd.isValidNonConstantFunction(function);
+        return restrictCache.lookup(function);
     }
 
     int lookupExists(int function) {
@@ -403,6 +426,11 @@ final class BooleanCache {
         composeSimplifyCache.put(hash, node, domain, result);
     }
 
+    void putRestrict(int hash, int function, int result) {
+        assert bdd.isValidNonConstantFunction(function) && bdd.isValidFunction(result);
+        restrictCache.put(hash, function, result);
+    }
+
     void putExists(int hash, int inputNode, int result) {
         assert bdd.isValidNonConstantFunction(inputNode) && bdd.isValidFunction(result);
         assert hash == HashUtil.hash(inputNode);
@@ -417,10 +445,11 @@ final class BooleanCache {
         statistics.put("validity_checks", valueOf(validityChecks));
         statistics.put("compose_reuse_count", valueOf(composeReuseCount));
         statistics.put("exists_reuse_count", valueOf(existsReuseCount));
+        statistics.put("restrict_reuse_count", valueOf(restrictReuseCount));
         return statistics;
     }
 
-    private static final class CacheStatistics {
+    static final class CacheStatistics {
         private int hitCount = 0;
         private int hitCountSinceClear = 0;
         private int putCount = 0;
@@ -685,8 +714,10 @@ final class BooleanCache {
 
             int binStart = binSize * binIndex(hash);
             if (function == cache[binStart]) {
+                int result = cache[binStart + 1];
+                assert bdd.isValidFunction(result);
                 statistics.hit();
-                return cache[binStart + 1];
+                return result;
             }
             statistics.miss();
             return placeholder;

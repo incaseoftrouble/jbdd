@@ -31,7 +31,7 @@ import java.util.function.IntConsumer;
 import java.util.function.IntPredicate;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 @SuppressWarnings("PMD.TooManyFields")
 abstract class NodeTable {
@@ -351,7 +351,7 @@ abstract class NodeTable {
         for (int node = FIRST_NODE; node < size(); node++) {
             int metadata = nodeData[node];
             if (dataIsValid(metadata) && dataIsReferencedOrSaturated(metadata)) {
-                count += markAllBelowNode(node);
+                count += markAllBelowNode(node, true);
             }
         }
 
@@ -373,9 +373,11 @@ abstract class NodeTable {
         assert isValidNode(node);
         assert isNoneMarked();
 
-        int count = markAllBelowNode(node);
+        // Only decision nodes are tallied, so leafs never need to be marked here at all - unlike a full
+        // GC-style mark (markAllBelowNode(node), the default), which also marks managed leafs.
+        int count = markAllBelowNode(node, false);
         if (count > 0) {
-            int unmarked = unMarkAllBelowNode(node);
+            int unmarked = unMarkAllBelowNode(node, false);
             assert count == unmarked : "Expected " + count + " but only unmarked " + unmarked;
         }
 
@@ -557,6 +559,7 @@ abstract class NodeTable {
                 nodeData[node] = unmarkedData;
             }
         }
+        invalidateUnmarkedAndUnreferencedLeaves();
     }
 
     public int reclaimUnmarkedNodes() {
@@ -603,6 +606,8 @@ abstract class NodeTable {
             }
         }
 
+        invalidateUnmarkedAndUnreferencedLeaves();
+
         this.biggestValidNode = biggestValidNode;
         this.firstFreeNode = firstFreeNode;
         this.freeNodeCount = (size() - FIRST_NODE) - referencedNodes;
@@ -618,11 +623,24 @@ abstract class NodeTable {
         return collectedNodes;
     }
 
+    protected abstract void invalidateUnmarkedAndUnreferencedLeaves();
+
     // Marking
 
     public boolean isDecisionNodeMarked(int node) {
         assert isValidDecisionNode(node);
         return dataIsMarked(nodeData[node]);
+    }
+
+    protected boolean markNodeIfUnmarked(int node) {
+        assert isValidDecisionNode(node);
+        int metadata = nodeData[node];
+        int markedData = dataSetMark(metadata);
+        if (metadata == markedData) {
+            return false;
+        }
+        nodeData[node] = markedData;
+        return true;
     }
 
     public int findFirstMarkedDecisionNode() {
@@ -664,8 +682,6 @@ abstract class NodeTable {
 
     // Tree marking
 
-    // TODO: abstract boolean isConstantMarked(...) etc.
-
     protected abstract boolean isLeafNodeMarkedOrUnmanaged(int leaf);
 
     protected abstract boolean isLeafUnmarkedOrUnmanaged(int leaf);
@@ -686,43 +702,49 @@ abstract class NodeTable {
     protected abstract boolean recurseNoneMarkedBelow(int node);
 
     public boolean isAllMarkedBelowNode(int node) {
-        assert isValidNode(node);
-        return doIsAllMarkedBelow(node);
+        return isAllMarkedBelowNode(node, true);
     }
 
-    protected boolean doIsAllMarkedBelow(int node) {
+    public boolean isAllMarkedBelowNode(int node, boolean includeLeafs) {
+        assert isValidNode(node);
+        return doIsAllMarkedBelow(node, includeLeafs);
+    }
+
+    protected boolean doIsAllMarkedBelow(int node, boolean includeLeafs) {
         assert isValidNode(node);
         if (isLeafNode(node)) {
-            return isLeafNodeMarkedOrUnmanaged(node);
+            return !includeLeafs || isLeafNodeMarkedOrUnmanaged(node);
         }
-        return isDecisionNodeMarked(node) && recurseIsAllMarkedBelow(node);
+        return isDecisionNodeMarked(node) && recurseIsAllMarkedBelow(node, includeLeafs);
     }
 
-    protected abstract boolean recurseIsAllMarkedBelow(int node);
+    protected abstract boolean recurseIsAllMarkedBelow(int node, boolean includeLeafs);
 
-    public int unMarkAllBelowNode(int node) {
+    public int unMarkAllBelowNode(int node, boolean includeLeaves) {
         /* The algorithm does not descend into trees whose root is unmarked, hence at the start of the
          * algorithm, all children of marked nodes must be marked to ensure correctness. */
-        assert isValidNode(node) && isAllMarkedBelowNode(node);
-        int unmarkedCount = doSetMarkBelow(node, false);
+        assert isValidNode(node) && isAllMarkedBelowNode(node, includeLeaves);
+        int unmarkedCount = doSetMarkBelow(node, false, includeLeaves);
         assert isNoneMarkedBelowNode(node);
         return unmarkedCount;
     }
 
-    public int markAllBelowNode(int node) {
+    public int markAllBelowNode(int node, boolean includeLeaves) {
         /* The algorithm does not descend into trees whose root is marked, hence at the start of the
          * algorithm, every marked node must have all of its descendants marked to ensure correctness. */
         assert isValidNode(node);
-        return doSetMarkBelow(node, true);
+        return doSetMarkBelow(node, true, includeLeaves);
     }
 
     protected abstract void markLeafNodeIfManaged(int node, boolean mark);
 
-    protected int doSetMarkBelow(int node, boolean mark) {
+    protected int doSetMarkBelow(int node, boolean mark, boolean includeLeaves) {
         assert isValidNode(node);
 
         if (isLeafNode(node)) {
-            markLeafNodeIfManaged(node, mark);
+            if (includeLeaves) {
+                markLeafNodeIfManaged(node, mark);
+            }
             return 0;
         }
 
@@ -732,10 +754,10 @@ abstract class NodeTable {
             return 0;
         }
         nodeData[node] = modifiedData;
-        return 1 + recurseSetMarkBelow(node, mark);
+        return 1 + recurseSetMarkBelow(node, mark, includeLeaves);
     }
 
-    protected abstract int recurseSetMarkBelow(int node, boolean mark);
+    protected abstract int recurseSetMarkBelow(int node, boolean mark, boolean includeLeaves);
 
     public int markAllReferencedNodes() {
         int referencedNodes = 0;
@@ -743,13 +765,13 @@ abstract class NodeTable {
         for (int i = 0; i < workStackIndex; i++) {
             int pointer = workStack[i];
             assert isValidPointer(pointer);
-            referencedNodes += markAllBelowNode(treeNodeFor(pointer));
+            referencedNodes += markAllBelowNode(treeNodeFor(pointer), true);
         }
 
         for (int node = FIRST_NODE; node <= biggestValidNode; node++) {
             int metadata = nodeData[node];
             if (node <= biggestReferencedNode && dataIsReferencedOrSaturated(metadata)) {
-                referencedNodes += markAllBelowNode(node);
+                referencedNodes += markAllBelowNode(node, true);
             }
         }
 
@@ -764,7 +786,8 @@ abstract class NodeTable {
         int node = treeNodeFor(pointer);
         assert isNoneMarkedBelowNode(node);
         doForEachVariable(node, action, null, Integer.MAX_VALUE);
-        unMarkAllBelowNode(node);
+        // doForEachVariable marks decision nodes, so do not consider leaves
+        unMarkAllBelowNode(node, false);
         assert isNoneMarkedBelowNode(node);
     }
 
@@ -779,7 +802,8 @@ abstract class NodeTable {
         int node = treeNodeFor(pointer);
         assert isNoneMarkedBelowNode(node);
         doForEachVariable(node, action, filter, depthLimit);
-        doSetMarkBelow(node, false);
+        // doForEachVariable never marks leaves (see the unfiltered overload above), so don't touch them here.
+        doSetMarkBelow(node, false, false);
         assert isNoneMarkedBelowNode(node);
     }
 
@@ -1040,7 +1064,7 @@ abstract class NodeTable {
                 .append('\n')
                 .append("  NODE|VAR|REF| CHILDREN \n");
         treeToStringRecursive(pointer, builder);
-        unMarkAllBelowNode(treeNodeFor(pointer));
+        unMarkAllBelowNode(treeNodeFor(pointer), false);
         return builder.toString();
     }
 
@@ -1076,7 +1100,7 @@ abstract class NodeTable {
                 validNodes += 1;
                 if (dataIsReferencedOrSaturated(metadata)) {
                     referencedNodes += 1;
-                    childrenCount += markAllBelowNode(node);
+                    childrenCount += markAllBelowNode(node, true);
 
                     if (dataIsSaturated(metadata)) {
                         saturatedNodes += 1;

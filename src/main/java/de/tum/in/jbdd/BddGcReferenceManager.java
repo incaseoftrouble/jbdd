@@ -23,7 +23,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 public class BddGcReferenceManager<V extends BddGcReferenceManager.BddContainer> {
     private static final Logger logger = Logger.getLogger(BddGcReferenceManager.class.getName());

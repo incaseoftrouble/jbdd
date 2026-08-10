@@ -34,7 +34,7 @@ import java.util.logging.Logger;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 @SuppressWarnings({"PMD.AvoidReassigningParameters", "AssignmentToMethodParameter", "DuplicatedCode"})
 final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
@@ -169,7 +169,8 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         int[] path = new int[numberOfVariables];
-        satisfyingAssignment(function, path);
+        boolean exists = satisfyingAssignment(function, path);
+        assert exists;
         return path;
     }
 
@@ -262,12 +263,6 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         return new NodePathIterator(this, function);
-    }
-
-    @Override
-    public Iterator<int[]> pathIteratorIn(int function, int domain) {
-        // TODO Native
-        return pathIterator(and(function, domain));
     }
 
     @Override
@@ -391,12 +386,6 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
 
         path[variable] = -1;
         return false;
-    }
-
-    @Override
-    public boolean anyPathMatchesIn(int function, int domain, Predicate<? super int[]> predicate) {
-        // TODO Native
-        return anyPathMatches(and(function, domain), predicate);
     }
 
     @Override
@@ -1553,12 +1542,12 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         @Override
-        protected boolean recurseIsAllMarkedBelow(int node) {
+        protected boolean recurseIsAllMarkedBelow(int node, boolean includeLeafs) {
             int[] children = tree[node];
             boolean all = true;
             for (int child : children) {
                 int childNode = positive(child);
-                if (childNode != TRUE && !doIsAllMarkedBelow(childNode)) {
+                if (childNode != TRUE && !doIsAllMarkedBelow(childNode, includeLeafs)) {
                     all = false;
                     break;
                 }
@@ -1572,13 +1561,13 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         @Override
-        protected int recurseSetMarkBelow(int node, boolean mark) {
+        protected int recurseSetMarkBelow(int node, boolean mark, boolean includeLeaves) {
             int[] children = tree[node];
             int sum = 0;
             for (int child : children) {
                 int childNode = positive(child);
                 if (childNode != TRUE) {
-                    sum += doSetMarkBelow(childNode, mark);
+                    sum += doSetMarkBelow(childNode, mark, includeLeaves);
                 }
             }
             return sum;
@@ -1650,6 +1639,11 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             mdd.afterTableGrow(nodesInvalidated);
             assert mdd.check();
             return true;
+        }
+
+        @Override
+        protected void invalidateUnmarkedAndUnreferencedLeaves() {
+            // NOOP
         }
 
         @Override

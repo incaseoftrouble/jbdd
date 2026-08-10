@@ -99,7 +99,10 @@ public class BddTheories {
          * structure once. */
 
         BddConfiguration config = ImmutableBddConfiguration.builder().build();
-        List<TestBdd> bdds = List.of(new TestBddImpl(new BddImpl(config)), new MddAsTestBdd(new MddImpl(config)));
+        List<TestBdd> bdds = List.of(
+                new TestBddImpl(new BddImpl(config)),
+                new MddAsTestBdd(new MddImpl(config)),
+                new MtBddAsTestBdd(new MtBddImpl(new BddImpl(config))));
 
         int bddCount = bdds.size();
         List<Set<UnaryDataPoint<TestBdd>>> unaryPoints = new ArrayList<>(bddCount);

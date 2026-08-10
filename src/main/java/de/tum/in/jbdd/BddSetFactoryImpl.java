@@ -25,7 +25,7 @@ import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.IntFunction;
 import java.util.function.IntUnaryOperator;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 @SuppressWarnings("ObjectEquality")
 final class BddSetFactoryImpl extends BddGcReferenceManager<BddSetFactoryImpl.BddSetImpl> implements BddSetFactory {

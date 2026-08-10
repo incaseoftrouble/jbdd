@@ -19,7 +19,7 @@ package de.tum.in.jbdd;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.util.regex.Pattern;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 public final class DimacsReader {
     private static final Pattern WHITESPACE = Pattern.compile("[ \t]+");

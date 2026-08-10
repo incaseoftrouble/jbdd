@@ -16,6 +16,8 @@
  */
 package de.tum.in.jbdd;
 
+import com.google.errorprone.annotations.FormatMethod;
+
 final class Preconditions {
     private Preconditions() {}
 
@@ -25,6 +27,7 @@ final class Preconditions {
         }
     }
 
+    @FormatMethod
     static void checkState(boolean state, String formatString, Object... format) {
         if (!state) {
             throw new IllegalStateException(String.format(formatString, format));

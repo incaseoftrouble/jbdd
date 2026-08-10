@@ -60,6 +60,12 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
+    public MtBdd mtbdd() {
+        onEnter("mtbdd");
+        return onExit(delegate.mtbdd());
+    }
+
+    @Override
     public int trueFunction() {
         onEnter("true");
         return onExit(delegate.trueFunction());
@@ -269,12 +275,6 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
-    public Iterator<BinaryPath> pathIteratorIn(int function, int domain) {
-        onEnter("pathIteratorIn");
-        return onExit(delegate.pathIteratorIn(function, domain));
-    }
-
-    @Override
     public void forEachPath(int function, Consumer<? super BinaryPath> action) {
         onEnter("forEachPath");
         delegate.forEachPath(function, action);
@@ -292,12 +292,6 @@ public class DelegatingBdd implements Bdd {
     public boolean anyPathMatches(int function, Predicate<? super BinaryPath> predicate) {
         onEnter("anyPathMatches");
         return onExit(delegate.anyPathMatches(function, predicate));
-    }
-
-    @Override
-    public boolean anyPathMatchesIn(int function, int domain, Predicate<? super BinaryPath> predicate) {
-        onEnter("anyPathMatchesIn");
-        return onExit(delegate.anyPathMatchesIn(function, domain, predicate));
     }
 
     @Override
@@ -326,9 +320,9 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
-    public void forEachSupportFiltered(int function, BitSet filter, IntConsumer action) {
+    public void forEachSupportVariableFiltered(int function, BitSet filter, IntConsumer action) {
         onEnter("forEachSupportFiltered");
-        delegate.forEachSupportFiltered(function, filter, action);
+        delegate.forEachSupportVariableFiltered(function, filter, action);
         onExit();
     }
 

@@ -31,6 +31,12 @@ import java.util.BitSet;
 // TODO Register caches for compose / simplify arrays
 public interface Bdd extends BooleanDecisionDiagram, BooleanTerminalDecisionDiagram<BitSet, BinaryPath> {
     /**
+     * The unique {@link MtBdd} sharing this BDD's variables, lazily created on first access. There is
+     * exactly one associated MTBDD per BDD - repeated calls return the same instance.
+     */
+    MtBdd mtbdd();
+
+    /**
      * Creates a new variable and returns the BDD function representing it. The implementation guarantees that
      * variables are always allocated sequentially starting from 0, i.e. {@code
      * getVariable(createVariable()) == numberOfVariables() - 1}.

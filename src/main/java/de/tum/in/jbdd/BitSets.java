@@ -31,6 +31,10 @@ import java.util.stream.IntStream;
 public final class BitSets {
     private BitSets() {}
 
+    public static BitSet of() {
+        return new BitSet(0);
+    }
+
     public static BitSet of(int value) {
         BitSet set = new BitSet(value + 1);
         set.set(value);
@@ -226,6 +230,7 @@ public final class BitSets {
             iteration = new BitSet(size);
         }
 
+        @SuppressWarnings("UnusedMethod")
         private PowerIterator(BitSet base) {
             this.base = toArray(base);
             iteration = new BitSet(base.length());

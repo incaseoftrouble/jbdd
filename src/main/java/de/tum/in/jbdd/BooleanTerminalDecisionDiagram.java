@@ -73,7 +73,7 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      * Returns an iterator over all satisfying assignments of the given boolean {@code function}. In other words,
      * this call is equivalent to
      * {@code
-     *   Set&lt;S&gt; solutions = new HashSet&lt;&gt;();
+     *   Set<S> solutions = new HashSet<>();
      *   for (S valuation : valuations) {
      *     if (this.evaluate(function, valuation)) {
      *       solutions.add(valuation);
@@ -124,8 +124,6 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
 
     Iterator<P> pathIterator(int function);
 
-    Iterator<P> pathIteratorIn(int function, int domain);
-
     /**
      * Executes the given {@code action} for all <em>minimal</em> solutions of the given boolean {@code function}.
      *
@@ -144,8 +142,6 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
     void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super P> action);
 
     boolean anyPathMatches(int function, Predicate<? super P> predicate);
-
-    boolean anyPathMatchesIn(int function, int domain, Predicate<? super P> predicate);
 
     /**
      * Checks whether the boolean {@code function1} implies {@code function2}, i.e. if every valuation under
@@ -275,7 +271,12 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
     }
 
     /**
-     * Constructs the generalized cofactor of {@code function} w.r.t. {@code domain}, also written {@code f @ g}.
+     * Constructs the generalized cofactor of {@code function} w.r.t. {@code domain} (Coudert &amp; Madre),
+     * also written {@code f @ domain}: The result agrees with {@code function} wherever {@code domain} holds,
+     * and elsewhere takes the value of {@code function} at the nearest {@code domain}-satisfying assignment
+     * (variables decided top-down, flipped only when {@code domain} forces it) - a specific canonical
+     * choice, unlike {@link #simplify}'s arbitrary one, so the result may depend on variables {@code
+     * function} did not and is not guaranteed to stay bounded in size.
      */
     int constrain(int function, int domain);
 

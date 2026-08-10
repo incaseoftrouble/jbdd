@@ -18,11 +18,8 @@ package de.tum.in.jbdd;
 
 import java.math.BigInteger;
 import java.util.BitSet;
-import java.util.HashMap;
 import java.util.Iterator;
-import java.util.Map;
 import java.util.Optional;
-import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.IntBinaryOperator;
 import java.util.function.IntConsumer;
@@ -115,7 +112,7 @@ public interface MtBdd extends BooleanDecisionDiagram {
      * @param action
      *     The action to be performed on these solutions.
      */
-    void forEachPath(int function, BiConsumer<BinaryPath, Integer> action);
+    void forEachPath(int function, PathConsumer action);
 
     /**
      * Computes the co-domain of the given {@code function}.
@@ -193,6 +190,12 @@ public interface MtBdd extends BooleanDecisionDiagram {
     int update(int function, int assignments, int value);
 
     /**
+     * Compute the function which yields {@code thenFunction} when {@code ifFunction} (represented as function
+     * in the underlying BDD) evaluates to {@code true}, and {@code elseFunction} otherwise.
+     */
+    int ifThenElse(int ifFunction, int thenFunction, int elseFunction);
+
+    /**
      * Compute the function that for each assignment {@code a} evaluates to {@code map(function1(a), function2(a))}.
      */
     int apply(int function1, int function2, IntBinaryOperator map);
@@ -234,35 +237,19 @@ public interface MtBdd extends BooleanDecisionDiagram {
 
     /**
      * Creates the split of the given {@code function}. Suppose {@code function} is {@code f(x_1, ..., x_n}}
-     * and {@code splitVariables} are all even variables. Then, the result of this method is a function
-     * {@code g(x_2, x_4, ..., x_{n-1})} which yields for every assignment to these variables a function
-     * {@code h(x_1, x_3, ..., x_n)} that evaluates to {@code f(x_1, ..., x_n)}.
+     * and {@code splitVariables} are all even variables. Then, the result's {@link FunctionToFunctionMap#function()}
+     * is a function {@code g(x_2, x_4, ..., x_{n-1})} which, for every assignment to these variables, yields
+     * an index into {@link FunctionToFunctionMap#support()} whose associated function {@code h(x_1, x_3, ..., x_n)}
+     * evaluates to {@code f(x_1, ..., x_n)}.
      */
-    int split(int function, BitSet splitVariables);
+    FunctionToFunctionMap split(int function, BitSet splitVariables);
 
     /**
      * Creates the product of the given {@code functions}. Suppose each function is {@code f_i(x_1, ..., x_n}},
      * then their product is a function {@code f(x)} that yields {@code [f_1(x), ..., f_m(x)]}. The returned
      * function indexes the {@code values} map. The outputs of {@code f} do not need to be dense.
      */
-    default Product cartesianProduct(int[] functions) {
-        Map<int[], Integer> product = new HashMap<>();
-        int function = apply(functions, values -> product.computeIfAbsent(values, k -> product.size()));
-        Map<Integer, int[]> results = new HashMap<>();
-        product.forEach((k, v) -> results.put(v, k));
-
-        return new Product() {
-            @Override
-            public int function() {
-                return function;
-            }
-
-            @Override
-            public Map<Integer, int[]> values() {
-                return results;
-            }
-        };
-    }
+    FunctionToFunctionsMap cartesianProduct(int[] functions);
 
     /**
      * Constructs a simplified version of the given {@code function} which is equivalent to it for all assignments
@@ -275,14 +262,50 @@ public interface MtBdd extends BooleanDecisionDiagram {
     int simplify(int function, int domain);
 
     interface Inverse {
-        int functionFor(int value);
-
-        BitSet values();
-    }
-
-    interface Product {
+        /**
+         * The inverted MTBDD function.
+         */
         int function();
 
-        Map<Integer, int[]> values();
+        /**
+         * Return the BDD function describing all valuations that yield the given value in the MTBDD function.
+         * In particular, for values outside the support, this function returns {@link Bdd#falseFunction() FALSE}.
+         */
+        int functionFor(int value);
+
+        /**
+         * The support of the inverted function.
+         */
+        BitSet support();
+    }
+
+    interface FunctionToFunctionMap {
+        /**
+         * The meta-function whose values index functions.
+         */
+        int function();
+
+        /**
+         * The functions corresponding to the given value (leaves of the meta-function).
+         */
+        int functionFor(int value);
+
+        /**
+         * The support of the meta-function.
+         */
+        BitSet support();
+    }
+
+    interface FunctionToFunctionsMap {
+        int function();
+
+        int[] functionFor(int value);
+
+        BitSet support();
+    }
+
+    @FunctionalInterface
+    interface PathConsumer {
+        void accept(BinaryPath path, int value);
     }
 }

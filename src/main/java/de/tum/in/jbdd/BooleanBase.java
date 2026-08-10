@@ -154,7 +154,7 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
     }
 
     @Override
-    public void forEachSupportFiltered(int function, BitSet filter, IntConsumer action) {
+    public void forEachSupportVariableFiltered(int function, BitSet filter, IntConsumer action) {
         table().forEachVariable(function, filter, action);
     }
 
