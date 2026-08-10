@@ -27,7 +27,7 @@ public class BddState {
     @Param({"1"})
     private float cacheSizeFactor;
 
-    @Param({"true", "false"})
+    @Param({"true"})
     private boolean preserveCache;
 
     @Param({"false"})

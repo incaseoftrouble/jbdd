@@ -16,7 +16,6 @@
  */
 package de.tum.in.jbdd;
 
-import static java.lang.String.valueOf;
 import static java.util.Map.entry;
 
 import java.math.BigInteger;
@@ -25,48 +24,40 @@ import java.util.BitSet;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.function.BooleanSupplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import org.jspecify.annotations.Nullable;
 
-@SuppressWarnings("PMD.CouplingBetweenObjects")
 final class BooleanCache {
     private static final Logger logger = Logger.getLogger(BooleanCache.class.getName());
-
-    @SuppressWarnings("StaticCollection")
-    private static final Collection<BooleanCache> cacheShutdownHook = new ConcurrentLinkedDeque<>();
 
     private static final int[] EMPTY_INT_ARRAY = new int[0];
     private static final Object[] EMPTY_OBJECT_ARRAY = new Object[0];
 
     private final BooleanBase<?, ?> bdd;
-    private final int placeholder;
     private int composeReuseCount = 0;
     private int existsReuseCount = 0;
     private int restrictReuseCount = 0;
     private int validityChecks = 0;
 
-    private final BinaryToIntCache andCache = new BinaryToIntCache();
-    private final TernaryToIntCache andSimplifyCache = new TernaryToIntCache();
-    private final BinaryToIntCache xorCache = new BinaryToIntCache();
-    private final TernaryToIntCache xorSimplifyCache = new TernaryToIntCache();
-    private final BinaryToIntCache simplifyCache = new BinaryToIntCache();
-    private final BinaryToIntCache constrainCache = new BinaryToIntCache();
-    private final BinaryToBooleanCache intersectsCache = new BinaryToBooleanCache();
-    private final TernaryToIntCache iteCache = new TernaryToIntCache();
-    private final QuaternaryToIntCache iteSimplifyCache = new QuaternaryToIntCache();
-    private final UnaryToIntCache existsCache = new UnaryToIntCache();
+    private final BinaryToIntCache andCache;
+    private final TernaryToIntCache andSimplifyCache;
+    private final BinaryToIntCache xorCache;
+    private final TernaryToIntCache xorSimplifyCache;
+    private final BinaryToIntCache simplifyCache;
+    private final BinaryToIntCache constrainCache;
+    private final BinaryToBooleanCache intersectsCache;
+    private final TernaryToIntCache iteCache;
+    private final QuaternaryToIntCache iteSimplifyCache;
+    private final UnaryToIntCache existsCache;
     private BitSet existsVariables = new BitSet(0);
-    private final UnaryToObjectCache<BigInteger> satisfactionCache = new UnaryToObjectCache<>();
-    private final BinaryToObjectCache<BigInteger> satisfactionInCache = new BinaryToObjectCache<>();
+    private final UnaryToObjectCache<BigInteger> satisfactionCache;
+    private final BinaryToObjectCache<BigInteger> satisfactionInCache;
     private final UnaryToIntCache composeCache;
     private final BinaryToIntCache composeSimplifyCache;
     private int[] composeArray = EMPTY_INT_ARRAY;
-    private final UnaryToIntCache restrictCache = new UnaryToIntCache();
+    private final UnaryToIntCache restrictCache;
     private BitSet restrictVariables = new BitSet(0);
     private BitSet restrictValues = new BitSet(0);
     private final Map<String, IntCache> caches;
@@ -75,8 +66,22 @@ final class BooleanCache {
 
     BooleanCache(BooleanBase<?, ?> bdd) {
         this.bdd = bdd;
-        this.placeholder = bdd.placeholder();
         this.lookupHash = -1;
+
+        andCache = new BinaryToIntCache(bdd);
+        andSimplifyCache = new TernaryToIntCache(bdd);
+        xorCache = new BinaryToIntCache(bdd);
+        xorSimplifyCache = new TernaryToIntCache(bdd);
+        simplifyCache = new BinaryToIntCache(bdd);
+        constrainCache = new BinaryToIntCache(bdd);
+        intersectsCache = new BinaryToBooleanCache(bdd);
+        iteCache = new TernaryToIntCache(bdd);
+        iteSimplifyCache = new QuaternaryToIntCache(bdd);
+        existsCache = new UnaryToIntCache(bdd);
+        satisfactionCache = new UnaryToObjectCache<>(bdd);
+        satisfactionInCache = new BinaryToObjectCache<>(bdd);
+        restrictCache = new UnaryToIntCache(bdd);
+
         BooleanSupplier composeValid = () -> {
             for (int composeNode : composeArray) {
                 if (!bdd.isValidFunction(composeNode)) {
@@ -85,8 +90,8 @@ final class BooleanCache {
             }
             return true;
         };
-        composeCache = new UnaryToIntCache(composeValid);
-        composeSimplifyCache = new BinaryToIntCache(composeValid);
+        composeCache = new UnaryToIntCache(bdd, composeValid);
+        composeSimplifyCache = new BinaryToIntCache(bdd, composeValid);
 
         caches = Map.ofEntries(
                 entry("and", andCache),
@@ -105,38 +110,34 @@ final class BooleanCache {
                 entry("exists", existsCache),
                 entry("restrict", restrictCache));
 
-        BddConfiguration configuration = bdd.configuration();
-        tableSizeChanged();
+        tableSizeChanged(0);
 
-        if (logger.isLoggable(Level.INFO) && configuration.logStatisticsOnShutdown()) {
-            logger.log(Level.INFO, "Adding {0} to shutdown hook", this);
-            addToShutdownHook(this);
+        if (bdd.configuration().logStatisticsOnShutdown()) {
+            Util.registerForCleanupStatistics(bdd, bdd.configuration().name());
         }
     }
 
-    private static void addToShutdownHook(BooleanCache cache) {
-        ShutdownHookLazyHolder.init();
-        cacheShutdownHook.add(cache);
-    }
-
-    private static int mod(int value, int modulus) {
-        int val = value % modulus;
-        return val < 0 ? val + modulus : val;
-    }
-
     boolean binarySymmetricWellOrdered(int node1, int node2) {
-        int node1var = bdd.decisionVariable(node1);
-        int node2var = bdd.decisionVariable(node2);
-        return node1var < node2var || node1var == node2var && node1 < node2;
+        return Util.symmetricCanonicallyOrdered(node1, bdd.decisionVariable(node1), node2, bdd.decisionVariable(node2));
     }
 
     int lookupHash() {
         return lookupHash;
     }
 
+    UnaryToIntCache composeCache() {
+        return composeCache;
+    }
+
+    BinaryToIntCache composeSimplifyCache() {
+        return composeSimplifyCache;
+    }
+
     // Size and invalidation
 
-    public void tableSizeChanged() {
+    void tableSizeChanged(int invalidatedNodes) {
+        onBddNodesInvalidated(invalidatedNodes);
+
         logger.log(Level.FINER, "Growing caches if necessary");
         BddConfiguration configuration = bdd.configuration();
 
@@ -164,10 +165,18 @@ final class BooleanCache {
         restrictCache.grow(ephemeralSize);
     }
 
-    public void variablesChanged() {
+    void variablesChanged() {
+        // Satisfaction counts are counts over [decisionVariable, numberOfVariables) - they are keyed on
+        // the node alone, but their value depends on the variable count, so adding a variable makes every
+        // stored entry wrong. Growing is not enough: CacheBase#grow only records a desired size and
+        // resizes lazily.
+        satisfactionCache.invalidate();
+        satisfactionInCache.invalidate();
+
         BddConfiguration configuration = bdd.configuration();
         int unarySize = bdd.tableSize() / configuration.cacheUnaryDivider();
         satisfactionCache.grow(unarySize);
+        satisfactionInCache.grow(unarySize);
 
         int ephemeralSize = bdd.tableSize() / configuration.cacheEphemeralMultiplier();
         existsCache.grow(ephemeralSize);
@@ -180,14 +189,19 @@ final class BooleanCache {
         return caches.values();
     }
 
-    public void invalidate() {
+    void invalidate() {
         caches().forEach(IntCache::invalidate);
     }
 
-    public void clearInvalidNodes(boolean attemptPruning) {
+    void onBddNodesInvalidated(int invalidatedNodes) {
+        if (invalidatedNodes == 0) {
+            return;
+        }
         validityChecks += 1;
+        // If we reclaimed a lot of nodes, we won't be able to save much, so don't try
+        boolean preserve = bdd.configuration().useCachePreserve() && invalidatedNodes < bdd.tableSize() / 2;
         for (IntCache cache : caches()) {
-            cache.clearInvalidNodes(bdd.configuration().useCachePreserve() && attemptPruning);
+            cache.clearInvalidNodes(preserve);
         }
     }
 
@@ -229,7 +243,9 @@ final class BooleanCache {
     int lookupAnd(int function1, int function2) {
         assert bdd.isValidNonConstantFunction(function1) && bdd.isValidNonConstantFunction(function2);
         assert binarySymmetricWellOrdered(function1, function2);
-        return andCache.lookup(function1, function2);
+        int result = andCache.lookup(function1, function2);
+        lookupHash = andCache.lookupHash();
+        return result;
     }
 
     int lookupAndSimplify(int function1, int function2, int domain) {
@@ -237,13 +253,17 @@ final class BooleanCache {
                 && bdd.isValidNonConstantFunction(function2)
                 && bdd.isValidNonConstantFunction(domain);
         assert binarySymmetricWellOrdered(function1, function2);
-        return andSimplifyCache.lookup(function1, function2, domain);
+        int result = andSimplifyCache.lookup(function1, function2, domain);
+        lookupHash = andSimplifyCache.lookupHash();
+        return result;
     }
 
     int lookupXor(int function1, int function2) {
         assert bdd.isValidNonConstantFunction(function1) && bdd.isValidNonConstantFunction(function2);
         assert binarySymmetricWellOrdered(function1, function2);
-        return xorCache.lookup(function1, function2);
+        int result = xorCache.lookup(function1, function2);
+        lookupHash = xorCache.lookupHash();
+        return result;
     }
 
     int lookupXorSimplify(int function1, int function2, int domain) {
@@ -251,27 +271,35 @@ final class BooleanCache {
                 && bdd.isValidNonConstantFunction(function2)
                 && bdd.isValidNonConstantFunction(domain);
         assert binarySymmetricWellOrdered(function1, function2);
-        return xorSimplifyCache.lookup(function1, function2, domain);
+        int result = xorSimplifyCache.lookup(function1, function2, domain);
+        lookupHash = xorSimplifyCache.lookupHash();
+        return result;
     }
 
     int lookupSimplify(int function, int domain) {
         assert bdd.isValidNonConstantFunction(function)
                 && bdd.isPositive(function)
                 && bdd.isValidNonConstantFunction(domain);
-        return simplifyCache.lookup(function, domain);
+        int result = simplifyCache.lookup(function, domain);
+        lookupHash = simplifyCache.lookupHash();
+        return result;
     }
 
     int lookupConstrain(int function, int domain) {
         assert bdd.isValidNonConstantFunction(function)
                 && bdd.isPositive(function)
                 && bdd.isValidNonConstantFunction(domain);
-        return constrainCache.lookup(function, domain);
+        int result = constrainCache.lookup(function, domain);
+        lookupHash = constrainCache.lookupHash();
+        return result;
     }
 
     int lookupIntersects(int function1, int function2) {
         assert bdd.isValidNonConstantFunction(function1) && bdd.isValidNonConstantFunction(function2);
         assert binarySymmetricWellOrdered(function1, function2);
-        return intersectsCache.lookup(function1, function2);
+        int result = intersectsCache.lookup(function1, function2);
+        lookupHash = intersectsCache.lookupHash();
+        return result;
     }
 
     int lookupIfThenElse(int function1, int function2, int function3) {
@@ -280,7 +308,9 @@ final class BooleanCache {
                 && bdd.isValidNonConstantFunction(function2)
                 && bdd.isPositive(function2)
                 && bdd.isValidNonConstantFunction(function3);
-        return iteCache.lookup(function1, function2, function3);
+        int result = iteCache.lookup(function1, function2, function3);
+        lookupHash = iteCache.lookupHash();
+        return result;
     }
 
     int lookupIfThenElseSimplify(int function1, int function2, int function3, int domain) {
@@ -290,41 +320,55 @@ final class BooleanCache {
                 && bdd.isPositive(function2)
                 && bdd.isValidNonConstantFunction(function3)
                 && bdd.isValidNonConstantFunction(domain);
-        return iteSimplifyCache.lookup(function1, function2, function3, domain);
+        int result = iteSimplifyCache.lookup(function1, function2, function3, domain);
+        lookupHash = iteSimplifyCache.lookupHash();
+        return result;
     }
 
     @Nullable
     BigInteger lookupSatisfaction(int function) {
         assert bdd.isValidNonConstantFunction(function);
-        return satisfactionCache.lookup(function);
+        BigInteger result = satisfactionCache.lookup(function);
+        lookupHash = satisfactionCache.lookupHash();
+        return result;
     }
 
     @Nullable
     BigInteger lookupSatisfactionIn(int function, int domain) {
         assert bdd.isValidNonConstantFunction(function) && bdd.isValidNonConstantFunction(domain);
-        return satisfactionInCache.lookup(function, domain);
+        BigInteger result = satisfactionInCache.lookup(function, domain);
+        lookupHash = satisfactionInCache.lookupHash();
+        return result;
     }
 
     int lookupCompose(int function) {
         assert bdd.isValidNonConstantFunction(function) && bdd.isPositive(function);
-        return composeCache.lookup(function);
+        int result = composeCache.lookup(function);
+        lookupHash = composeCache.lookupHash();
+        return result;
     }
 
     int lookupComposeSimplify(int function, int domain) {
         assert bdd.isValidNonConstantFunction(function)
                 && bdd.isPositive(function)
                 && bdd.isValidNonConstantFunction(domain);
-        return composeSimplifyCache.lookup(function, domain);
+        int result = composeSimplifyCache.lookup(function, domain);
+        lookupHash = composeSimplifyCache.lookupHash();
+        return result;
     }
 
     int lookupRestrict(int function) {
         assert bdd.isValidNonConstantFunction(function);
-        return restrictCache.lookup(function);
+        int result = restrictCache.lookup(function);
+        lookupHash = restrictCache.lookupHash();
+        return result;
     }
 
     int lookupExists(int function) {
         assert bdd.isValidNonConstantFunction(function);
-        return existsCache.lookup(function);
+        int result = existsCache.lookup(function);
+        lookupHash = existsCache.lookupHash();
+        return result;
     }
 
     // Put
@@ -421,7 +465,7 @@ final class BooleanCache {
         composeCache.put(hash, node, result);
     }
 
-    public void putComposeSimplify(int hash, int node, int domain, int result) {
+    void putComposeSimplify(int hash, int node, int domain, int result) {
         assert bdd.isValidNonConstantFunction(node) && bdd.isPositive(node) && bdd.isValidFunction(result);
         composeSimplifyCache.put(hash, node, domain, result);
     }
@@ -439,223 +483,37 @@ final class BooleanCache {
 
     // Utility
 
-    public Map<String, Object> statistics() {
+    Map<String, Object> statistics() {
         Map<String, Object> statistics = new HashMap<>();
         caches.forEach((name, cache) -> statistics.putAll(cache.statistics("cache_" + name)));
-        statistics.put("validity_checks", valueOf(validityChecks));
-        statistics.put("compose_reuse_count", valueOf(composeReuseCount));
-        statistics.put("exists_reuse_count", valueOf(existsReuseCount));
-        statistics.put("restrict_reuse_count", valueOf(restrictReuseCount));
+        statistics.put("validity_checks", String.valueOf(validityChecks));
+        statistics.put("compose_reuse_count", String.valueOf(composeReuseCount));
+        statistics.put("exists_reuse_count", String.valueOf(existsReuseCount));
+        statistics.put("restrict_reuse_count", String.valueOf(restrictReuseCount));
         return statistics;
     }
 
-    static final class CacheStatistics {
-        private int hitCount = 0;
-        private int hitCountSinceClear = 0;
-        private int putCount = 0;
-        private int putCountSinceClear = 0;
-        private int missCount = 0;
-        private int missCountSinceClear = 0;
-        private int clearCount = 0;
-        private int pruningCount = 0;
-        private int totalPrunedEntries = 0;
+    abstract static class IntCache extends CacheBase.IntKeys {
+        final BooleanBase<?, ?> bdd;
+        int lookupHash = 0;
 
-        void hit() {
-            hitCount++;
-            hitCountSinceClear++;
+        IntCache(BooleanBase<?, ?> bdd, int arity, int binSize) {
+            super(arity, binSize);
+            this.bdd = bdd;
         }
 
-        void miss() {
-            missCount++;
-            missCountSinceClear++;
+        IntCache(BooleanBase<?, ?> bdd, int arity, int binSize, BooleanSupplier cacheDependenciesValid) {
+            super(arity, binSize, cacheDependenciesValid);
+            this.bdd = bdd;
         }
 
-        void put() {
-            putCount++;
-            putCountSinceClear++;
+        int lookupHash() {
+            return lookupHash;
         }
 
-        void clear() {
-            clearCount++;
-            hitCountSinceClear = 0;
-            putCountSinceClear = 0;
-            missCountSinceClear = 0;
-        }
-
-        void prune(int prunedEntries) {
-            pruningCount++;
-            totalPrunedEntries += prunedEntries;
-        }
-
-        public Map<String, Object> data() {
-            double hitToPutRatio = (double) hitCount / Math.max(putCount, 1);
-            double hitRatio = (double) hitCount / Math.max(hitCount + missCount, 1);
-
-            return Map.ofEntries(
-                    entry("put", putCount),
-                    entry("hit", hitCount),
-                    entry("miss", missCount),
-                    entry("hit_ratio", hitRatio),
-                    entry("hit_to_put_ratio", hitToPutRatio),
-                    entry("clear_count", clearCount),
-                    entry("put_since_clear", putCountSinceClear),
-                    entry("hit_since_clear", hitCountSinceClear),
-                    entry("miss_since_clear", missCountSinceClear),
-                    entry("prune_count", pruningCount),
-                    entry("pruned_entries", totalPrunedEntries));
-        }
-    }
-
-    abstract class IntCache {
-        final int arity;
-        final int binSize;
-        int size = 0;
-        int[] cache = EMPTY_INT_ARRAY;
-        CacheStatistics statistics = new CacheStatistics();
-        BooleanSupplier cacheDependenciesValid;
-        private int desiredSize = 0;
-        private boolean cacheInvalid = true;
-
-        IntCache(int arity, int binSize) {
-            this.arity = arity;
-            this.binSize = binSize;
-            this.cacheDependenciesValid = () -> true;
-        }
-
-        IntCache(int arity, int binSize, BooleanSupplier cacheDependenciesValid) {
-            this.arity = arity;
-            this.binSize = binSize;
-            this.cacheDependenciesValid = cacheDependenciesValid;
-        }
-
-        int size() {
-            assert size == cache.length / binSize;
-            return size;
-        }
-
-        double loadFactor() {
-            int loadedBins = 0;
-            for (int i = 0; i < cache.length; i += binSize) {
-                if (cache[i] != placeholder) {
-                    loadedBins++;
-                }
-            }
-            return (double) loadedBins / size();
-        }
-
-        int binIndex(int hash) {
-            return mod(hash, size());
-        }
-
-        void clearInvalidNodes(boolean attemptPruning) {
-            if (cacheInvalid || !cacheDependenciesValid.getAsBoolean()) {
-                cacheInvalid = true;
-                return;
-            }
-            if (statistics.putCountSinceClear == 0) {
-                assert isEmpty();
-                return;
-            }
-            if (!attemptPruning || statistics.putCountSinceClear < size() / 4) {
-                cacheInvalid = true;
-                return;
-            }
-            if (2 * size < desiredSize) {
-                // No point in pruning if we need to grow and check anyway
-                growToSize();
-                return;
-            }
-            assert !cacheInvalid;
-
-            int pruned = 0;
-            for (int binStart = 0; binStart < cache.length; binStart += binSize) {
-                if (cache[binStart] != placeholder && !isValid(binStart)) {
-                    pruned += 1;
-                    cache[binStart] = placeholder;
-                }
-            }
-            statistics.prune(pruned);
-            assert allEntriesValid();
-        }
-
-        void grow(int size) {
-            assert size > 0;
-            this.desiredSize = Math.max(size, this.size);
-        }
-
-        void ensureValid() {
-            if (2 * size < desiredSize) {
-                // Also takes care of emptying the cache
-                growToSize();
-            } else if (cacheInvalid) {
-                doClear(cache);
-                statistics.clear();
-                cacheInvalid = false;
-                assert isEmpty();
-            }
-            assert allEntriesValid();
-            assert !cacheInvalid;
-        }
-
-        private boolean allEntriesValid() {
-            for (int binStart = 0; binStart < cache.length; binStart += binSize) {
-                if (cache[binStart] != placeholder && !isValid(binStart)) {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        private boolean isEmpty() {
-            for (int binStart = 0; binStart < cache.length; binStart += binSize) {
-                if (cache[binStart] != placeholder) {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        private void growToSize() {
-            int newSize = Primes.nextPrime(desiredSize);
-            int[] newCache = new int[newSize * binSize];
-            if (placeholder != 0) {
-                // Need to clear even if preserving values, as this will not write the placeholder
-                // to invalid locations
-                doClear(newCache);
-            }
-
-            boolean preserve =
-                    !cacheInvalid && bdd.configuration().useCachePreserve() && statistics.putCountSinceClear > size / 8;
-            grow(newSize, newCache, preserve);
-            cache = newCache;
-            size = newSize;
-            if (!preserve) {
-                statistics.clear();
-                assert isEmpty();
-            }
-            // If cache was invalid before grow, make sure the cache has been emptied
-            assert !cacheInvalid || isEmpty();
-            cacheInvalid = false;
-        }
-
-        private void doClear(int[] cache) {
-            if (binSize == 1) {
-                Arrays.fill(cache, placeholder);
-            } else {
-                for (int i = 0; i < cache.length; i += binSize) {
-                    cache[i] = placeholder;
-                }
-            }
-        }
-
-        void invalidate() {
-            if (statistics.putCountSinceClear > 0) {
-                cacheInvalid = true;
-            }
-        }
-
-        boolean isValid(int binStart) {
-            for (int j = binStart; j < binStart + arity; j++) {
+        @Override
+        protected boolean isValid(int binStart) {
+            for (int j = binStart; j < binStart + keyCount; j++) {
                 if (!bdd.isValidNonConstantFunction(cache[j])) {
                     return false;
                 }
@@ -663,48 +521,30 @@ final class BooleanCache {
             return isValidResult(binStart);
         }
 
-        public Map<String, Object> statistics(String name) {
-            Map<String, Object> data = Map.of("size", size, "load_factor", loadFactor());
-            return Stream.concat(data.entrySet().stream(), statistics.data().entrySet().stream())
-                    .collect(Collectors.toUnmodifiableMap(
-                            e -> String.format("%s_%s", name, e.getKey()), Map.Entry::getValue));
+        @Override
+        protected boolean useCachePreserve() {
+            return bdd.configuration().useCachePreserve();
+        }
+
+        void clearInvalidNodes(boolean attemptPruning) {
+            prune(attemptPruning, this::isValid);
         }
 
         protected abstract boolean isValidResult(int binStart);
-
-        protected abstract void grow(int newSize, int[] newKeys, boolean preserve);
     }
 
-    class UnaryToIntCache extends IntCache {
-        public UnaryToIntCache() {
-            super(1, 2);
+    static class UnaryToIntCache extends IntCache {
+        UnaryToIntCache(BooleanBase<?, ?> bdd) {
+            super(bdd, 1, 2);
         }
 
-        public UnaryToIntCache(BooleanSupplier pruningValid) {
-            super(1, 2, pruningValid);
+        UnaryToIntCache(BooleanBase<?, ?> bdd, BooleanSupplier pruningValid) {
+            super(bdd, 1, 2, pruningValid);
         }
 
         @Override
         protected boolean isValidResult(int binStart) {
             return bdd.isValidFunction(cache[binStart + 1]);
-        }
-
-        @Override
-        protected void grow(int newSize, int[] newCache, boolean preserve) {
-            if (!preserve) {
-                return;
-            }
-
-            for (int binIndex = 0; binIndex < size; binIndex++) {
-                int binStart = binIndex * binSize;
-                int key = cache[binStart];
-                if (key == placeholder || !isValid(binStart)) {
-                    continue;
-                }
-                int newBinStart = binSize * mod(HashUtil.hash(key), newSize);
-                newCache[newBinStart] = key;
-                newCache[newBinStart + 1] = cache[binStart + 1];
-            }
         }
 
         protected int lookup(int function) {
@@ -720,7 +560,7 @@ final class BooleanCache {
                 return result;
             }
             statistics.miss();
-            return placeholder;
+            return NodeTable.PLACEHOLDER;
         }
 
         void put(int hash, int function, int result) {
@@ -734,38 +574,18 @@ final class BooleanCache {
         }
     }
 
-    class BinaryToIntCache extends IntCache {
-        public BinaryToIntCache() {
-            super(2, 3);
+    static class BinaryToIntCache extends IntCache {
+        BinaryToIntCache(BooleanBase<?, ?> bdd) {
+            super(bdd, 2, 3);
         }
 
-        public BinaryToIntCache(BooleanSupplier cacheDependenciesValid) {
-            super(2, 3, cacheDependenciesValid);
+        BinaryToIntCache(BooleanBase<?, ?> bdd, BooleanSupplier cacheDependenciesValid) {
+            super(bdd, 2, 3, cacheDependenciesValid);
         }
 
         @Override
         protected boolean isValidResult(int binStart) {
             return bdd.isValidFunction(cache[binStart + 2]);
-        }
-
-        @Override
-        protected void grow(int newSize, int[] newCache, boolean preserve) {
-            if (!preserve) {
-                return;
-            }
-
-            for (int binIndex = 0; binIndex < size; binIndex++) {
-                int binStart = binIndex * binSize;
-                int key1 = cache[binStart];
-                if (key1 == placeholder || !isValid(binStart)) {
-                    continue;
-                }
-                int key2 = cache[binStart + 1];
-                int newBinStart = binSize * mod(HashUtil.hash(key1, key2), newSize);
-                newCache[newBinStart] = key1;
-                newCache[newBinStart + 1] = key2;
-                newCache[newBinStart + 2] = cache[binStart + 2];
-            }
         }
 
         protected int lookup(int function1, int function2) {
@@ -782,7 +602,7 @@ final class BooleanCache {
                 return result;
             }
             statistics.miss();
-            return placeholder;
+            return NodeTable.PLACEHOLDER;
         }
 
         void put(int hash, int function1, int function2, int result) {
@@ -798,36 +618,14 @@ final class BooleanCache {
         }
     }
 
-    class TernaryToIntCache extends IntCache {
-        public TernaryToIntCache() {
-            super(3, 4);
+    static class TernaryToIntCache extends IntCache {
+        TernaryToIntCache(BooleanBase<?, ?> bdd) {
+            super(bdd, 3, 4);
         }
 
         @Override
         protected boolean isValidResult(int binStart) {
             return bdd.isValidFunction(cache[binStart + 3]);
-        }
-
-        @Override
-        protected void grow(int newSize, int[] newCache, boolean preserve) {
-            if (!preserve) {
-                return;
-            }
-
-            for (int binIndex = 0; binIndex < size; binIndex++) {
-                int binStart = binIndex * binSize;
-                int key1 = cache[binStart];
-                if (key1 == placeholder || !isValid(binStart)) {
-                    continue;
-                }
-                int key2 = cache[binStart + 1];
-                int key3 = cache[binStart + 2];
-                int newBinStart = binSize * mod(HashUtil.hash(key1, key2, key3), newSize);
-                newCache[newBinStart] = key1;
-                newCache[newBinStart + 1] = key2;
-                newCache[newBinStart + 2] = key3;
-                newCache[newBinStart + 3] = cache[binStart + 3];
-            }
         }
 
         protected int lookup(int function1, int function2, int function3) {
@@ -843,7 +641,7 @@ final class BooleanCache {
                 return result;
             }
             statistics.miss();
-            return placeholder;
+            return NodeTable.PLACEHOLDER;
         }
 
         void put(int hash, int function1, int function2, int function3, int result) {
@@ -859,38 +657,14 @@ final class BooleanCache {
         }
     }
 
-    class QuaternaryToIntCache extends IntCache {
-        public QuaternaryToIntCache() {
-            super(4, 5);
+    static class QuaternaryToIntCache extends IntCache {
+        QuaternaryToIntCache(BooleanBase<?, ?> bdd) {
+            super(bdd, 4, 5);
         }
 
         @Override
         protected boolean isValidResult(int binStart) {
             return bdd.isValidFunction(cache[binStart + 4]);
-        }
-
-        @Override
-        protected void grow(int newSize, int[] newCache, boolean preserve) {
-            if (!preserve) {
-                return;
-            }
-
-            for (int binIndex = 0; binIndex < size; binIndex++) {
-                int binStart = binIndex * binSize;
-                int key1 = cache[binStart];
-                if (key1 == placeholder || !isValid(binStart)) {
-                    continue;
-                }
-                int key2 = cache[binStart + 1];
-                int key3 = cache[binStart + 2];
-                int key4 = cache[binStart + 3];
-                int newBinStart = binSize * mod(HashUtil.hash(key1, key2, key3, key4), newSize);
-                newCache[newBinStart] = key1;
-                newCache[newBinStart + 1] = key2;
-                newCache[newBinStart + 2] = key3;
-                newCache[newBinStart + 3] = key4;
-                newCache[newBinStart + 4] = cache[binStart + 4];
-            }
         }
 
         protected int lookup(int function1, int function2, int function3, int function4) {
@@ -909,7 +683,7 @@ final class BooleanCache {
                 return result;
             }
             statistics.miss();
-            return placeholder;
+            return NodeTable.PLACEHOLDER;
         }
 
         void put(int hash, int function1, int function2, int function3, int function4, int result) {
@@ -926,11 +700,11 @@ final class BooleanCache {
         }
     }
 
-    class BinaryToBooleanCache extends IntCache {
+    static class BinaryToBooleanCache extends IntCache {
         private BitSet values = new BitSet();
 
-        public BinaryToBooleanCache() {
-            super(2, 2);
+        BinaryToBooleanCache(BooleanBase<?, ?> bdd) {
+            super(bdd, 2, 2);
         }
 
         @Override
@@ -939,24 +713,10 @@ final class BooleanCache {
         }
 
         @Override
-        protected void grow(int newSize, int[] newCache, boolean preserve) {
+        protected void growInto(int newSize, int[] newCache, boolean preserve) {
             if (preserve) {
                 BitSet newValues = new BitSet();
-                for (int binIndex = 0; binIndex < size; binIndex++) {
-                    int binStart = binIndex * binSize;
-                    int key1 = cache[binStart];
-                    if (key1 == placeholder || !isValid(binStart)) {
-                        continue;
-                    }
-                    int key2 = cache[binStart + 1];
-                    int newBinIndex = mod(HashUtil.hash(key1, key2), newSize);
-                    int newBinStart = binSize * newBinIndex;
-                    newCache[newBinStart] = key1;
-                    newCache[newBinStart + 1] = key2;
-                    if (values.get(binIndex)) {
-                        newValues.set(newBinIndex);
-                    }
-                }
+                rehashInto(newSize, newCache, (oldBin, newBin) -> newValues.set(newBin, values.get(oldBin)));
                 this.values = newValues;
             } else {
                 values.clear();
@@ -975,7 +735,7 @@ final class BooleanCache {
                 return values.get(binIndex) ? bdd.trueFunction() : bdd.falseFunction();
             }
             statistics.miss();
-            return placeholder;
+            return NodeTable.PLACEHOLDER;
         }
 
         void put(int hash, int function1, int function2, boolean result) {
@@ -992,11 +752,11 @@ final class BooleanCache {
     }
 
     @SuppressWarnings("unchecked")
-    class UnaryToObjectCache<V> extends IntCache {
+    static class UnaryToObjectCache<V> extends IntCache {
         private Object[] values = EMPTY_OBJECT_ARRAY;
 
-        public UnaryToObjectCache() {
-            super(1, 1);
+        UnaryToObjectCache(BooleanBase<?, ?> bdd) {
+            super(bdd, 1, 1);
         }
 
         @Override
@@ -1005,20 +765,10 @@ final class BooleanCache {
         }
 
         @Override
-        protected void grow(int newSize, int[] newCache, boolean preserve) {
+        protected void growInto(int newSize, int[] newCache, boolean preserve) {
             if (preserve) {
                 Object[] newValues = new Object[newSize];
-                for (int binIndex = 0; binIndex < size; binIndex++) {
-                    int binStart = binIndex * binSize;
-                    int key = cache[binStart];
-                    if (key == placeholder || !isValid(binStart)) {
-                        continue;
-                    }
-                    int newBinIndex = mod(HashUtil.hash(key), newSize);
-                    int newBinStart = binSize * newBinIndex;
-                    newCache[newBinStart] = key;
-                    newValues[newBinIndex] = values[binIndex];
-                }
+                rehashInto(newSize, newCache, (oldBin, newBin) -> newValues[newBin] = values[oldBin]);
                 this.values = newValues;
             } else {
                 this.values = new Object[newSize];
@@ -1054,11 +804,11 @@ final class BooleanCache {
     }
 
     @SuppressWarnings("unchecked")
-    class BinaryToObjectCache<V> extends IntCache {
+    static class BinaryToObjectCache<V> extends IntCache {
         private Object[] values = EMPTY_OBJECT_ARRAY;
 
-        public BinaryToObjectCache() {
-            super(2, 2);
+        BinaryToObjectCache(BooleanBase<?, ?> bdd) {
+            super(bdd, 2, 2);
         }
 
         @Override
@@ -1067,22 +817,10 @@ final class BooleanCache {
         }
 
         @Override
-        protected void grow(int newSize, int[] newCache, boolean preserve) {
+        protected void growInto(int newSize, int[] newCache, boolean preserve) {
             if (preserve) {
                 Object[] newValues = new Object[newSize];
-                for (int binIndex = 0; binIndex < size; binIndex++) {
-                    int binStart = binIndex * binSize;
-                    int key1 = cache[binStart];
-                    if (key1 == placeholder || !isValid(binStart)) {
-                        continue;
-                    }
-                    int key2 = cache[binStart + 1];
-                    int newBinIndex = mod(HashUtil.hash(key1, key2), newSize);
-                    int newBinStart = binSize * newBinIndex;
-                    newCache[newBinStart] = key1;
-                    newCache[newBinStart + 1] = key2;
-                    newValues[newBinIndex] = values[binIndex];
-                }
+                rehashInto(newSize, newCache, (oldBin, newBin) -> newValues[newBin] = values[oldBin]);
                 this.values = newValues;
             } else {
                 this.values = new Object[newSize];
@@ -1115,30 +853,6 @@ final class BooleanCache {
             cache[binStart] = function1;
             cache[binStart + 1] = function2;
             values[binIndex] = result;
-        }
-    }
-
-    private static final class ShutdownHookLazyHolder {
-        private static final Runnable shutdownHook = new ShutdownHookPrinter();
-
-        static {
-            Runtime.getRuntime().addShutdownHook(new Thread(shutdownHook));
-        }
-
-        static void init() {
-            // bogus method to force static initialization
-        }
-    }
-
-    private static final class ShutdownHookPrinter implements Runnable {
-        @Override
-        public void run() {
-            if (!logger.isLoggable(Level.INFO)) {
-                return;
-            }
-            for (BooleanCache cache : cacheShutdownHook) {
-                logger.info(() -> "CACHE STATISTICS:\n" + DecisionDiagram.formatStatistics(cache.bdd.statistics()));
-            }
         }
     }
 }

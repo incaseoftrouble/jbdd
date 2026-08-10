@@ -24,9 +24,9 @@ import java.util.Random;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 
-public class UtilityTest {
+class UtilityTest {
     @Test
-    public void testPowerIterator() {
+    void testPowerIterator() {
         Random random = new Random(0);
         int size = 12;
         BitSet set = new BitSet(size);

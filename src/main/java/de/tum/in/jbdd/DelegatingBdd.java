@@ -60,12 +60,6 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
-    public MtBdd mtbdd() {
-        onEnter("mtbdd");
-        return onExit(delegate.mtbdd());
-    }
-
-    @Override
     public int trueFunction() {
         onEnter("true");
         return onExit(delegate.trueFunction());
@@ -123,6 +117,18 @@ public class DelegatingBdd implements Bdd {
     public boolean isConstant(int function) {
         onEnter("isConstant");
         return onExit(delegate.isConstant(function));
+    }
+
+    @Override
+    public boolean isUnmanaged(int function) {
+        onEnter("isUnmanaged");
+        return onExit(delegate.isUnmanaged(function));
+    }
+
+    @Override
+    public boolean isValidFunction(int function) {
+        onEnter("isValidFunction");
+        return onExit(delegate.isValidFunction(function));
     }
 
     @Override
@@ -384,6 +390,18 @@ public class DelegatingBdd implements Bdd {
     public int compose(int function, int[] variableMapping) {
         onEnter("compose");
         return onExit(delegate.compose(function, variableMapping));
+    }
+
+    @Override
+    public RegisteredOperation.Unary registerCompose(int[] variableMapping) {
+        onEnter("registerCompose");
+        return onExit(delegate.registerCompose(variableMapping));
+    }
+
+    @Override
+    public RegisteredOperation.Binary registerComposeSimplify(int[] variableMapping) {
+        onEnter("registerComposeSimplify");
+        return onExit(delegate.registerComposeSimplify(variableMapping));
     }
 
     @Override

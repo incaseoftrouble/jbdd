@@ -32,14 +32,8 @@ class MddAsTestBdd implements TestBdd {
     private static final int TRUE = 1;
     private static final int FALSE = 0;
 
-    public MddAsTestBdd(MddImpl mdd) {
+    MddAsTestBdd(MddImpl mdd) {
         this.mdd = mdd;
-    }
-
-    @Override
-    public MtBdd mtbdd() {
-        // Mdd has no associated MTBDD (it isn't backed by a BddImpl) - not applicable to this adapter.
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -105,6 +99,11 @@ class MddAsTestBdd implements TestBdd {
     @Override
     public boolean isConstant(int function) {
         return mdd.isConstant(function);
+    }
+
+    @Override
+    public boolean isUnmanaged(int function) {
+        return mdd.isUnmanaged(function);
     }
 
     @Override
@@ -421,6 +420,17 @@ class MddAsTestBdd implements TestBdd {
     @Override
     public boolean intersects(int function1, int function2) {
         return mdd.intersects(function1, function2);
+    }
+
+    @Override
+    public RegisteredOperation.Unary registerCompose(int[] variableMapping) {
+        // Registered compose is tied to a real BddImpl; this adapter has none to bind to.
+        throw new UnsupportedOperationException("registerCompose is not supported on an MDD-backed TestBdd");
+    }
+
+    @Override
+    public RegisteredOperation.Binary registerComposeSimplify(int[] variableMapping) {
+        throw new UnsupportedOperationException("registerComposeSimplify is not supported on an MDD-backed TestBdd");
     }
 
     @Override

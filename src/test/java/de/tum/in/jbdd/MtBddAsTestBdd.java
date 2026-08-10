@@ -57,12 +57,6 @@ class MtBddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public MtBdd mtbdd() {
-        // This adapter *is* a Bdd-shaped view of mt, so mt itself is the associated MTBDD.
-        return mt;
-    }
-
-    @Override
     public int placeholder() {
         return mt.placeholder();
     }
@@ -125,6 +119,11 @@ class MtBddAsTestBdd implements TestBdd {
     @Override
     public boolean isConstant(int function) {
         return mt.isConstant(function);
+    }
+
+    @Override
+    public boolean isUnmanaged(int function) {
+        return mt.isUnmanaged(function);
     }
 
     @Override
@@ -372,17 +371,25 @@ class MtBddAsTestBdd implements TestBdd {
 
     @Override
     public int and(int function1, int function2) {
-        return mt.apply(function1, function2, (a, b) -> a != FALSE && b != FALSE ? TRUE : FALSE);
+        // Genuine commutative monoid (neutral=TRUE) with an absorbing element (FALSE) - exercises the
+        // shortcut-taking apply variants from real boolean usage, not just MtBddTheories' synthetic ops.
+        return mt.applyMonoid(function1, function2, (a, b) -> a == FALSE || b == FALSE ? FALSE : TRUE, TRUE, FALSE);
     }
 
     @Override
     public int andNot(int function1, int function2) {
+        // NOT commutative (andNot(a,b) != andNot(b,a)), and FALSE plays different roles depending on
+        // position (right-neutral, left-absorbing) - incompatible with applyMonoid/applyAbsorbing's
+        // two-sided (either-position) contract, so this stays plain apply.
         return mt.apply(function1, function2, (a, b) -> a != FALSE && b == FALSE ? TRUE : FALSE);
     }
 
     @Override
     public int equivalence(int function1, int function2) {
-        return mt.apply(function1, function2, (a, b) -> (a != FALSE) == (b != FALSE) ? TRUE : FALSE);
+        // Commutative monoid (neutral=TRUE), but no absorbing element - equivalence is invertible (it's a
+        // group operation on {TRUE,FALSE}), so no constant ever forces a fixed result regardless of the
+        // other operand.
+        return mt.applyMonoid(function1, function2, (a, b) -> (a != FALSE) == (b != FALSE) ? TRUE : FALSE, TRUE);
     }
 
     @Override
@@ -392,21 +399,27 @@ class MtBddAsTestBdd implements TestBdd {
 
     @Override
     public int notAnd(int function1, int function2) {
-        return mt.apply(function1, function2, (a, b) -> a != FALSE && b != FALSE ? FALSE : TRUE);
+        // Commutative (NOT(AND(a,b)) == NOT(AND(b,a))), but no neutral or absorbing element for either
+        // constant - stays plain apply.
+        return mt.apply(function1, function2, (a, b) -> a == FALSE || b == FALSE ? TRUE : FALSE);
     }
 
     @Override
     public int or(int function1, int function2) {
-        return mt.apply(function1, function2, (a, b) -> a != FALSE || b != FALSE ? TRUE : FALSE);
+        return mt.applyMonoid(function1, function2, (a, b) -> a == FALSE && b == FALSE ? FALSE : TRUE, FALSE, TRUE);
     }
 
     @Override
     public int xor(int function1, int function2) {
-        return mt.apply(function1, function2, (a, b) -> (a != FALSE) != (b != FALSE) ? TRUE : FALSE);
+        // Commutative monoid (neutral=FALSE), no absorbing element - same reasoning as equivalence (also a
+        // group operation on {TRUE,FALSE}).
+        return mt.applyMonoid(function1, function2, (a, b) -> (a == FALSE) == (b != FALSE) ? TRUE : FALSE, FALSE);
     }
 
     @Override
     public int implication(int function1, int function2) {
+        // NOT commutative, and TRUE plays different roles depending on position (left-neutral,
+        // right-absorbing) - same incompatibility as andNot, stays plain apply.
         return mt.apply(function1, function2, (a, b) -> a == FALSE || b != FALSE ? TRUE : FALSE);
     }
 
@@ -448,20 +461,27 @@ class MtBddAsTestBdd implements TestBdd {
 
     @Override
     public int ifThenElse(int ifFunction, int thenFunction, int elseFunction) {
-        // Not routed through MtBdd.ifThenElse(bddIf, ...): its real-Bdd-condition variant currently has a
-        // bug (it calls updateRecursive with a raw Bdd id where an MTBDD node is expected). Built directly
-        // from and/or/not instead, all of which are independently correct.
-        int notIf = mt.reference(not(ifFunction));
-        int thenBranch = mt.reference(and(ifFunction, thenFunction));
-        int elseBranch = mt.reference(and(notIf, elseFunction));
-        mt.dereference(notIf);
-        return mt.consume(or(thenBranch, elseBranch), thenBranch, elseBranch);
+        Bdd bdd = mt.bdd();
+        int bddCondition = bdd.reference(mt.mapBoolean(ifFunction, v -> v != FALSE));
+        int result = mt.ifThenElse(bddCondition, thenFunction, elseFunction);
+        bdd.dereference(bddCondition);
+        return result;
+    }
+
+    @Override
+    public RegisteredOperation.Unary registerCompose(int[] variableMapping) {
+        // Registered compose is tied to a real BddImpl's own compose; this adapter routes compose through
+        // the MTBDD engine instead (see #compose below), which has no equivalent registered form (yet).
+        throw new UnsupportedOperationException("registerCompose is not supported on an MTBDD-backed TestBdd");
+    }
+
+    @Override
+    public RegisteredOperation.Binary registerComposeSimplify(int[] variableMapping) {
+        throw new UnsupportedOperationException("registerComposeSimplify is not supported on an MTBDD-backed TestBdd");
     }
 
     @Override
     public int compose(int function, int[] variableMapping) {
-        // MtBdd.compose's variableMapping lives in the underlying real Bdd's function space, not this
-        // (MTBDD 0/1) TestBdd's own - each entry must be lifted via mapBoolean before delegating.
         Bdd bdd = mt.bdd();
         int[] bddMapping = new int[variableMapping.length];
         for (int i = 0; i < variableMapping.length; i++) {
@@ -495,7 +515,12 @@ class MtBddAsTestBdd implements TestBdd {
 
     @Override
     public int constrain(int function, int domain) {
-        return simplify(function, domain);
+        // Same bridging as simplify(): MtBdd.constrain's domain is a real Bdd function.
+        Bdd bdd = mt.bdd();
+        int bddDomain = bdd.reference(mt.mapBoolean(domain, v -> v != FALSE));
+        int result = mt.constrain(function, bddDomain);
+        bdd.dereference(bddDomain);
+        return result;
     }
 
     @Override
@@ -505,7 +530,7 @@ class MtBddAsTestBdd implements TestBdd {
 
     @Override
     public void invalidateCache() {
-        // MtBddImpl performs no operation caching by design - nothing to invalidate.
+        mt.invalidateCache();
     }
 
     @Override

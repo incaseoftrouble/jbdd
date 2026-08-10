@@ -171,6 +171,18 @@ public final class BitSets {
         return true;
     }
 
+    public static BitSet lazyUnion(BitSet... sets) {
+        return sets.length == 1 ? sets[0] : union(sets);
+    }
+
+    public static BitSet union(BitSet... sets) {
+        BitSet result = copyOf(sets[0]);
+        for (int i = 1; i < sets.length; i++) {
+            result.or(sets[i]);
+        }
+        return result;
+    }
+
     private static final class PowerIteratorShift implements Iterator<BitSet> {
         private final BitSet bitSet;
         private final int[] restrictionPositions;

@@ -91,7 +91,7 @@ public final class DimacsReader {
                         : bdd.variableFunction(variable - 1);
                 clauseNode = bdd.updateWith(bdd.or(node, clauseNode), clauseNode);
             }
-            expression = bdd.updateWith(clauseNode, expression);
+            expression = bdd.consume(bdd.and(clauseNode, expression), clauseNode, expression);
         }
         return expression;
     }

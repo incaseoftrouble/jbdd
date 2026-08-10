@@ -27,7 +27,7 @@ public class BddFactoryState {
 
     @Setup(Level.Iteration)
     public void setUpBdd() {
-        factory = BddSetFactory.create();
+        factory = BddContext.create().bddSets();
     }
 
     public BddSetFactory factory() {

@@ -172,7 +172,7 @@ public final class SyntaxTree {
         }
 
         @Override
-        public int depth() {
+        int depth() {
             return depth;
         }
 
@@ -225,7 +225,7 @@ public final class SyntaxTree {
         }
 
         @Override
-        public void gatherVariables(Set<Integer> set) {
+        void gatherVariables(Set<Integer> set) {
             left.gatherVariables(set);
             right.gatherVariables(set);
         }
@@ -243,7 +243,7 @@ public final class SyntaxTree {
         }
 
         @Override
-        public boolean hasVariable(int number) {
+        boolean hasVariable(int number) {
             return left.hasVariable(number) || right.hasVariable(number);
         }
 
@@ -274,7 +274,7 @@ public final class SyntaxTree {
         }
 
         @Override
-        public int depth() {
+        int depth() {
             return 1;
         }
 
@@ -301,12 +301,12 @@ public final class SyntaxTree {
         }
 
         @Override
-        public void gatherVariables(Set<Integer> set) {
+        void gatherVariables(Set<Integer> set) {
             // No variables in this leaf
         }
 
         @Override
-        public boolean hasVariable(int number) {
+        boolean hasVariable(int number) {
             return false;
         }
 
@@ -329,7 +329,7 @@ public final class SyntaxTree {
         }
 
         @Override
-        public int depth() {
+        int depth() {
             return 1;
         }
 
@@ -356,16 +356,16 @@ public final class SyntaxTree {
         }
 
         @Override
-        public void gatherVariables(Set<Integer> set) {
+        void gatherVariables(Set<Integer> set) {
             set.add(variableNumber);
         }
 
-        public int getVariableNumber() {
+        int getVariableNumber() {
             return variableNumber;
         }
 
         @Override
-        public boolean hasVariable(int number) {
+        boolean hasVariable(int number) {
             return variableNumber == number;
         }
 
@@ -381,15 +381,15 @@ public final class SyntaxTree {
     }
 
     abstract static class SyntaxTreeNode {
-        public abstract int depth();
+        abstract int depth();
 
         abstract boolean evaluate(BitSet valuation);
 
         abstract boolean evaluate(boolean[] valuation);
 
-        public abstract void gatherVariables(Set<Integer> set);
+        abstract void gatherVariables(Set<Integer> set);
 
-        public abstract boolean hasVariable(int number);
+        abstract boolean hasVariable(int number);
     }
 
     static final class SyntaxTreeNot extends SyntaxTreeNode {
@@ -400,7 +400,7 @@ public final class SyntaxTree {
         }
 
         @Override
-        public int depth() {
+        int depth() {
             // Unary operations are not relevant for bdd complexity
             return child.depth();
         }
@@ -428,7 +428,7 @@ public final class SyntaxTree {
         }
 
         @Override
-        public void gatherVariables(Set<Integer> set) {
+        void gatherVariables(Set<Integer> set) {
             child.gatherVariables(set);
         }
 
@@ -437,7 +437,7 @@ public final class SyntaxTree {
         }
 
         @Override
-        public boolean hasVariable(int number) {
+        boolean hasVariable(int number) {
             return child.hasVariable(number);
         }
 
@@ -469,7 +469,7 @@ public final class SyntaxTree {
         }
 
         @Override
-        public int depth() {
+        int depth() {
             return depth;
         }
 
@@ -513,7 +513,7 @@ public final class SyntaxTree {
         }
 
         @Override
-        public void gatherVariables(Set<Integer> set) {
+        void gatherVariables(Set<Integer> set) {
             first.gatherVariables(set);
             second.gatherVariables(set);
             third.gatherVariables(set);
@@ -536,7 +536,7 @@ public final class SyntaxTree {
         }
 
         @Override
-        public boolean hasVariable(int number) {
+        boolean hasVariable(int number) {
             return first.hasVariable(number) || second.hasVariable(number) || third.hasVariable(number);
         }
 

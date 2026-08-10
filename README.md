@@ -18,8 +18,8 @@ Compared to other libraries, JBDD beats most Java implementations and even is on
 ## Features
 
 Some more fancy BDD features and variants are missing.
-Most notably, these are ZDDs, MTBDDs, and variable reordering.
-They might get added over time, but if you require such features, consider using optimized implementations like [CUDD](http://vlsi.colorado.edu/~fabio/), [BuDDy](http://buddy.sourceforge.net/manual/main.html) or [Sylvan](http://fmt.cs.utwente.nl/tools/sylvan/) instead.
+Most notably, these are ZDDs and variable reordering.
+They might get added over time, but if you require such features, consider using [CUDD](http://vlsi.colorado.edu/~fabio/) or [Sylvan](http://fmt.cs.utwente.nl/tools/sylvan/) instead.
 
 ## Usage
 
@@ -39,6 +39,15 @@ and for gradle:
 // https://mvnrepository.com/artifact/de.tum.in/jbdd
 implementation("de.tum.in:jbdd:0.7.0")
 ```
+
+A few JVM flags worth trying out:
+
+- `-Xss128m` or similar high values, the implementation is very recursive 
+- High values for `-Xms` and `-XX:+AlwaysPreTouch` to avoid repeated heap growth
+- `-XX:+UseParallelGC` -- low latency is not required
+- `-XX:+UseTransparentHugePages`
+- `-XX:AutoBoxCacheMax=2048` -- The MTBDD implementation requires boxed values at a few places
+- `-XX:TypeProfileLevel=222` and `-XX:TypeProfileWidth=4`
 
 ## Building
 

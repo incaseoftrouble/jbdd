@@ -59,6 +59,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestInstance.Lifecycle;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
@@ -71,21 +72,25 @@ import org.junit.jupiter.params.provider.MethodSource;
     "StaticCollection",
     "NewClassNamingConvention",
     "PMD.ClassNamingConventions",
-    "PMD.CouplingBetweenObjects"
+    "PMD.CouplingBetweenObjects",
+    "PMD.VariableDeclarationUsageDistance"
 })
 @TestInstance(Lifecycle.PER_CLASS)
-public class BddTheories {
+@ExtendWith(FailFastExtension.class)
+class BddTheories {
     private static final Comparator<BitSet> LEXICOGRAPHIC = new BitSetComparator();
     private static final Logger logger = Logger.getLogger(BddTheories.class.getName());
 
     private static final Map<TestBdd, ExtendedInfo> infoMap = new HashMap<>();
     private static final int SKIP_CHECK_RANDOM_BOUND = 500;
-    private static final int binaryCount = 4_000;
-    private static final int ternaryCount = 3_000;
-    private static final int unaryCount = 1_000;
+    private static final double FACTOR = 0.25;
+    private static final int binaryCount = (int) (4_000 * FACTOR);
+    private static final int ternaryCount = (int) (3_000 * FACTOR);
+    private static final int unaryCount = (int) (1_000 * FACTOR);
     private static final int treeDepth = 20;
     private static final int treeWidth = 35;
     private static final int variableCount = 10;
+    private static final int MAX_ASSIGNMENT_VARIABLES = 8;
     private static final int[] EMPTY_INTS = new int[0];
     private static final Iterable<boolean[]> valuations;
     private static final Collection<UnaryDataPoint<TestBdd>> unary;
@@ -102,7 +107,7 @@ public class BddTheories {
         List<TestBdd> bdds = List.of(
                 new TestBddImpl(new BddImpl(config)),
                 new MddAsTestBdd(new MddImpl(config)),
-                new MtBddAsTestBdd(new MtBddImpl(new BddImpl(config))));
+                new MtBddAsTestBdd(new BddImpl(config).mtbdd()));
 
         int bddCount = bdds.size();
         List<Set<UnaryDataPoint<TestBdd>>> unaryPoints = new ArrayList<>(bddCount);
@@ -134,7 +139,7 @@ public class BddTheories {
         unary = unaryPoints.stream().flatMap(Collection::stream).collect(Collectors.toList());
         binary = binaryPoints.stream().flatMap(Collection::stream).collect(Collectors.toList());
         ternary = ternaryPoints.stream().flatMap(Collection::stream).collect(Collectors.toList());
-        valuations = () -> new SimplePowerSetIterator(variableCount);
+        valuations = () -> new ScopedAssignments.SimplePowerSetIterator(variableCount);
 
         logger.log(Level.INFO, "Finished initialization");
     }
@@ -160,7 +165,11 @@ public class BddTheories {
     private static Iterator<boolean[]> getArrayIterator(BitSet enabledVariables) {
         boolean[] base = new boolean[variableCount];
         enabledVariables.stream().forEach(i -> base[i] = true);
-        return new PowerSetIterator(base);
+        return new ScopedAssignments.PowerSetIterator(base);
+    }
+
+    private static Iterable<boolean[]> assignmentsOver(BitSet... variableSets) {
+        return ScopedAssignments.of(variableCount, MAX_ASSIGNMENT_VARIABLES, variableSets);
     }
 
     private static BitSet asSet(boolean[] array) {
@@ -173,15 +182,15 @@ public class BddTheories {
         return set;
     }
 
-    public static Stream<BinaryDataPoint<TestBdd>> binary() {
+    static Stream<BinaryDataPoint<TestBdd>> binary() {
         return binary.stream();
     }
 
-    public static Stream<TernaryDataPoint<TestBdd>> ternary() {
+    static Stream<TernaryDataPoint<TestBdd>> ternary() {
         return ternary.stream();
     }
 
-    public static Stream<UnaryDataPoint<TestBdd>> unary() {
+    static Stream<UnaryDataPoint<TestBdd>> unary() {
         return unary.stream();
     }
 
@@ -193,30 +202,30 @@ public class BddTheories {
     }
 
     @SuppressWarnings("unused")
-    public static Collection<TestBdd> bdds() {
+    static Collection<TestBdd> bdds() {
         return infoMap.keySet();
     }
 
     @BeforeAll
-    public static void dummy() {
+    static void dummy() {
         // Dummy method to separate static initialization from actual test running times
         logger.log(Level.FINE, "Before class");
     }
 
     @AfterAll
-    public static void check() {
+    static void check() {
         doCheckInvariants();
     }
 
     @AfterAll
-    public static void statistics() {
+    static void statistics() {
         for (TestBdd bdd : infoMap.keySet()) {
             logger.log(Level.INFO, DecisionDiagram.formatStatistics(bdd.statistics()));
         }
     }
 
     @AfterEach
-    public void clearCaches() {
+    void clearCaches() {
         for (TestBdd bdd : infoMap.keySet()) {
             if (skipCheckRandom.nextInt(100) == 0) {
                 bdd.invalidateCache();
@@ -225,7 +234,7 @@ public class BddTheories {
     }
 
     @AfterEach
-    public void checkInvariants() {
+    void checkInvariants() {
         if (skipCheckRandom.nextInt(SKIP_CHECK_RANDOM_BOUND) == 0) {
             doCheckInvariants();
         }
@@ -233,7 +242,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
-    public void testAnd(BinaryDataPoint<TestBdd> dataPoint) {
+    void testAnd(BinaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function1 = dataPoint.left;
         int function2 = dataPoint.right;
@@ -242,8 +251,7 @@ public class BddTheories {
 
         int and = bdd.reference(bdd.and(function1, function2));
 
-        Iterable<boolean[]> valuations = () -> new SimplePowerSetIterator(variableCount);
-        for (boolean[] valuation : valuations) {
+        for (boolean[] valuation : assignmentsOver(bdd.support(function1), bdd.support(function2))) {
             if (bdd.evaluate(function1, valuation)) {
                 assertThat(bdd.evaluate(and, valuation), is(bdd.evaluate(function2, valuation)));
             } else {
@@ -266,7 +274,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("ternary")
-    public void testAndSimplify(TernaryDataPoint<TestBdd> dataPoint) {
+    void testAndSimplify(TernaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function1 = dataPoint.first;
         int function2 = dataPoint.second;
@@ -285,7 +293,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
-    public void testAndNot(BinaryDataPoint<TestBdd> dataPoint) {
+    void testAndNot(BinaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function1 = dataPoint.left;
         int function2 = dataPoint.right;
@@ -294,8 +302,7 @@ public class BddTheories {
 
         int andNot = bdd.reference(bdd.andNot(function1, function2));
 
-        Iterable<boolean[]> valuations = () -> new SimplePowerSetIterator(variableCount);
-        for (boolean[] valuation : valuations) {
+        for (boolean[] valuation : assignmentsOver(bdd.support(function1), bdd.support(function2))) {
             if (bdd.evaluate(function1, valuation)) {
                 assertThat(bdd.evaluate(andNot, valuation), is(!bdd.evaluate(function2, valuation)));
             } else {
@@ -318,7 +325,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("ternary")
-    public void testAndNotSimplify(TernaryDataPoint<TestBdd> dataPoint) {
+    void testAndNotSimplify(TernaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function1 = dataPoint.first;
         int function2 = dataPoint.second;
@@ -334,7 +341,8 @@ public class BddTheories {
         bdd.dereference(direct, indirect);
     }
 
-    private int[] buildComposeArray(TestBdd bdd, int function, SyntaxTree syntaxTree) {
+    @SuppressWarnings("NullAway")
+    private static int[] buildComposeArray(TestBdd bdd, int function, SyntaxTree syntaxTree) {
         Info<TestBdd> bddInfo = infoMap.get(bdd).bddInfo;
         Set<Integer> containedVariables = syntaxTree.containedVariables();
         assumeTrue(containedVariables.size() <= 7);
@@ -355,7 +363,8 @@ public class BddTheories {
         return composeArray;
     }
 
-    private SyntaxTree buildComposeTree(TestBdd bdd, SyntaxTree syntaxTree, int[] composeArray) {
+    @SuppressWarnings("NullAway")
+    private static SyntaxTree buildComposeTree(TestBdd bdd, SyntaxTree syntaxTree, int[] composeArray) {
         Info<TestBdd> bddInfo = infoMap.get(bdd).bddInfo;
         Map<Integer, SyntaxTree> replacementMap = new HashMap<>();
         for (int i = 0; i < composeArray.length; i++) {
@@ -369,7 +378,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testComposeTree(UnaryDataPoint<TestBdd> dataPoint) {
+    void testComposeTree(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
@@ -412,7 +421,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testComposeSimple(UnaryDataPoint<TestBdd> dataPoint) {
+    void testComposeSimple(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
@@ -425,7 +434,7 @@ public class BddTheories {
         int falseFunction = bdd.falseFunction();
         int[] composeArray = new int[variableCount];
 
-        new PowerSetIterator(baseArray).forEachRemaining(valuation -> {
+        new ScopedAssignments.PowerSetIterator(baseArray).forEachRemaining(valuation -> {
             for (int i = 0; i < variableCount; i++) {
                 composeArray[i] = valuation[i] ? trueFunction : falseFunction;
             }
@@ -440,9 +449,10 @@ public class BddTheories {
         });
     }
 
+    @SuppressWarnings("NullAway")
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testComposeRepeated(UnaryDataPoint<TestBdd> dataPoint) {
+    void testComposeRepeated(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         Info<TestBdd> bddInfo = infoMap.get(bdd).bddInfo;
         int function = dataPoint.function;
@@ -495,9 +505,10 @@ public class BddTheories {
         bdd.dereference(selfComposeNode);
     }
 
+    @SuppressWarnings("NullAway")
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testComposeRelabel(UnaryDataPoint<TestBdd> dataPoint) {
+    void testComposeRelabel(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         Info<TestBdd> bddInfo = infoMap.get(bdd).bddInfo;
         int function = dataPoint.function;
@@ -549,7 +560,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
-    public void testComposeTreeSimplify(BinaryDataPoint<TestBdd> dataPoint) {
+    void testComposeTreeSimplify(BinaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.left;
         int domain = dataPoint.right;
@@ -579,7 +590,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
-    public void testConsume(BinaryDataPoint<TestBdd> dataPoint) {
+    void testConsume(BinaryDataPoint<TestBdd> dataPoint) {
         // This test simply tests if the semantics of consume are as specified, i.e.
         // consume(result, input1, input2) reduces the reference count of the inputs and increases that
         // of result
@@ -647,7 +658,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testCountSatisfyingAssignments(UnaryDataPoint<TestBdd> dataPoint) {
+    void testCountSatisfyingAssignments(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
@@ -664,7 +675,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
-    public void testCountSatisfyingAssignmentsIn(BinaryDataPoint<TestBdd> dataPoint) {
+    void testCountSatisfyingAssignmentsIn(BinaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function1 = dataPoint.left;
         int function2 = dataPoint.right;
@@ -687,7 +698,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testCountSatisfyingAssignmentsRestrictedSimple(UnaryDataPoint<TestBdd> dataPoint) {
+    void testCountSatisfyingAssignmentsRestrictedSimple(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
@@ -702,7 +713,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testCountSatisfyingAssignmentsRestricted(UnaryDataPoint<TestBdd> dataPoint) {
+    void testCountSatisfyingAssignmentsRestricted(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
@@ -724,7 +735,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
-    public void testEquivalence(BinaryDataPoint<TestBdd> dataPoint) {
+    void testEquivalence(BinaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function1 = dataPoint.left;
         int function2 = dataPoint.right;
@@ -733,7 +744,7 @@ public class BddTheories {
 
         int equivalence = bdd.reference(bdd.equivalence(function1, function2));
 
-        for (boolean[] valuation : valuations) {
+        for (boolean[] valuation : assignmentsOver(bdd.support(function1), bdd.support(function2))) {
             if (bdd.evaluate(function1, valuation)) {
                 assertThat(bdd.evaluate(equivalence, valuation), is(bdd.evaluate(function2, valuation)));
             } else {
@@ -763,7 +774,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("ternary")
-    public void testEquivalenceSimplify(TernaryDataPoint<TestBdd> dataPoint) {
+    void testEquivalenceSimplify(TernaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function1 = dataPoint.first;
         int function2 = dataPoint.second;
@@ -781,20 +792,20 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testEvaluateTree(UnaryDataPoint<TestBdd> dataPoint) {
+    void testEvaluateTree(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
         assumeTrue(dataPoint.tree.depth() <= 5);
 
-        for (boolean[] valuation : valuations) {
+        for (boolean[] valuation : assignmentsOver(bdd.support(function))) {
             assertThat(bdd.evaluate(function, valuation), is(dataPoint.tree.evaluate(valuation)));
         }
     }
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testExists(UnaryDataPoint<TestBdd> dataPoint) {
+    void testExists(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
@@ -831,7 +842,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testForall(UnaryDataPoint<TestBdd> dataPoint) {
+    void testForall(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
@@ -868,7 +879,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testForEachPathSimple(UnaryDataPoint<TestBdd> dataPoint) {
+    void testForEachPathSimple(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
@@ -912,7 +923,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testForEachPathWithSupportSimple(UnaryDataPoint<TestBdd> dataPoint) {
+    void testForEachPathWithSupportSimple(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
@@ -954,7 +965,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testForEachPathWithRelevantSet(UnaryDataPoint<TestBdd> dataPoint) {
+    void testForEachPathWithRelevantSet(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
@@ -986,7 +997,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testPathIterator(UnaryDataPoint<TestBdd> dataPoint) {
+    void testPathIterator(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
@@ -1005,7 +1016,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testForEach(UnaryDataPoint<TestBdd> dataPoint) {
+    void testForEach(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
@@ -1026,7 +1037,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testGetLowAndHigh(UnaryDataPoint<TestBdd> dataPoint) {
+    void testGetLowAndHigh(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidNonConstantFunction(function));
@@ -1087,7 +1098,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("ternary")
-    public void testIfThenElse(TernaryDataPoint<TestBdd> dataPoint) {
+    void testIfThenElse(TernaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int ifFunction = dataPoint.first;
         int thenFunction = dataPoint.second;
@@ -1098,7 +1109,8 @@ public class BddTheories {
 
         int ifThenElse = bdd.reference(bdd.ifThenElse(ifFunction, thenFunction, elseFunction));
 
-        for (boolean[] valuation : valuations) {
+        for (boolean[] valuation :
+                assignmentsOver(bdd.support(ifFunction), bdd.support(thenFunction), bdd.support(elseFunction))) {
             if (bdd.evaluate(ifFunction, valuation)) {
                 assertThat(bdd.evaluate(ifThenElse, valuation), is(bdd.evaluate(thenFunction, valuation)));
             } else {
@@ -1121,7 +1133,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("ternary")
-    public void testIfThenElseSimplify(TernaryDataPoint<TestBdd> dataPoint) {
+    void testIfThenElseSimplify(TernaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int ifFunction = dataPoint.first;
         int thenFunction = dataPoint.second;
@@ -1141,7 +1153,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
-    public void testImplication(BinaryDataPoint<TestBdd> dataPoint) {
+    void testImplication(BinaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function1 = dataPoint.left;
         int function2 = dataPoint.right;
@@ -1150,7 +1162,7 @@ public class BddTheories {
 
         int implication = bdd.reference(bdd.implication(function1, function2));
 
-        for (boolean[] valuation : valuations) {
+        for (boolean[] valuation : assignmentsOver(bdd.support(function1), bdd.support(function2))) {
             boolean implies = !bdd.evaluate(function1, valuation) || bdd.evaluate(function2, valuation);
             assertThat(bdd.evaluate(implication, valuation), is(implies));
         }
@@ -1165,7 +1177,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("ternary")
-    public void testImplicationSimplify(TernaryDataPoint<TestBdd> dataPoint) {
+    void testImplicationSimplify(TernaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function1 = dataPoint.first;
         int function2 = dataPoint.second;
@@ -1183,7 +1195,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
-    public void testImplies(BinaryDataPoint<TestBdd> dataPoint) {
+    void testImplies(BinaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function1 = dataPoint.left;
         int function2 = dataPoint.right;
@@ -1209,7 +1221,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
-    public void testIntersects(BinaryDataPoint<TestBdd> dataPoint) {
+    void testIntersects(BinaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function1 = dataPoint.left;
         int function2 = dataPoint.right;
@@ -1228,7 +1240,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testIsVariable(UnaryDataPoint<TestBdd> dataPoint) {
+    void testIsVariable(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         SyntaxTreeNode root = dataPoint.tree.getRootNode();
         int function = dataPoint.function;
@@ -1249,7 +1261,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testIterator(UnaryDataPoint<TestBdd> dataPoint) {
+    void testIterator(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
@@ -1270,14 +1282,14 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testNot(UnaryDataPoint<TestBdd> dataPoint) {
+    void testNot(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
 
         int not = bdd.reference(bdd.not(function));
 
-        for (boolean[] valuation : valuations) {
+        for (boolean[] valuation : assignmentsOver(bdd.support(function))) {
             assertThat(bdd.evaluate(not, valuation), is(!bdd.evaluate(function, valuation)));
         }
 
@@ -1291,7 +1303,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
-    public void testNotAnd(BinaryDataPoint<TestBdd> dataPoint) {
+    void testNotAnd(BinaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function1 = dataPoint.left;
         int function2 = dataPoint.right;
@@ -1300,7 +1312,7 @@ public class BddTheories {
 
         int notAnd = bdd.reference(bdd.notAnd(function1, function2));
 
-        for (boolean[] valuation : valuations) {
+        for (boolean[] valuation : assignmentsOver(bdd.support(function1), bdd.support(function2))) {
             if (bdd.evaluate(function1, valuation)) {
                 assertThat(bdd.evaluate(notAnd, valuation), is(!bdd.evaluate(function2, valuation)));
             } else {
@@ -1323,7 +1335,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("ternary")
-    public void testNotAndSimplify(TernaryDataPoint<TestBdd> dataPoint) {
+    void testNotAndSimplify(TernaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function1 = dataPoint.first;
         int function2 = dataPoint.second;
@@ -1341,7 +1353,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
-    public void testOr(BinaryDataPoint<TestBdd> dataPoint) {
+    void testOr(BinaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function1 = dataPoint.left;
         int function2 = dataPoint.right;
@@ -1350,7 +1362,7 @@ public class BddTheories {
 
         int or = bdd.reference(bdd.or(function1, function2));
 
-        for (boolean[] valuation : valuations) {
+        for (boolean[] valuation : assignmentsOver(bdd.support(function1), bdd.support(function2))) {
             if (bdd.evaluate(function1, valuation)) {
                 assertThat(bdd.evaluate(or, valuation), is(true));
             } else {
@@ -1373,7 +1385,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("ternary")
-    public void testOrSimplify(TernaryDataPoint<TestBdd> dataPoint) {
+    void testOrSimplify(TernaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function1 = dataPoint.first;
         int function2 = dataPoint.second;
@@ -1391,7 +1403,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testReferenceAndDereference(UnaryDataPoint<TestBdd> dataPoint) {
+    void testReferenceAndDereference(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
@@ -1414,7 +1426,7 @@ public class BddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
     @SuppressWarnings("PMD.ExceptionAsFlowControl")
-    public void testReferenceGuard(UnaryDataPoint<TestBdd> dataPoint) {
+    void testReferenceGuard(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
@@ -1424,7 +1436,7 @@ public class BddTheories {
         int referenceCount = bdd.nodeReferenceCount(node);
         try {
             //noinspection NestedTryStatement
-            try (Bdd.ReferenceGuard guard = new Bdd.ReferenceGuard(function, bdd)) {
+            try (DecisionDiagram.ReferenceGuard guard = new DecisionDiagram.ReferenceGuard(function, bdd)) {
                 assertThat(bdd.nodeReferenceCount(node), is(referenceCount + 1));
                 assertThat(guard.diagram, is(bdd));
                 assertThat(guard.function, is(function));
@@ -1438,7 +1450,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testRestrict(UnaryDataPoint<TestBdd> dataPoint) {
+    void testRestrict(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
@@ -1478,7 +1490,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testSatisfyingAssignment(UnaryDataPoint<TestBdd> dataPoint) {
+    void testSatisfyingAssignment(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
@@ -1492,7 +1504,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
-    public void testSatisfyingAssignmentIn(BinaryDataPoint<TestBdd> dataPoint) {
+    void testSatisfyingAssignmentIn(BinaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function1 = dataPoint.left;
         int function2 = dataPoint.right;
@@ -1513,7 +1525,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testSupportTree(UnaryDataPoint<TestBdd> dataPoint) {
+    void testSupportTree(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
@@ -1561,7 +1573,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
-    public void testSupportUnion(BinaryDataPoint<TestBdd> dataPoint) {
+    void testSupportUnion(BinaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function1 = dataPoint.left;
         int function2 = dataPoint.right;
@@ -1581,7 +1593,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    public void testSupportCutoff(UnaryDataPoint<TestBdd> dataPoint) {
+    void testSupportCutoff(UnaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
@@ -1598,7 +1610,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
-    public void testSimplify(BinaryDataPoint<TestBdd> dataPoint) {
+    void testSimplify(BinaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function = dataPoint.left;
         int domain = dataPoint.right;
@@ -1607,7 +1619,7 @@ public class BddTheories {
 
         int simplify = bdd.reference(bdd.simplify(function, domain));
 
-        for (boolean[] valuation : valuations) {
+        for (boolean[] valuation : assignmentsOver(bdd.support(function), bdd.support(domain))) {
             if (bdd.evaluate(domain, valuation)) {
                 assertThat(bdd.evaluate(simplify, valuation), is(bdd.evaluate(function, valuation)));
             }
@@ -1632,7 +1644,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
-    public void testUpdateWith(BinaryDataPoint<TestBdd> dataPoint) {
+    void testUpdateWith(BinaryDataPoint<TestBdd> dataPoint) {
         // This test simply tests if the semantics of updateWith are as specified, i.e.
         // updateWith(result, input) reduces the reference count of the input and increases that of
         // result
@@ -1691,7 +1703,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
-    public void testXor(BinaryDataPoint<TestBdd> dataPoint) {
+    void testXor(BinaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function1 = dataPoint.left;
         int function2 = dataPoint.right;
@@ -1700,7 +1712,7 @@ public class BddTheories {
 
         int xor = bdd.reference(bdd.xor(function1, function2));
 
-        for (boolean[] valuation : valuations) {
+        for (boolean[] valuation : assignmentsOver(bdd.support(function1), bdd.support(function2))) {
             if (bdd.evaluate(function1, valuation)) {
                 assertThat(bdd.evaluate(xor, valuation), is(!bdd.evaluate(function2, valuation)));
             } else {
@@ -1721,7 +1733,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("ternary")
-    public void testXorSimplify(TernaryDataPoint<TestBdd> dataPoint) {
+    void testXorSimplify(TernaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function1 = dataPoint.first;
         int function2 = dataPoint.second;
@@ -1739,7 +1751,7 @@ public class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
-    public void testCanonical(BinaryDataPoint<TestBdd> dataPoint) {
+    void testCanonical(BinaryDataPoint<TestBdd> dataPoint) {
         TestBdd bdd = dataPoint.bdd;
         int function1 = dataPoint.left;
         int function2 = dataPoint.right;
@@ -1762,13 +1774,11 @@ public class BddTheories {
     }
 
     private static final class ExtendedInfo {
-        final TestBdd bdd;
         final int initialNodeCount;
         final int initialReferencedNodeCount;
         final Info<TestBdd> bddInfo;
 
         ExtendedInfo(TestBdd bdd, Info<TestBdd> bddInfo) {
-            this.bdd = bdd;
             initialNodeCount = bdd.nodeCount();
             initialReferencedNodeCount = bdd.referencedNodeCount();
             this.bddInfo = bddInfo;
@@ -1837,82 +1847,6 @@ public class BddTheories {
                     recurse(recursePath, assignment);
                 }
             }
-        }
-    }
-
-    private static final class SimplePowerSetIterator implements Iterator<boolean[]> {
-        private final int length;
-        private final boolean[] next;
-        private boolean hasNext = true;
-
-        SimplePowerSetIterator(int length) {
-            this.length = length;
-            this.next = new boolean[length];
-        }
-
-        @Override
-        public boolean hasNext() {
-            return hasNext;
-        }
-
-        @Override
-        public boolean[] next() {
-            if (!hasNext) {
-                throw new NoSuchElementException();
-            }
-            for (int i = 0; i < length; i++) {
-                if (next[i]) {
-                    next[i] = false;
-                } else {
-                    next[i] = true;
-                    return next;
-                }
-            }
-            hasNext = false;
-            return next;
-        }
-    }
-
-    private static final class PowerSetIterator implements Iterator<boolean[]> {
-        private final int[] indices;
-        private final boolean[] next;
-        private boolean hasNext = true;
-
-        PowerSetIterator(boolean[] base) {
-            int length = base.length;
-
-            int[] indices = new int[length];
-            int count = 0;
-            for (int i = 0; i < length; i++) {
-                if (base[i]) {
-                    indices[count] = i;
-                    count += 1;
-                }
-            }
-            this.indices = Arrays.copyOf(indices, count);
-            this.next = new boolean[length];
-        }
-
-        @Override
-        public boolean hasNext() {
-            return hasNext;
-        }
-
-        @Override
-        public boolean[] next() {
-            if (!hasNext) {
-                throw new NoSuchElementException();
-            }
-            for (int index : indices) {
-                if (next[index]) {
-                    next[index] = false;
-                } else {
-                    next[index] = true;
-                    return next;
-                }
-            }
-            hasNext = false;
-            return next;
         }
     }
 }

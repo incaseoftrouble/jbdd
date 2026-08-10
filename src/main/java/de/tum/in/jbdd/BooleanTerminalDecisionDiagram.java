@@ -284,6 +284,11 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      * Constructs a simplified version of the given {@code function} which is equivalent to it for all assignments
      * where {@code domain} is true. This is equivalent to {@code IF domain THEN function ELSE x} where {@code x}
      * is any function.
+     *
+     * <p>A heuristic, not a minimization: the result is usually much smaller, but it is <em>not</em>
+     * guaranteed to be. Each node is simplified against the domain cofactor it is reached under, so a
+     * subgraph shared by two paths with different domain contexts can simplify two different ways and be
+     * duplicated - every path gets no longer, but the diagram loses a merge.</p>
      */
     default int simplify(int function, int domain) {
         return constrain(function, domain);

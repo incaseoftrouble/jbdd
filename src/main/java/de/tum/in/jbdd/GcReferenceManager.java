@@ -25,17 +25,17 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.jspecify.annotations.Nullable;
 
-public class BddGcReferenceManager<V extends BddGcReferenceManager.BddContainer> {
-    private static final Logger logger = Logger.getLogger(BddGcReferenceManager.class.getName());
+public class GcReferenceManager<V extends GcReferenceManager.DdContainer, DD extends DecisionDiagram> {
+    private static final Logger logger = Logger.getLogger(GcReferenceManager.class.getName());
 
-    protected final Bdd bdd;
+    protected final DD dd;
 
-    private final Map<Integer, BddReference<V>> gcObjects = new HashMap<>();
+    private final Map<Integer, DdReference<V>> gcObjects = new HashMap<>();
     private final Map<Integer, V> nonGcObjects = new HashMap<>();
     private final ReferenceQueue<V> queue = new ReferenceQueue<>();
 
-    public BddGcReferenceManager(Bdd bdd) {
-        this.bdd = bdd;
+    public GcReferenceManager(DD dd) {
+        this.dd = dd;
     }
 
     @Nullable
@@ -46,7 +46,7 @@ public class BddGcReferenceManager<V extends BddGcReferenceManager.BddContainer>
             return wrapper;
         }
 
-        BddReference<V> reference = gcObjects.get(function);
+        DdReference<V> reference = gcObjects.get(function);
         return reference == null ? null : reference.get();
     }
 
@@ -55,16 +55,16 @@ public class BddGcReferenceManager<V extends BddGcReferenceManager.BddContainer>
         int function = container.function();
 
         // Constants and variables are exempt from GC but still canonical
-        if (bdd.isConstant(function) || bdd.isVariableOrNegated(function)) {
+        if (dd.isUnmanaged(function)) {
             return nonGcObjects.merge(function, container, (oldW, newW) -> oldW);
         }
 
-        BddReference<V> canonicalReference = gcObjects.get(function);
+        DdReference<V> canonicalReference = gcObjects.get(function);
         if (canonicalReference == null) {
-            // The BDD was created and needs a reference to be protected.
-            bdd.reference(function);
+            // The object was created and needs a reference to be protected.
+            dd.reference(function);
         } else {
-            // The BDD already existed -- Can have a reference for the BDD and its negation
+            // The object already existed
             V canonicalNode = canonicalReference.get();
             if (canonicalNode == null) {
                 // This object was GC'ed since the last run of clear(), but potentially wasn't added to the
@@ -77,11 +77,11 @@ public class BddGcReferenceManager<V extends BddGcReferenceManager.BddContainer>
             }
         }
 
-        // Remove queued BDDs from the mapping.
+        // Remove queued functions from the mapping.
         processReferenceQueue(function);
 
-        // Insert BDD into mapping.
-        gcObjects.put(function, new BddReference<>(container, queue));
+        // Insert function into mapping.
+        gcObjects.put(function, new DdReference<>(container, queue));
         return container;
     }
 
@@ -94,12 +94,12 @@ public class BddGcReferenceManager<V extends BddGcReferenceManager.BddContainer>
 
         int count = 0;
         do {
-            int node = ((BddReference<?>) reference).node;
+            int node = ((DdReference<?>) reference).node;
             gcObjects.remove(node);
 
             if (node != protectedNode) {
                 // assert bdd.nodeReferenceCount(node) == 1;
-                bdd.dereference(node);
+                dd.dereference(node);
                 // assert bdd.nodeReferenceCount(node) == 0;
                 count += 1;
             }
@@ -110,18 +110,17 @@ public class BddGcReferenceManager<V extends BddGcReferenceManager.BddContainer>
         logger.log(Level.FINEST, "Cleared {0} references", count);
     }
 
-    // TODO Candidate for record in Java 17
-    private static final class BddReference<V extends BddContainer> extends WeakReference<V> {
+    private static final class DdReference<V extends DdContainer> extends WeakReference<V> {
         private final int node;
 
-        private BddReference(V node, ReferenceQueue<? super V> queue) {
+        private DdReference(V node, ReferenceQueue<? super V> queue) {
             super(node, queue);
             this.node = node.function();
         }
     }
 
     @SuppressWarnings({"InterfaceMayBeAnnotatedFunctional", "PMD.ImplicitFunctionalInterface"})
-    public interface BddContainer {
+    public interface DdContainer {
         int function();
     }
 }

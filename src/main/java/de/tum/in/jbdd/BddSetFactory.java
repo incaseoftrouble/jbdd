@@ -19,24 +19,32 @@ package de.tum.in.jbdd;
 import java.util.BitSet;
 import java.util.Map;
 
+/** Obtained from {@link BddContext#bddSets()} - there's no standalone way to build one, since every
+ * {@code BddSetFactory} needs a {@link Bdd} to share (see {@link BddContext}). */
 public interface BddSetFactory {
-    static BddSetFactory create() {
-        return new BddSetFactoryImpl();
-    }
-
-    static BddSetFactory create(int variables) {
-        return new BddSetFactoryImpl(variables);
-    }
-
+    /** The empty set. */
     BddSet empty();
 
+    /** The set of all valuations. */
     BddSet universe();
 
+    /** The set of all valuations where {@code variable} is true. */
     BddSet var(int variable);
 
+    /** {@link #universe()} if {@code true}, {@link #empty()} otherwise. */
     BddSet of(boolean booleanConstant);
 
+    /** The single-element set containing {@code valuation} restricted to {@code support}. */
     BddSet of(BitSet valuation, BitSet support);
+
+    /** The union of the single-element sets ({@link #of(BitSet, BitSet)}) given by {@code valuations}. */
+    default BddSet of(Iterable<BitSet> valuations, BitSet support) {
+        BddSet result = empty();
+        for (BitSet valuation : valuations) {
+            result = result.union(of(valuation, support));
+        }
+        return result;
+    }
 
     default BddSet union(BddSet... sets) {
         if (sets.length == 0) {

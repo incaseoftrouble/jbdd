@@ -23,7 +23,6 @@ import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collections;
 import java.util.Iterator;
-import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -31,13 +30,11 @@ import java.util.function.IntConsumer;
 import java.util.function.Predicate;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-import java.util.stream.Stream;
 import org.jspecify.annotations.Nullable;
 
 @SuppressWarnings({"PMD.AvoidReassigningParameters", "AssignmentToMethodParameter", "DuplicatedCode"})
-final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
+public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     private static final Logger logger = Logger.getLogger(MddImpl.class.getName());
 
     private final BooleanCache cache;
@@ -498,11 +495,11 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     public int and(int function1, int function2) {
         assert isValidFunction(function1) && isValidFunction(function2);
 
-        assert table.isWorkStackEmpty();
+        assert table.workStacksEmpty();
         table.pushToWorkStack(function1, function2);
         int result = computeAnd(function1, function2);
         table.popFromWorkStack(2);
-        assert table.isWorkStackEmpty();
+        assert table.workStacksEmpty();
         return result;
     }
 
@@ -576,11 +573,11 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     @Override
     public int xor(int function1, int function2) {
         assert isValidFunction(function1) && isValidFunction(function2);
-        assert table.isWorkStackEmpty();
+        assert table.workStacksEmpty();
         table.pushToWorkStack(function1, function2);
         int ret = computeXor(function1, function2);
         table.popFromWorkStack(2);
-        assert table.isWorkStackEmpty();
+        assert table.workStacksEmpty();
         return ret;
     }
 
@@ -669,12 +666,12 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             return TRUE;
         }
 
-        assert table.isWorkStackEmpty();
+        assert table.workStacksEmpty();
         cache.initExists(quantifiedVariables);
         table.pushToWorkStack(function);
         int result = existsRecursive(function, quantifiedVariables);
         table.popFromWorkStack();
-        assert table.isWorkStackEmpty();
+        assert table.workStacksEmpty();
         return result;
     }
 
@@ -742,9 +739,9 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     public boolean implies(int function1, int function2) {
         assert isValidFunction(function1) && isValidFunction(function2);
 
-        assert table.isWorkStackEmpty();
+        assert table.workStacksEmpty();
         boolean result = !intersectsRecursive(function1, complement(function2));
-        assert table.isWorkStackEmpty();
+        assert table.workStacksEmpty();
         return result;
     }
 
@@ -752,9 +749,9 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     public boolean intersects(int function1, int function2) {
         assert isValidFunction(function1) && isValidFunction(function2);
 
-        assert table.isWorkStackEmpty();
+        assert table.workStacksEmpty();
         boolean result = intersectsRecursive(function1, function2);
-        assert table.isWorkStackEmpty();
+        assert table.workStacksEmpty();
         return result;
     }
 
@@ -830,7 +827,7 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             return function;
         }
 
-        assert table.isWorkStackEmpty();
+        assert table.workStacksEmpty();
         int highestReplacedVariable = values.length - 1;
         while (highestReplacedVariable >= 0 && values[highestReplacedVariable] == -1) {
             highestReplacedVariable -= 1;
@@ -844,7 +841,7 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         // cache.initRemapping(values, highestReplacedVariable);
         int result = computeRestrict(function, values, highestReplacedVariable);
         table.popFromWorkStack();
-        assert table.isWorkStackEmpty();
+        assert table.workStacksEmpty();
         return result;
     }
 
@@ -892,11 +889,11 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     public int ifThenElse(int ifFunction, int thenFunction, int elseFunction) {
         assert isValidFunction(ifFunction) && isValidFunction(thenFunction) && isValidFunction(elseFunction);
 
-        assert table.isWorkStackEmpty();
+        assert table.workStacksEmpty();
         table.pushToWorkStack(ifFunction, thenFunction, elseFunction);
         int result = computeIfThenElse(ifFunction, thenFunction, elseFunction);
         table.popFromWorkStack(3);
-        assert table.isWorkStackEmpty();
+        assert table.workStacksEmpty();
         return result;
     }
 
@@ -990,11 +987,11 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             return FALSE;
         }
 
-        assert table.isWorkStackEmpty();
+        assert table.workStacksEmpty();
         table.pushToWorkStack(function, domain);
         int result = computeConstrainSimplify(function, domain, true);
         table.popFromWorkStack(2);
-        assert table.isWorkStackEmpty();
+        assert table.workStacksEmpty();
         return result;
     }
 
@@ -1006,11 +1003,11 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             return FALSE;
         }
 
-        assert table.isWorkStackEmpty();
+        assert table.workStacksEmpty();
         table.pushToWorkStack(function, domain);
         int result = computeConstrainSimplify(function, domain, false);
         table.popFromWorkStack(2);
-        assert table.isWorkStackEmpty();
+        assert table.workStacksEmpty();
         return result;
     }
 
@@ -1101,12 +1098,6 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     @Override
     public String toString() {
         return String.format("MDD@%d(%d)", table.size(), System.identityHashCode(this));
-    }
-
-    @Override
-    public Map<String, Object> statistics() {
-        return Stream.concat(table.statistics().entrySet().stream(), cache.statistics().entrySet().stream())
-                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
     // Utility
@@ -1585,7 +1576,7 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         @Override
-        public int treeNodeFor(int pointer) {
+        int treeNodeFor(int pointer) {
             return mdd.nodeFor(pointer);
         }
 
@@ -1600,7 +1591,7 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         @Override
-        public boolean ensureCapacity() {
+        boolean ensureCapacity() {
             if (freeNodeCount() > size() / 4) {
                 return false;
             }
@@ -1608,7 +1599,7 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             NodeTable table = mdd.table;
             int currentSize = table.size();
             int approximateDeadNodeCount = table.approximateDeadNodeCount();
-            boolean nodesInvalidated;
+            int invalidatedNodes;
             if (mdd.configuration.useGarbageCollection() && approximateDeadNodeCount > 0) {
                 logger.log(Level.FINE, "Running GC on {0} has size {1} and approximately {2} dead nodes", new Object[] {
                     this, currentSize, approximateDeadNodeCount
@@ -1623,27 +1614,21 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
                 if (referencedNodes <= maximumReferencedNodes) {
                     int reclaimedNodes = table.reclaimUnmarkedNodes();
                     logger.log(Level.FINE, "Collected {0} nodes", reclaimedNodes);
-                    mdd.pruneCacheAfterGC(reclaimedNodes);
+                    mdd.notifyAfterGc(reclaimedNodes);
                     assert mdd.check();
                     return false;
                 }
 
                 logger.log(Level.FINER, "Not enough free nodes");
-                table.invalidateUnmarkedNodes();
-                nodesInvalidated = true;
+                invalidatedNodes = table.invalidateUnmarkedNodes();
             } else {
-                nodesInvalidated = false;
+                invalidatedNodes = 0;
             }
             //noinspection NumericCastThatLosesPrecision
             table.grow((int) (currentSize * mdd.configuration.growthFactor()));
-            mdd.afterTableGrow(nodesInvalidated);
+            mdd.notifyAfterTableGrow(invalidatedNodes);
             assert mdd.check();
             return true;
-        }
-
-        @Override
-        protected void invalidateUnmarkedAndUnreferencedLeaves() {
-            // NOOP
         }
 
         @Override
@@ -1667,7 +1652,7 @@ final class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         @Override
-        public String format(int pointer) {
+        String format(int pointer) {
             return mdd.format(pointer);
         }
     }

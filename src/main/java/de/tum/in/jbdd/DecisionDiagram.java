@@ -127,6 +127,13 @@ public interface DecisionDiagram {
         return result;
     }
 
+    /**
+     * Indicates whether the given function is GC-managed.
+     */
+    boolean isUnmanaged(int function);
+
+    boolean isValidFunction(int function);
+
     // Support
 
     /**
@@ -196,6 +203,15 @@ public interface DecisionDiagram {
                 .sorted(Map.Entry.comparingByKey())
                 .map(e -> String.format("%s=%s", e.getKey(), e.getValue()))
                 .collect(Collectors.joining("\n"));
+    }
+
+    static Map<String, Object> prefixStatistics(String name, Map<String, Object> statistics) {
+        if (name.isEmpty()) {
+            return statistics;
+        }
+        return statistics.entrySet().stream()
+                .collect(Collectors.toUnmodifiableMap(
+                        e -> String.format("%s_%s", name, e.getKey()), Map.Entry::getValue));
     }
 
     /**

@@ -36,7 +36,7 @@ import org.junit.jupiter.api.Test;
  * A collection of simple tests for the BDD class.
  */
 @SuppressWarnings("UseOfClone")
-public class BddTest {
+class BddTest {
     private static final BddConfiguration config =
             ImmutableBddConfiguration.builder().build();
 
@@ -60,90 +60,131 @@ public class BddTest {
         return bitSet;
     }
 
-    /**
-     * This is a remainder of the original JDD.
-     */
     @Test
-    public void internalTest() {
+    void testDeadNodeCounter() {
         BddImpl bdd = new BddImpl(config);
         NodeTable table = bdd.table();
+        int v1 = bdd.createVariable();
+        int v2 = bdd.createVariable();
 
+        int and = bdd.reference(bdd.and(v1, v2));
+        assertThat(table.approximateDeadNodeCount(), is(0));
+        bdd.dereference(and);
+        assertThat(table.approximateDeadNodeCount(), is(1));
+    }
+
+    @Test
+    void testGarbageCollection() {
+        BddImpl bdd = new BddImpl(config);
+        int v1 = bdd.createVariable();
+        int v2 = bdd.createVariable();
+        int v3 = bdd.createVariable();
+
+        bdd.forceGc(); // make sure there is room for it
+        int and = bdd.and(v3, v2);
+        int or = bdd.reference(bdd.or(and, v1));
+        assertThat(bdd.forceGc(), is(0));
+        bdd.dereference(or);
+
+        assertThat(bdd.forceGc(), is(2));
+        bdd.forceGc(); // should free `and` and `or`
+    }
+
+    @Test
+    void testDeMorgan() {
+        BddImpl bdd = new BddImpl(config);
+        int v1 = bdd.createVariable();
+        int v2 = bdd.createVariable();
+        int notV1 = bdd.reference(bdd.not(v1));
+        int notV2 = bdd.reference(bdd.not(v2));
+
+        int and = bdd.reference(bdd.and(v1, v2));
+        int notV1OrNotV2 = bdd.reference(bdd.or(notV1, notV2));
+        int notOfThat = bdd.reference(bdd.not(notV1OrNotV2));
+        assertThat(and, is(notOfThat));
+    }
+
+    @Test
+    void testXorIdentity() {
+        BddImpl bdd = new BddImpl(config);
+        int v1 = bdd.createVariable();
+        int v2 = bdd.createVariable();
+        int notV1 = bdd.not(v1);
+        int notV2 = bdd.not(v2);
+
+        int v1AndNotV2 = bdd.reference(bdd.and(v1, notV2));
+        int v2AndNotV1 = bdd.reference(bdd.and(v2, notV1));
+        int orOfThose = bdd.reference(bdd.or(v1AndNotV2, v2AndNotV1));
+        bdd.dereference(v1AndNotV2);
+        bdd.dereference(v2AndNotV1);
+        int xor = bdd.reference(bdd.xor(v1, v2));
+        assertThat(orOfThose, is(xor));
+        bdd.dereference(orOfThose);
+        bdd.dereference(xor);
+    }
+
+    @Test
+    void testEquivalenceIdentity() {
+        BddImpl bdd = new BddImpl(config);
+        NodeTable table = bdd.table();
+        int v1 = bdd.createVariable();
+        int v2 = bdd.createVariable();
+
+        int and = bdd.and(v1, v2);
+        int orOfAndAndNorm = bdd.or(and, bdd.and(bdd.not(v1), bdd.not(v2)));
+        int equivalence = bdd.equivalence(v1, v2);
+        assertThat(orOfAndAndNorm, is(equivalence));
+        assertThat(table.workStacksEmpty(), is(true));
+    }
+
+    @Test
+    void testNodeCountBelow() {
+        BddImpl bdd = new BddImpl(config);
+        NodeTable table = bdd.table();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int v3 = bdd.createVariable();
         int v4 = bdd.createVariable();
 
-        // check dead nodes counter
-        int dum = bdd.reference(bdd.and(v3, v2));
-        assertThat(table.approximateDeadNodeCount(), is(0));
-        bdd.dereference(dum);
-        assertThat(table.approximateDeadNodeCount(), is(1));
-
-        // test garbage collection:
-        bdd.forceGc(); // make sure there is room for it
-        int g1 = bdd.and(v3, v2);
-        int g2 = bdd.reference(bdd.or(g1, v1));
-        assertThat(bdd.forceGc(), is(0));
-        bdd.dereference(g2);
-
-        // bdd.show_table();
-        assertThat(bdd.forceGc(), is(2));
-        bdd.forceGc(); // Should free g1 and g2
-
-        int nv1 = bdd.reference(bdd.not(v1));
-        int nv2 = bdd.reference(bdd.not(v2));
-
-        // and, or, not
-        int n1 = bdd.reference(bdd.and(v1, v2));
-        int orn12 = bdd.reference(bdd.or(nv1, nv2));
-        int n2 = bdd.reference(bdd.not(orn12));
-        assertThat(n1, is(n2));
-
-        // XOR:
-        int h1 = bdd.reference(bdd.and(v1, nv2));
-        int h2 = bdd.reference(bdd.and(v2, nv1));
-        int x1 = bdd.reference(bdd.or(h1, h2));
-        bdd.dereference(h1);
-        bdd.dereference(h2);
-        int x2 = bdd.reference(bdd.xor(v1, v2));
-        assertThat(x1, is(x2));
-        bdd.dereference(x1);
-        bdd.dereference(x2);
-
-        // equivalence
-        int b1 = bdd.or(n1, bdd.and(bdd.not(v1), bdd.not(v2)));
-        int b2 = bdd.equivalence(v1, v2);
-        assertThat(b1, is(b2));
-        assertThat(table.isWorkStackEmpty(), is(true));
-
-        // nodeCount
         assertThat(table.nodeCountBelow(bdd.nodeFor(bdd.trueFunction())), is(0));
         assertThat(table.nodeCountBelow(bdd.nodeFor(bdd.falseFunction())), is(0));
         assertThat(table.nodeCountBelow(bdd.nodeFor(v1)), is(1));
-        assertThat(table.nodeCountBelow(bdd.nodeFor(nv2)), is(1));
+        assertThat(table.nodeCountBelow(bdd.nodeFor(bdd.not(v2))), is(1));
         assertThat(table.nodeCountBelow(bdd.nodeFor(bdd.and(v1, v2))), is(2));
         assertThat(table.nodeCountBelow(bdd.nodeFor(bdd.xor(v1, v2))), is(2));
 
-        int qs1 = bdd.reference(bdd.xor(v1, v2));
-        int qs2 = bdd.reference(bdd.xor(v3, v4));
-        int qs3 = bdd.reference(bdd.xor(qs1, qs2));
-        assertThat(table.nodeCountBelow(bdd.nodeFor(qs1)), is(2));
-        assertThat(table.nodeCountBelow(bdd.nodeFor(qs2)), is(2));
-        assertThat(table.nodeCountBelow(bdd.nodeFor(qs3)), is(4));
-        bdd.dereference(qs1);
-        bdd.dereference(qs2);
-        bdd.dereference(qs3);
+        int xor12 = bdd.reference(bdd.xor(v1, v2));
+        int xor34 = bdd.reference(bdd.xor(v3, v4));
+        int xorOfXors = bdd.reference(bdd.xor(xor12, xor34));
+        assertThat(table.nodeCountBelow(bdd.nodeFor(xor12)), is(2));
+        assertThat(table.nodeCountBelow(bdd.nodeFor(xor34)), is(2));
+        assertThat(table.nodeCountBelow(bdd.nodeFor(xorOfXors)), is(4));
+        bdd.dereference(xor12);
+        bdd.dereference(xor34);
+        bdd.dereference(xorOfXors);
+    }
+
+    @Test
+    void testCountSatisfyingAssignments() {
+        BddImpl bdd = new BddImpl(config);
+        int v1 = bdd.createVariable();
+        int v2 = bdd.createVariable();
+        bdd.createVariable();
+        bdd.createVariable();
+
+        int and = bdd.and(v1, v2);
+        int equivalence = bdd.equivalence(v1, v2);
 
         assertThat(bdd.countSatisfyingAssignments(bdd.falseFunction()).longValueExact(), is(0L));
         assertThat(bdd.countSatisfyingAssignments(bdd.trueFunction()).longValueExact(), is(16L));
         assertThat(bdd.countSatisfyingAssignments(v1).longValueExact(), is(8L));
-        assertThat(bdd.countSatisfyingAssignments(n1).longValueExact(), is(4L));
-        assertThat(bdd.countSatisfyingAssignments(b1).longValueExact(), is(8L));
+        assertThat(bdd.countSatisfyingAssignments(and).longValueExact(), is(4L));
+        assertThat(bdd.countSatisfyingAssignments(equivalence).longValueExact(), is(8L));
     }
 
     @SuppressWarnings("ReuseOfLocalVariable")
     @Test
-    public void testCompose() {
+    void testCompose() {
         BddImpl bdd = new BddImpl(config);
         int v1 = bdd.createVariable();
         int nv1 = bdd.not(v1);
@@ -169,7 +210,7 @@ public class BddTest {
     }
 
     @Test
-    public void testIfThenElse() {
+    void testIfThenElse() {
         BddImpl bdd = new BddImpl(config);
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
@@ -185,7 +226,7 @@ public class BddTest {
     }
 
     @Test
-    public void testMember() {
+    void testMember() {
         BddImpl bdd = new BddImpl(config);
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
@@ -208,7 +249,7 @@ public class BddTest {
     }
 
     @Test
-    public void testMinimalSolutionsForConstants() {
+    void testMinimalSolutionsForConstants() {
         BddImpl bdd = new BddImpl(config);
 
         List<BitSet> falseSolutions = Lists.newArrayList();
@@ -221,7 +262,7 @@ public class BddTest {
     }
 
     @Test
-    public void testSupport() {
+    void testSupport() {
         BddImpl bdd = new BddImpl(config);
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
@@ -268,7 +309,7 @@ public class BddTest {
     }
 
     @Test
-    public void testWorkStack() {
+    void testWorkStack() {
         BddImpl bdd = new BddImpl(config);
         NodeTable table = bdd.table();
 
@@ -283,7 +324,7 @@ public class BddTest {
     }
 
     @Test
-    public void testUniverseIterator() {
+    void testUniverseIterator() {
         BddImpl bdd = new BddImpl(config);
         bdd.createVariables(5);
         Set<BitSet> solutions = new HashSet<>();
@@ -292,7 +333,7 @@ public class BddTest {
     }
 
     @Test
-    public void testConjunctionIterator() {
+    void testConjunctionIterator() {
         BddImpl bdd = new BddImpl(config);
         bdd.createVariables(5);
         BitSet conjunction = new BitSet(5);
@@ -304,7 +345,7 @@ public class BddTest {
     }
 
     @Test
-    public void testConcurrentAccessChecked() {
+    void testConcurrentAccessChecked() {
         Bdd bdd = new CheckedBdd(new BddImpl(config));
         bdd.createVariables(2);
         int node = bdd.reference(bdd.disjunction(0, 1));
@@ -314,7 +355,7 @@ public class BddTest {
     }
 
     @Test
-    public void testDeadNodeApproximation() {
+    void testDeadNodeApproximation() {
         BddImpl bdd = new BddImpl(config);
         NodeTable table = bdd.table();
 

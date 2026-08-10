@@ -37,7 +37,10 @@ java {
 
 var defaultEncoding = "UTF-8"
 
-tasks.withType<JavaCompile> { options.encoding = defaultEncoding }
+tasks.withType<JavaCompile> {
+  options.encoding = defaultEncoding
+  options.release.set(11)
+}
 
 tasks.withType<Javadoc> {
   options.encoding = defaultEncoding
@@ -71,6 +74,7 @@ spotless {
 }
 
 tasks.register<Task>("jmhRandom") {
+  description = "Run randomized benchmarks"
   doFirst {
     jmh.includes.add("RandomBenchmark*")
     jmh.warmupIterations = 5
@@ -80,6 +84,7 @@ tasks.register<Task>("jmhRandom") {
 }
 
 tasks.register<Task>("jmhSynthetic") {
+  description = "Run synthetic benchmarks"
   doFirst { jmh.includes.add("SyntheticBenchmark*") }
   finalizedBy("jmh")
 }
@@ -130,9 +135,11 @@ tasks.withType<JavaCompile> {
         "StringSplitter",
         "ReferenceEquality",
     )
+    disableWarningsInGeneratedCode.set(true)
 
     nullaway {
       assertsEnabled = true
+      disableWarningsInGeneratedCode.set(true)
     }
   }
 }

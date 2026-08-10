@@ -36,7 +36,7 @@ final class PowerIteratorArray implements Iterator<int[]> {
         iteration = new int[domain.length];
     }
 
-    public PowerIteratorArray(int[] domain, BitSet support) {
+    PowerIteratorArray(int[] domain, BitSet support) {
         this.domain = domain;
         this.support = new int[support.cardinality()];
         int pos = 0;

@@ -21,7 +21,7 @@ import static org.hamcrest.Matchers.is;
 
 import org.junit.jupiter.api.Test;
 
-public class SyntheticTest {
+class SyntheticTest {
     private static final int[][] nQueensPairs = {
         {4, 2},
         {5, 10},
@@ -32,7 +32,7 @@ public class SyntheticTest {
     };
 
     @Test
-    public void testQueens() {
+    void testQueens() {
         for (int[] pair : nQueensPairs) {
             Bdd bdd = BddFactory.buildBdd();
             assertThat(

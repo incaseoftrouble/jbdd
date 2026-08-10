@@ -25,11 +25,39 @@ public class BddConfiguration {
     public static final int DEFAULT_CACHE_BINARY_DIVIDER = 32;
     public static final int DEFAULT_CACHE_TERNARY_DIVIDER = 32;
     public static final int DEFAULT_CACHE_EPHEMERAL_MULTIPLIER = 32;
+    public static final int DEFAULT_MTBDD_CACHE_UNARY_DIVIDER = 64;
+    public static final int DEFAULT_MTBDD_CACHE_BINARY_DIVIDER = 32;
+    public static final int DEFAULT_MTBDD_CACHE_TERNARY_DIVIDER = 32;
+    public static final int DEFAULT_MTBDD_CACHE_EPHEMERAL_MULTIPLIER = 32;
+    public static final int DEFAULT_REGISTERED_OPERATION_DIVIDER = 8;
     public static final double DEFAULT_NODE_TABLE_GROWTH_FACTOR = 2.0d;
+
+    /** An optional, human-readable name for this configuration's instance - used to label diagnostics
+     * (e.g. shutdown statistics) instead of falling back to an identity-based label; empty by default. */
+    @Value.Default
+    public String name() {
+        return "";
+    }
 
     @Value.Default
     public int initialSize() {
         return 1024;
+    }
+
+    /** Initial node-table size of the boolean diagram; defaults to {@link #initialSize()}. */
+    @Value.Default
+    public int bddInitialSize() {
+        return initialSize();
+    }
+
+    /**
+     * Initial node-table size of the companion MTBDD (see {@code MtBddImpl}); defaults to
+     * {@link #initialSize()}. Separate from {@link #bddInitialSize()} because every {@code Bdd} carries an
+     * MTBDD whether or not it is ever used, so the two tables' useful starting sizes rarely match.
+     */
+    @Value.Default
+    public int mtbddInitialSize() {
+        return initialSize();
     }
 
     @Value.Default
@@ -50,6 +78,35 @@ public class BddConfiguration {
     @Value.Default
     public int cacheEphemeralMultiplier() {
         return DEFAULT_CACHE_EPHEMERAL_MULTIPLIER;
+    }
+
+    @Value.Default
+    public int mtbddCacheUnaryDivider() {
+        return DEFAULT_MTBDD_CACHE_UNARY_DIVIDER;
+    }
+
+    @Value.Default
+    public int mtbddCacheBinaryDivider() {
+        return DEFAULT_MTBDD_CACHE_BINARY_DIVIDER;
+    }
+
+    @Value.Default
+    public int mtbddCacheTernaryDivider() {
+        return DEFAULT_MTBDD_CACHE_TERNARY_DIVIDER;
+    }
+
+    @Value.Default
+    public int mtbddCacheEphemeralMultiplier() {
+        return DEFAULT_MTBDD_CACHE_EPHEMERAL_MULTIPLIER;
+    }
+
+    /** Further divides down a registered operation's (see {@link RegisteredOperation}) initial cache size
+     * relative to the base ephemeral cache it would otherwise match - registered operations have a
+     * different usage pattern (one fixed parameter, reused many times) and grow from there based on actual
+     * usage (see {@link CacheBase.IntKeys#growOnUsage()}) rather than tracking the table size directly. */
+    @Value.Default
+    public int registeredOperationDivider() {
+        return DEFAULT_REGISTERED_OPERATION_DIVIDER;
     }
 
     @Value.Default

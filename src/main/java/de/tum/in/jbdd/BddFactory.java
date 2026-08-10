@@ -27,4 +27,12 @@ public final class BddFactory {
         BddImpl bdd = new BddImpl(configuration);
         return configuration.threadSafetyCheck() ? new CheckedBdd(bdd) : bdd;
     }
+
+    public static MtBdd buildMtBdd() {
+        return buildMtBdd(ImmutableBddConfiguration.builder().build());
+    }
+
+    public static MtBdd buildMtBdd(BddConfiguration configuration) {
+        return new BddImpl(configuration).mtbdd();
+    }
 }

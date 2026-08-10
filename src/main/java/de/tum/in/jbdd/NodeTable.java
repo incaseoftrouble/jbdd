@@ -17,7 +17,6 @@
 package de.tum.in.jbdd;
 
 import static de.tum.in.jbdd.Preconditions.checkState;
-import static java.lang.String.valueOf;
 import static java.util.Map.entry;
 
 import java.util.ArrayDeque;
@@ -34,7 +33,7 @@ import java.util.logging.Logger;
 import org.jspecify.annotations.Nullable;
 
 @SuppressWarnings("PMD.TooManyFields")
-abstract class NodeTable {
+public abstract class NodeTable {
     private static final Logger logger = Logger.getLogger(NodeTable.class.getName());
 
     // Use 0 as "not a node" to make re-allocations slightly more efficient (arrays are always filled with zeroes)
@@ -77,7 +76,7 @@ abstract class NodeTable {
      * node. Potentially, we could instead check if the next chain entry of firstFreeNode is 0. */
     private int freeNodeCount;
 
-    /* Stores the meta-data for BDD nodes, namely the variable number, reference count and a mask used
+    /* Stores the metadata for BDD nodes, namely the variable number, reference count and a mask used
      * by various internal algorithms. These values are manipulated through static helper functions.
      *
      * Layout: <---VAR---><---REF---><MARK> */
@@ -114,6 +113,11 @@ abstract class NodeTable {
     private int[] workStack;
     /* Current top of the work stack. */
     private int workStackIndex = 0;
+    /* Secondary work stack, for protecting intermediates that must outlive a nested call's own work-stack
+     * usage (e.g. a recursion accumulating results across several levels) without forcing every ancestor
+     * frame to drop and re-push them just to keep popFromWorkStack's LIFO counting correct. */
+    private int[] secondaryWorkStack;
+    private int secondaryWorkStackIndex = 0;
 
     NodeTable(int initialSize) {
         int size = Math.max(Primes.nextPrime(initialSize), MINIMUM_NODE_TABLE_SIZE);
@@ -138,6 +142,7 @@ abstract class NodeTable {
         hashChain[size - 1] = FIRST_NODE;
 
         workStack = new int[32];
+        secondaryWorkStack = new int[32];
     }
 
     // Structure
@@ -155,7 +160,7 @@ abstract class NodeTable {
         return freeNodeCount;
     }
 
-    protected abstract int treeNodeFor(int pointer);
+    abstract int treeNodeFor(int pointer);
 
     protected abstract boolean isLeafNode(int node);
 
@@ -275,7 +280,7 @@ abstract class NodeTable {
         }
         assert referenceCount > 0;
         if (referenceCount == 1) {
-            // After decrease its 0
+            // After decrease, it is 0
 
             // We are approximating the actual dead node count here - it could be the case that
             // this node was the only one keeping its children "alive" - similarly, this node could be
@@ -395,8 +400,8 @@ abstract class NodeTable {
         workStack = Arrays.copyOf(workStack, newSize);
     }
 
-    boolean isWorkStackEmpty() {
-        return workStackIndex == 0;
+    boolean workStacksEmpty() {
+        return workStackIndex == 0 && secondaryWorkStackIndex == 0;
     }
 
     /**
@@ -405,7 +410,7 @@ abstract class NodeTable {
      * @see #pushToWorkStack(int)
      */
     void popFromWorkStack() {
-        assert !isWorkStackEmpty();
+        assert !workStacksEmpty();
         workStackIndex--;
     }
 
@@ -466,13 +471,50 @@ abstract class NodeTable {
         workStackIndex += 4;
     }
 
+    // Secondary work stack
+
+    private void ensureSecondaryWorkStackSize(int size) {
+        if (size < secondaryWorkStack.length) {
+            return;
+        }
+        int newSize = secondaryWorkStack.length * 2;
+        secondaryWorkStack = Arrays.copyOf(secondaryWorkStack, newSize);
+    }
+
+    /**
+     * Removes the {@code amount} topmost elements from the secondary stack.
+     *
+     * @see #pushToSecondaryWorkStack(int)
+     */
+    void popFromSecondaryWorkStack(int amount) {
+        assert secondaryWorkStackIndex >= amount;
+        secondaryWorkStackIndex -= amount;
+    }
+
+    /**
+     * Pushes the given pointer onto the secondary stack. Behaves exactly like {@link #pushToWorkStack(int)},
+     * but on an independent stack - so pushing here does not disturb what {@link #popFromWorkStack(int)}
+     * considers the top of the primary stack.
+     *
+     * @param pointer The pointer to be pushed.
+     * @return The given {@code pointer}, to be used for chaining.
+     * @see #popFromSecondaryWorkStack(int)
+     */
+    int pushToSecondaryWorkStack(int pointer) {
+        assert isValidPointer(pointer);
+        ensureSecondaryWorkStackSize(secondaryWorkStackIndex);
+        secondaryWorkStack[secondaryWorkStackIndex] = pointer;
+        secondaryWorkStackIndex += 1;
+        return pointer;
+    }
+
     // Memory management
 
     public int approximateDeadNodeCount() {
         return approximateDeadNodeCount;
     }
 
-    protected abstract boolean ensureCapacity();
+    abstract boolean ensureCapacity();
 
     public void grow(int size) {
         int currentSize = size();
@@ -497,7 +539,7 @@ abstract class NodeTable {
 
         // Chain start and next is used in calls to connectHashList so first enlarge and then copy to local reference
         int[] nodeData = this.nodeData;
-        int[] hashToChainStart = this.hashToChainStart;
+        int[] hashToChainStart = this.hashToChainStart; // NOPMD
         int[] hashChain = this.hashChain;
 
         // Invalidate the new nodes
@@ -544,8 +586,9 @@ abstract class NodeTable {
 
     protected abstract void growTo(int newSize);
 
-    public void invalidateUnmarkedNodes() {
+    public int invalidateUnmarkedNodes() {
         int[] nodeData = this.nodeData;
+        int count = 0;
         for (int node = biggestValidNode; node >= FIRST_NODE; node--) {
             int metadata = nodeData[node];
             int unmarkedData = dataClearMark(metadata);
@@ -554,12 +597,13 @@ abstract class NodeTable {
                 if (node == biggestValidNode) {
                     biggestValidNode--;
                 }
+                count += 1;
                 nodeData[node] = dataMakeInvalid();
             } else {
                 nodeData[node] = unmarkedData;
             }
         }
-        invalidateUnmarkedAndUnreferencedLeaves();
+        return count;
     }
 
     public int reclaimUnmarkedNodes() {
@@ -574,7 +618,7 @@ abstract class NodeTable {
         //   closed hashing
         Arrays.fill(hashToChainStart, PLACEHOLDER);
 
-        int previousFreeNodes = this.freeNodeCount;
+        int previousFreeNodes = this.freeNodeCount; // NOPMD
         int firstFreeNode = FIRST_NODE;
 
         // Connect all definitely invalid nodes in the free node chain
@@ -606,8 +650,6 @@ abstract class NodeTable {
             }
         }
 
-        invalidateUnmarkedAndUnreferencedLeaves();
-
         this.biggestValidNode = biggestValidNode;
         this.firstFreeNode = firstFreeNode;
         this.freeNodeCount = (size() - FIRST_NODE) - referencedNodes;
@@ -622,8 +664,6 @@ abstract class NodeTable {
         assert isNoneMarked();
         return collectedNodes;
     }
-
-    protected abstract void invalidateUnmarkedAndUnreferencedLeaves();
 
     // Marking
 
@@ -768,6 +808,12 @@ abstract class NodeTable {
             referencedNodes += markAllBelowNode(treeNodeFor(pointer), true);
         }
 
+        for (int i = 0; i < secondaryWorkStackIndex; i++) {
+            int pointer = secondaryWorkStack[i];
+            assert isValidPointer(pointer);
+            referencedNodes += markAllBelowNode(treeNodeFor(pointer), true);
+        }
+
         for (int node = FIRST_NODE; node <= biggestValidNode; node++) {
             int metadata = nodeData[node];
             if (node <= biggestReferencedNode && dataIsReferencedOrSaturated(metadata)) {
@@ -859,18 +905,19 @@ abstract class NodeTable {
         logger.log(Level.FINER, "Running integrity check");
         checkState(biggestReferencedNode <= biggestValidNode);
 
-        // Check the biggestValidNode variable
+        // Check the biggestValidNode variable. PLACEHOLDER means "no valid node at all" (a fresh table);
+        // slot 0 itself is never a node, so it stays invalid and must not be checked for validity.
         checkState(
-                dataIsValid(nodeData[biggestValidNode]),
+                biggestValidNode == PLACEHOLDER || dataIsValid(nodeData[biggestValidNode]),
                 "Node (%s) is not valid or leaf",
                 pointerToStringSupplier(biggestValidNode));
         for (int i = biggestValidNode + 1; i < size(); i++) {
             checkState(!dataIsValid(nodeData[i]), "Node (%s) is valid", pointerToStringSupplier(i));
         }
 
-        // Check biggestReferencedNode variable
+        // Check biggestReferencedNode variable (PLACEHOLDER means "nothing is referenced", see above)
         checkState(
-                dataIsReferencedOrSaturated(nodeData[biggestReferencedNode]),
+                biggestReferencedNode == PLACEHOLDER || dataIsReferencedOrSaturated(nodeData[biggestReferencedNode]),
                 "Node (%s) is not referenced",
                 pointerToStringSupplier(biggestReferencedNode));
         for (int i = biggestReferencedNode + 1; i < size(); i++) {
@@ -1019,7 +1066,7 @@ abstract class NodeTable {
 
     // Printing
 
-    protected abstract String format(int pointer);
+    abstract String format(int pointer);
 
     private String pointerToString(int pointer) {
         int node = treeNodeFor(pointer);
@@ -1088,7 +1135,7 @@ abstract class NodeTable {
         return createdNodes;
     }
 
-    public Map<String, Object> statistics() {
+    public Map<String, Object> statistics(String prefix) {
         int childrenCount = 0;
         int saturatedNodes = 0;
         int referencedNodes = 0;
@@ -1157,30 +1204,34 @@ abstract class NodeTable {
         }
 
         return Map.ofEntries(
-                entry("node_table_size", valueOf(size())),
-                entry("biggest_referenced_node", valueOf(biggestReferencedNode)),
-                entry("created_nodes", valueOf(createdNodes)),
-                entry("valid_nodes", valueOf(validNodes)),
-                entry("referenced_nodes", valueOf(referencedNodes)),
-                entry("saturated_nodes", valueOf(saturatedNodes)),
-                entry("children_count", valueOf(childrenCount)),
-                entry("hash_table_load_factor", valueOf(chainLenghtSum * 1.0 / size())),
-                entry("hash_table_distinct_chains", valueOf(distinctChains)),
-                entry("hash_table_average_chain_length", valueOf(chainLenghtSum * 1.0 / distinctChains)),
-                entry("hash_table_longest_chain", valueOf(maximumChainLength)),
-                entry("hash_table_lookups", valueOf(hashChainLookups)),
-                entry("hash_table_lookup_average_length", valueOf(hashChainLookupLength * 1.0 / hashChainLookups)),
-                entry("node_table_gc_count", valueOf(garbageCollectionCount)),
-                entry("node_table_gc_time_milliseconds", valueOf(garbageCollectionTime)),
-                entry("node_table_gc_collected_nodes", valueOf(garbageCollectedNodeCount)),
-                entry("node_table_grow_count", valueOf(growCount)));
+                entry(prefix + "node_table_size", String.valueOf(size())),
+                entry(prefix + "biggest_referenced_node", String.valueOf(biggestReferencedNode)),
+                entry(prefix + "created_nodes", String.valueOf(createdNodes)),
+                entry(prefix + "valid_nodes", String.valueOf(validNodes)),
+                entry(prefix + "referenced_nodes", String.valueOf(referencedNodes)),
+                entry(prefix + "saturated_nodes", String.valueOf(saturatedNodes)),
+                entry(prefix + "children_count", String.valueOf(childrenCount)),
+                entry(prefix + "hash_table_load_factor", String.valueOf(chainLenghtSum * 1.0 / size())),
+                entry(prefix + "hash_table_distinct_chains", String.valueOf(distinctChains)),
+                entry(
+                        prefix + "hash_table_average_chain_length",
+                        String.valueOf(chainLenghtSum * 1.0 / distinctChains)),
+                entry(prefix + "hash_table_longest_chain", String.valueOf(maximumChainLength)),
+                entry(prefix + "hash_table_lookups", String.valueOf(hashChainLookups)),
+                entry(
+                        prefix + "hash_table_lookup_average_length",
+                        String.valueOf(hashChainLookupLength * 1.0 / hashChainLookups)),
+                entry(prefix + "node_table_gc_count", String.valueOf(garbageCollectionCount)),
+                entry(prefix + "node_table_gc_time_milliseconds", String.valueOf(garbageCollectionTime)),
+                entry(prefix + "node_table_gc_collected_nodes", String.valueOf(garbageCollectedNodeCount)),
+                entry(prefix + "node_table_grow_count", String.valueOf(growCount)));
     }
 
     private static final class FunctionToStringSupplier {
         private final int node;
         private final NodeTable table;
 
-        public FunctionToStringSupplier(NodeTable table, int node) {
+        FunctionToStringSupplier(NodeTable table, int node) {
             this.table = table;
             this.node = node;
         }
@@ -1258,7 +1309,7 @@ abstract class NodeTable {
         return (metadata & 1) != 0;
     }
 
-    abstract static class Binary extends NodeTable {
+    public abstract static class Binary extends NodeTable {
         /* Low and high successors of each node */
         // There seems to be no performance difference to packing these into one array
         protected int[] low;
@@ -1311,11 +1362,10 @@ abstract class NodeTable {
         }
 
         private static int hash(int variable, int low, int high) {
-            // TODO This silly "hash function" seems to be significantly better than any "proper" one and I have no idea
-            // why
+            // TODO This silly "hash function" seems to be significantly better than any "proper" one - why?
             //   Conjecture: This leads to "locality" in the hash chain?
-            int hashCode = low < 0 ? -low + high + variable : low + high + variable;
-            return (hashCode < 0 ? ~hashCode : hashCode);
+            int hashCode = (low < 0 ? -low : low) + (high < 0 ? -high : high) + variable;
+            return hashCode & Integer.MAX_VALUE;
         }
 
         public int makeNode(int variable, int lowPointer, int highPointer) {
@@ -1372,7 +1422,7 @@ abstract class NodeTable {
         }
     }
 
-    abstract static class Multi extends NodeTable {
+    public abstract static class Multi extends NodeTable {
         protected int[][] tree;
 
         Multi(int initialSize) {
@@ -1420,7 +1470,7 @@ abstract class NodeTable {
             for (int child : children) {
                 hashCode += child < 0 ? -child : child;
             }
-            return (hashCode < 0 ? ~hashCode : hashCode);
+            return hashCode & Integer.MAX_VALUE;
         }
 
         public int makeNode(int variable, int[] children) {

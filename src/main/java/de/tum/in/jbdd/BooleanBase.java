@@ -18,13 +18,38 @@ package de.tum.in.jbdd;
 
 import java.math.BigInteger;
 import java.util.BitSet;
+import java.util.Map;
 import java.util.function.IntConsumer;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
-abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>, NodeBasedDecisionDiagram {
+public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>, NodeBasedDecisionDiagram {
+    private static final BitSet NO_VALUES = new BitSet(0);
+
     static final BigInteger TWO = BigInteger.ONE.add(BigInteger.ONE);
     static final int[] EMPTY_INT_ARRAY = new int[0];
     static final int TRUE = Integer.MAX_VALUE;
     static final int FALSE = complement(TRUE);
+
+    private final NodeLifecycleObserverGroup<NodeLifecycleObserver> observers = new NodeLifecycleObserverGroup<>();
+    private final ProtectionTracker protectionTracker = new ProtectionTracker();
+
+    BooleanBase() {
+        observers.registerStrongly(protectionTracker);
+        // Strongly: this hook is owned by the diagram, nothing else holds it - see
+        // NodeLifecycleObserverGroup#registerStrongly.
+        observers.registerStrongly(new NodeLifecycleObserver() {
+            @Override
+            public void afterGc(int reclaimedNodes, BitSet reclaimedValues) {
+                cache().onBddNodesInvalidated(reclaimedNodes);
+            }
+
+            @Override
+            public void afterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
+                cache().tableSizeChanged(invalidatedNodes);
+            }
+        });
+    }
 
     abstract BooleanCache cache();
 
@@ -32,7 +57,7 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
 
     abstract BddConfiguration configuration();
 
-    public int tableSize() {
+    int tableSize() {
         return table().size();
     }
 
@@ -40,35 +65,53 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
         return table().check();
     }
 
-    void invalidateCache() {
+    @SuppressWarnings({"ClassReferencesSubclass", "InstanceofThis"})
+    @Override
+    public Map<String, Object> statistics() {
+        Map<String, Object> statistics = Stream.concat(
+                        table().statistics((this instanceof BddImpl) ? "bdd_" : "mdd_").entrySet().stream(),
+                        cache().statistics().entrySet().stream())
+                .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+        return DecisionDiagram.prefixStatistics(configuration().name(), statistics);
+    }
+
+    public void invalidateCache() {
+        // Mainly available for testing
         cache().invalidate();
     }
 
-    void pruneCacheAfterGC(int reclaimedNodes) {
-        // Delete cache entries which are no longer valid
-        // If we reclaimed a lot of nodes, we won't be able to save much
-        cache().clearInvalidNodes(reclaimedNodes < tableSize() / 2);
+    ProtectionTracker protectionTracker() {
+        return protectionTracker;
     }
 
-    /**
-     * Perform garbage collection by freeing up dead nodes.
-     *
-     * @return Number of reclaimed nodes.
-     */
+    void registerObserver(NodeLifecycleObserver observer) {
+        observers.register(observer);
+    }
+
+    /** Registers an observer owned by this diagram, see {@link NodeLifecycleObserverGroup#registerStrongly}. */
+    void registerOwnedObserver(NodeLifecycleObserver observer) {
+        observers.registerStrongly(observer);
+    }
+
+    void notifyBeforeGc() {
+        observers.dispatch(NodeLifecycleObserver::beforeGc);
+    }
+
+    void notifyAfterGc(int reclaimedNodes) {
+        observers.dispatch(observer -> observer.afterGc(reclaimedNodes, NO_VALUES));
+    }
+
+    void notifyAfterTableGrow(int reclaimedNodes) {
+        observers.dispatch(observer -> observer.afterTableGrowth(reclaimedNodes, NO_VALUES));
+    }
+
     public int forceGc() {
+        notifyBeforeGc();
         table().markAllReferencedNodes();
         int reclaimedNodes = table().reclaimUnmarkedNodes();
-        pruneCacheAfterGC(reclaimedNodes);
         assert table().isNoneMarked();
+        notifyAfterGc(reclaimedNodes);
         return reclaimedNodes;
-    }
-
-    public void afterTableGrow(boolean someNodesInvalidated) {
-        cache().tableSizeChanged();
-        if (someNodesInvalidated) {
-            // We only grow the table if most current nodes are valid
-            cache().clearInvalidNodes(true);
-        }
     }
 
     boolean isValidNonConstantFunction(int function) {
@@ -95,6 +138,11 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
             table().dereferenceNode(positive);
         }
         return function;
+    }
+
+    @Override
+    public boolean isUnmanaged(int function) {
+        return isSaturatedNode(nodeFor(function));
     }
 
     @Override
@@ -180,13 +228,7 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
         return FALSE;
     }
 
-    /**
-     * Determines if the given {@code function} is valid. For most operations it is required that this is the case.
-     *
-     * @param function The function to be checked.
-     * @return If {@code} is valid or root function.
-     * @see #isConstant(int)
-     */
+    @Override
     public boolean isValidFunction(int function) {
         int positive = positive(function);
         return positive == TRUE || table().isValidDecisionNode(positive);
@@ -214,7 +256,7 @@ abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>
         return function == TRUE || function == FALSE;
     }
 
-    public boolean isPositive(int function) {
+    boolean isPositive(int function) {
         return function > 0;
     }
 

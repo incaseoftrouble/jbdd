@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
@@ -30,6 +31,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 import java.util.function.IntPredicate;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -40,10 +42,8 @@ import org.junit.jupiter.api.Test;
 class MtBddTest {
     private static final BddConfiguration config =
             ImmutableBddConfiguration.builder().build();
-
-    private static MtBddImpl create(BddImpl bdd) {
-        return new MtBddImpl(bdd);
-    }
+    private static final int[] EMPTY_INTS = new int[0];
+    private static final boolean[] EMPTY_BOOL = new boolean[0];
 
     private static BitSet fullSupport(int numVars) {
         BitSet support = new BitSet(numVars);
@@ -52,13 +52,26 @@ class MtBddTest {
     }
 
     @Test
+    void testOfConstantEvaluatesToValueEverywhere() {
+        BddImpl bdd = new BddImpl(config);
+        int numVars = 3;
+        bdd.createVariables(numVars);
+        MtBddImpl mt = bdd.mtbdd();
+
+        int f = mt.of(42);
+        assertTrue(mt.isConstant(f));
+        for (int mask = 0; mask < (1 << numVars); mask++) {
+            assertEquals(42, mt.evaluate(f, maskToAssignment(mask, numVars)));
+        }
+    }
+
+    @Test
     void testOfCollapsesEqualChildren() {
         BddImpl bdd = new BddImpl(config);
         bdd.createVariable();
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         int leaf = mt.of(5);
-        // ROBDD reduction: a node with two equal children must collapse to that child, not get built.
         assertEquals(leaf, mt.of(0, leaf, leaf));
     }
 
@@ -66,14 +79,12 @@ class MtBddTest {
     void testOfChildOrderMatchesTrueHighFalseLow() {
         BddImpl bdd = new BddImpl(config);
         bdd.createVariable();
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         int trueChild = mt.of(1);
         int falseChild = mt.of(2);
         int f = mt.of(0, trueChild, falseChild);
 
-        // Regression test: of()'s trueChild must be reachable when the variable is assigned true, and
-        // falseChild when false - these were swapped by a bug fixed earlier this session.
         assertEquals(1, mt.evaluate(f, new boolean[] {true}));
         assertEquals(2, mt.evaluate(f, new boolean[] {false}));
     }
@@ -82,7 +93,7 @@ class MtBddTest {
     void testHighOfAndLowOfMatchTrueHighFalseLow() {
         BddImpl bdd = new BddImpl(config);
         bdd.createVariable();
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         int trueChild = mt.of(1);
         int falseChild = mt.of(2);
@@ -97,7 +108,7 @@ class MtBddTest {
     void testSizeCountsDecisionNodesOnly() {
         BddImpl bdd = new BddImpl(config);
         bdd.createVariables(2);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         // Two nested ite's -> two decision nodes (outer + inner); leaves never count.
         int f = mt.of(0, mt.of(3), mt.of(1, mt.of(5), mt.of(7)));
@@ -116,7 +127,7 @@ class MtBddTest {
     void testReferenceCounting() {
         BddImpl bdd = new BddImpl(config);
         bdd.createVariable();
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         // Constants live in the separate value-refcount array, not the NodeTable - must behave identically
         // to a decision node from the caller's point of view: starts at 0, tracks +1/-1 exactly.
@@ -140,7 +151,7 @@ class MtBddTest {
     void testEvaluateOverMultiLevelFunction() {
         BddImpl bdd = new BddImpl(config);
         bdd.createVariables(2);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         // f = ite(v0, 3, ite(v1, 5, 7))
         int f = mt.of(0, mt.of(3), mt.of(1, mt.of(5), mt.of(7)));
@@ -161,11 +172,9 @@ class MtBddTest {
     void testBinaryApplyDoesNotAssumeIdempotence() {
         BddImpl bdd = new BddImpl(config);
         bdd.createVariable();
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         int f = mt.of(0, mt.of(3), mt.of(4));
-        // A non-idempotent combiner applied to (f, f) must not collapse to f itself (id equality doesn't
-        // imply op(x, x) == x): each leaf must be summed with itself, i.e. doubled: 3+3=6, 4+4=8.
         int doubled = mt.apply(f, f, Integer::sum);
         assertEquals(6, mt.evaluate(doubled, new boolean[] {true}));
         assertEquals(8, mt.evaluate(doubled, new boolean[] {false}));
@@ -179,7 +188,7 @@ class MtBddTest {
     void testMap() {
         BddImpl bdd = new BddImpl(config);
         bdd.createVariable();
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         // map() rewrites every leaf independently: 3->6, 4->8 (twice each leaf, not the whole function).
         int f = mt.of(0, mt.of(3), mt.of(4));
@@ -196,7 +205,7 @@ class MtBddTest {
     void testNaryApply() {
         BddImpl bdd = new BddImpl(config);
         bdd.createVariables(2);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         int f = mt.of(0, mt.of(3), mt.of(1, mt.of(5), mt.of(7)));
         int g = mt.of(0, mt.of(10), mt.of(20));
@@ -234,7 +243,7 @@ class MtBddTest {
         BddImpl bdd = new BddImpl(config);
         int numVars = 3;
         bdd.createVariables(numVars);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         int f = mt.of(0, mt.of(1, mt.of(1), mt.of(2)), mt.of(2, mt.of(3), mt.of(4)));
 
@@ -267,14 +276,14 @@ class MtBddTest {
         BddImpl bdd = new BddImpl(config);
         int numVars = 4;
         bdd.createVariables(numVars);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         // f only depends on v0, v1 - v2, v3 are genuine don't-cares.
         int f = mt.of(0, mt.of(1, mt.of(1), mt.of(2)), mt.of(1, mt.of(2), mt.of(3)));
 
         // A selective, an inclusive-of-most-leaves, and a match-everything predicate.
         checkAgainstBruteForce(mt, f, v -> v == 2, numVars, fullSupport(numVars));
-        checkAgainstBruteForce(mt, f, v -> v % 2 == 1, numVars, fullSupport(numVars));
+        checkAgainstBruteForce(mt, f, v -> v % 2 != 0, numVars, fullSupport(numVars));
         checkAgainstBruteForce(mt, f, v -> true, numVars, fullSupport(numVars));
 
         // f's leaves are 1..3, so nothing can match a predicate that's always false.
@@ -343,7 +352,7 @@ class MtBddTest {
     void testGarbageCollectionUnderPressureFromApplyAndValues() {
         BddImpl bdd = new BddImpl(config);
         bdd.createVariables(3);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         // Nothing returned by of()/apply()/... is automatically referenced - a nested expression like
         // of(v, of(...), of(...)) only protects each of()'s own direct arguments for the duration of that
@@ -398,18 +407,10 @@ class MtBddTest {
     @Test
     void testEmptyNaryApplyReturnsPlaceholder() {
         BddImpl bdd = new BddImpl(config);
-        MtBddImpl mt = create(bdd);
-        // 0 operands have no meaningful combination (this codebase's chosen convention, not a general
-        // MTBDD requirement), so apply degrades to the "not a node" sentinel rather than calling map.
-        assertEquals(mt.placeholder(), mt.apply(new int[0], values -> 42));
+        MtBddImpl mt = bdd.mtbdd();
+        assertEquals(mt.placeholder(), mt.apply(EMPTY_INTS, values -> 42));
     }
 
-    /**
-     * Builds a two-variable function whose two leaves (values 1 and 2, or the given pair) are each
-     * reached via two different parent nodes - useful for telling apart "distinct reachable values"
-     * (forEachValue et al., which must dedupe) from "distinct root-to-leaf paths" (forEachPath, which
-     * must not).
-     */
     private static int buildSharedLeafFunction(MtBddImpl mt, int value1, int value2) {
         int leafA = mt.of(value1);
         int leafB = mt.of(value2);
@@ -422,7 +423,7 @@ class MtBddTest {
     void testForEachPathVisitsEveryPathAndAgreesWithEvaluate() {
         BddImpl bdd = new BddImpl(config);
         bdd.createVariables(2);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         int f = buildSharedLeafFunction(mt, 1, 2);
 
@@ -450,7 +451,7 @@ class MtBddTest {
     @Test
     void testForEachPathOnConstant() {
         BddImpl bdd = new BddImpl(config);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         List<BinaryPath> paths = new ArrayList<>();
         List<Integer> values = new ArrayList<>();
@@ -469,7 +470,7 @@ class MtBddTest {
     void testForEachValueDedupesSharedLeaves() {
         BddImpl bdd = new BddImpl(config);
         bdd.createVariables(2);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         // Unlike forEachPath (4 distinct paths, previous test), forEachValue must report each of the two
         // underlying leaves exactly once, even though each is reached via two different parent nodes.
@@ -488,7 +489,7 @@ class MtBddTest {
     void testAllValuesMatchAndAnyValueMatches() {
         BddImpl bdd = new BddImpl(config);
         bdd.createVariables(2);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         // Co-domain is exactly {2, 4}: both even (allValuesMatch true), neither alone is (false), each is
         // individually present (anyValueMatches true), 3 is absent (false).
@@ -527,7 +528,7 @@ class MtBddTest {
         BddImpl bdd = new BddImpl(config);
         int depth = 20;
         bdd.createVariables(depth + 1);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         int f = buildRootWithShallowLowAndDeepHighChain(mt, depth, 999);
 
@@ -547,7 +548,7 @@ class MtBddTest {
         BddImpl bdd = new BddImpl(config);
         int depth = 20;
         bdd.createVariables(depth + 1);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         int f = buildRootWithShallowLowAndDeepHighChain(mt, depth, 1);
 
@@ -567,7 +568,7 @@ class MtBddTest {
         BddImpl bdd = new BddImpl(config);
         int numVars = 3;
         bdd.createVariables(numVars);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         int f = mt.of(0, mt.of(1, mt.of(1), mt.of(2)), mt.of(2, mt.of(3), mt.of(4)));
         int g = mt.of(0, mt.of(1, mt.of(9), mt.of(2)), mt.of(1, mt.of(3), mt.of(4)));
@@ -587,13 +588,11 @@ class MtBddTest {
         BddImpl bdd = new BddImpl(config);
         int numVars = 3;
         bdd.createVariables(numVars);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         int f = mt.of(0, mt.of(1, mt.of(1), mt.of(2)), mt.of(2, mt.of(3), mt.of(4)));
         int matchesEven = mt.mapBoolean(f, v -> v % 2 == 0);
 
-        // matchesEven is a Bdd function; it must be true at exactly the assignments where f's own value is
-        // even.
         for (int mask = 0; mask < (1 << numVars); mask++) {
             boolean[] assignment = maskToAssignment(mask, numVars);
             boolean expected = mt.evaluate(f, assignment) % 2 == 0;
@@ -606,7 +605,7 @@ class MtBddTest {
         BddImpl bdd = new BddImpl(config);
         int numVars = 3;
         bdd.createVariables(numVars);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         int f = mt.of(0, mt.of(1, mt.of(1), mt.of(2)), mt.of(2, mt.of(3), mt.of(4)));
         int assignments = bdd.and(bdd.variableFunction(0), bdd.variableFunction(1)); // v0 && v1, a Bdd fn
@@ -636,7 +635,7 @@ class MtBddTest {
         BddImpl bdd = new BddImpl(config);
         int numVars = 3;
         bdd.createVariables(numVars);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         // f depends only on the first two formal variables (x0, x1).
         int f = mt.of(0, mt.of(1, mt.of(1), mt.of(2)), mt.of(1, mt.of(3), mt.of(4)));
@@ -669,7 +668,7 @@ class MtBddTest {
         BddImpl bdd = new BddImpl(config);
         int numVars = 3;
         bdd.createVariables(numVars);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         int f = mt.of(0, mt.of(1, mt.of(1), mt.of(2)), mt.of(1, mt.of(3), mt.of(4)));
 
@@ -697,13 +696,13 @@ class MtBddTest {
         BddImpl bdd = new BddImpl(config);
         int numVars = 3;
         bdd.createVariables(numVars);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         int f = mt.of(0, mt.of(1, mt.of(1), mt.of(2)), mt.of(2, mt.of(3), mt.of(4)));
         MtBdd.Inverse inverse = mt.invert(f);
 
         // invert()'s co-domain must be exactly f's actual co-domain (values 1..4 here, nothing else).
-        assertEquals(mt.valuesOf(f), inverse.support());
+        assertEquals(mt.valuesOf(f), inverse.codomain());
 
         // For every achieved value, functionFor(value) must be true at exactly the assignments where f
         // evaluates to that value - the same characterization mapBoolean(f, v -> v == value) gives.
@@ -724,14 +723,14 @@ class MtBddTest {
         BddImpl bdd = new BddImpl(config);
         int numVars = 6;
         bdd.createVariables(numVars);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         // 64 distinct values (0..63), comfortably above invert()'s array/map size threshold - forces the
         // Map-based path (the smaller test above, with only 4 values, only ever exercises the array path).
         int f = buildValueFunction(mt, numVars, 0, 0);
         MtBdd.Inverse inverse = mt.invert(f);
 
-        assertEquals(mt.valuesOf(f), inverse.support());
+        assertEquals(mt.valuesOf(f), inverse.codomain());
         for (int mask = 0; mask < (1 << numVars); mask++) {
             boolean[] assignment = maskToAssignment(mask, numVars);
             // buildValueFunction's own convention: f's value at an assignment is that assignment's mask.
@@ -747,7 +746,7 @@ class MtBddTest {
     void testSplitHandlesConstantResidualFunctions() {
         BddImpl bdd = new BddImpl(config);
         bdd.createVariable();
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         // f depends only on the split variable itself, so once it is fixed, the residual "h" is a bare
         // constant - a negative MTBDD function id. A plain int split() could not express this as a leaf
@@ -761,8 +760,8 @@ class MtBddTest {
 
         int indexWhenTrue = mt.evaluate(g, new boolean[] {true});
         int indexWhenFalse = mt.evaluate(g, new boolean[] {false});
-        assertEquals(10, mt.evaluate(result.functionFor(indexWhenTrue), new boolean[0]));
-        assertEquals(20, mt.evaluate(result.functionFor(indexWhenFalse), new boolean[0]));
+        assertEquals(10, mt.evaluate(result.functionFor(indexWhenTrue), EMPTY_BOOL));
+        assertEquals(20, mt.evaluate(result.functionFor(indexWhenFalse), EMPTY_BOOL));
     }
 
     @Test
@@ -770,7 +769,7 @@ class MtBddTest {
         BddImpl bdd = new BddImpl(config);
         int numVars = 4;
         bdd.createVariables(numVars);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         // f(x0,x1,x2,x3) evaluates to the assignment's own bit pattern - depends on every variable.
         int f = buildValueFunction(mt, numVars, 0, 0);
@@ -824,7 +823,7 @@ class MtBddTest {
     void testCartesianProductDeduplicatesRepeatedTuples() {
         BddImpl bdd = new BddImpl(config);
         bdd.createVariables(2);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         // f1(x0,x1): (T,T)->1 (T,F)->2 (F,T)->2 (F,F)->1
         int f1 = mt.of(0, mt.of(1, mt.of(1), mt.of(2)), mt.of(1, mt.of(2), mt.of(1)));
@@ -850,7 +849,7 @@ class MtBddTest {
         assertArrayEquals(new int[] {2, 8}, product.functionFor(indexTF));
 
         // Exactly the two distinct tuples were recorded, nothing more.
-        assertEquals(2, product.support().cardinality());
+        assertEquals(2, product.codomain().cardinality());
     }
 
     @Test
@@ -858,7 +857,7 @@ class MtBddTest {
         BddImpl bdd = new BddImpl(config);
         int numVars = 3;
         bdd.createVariables(numVars);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         int f1 = mt.of(0, mt.of(1, mt.of(1), mt.of(2)), mt.of(2, mt.of(3), mt.of(4)));
         int f2 = mt.of(1, mt.of(5), mt.of(2, mt.of(6), mt.of(7)));
@@ -875,14 +874,50 @@ class MtBddTest {
     }
 
     @Test
+    void testCartesianProductMemoIsPerCall() {
+        BddImpl bdd = new BddImpl(config);
+        int numVars = 3;
+        bdd.createVariables(numVars);
+        MtBddImpl mt = bdd.mtbdd();
+
+        int p = mt.of(2, mt.of(1), mt.of(2));
+        int q = mt.of(2, mt.of(3), mt.of(4));
+        int f2 = mt.of(2, mt.of(7), mt.of(8));
+        // The (p, f2) and (q, f2) operand pairs are each reached twice (via x0/x1), so the operation cache
+        // is genuinely hit inside one call...
+        int f1 = mt.of(0, mt.of(1, p, q), mt.of(1, q, p));
+        // ...and this one reaches the very same pairs, but in the opposite order - so the second call
+        // interns the same tuples under *different* indices. A cache surviving across calls would hand
+        // back the first call's node, whose leaves index a bijection that no longer exists.
+        int swapped = mt.of(0, mt.of(1, q, p), mt.of(1, p, q));
+
+        assertCartesianProductAgrees(mt, f1, f2, numVars);
+        assertCartesianProductAgrees(mt, swapped, f2, numVars);
+        assertCartesianProductAgrees(mt, f1, f2, numVars);
+    }
+
+    private static void assertCartesianProductAgrees(MtBddImpl mt, int f1, int f2, int numVars) {
+        MtBdd.FunctionToFunctionsMap product = mt.cartesianProduct(new int[] {f1, f2});
+        int g = product.function();
+        for (int mask = 0; mask < (1 << numVars); mask++) {
+            boolean[] assignment = maskToAssignment(mask, numVars);
+            int[] tuple = product.functionFor(mt.evaluate(g, assignment));
+            assertEquals(mt.evaluate(f1, assignment), tuple[0]);
+            assertEquals(mt.evaluate(f2, assignment), tuple[1]);
+        }
+        // Four distinct (component, component) tuples exist here; the memo must not merge or duplicate any.
+        assertEquals(4, product.codomain().cardinality());
+    }
+
+    @Test
     void testCartesianProductEmptyFunctionsReturnsPlaceholder() {
         BddImpl bdd = new BddImpl(config);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         // Mirrors apply()'s own convention for 0 operands: not a meaningful function, just the sentinel.
-        MtBdd.FunctionToFunctionsMap product = mt.cartesianProduct(new int[0]);
+        MtBdd.FunctionToFunctionsMap product = mt.cartesianProduct(EMPTY_INTS);
         assertEquals(mt.placeholder(), product.function());
-        assertTrue(product.support().isEmpty());
+        assertTrue(product.codomain().isEmpty());
     }
 
     @Test
@@ -890,7 +925,7 @@ class MtBddTest {
         BddImpl bdd = new BddImpl(config);
         int numVars = 3;
         bdd.createVariables(numVars);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         int f = mt.of(0, mt.of(1, mt.of(1), mt.of(2)), mt.of(2, mt.of(3), mt.of(4)));
         int domain = bdd.or(bdd.variableFunction(0), bdd.variableFunction(1)); // x0 || x1
@@ -909,7 +944,7 @@ class MtBddTest {
     void testSimplifyEliminatesVariableUnconstrainedByDomain() {
         BddImpl bdd = new BddImpl(config);
         bdd.createVariables(2);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         // f depends on both x0 and x1, but domain only cares about x0=true - the x0=false branch is
         // entirely free, so generalized cofactor ("restrict") eliminates x0 outright, keeping only the
@@ -929,10 +964,59 @@ class MtBddTest {
     }
 
     @Test
+    void testSimplifyNeverDependsOnAVariableOutsideFunctionsOwnSupport() {
+        BddImpl bdd = new BddImpl(config);
+        bdd.createVariables(3);
+        MtBddImpl mt = bdd.mtbdd();
+
+        // f depends only on x1 and x2 - never on x0.
+        int f = mt.of(
+                1,
+                mt.of(2, mt.of(100), mt.of(200)), // x1 = true: if x2 then 100 else 200
+                mt.of(2, mt.of(300), mt.of(400))); // x1 = false: if x2 then 300 else 400
+
+        // domain's top variable (x0) is strictly above f's own (x1), and neither of domain's x0-cofactors
+        // is FALSE (domainLow = !x2, domainHigh = x2) - exactly the case that must widen the domain
+        // (domainLow | domainHigh) and keep recursing on the very same f, rather than building a new
+        // decision on x0 the way constrain (below) legitimately does. Here the widened domain happens to
+        // collapse to TRUE (!x2 | x2), so a correct simplify must return f completely unchanged.
+        int domain = bdd.equivalence(bdd.variableFunction(0), bdd.variableFunction(2));
+        int simplified = mt.simplify(f, domain);
+
+        assertEquals(f, simplified);
+        assertFalse(mt.support(simplified).get(0));
+    }
+
+    @Test
+    void testConstrainMayDependOnAVariableOutsideFunctionsOwnSupport() {
+        BddImpl bdd = new BddImpl(config);
+        bdd.createVariables(3);
+        MtBddImpl mt = bdd.mtbdd();
+
+        // Same f and domain as testSimplifyNeverDependsOnAVariableOutsideFunctionsOwnSupport - unlike
+        // simplify, constrain's canonical "nearest satisfying assignment" semantics genuinely need to
+        // distinguish domain's x0=false (!x2) and x0=true (x2) branches to stay exact off the domain too,
+        // so the result may end up depending on x0 even though f itself never did.
+        int f = mt.of(1, mt.of(2, mt.of(100), mt.of(200)), mt.of(2, mt.of(300), mt.of(400)));
+        int domain = bdd.equivalence(bdd.variableFunction(0), bdd.variableFunction(2));
+        int constrained = mt.constrain(f, domain);
+
+        assertTrue(mt.support(constrained).get(0));
+
+        // constrain's contract only promises agreement where domain holds - check exactly that.
+        for (int mask = 0; mask < (1 << 3); mask++) {
+            boolean[] assignment = maskToAssignment(mask, 3);
+            if (bdd.evaluate(domain, assignment)) {
+                assertEquals(mt.evaluate(f, assignment), mt.evaluate(constrained, assignment));
+            }
+        }
+    }
+
+    @Test
     void testSimplifyWithTrueDomainReturnsFunctionUnchanged() {
         BddImpl bdd = new BddImpl(config);
         bdd.createVariables(2);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         int f = mt.of(0, mt.of(1, mt.of(1), mt.of(2)), mt.of(1, mt.of(3), mt.of(4)));
 
@@ -944,7 +1028,7 @@ class MtBddTest {
     void testSimplifyWithFalseDomainCollapsesToASingleConstant() {
         BddImpl bdd = new BddImpl(config);
         bdd.createVariables(2);
-        MtBddImpl mt = create(bdd);
+        MtBddImpl mt = bdd.mtbdd();
 
         int f = mt.of(0, mt.of(1, mt.of(1), mt.of(2)), mt.of(1, mt.of(3), mt.of(4)));
 
@@ -953,5 +1037,266 @@ class MtBddTest {
         int simplified = mt.simplify(f, bdd.falseFunction());
         assertEquals(0, mt.size(simplified));
         assertTrue(mt.isConstant(simplified));
+    }
+
+    // A function of x0 and x1 with four distinct leaves, the standard operand of the simplify tests below.
+    private static int buildFourLeafFunction(MtBddImpl mt, int base) {
+        return mt.of(0, mt.of(1, mt.of(base), mt.of(base + 1)), mt.of(1, mt.of(base + 2), mt.of(base + 3)));
+    }
+
+    @Test
+    void testApplySimplifyAgreesWithApplyWhereDomainHolds() {
+        BddImpl bdd = new BddImpl(config);
+        int numVars = 3;
+        bdd.createVariables(numVars);
+        MtBddImpl mt = bdd.mtbdd();
+
+        int f = buildFourLeafFunction(mt, 1);
+        int g = mt.of(2, mt.of(10), mt.of(20));
+        MtBddBinaryOperator sum = MtBddBinaryOperator.commutative(Integer::sum);
+
+        int applied = mt.apply(f, g, sum);
+        int domain = bdd.or(bdd.variableFunction(0), bdd.variableFunction(1)); // x0 || x1
+        int simplified = mt.applySimplify(f, g, sum, domain);
+
+        // applySimplify only promises agreement with apply where the domain holds - check exactly that.
+        for (int mask = 0; mask < (1 << numVars); mask++) {
+            boolean[] assignment = maskToAssignment(mask, numVars);
+            if (bdd.evaluate(domain, assignment)) {
+                assertEquals(mt.evaluate(applied, assignment), mt.evaluate(simplified, assignment));
+            }
+        }
+
+        // domain == true is the plain apply, down to the very same node.
+        assertEquals(applied, mt.applySimplify(f, g, sum, bdd.trueFunction()));
+
+        // domain == false leaves everything unconstrained, so a bare constant must come back.
+        assertTrue(mt.isConstant(mt.applySimplify(f, g, sum, bdd.falseFunction())));
+    }
+
+    @Test
+    void testApplySimplifyEliminatesVariableUnconstrainedByDomain() {
+        BddImpl bdd = new BddImpl(config);
+        bdd.createVariables(2);
+        MtBddImpl mt = bdd.mtbdd();
+
+        int f = buildFourLeafFunction(mt, 1);
+        int g = mt.of(0, mt.of(10), mt.of(20));
+        MtBddBinaryOperator sum = MtBddBinaryOperator.commutative(Integer::sum);
+
+        // The domain forces x0, so the x0=false branch of both operands is entirely free: a correct
+        // applySimplify never even evaluates the operator there and drops the decision on x0 outright,
+        // leaving only the x0=true residual (one node testing x1).
+        int domain = bdd.variableFunction(0);
+        int simplified = mt.applySimplify(f, g, sum, domain);
+
+        assertEquals(1, mt.size(simplified));
+        assertFalse(mt.support(simplified).get(0));
+        assertEquals(1 + 10, mt.evaluate(simplified, new boolean[] {true, true}));
+        assertEquals(2 + 10, mt.evaluate(simplified, new boolean[] {true, false}));
+    }
+
+    @Test
+    void testApplySimplifyUsesOperatorShortcutsUnderADomain() {
+        BddImpl bdd = new BddImpl(config);
+        bdd.createVariables(2);
+        MtBddImpl mt = bdd.mtbdd();
+
+        int f = buildFourLeafFunction(mt, 1);
+        MtBddBinaryOperator product = MtBddBinaryOperator.monoid((a, b) -> a * b, 1, 0);
+        int domain = bdd.variableFunction(0);
+
+        // The absorbing element prunes both subtrees, domain or not.
+        assertEquals(mt.of(0), mt.applySimplify(f, mt.of(0), product, domain));
+        // The neutral element hands back the other operand - simplified against the domain, i.e. exactly
+        // what simplify() alone would have produced.
+        assertEquals(mt.simplify(f, domain), mt.applySimplify(f, mt.of(1), product, domain));
+    }
+
+    @Test
+    void testRegisteredApplyAndApplySimplifyMatchTheDirectCalls() {
+        BddImpl bdd = new BddImpl(config);
+        bdd.createVariables(3);
+        MtBddImpl mt = bdd.mtbdd();
+
+        int f = buildFourLeafFunction(mt, 1);
+        int g = mt.of(2, mt.of(10), mt.of(20));
+        MtBddBinaryOperator sum = MtBddBinaryOperator.commutative(Integer::sum);
+        int domain = bdd.or(bdd.variableFunction(0), bdd.variableFunction(1));
+
+        RegisteredOperation.Binary registeredApply = mt.registerApply(sum);
+        assertEquals(mt.apply(f, g, sum), registeredApply.applyAsInt(f, g));
+
+        RegisteredOperation.Ternary registered = mt.registerApplySimplify(sum);
+        assertEquals(mt.applySimplify(f, g, sum, domain), registered.applyAsInt(f, g, domain));
+        // Invoked twice, the private cache is now warm - the answer must not change.
+        assertEquals(mt.applySimplify(f, g, sum, domain), registered.applyAsInt(f, g, domain));
+        assertEquals(mt.apply(f, g, sum), registered.applyAsInt(f, g, bdd.trueFunction()));
+        assertTrue(mt.isConstant(registered.applyAsInt(f, g, bdd.falseFunction())));
+    }
+
+    @Test
+    void testMapSimplifyAgreesWithMapWhereDomainHolds() {
+        BddImpl bdd = new BddImpl(config);
+        int numVars = 2;
+        bdd.createVariables(numVars);
+        MtBddImpl mt = bdd.mtbdd();
+
+        int f = buildFourLeafFunction(mt, 1);
+        int mapped = mt.map(f, x -> x * 2);
+        int domain = bdd.variableFunction(0);
+        int simplified = mt.mapSimplify(f, x -> x * 2, domain);
+
+        for (int mask = 0; mask < (1 << numVars); mask++) {
+            boolean[] assignment = maskToAssignment(mask, numVars);
+            if (bdd.evaluate(domain, assignment)) {
+                assertEquals(mt.evaluate(mapped, assignment), mt.evaluate(simplified, assignment));
+            }
+        }
+
+        // As in applySimplify: the free x0=false branch is dropped rather than mapped.
+        assertEquals(1, mt.size(simplified));
+        assertFalse(mt.support(simplified).get(0));
+
+        assertEquals(mapped, mt.mapSimplify(f, x -> x * 2, bdd.trueFunction()));
+        assertTrue(mt.isConstant(mt.mapSimplify(f, x -> x * 2, bdd.falseFunction())));
+    }
+
+    @Test
+    void testComposeSimplifyAgreesWithComposeWhereDomainHolds() {
+        BddImpl bdd = new BddImpl(config);
+        int numVars = 3;
+        bdd.createVariables(numVars);
+        MtBddImpl mt = bdd.mtbdd();
+
+        int f = buildFourLeafFunction(mt, 1);
+        // compose()/analyzeCompose() resolve placeholders in place, so hand every call its own array.
+        Supplier<int[]> mapping = () -> new int[] {
+            bdd.variableFunction(2), // x0 -> x2
+            bdd.not(bdd.variableFunction(1)), // x1 -> !x1
+            mt.placeholder() // x2 -> x2
+        };
+
+        int composed = mt.compose(f, mapping.get());
+        int domain = bdd.or(bdd.variableFunction(1), bdd.variableFunction(2));
+        int simplified = mt.composeSimplify(f, mapping.get(), domain);
+
+        for (int mask = 0; mask < (1 << numVars); mask++) {
+            boolean[] assignment = maskToAssignment(mask, numVars);
+            if (bdd.evaluate(domain, assignment)) {
+                assertEquals(mt.evaluate(composed, assignment), mt.evaluate(simplified, assignment));
+            }
+        }
+
+        assertEquals(composed, mt.composeSimplify(f, mapping.get(), bdd.trueFunction()));
+        assertTrue(mt.isConstant(mt.composeSimplify(f, mapping.get(), bdd.falseFunction())));
+
+        // An identity mapping degenerates to a plain simplify.
+        int[] identity = new int[numVars];
+        Arrays.fill(identity, mt.placeholder());
+        assertEquals(mt.simplify(f, domain), mt.composeSimplify(f, identity, domain));
+    }
+
+    @Test
+    void testComposeSimplifyDropsBranchesTheDomainExcludes() {
+        BddImpl bdd = new BddImpl(config);
+        bdd.createVariables(2);
+        MtBddImpl mt = bdd.mtbdd();
+
+        int f = buildFourLeafFunction(mt, 1);
+        // x0 maps to itself, x1 to !x1 - so the domain's x0-cofactor really does describe the branch being
+        // descended into ("aligned"), and forcing x0 must eliminate it from the result.
+        int[] mapping = {mt.placeholder(), bdd.not(bdd.variableFunction(1))};
+        int domain = bdd.variableFunction(0);
+        int simplified = mt.composeSimplify(f, mapping, domain);
+
+        assertFalse(mt.support(simplified).get(0));
+        assertEquals(mt.evaluate(f, new boolean[] {true, false}), mt.evaluate(simplified, new boolean[] {true, true}));
+        assertEquals(mt.evaluate(f, new boolean[] {true, true}), mt.evaluate(simplified, new boolean[] {true, false}));
+    }
+
+    @Test
+    void testRegisteredComposeAndComposeSimplifyMatchTheDirectCalls() {
+        BddImpl bdd = new BddImpl(config);
+        int numVars = 3;
+        bdd.createVariables(numVars);
+        MtBddImpl mt = bdd.mtbdd();
+
+        int f = buildFourLeafFunction(mt, 1);
+        Supplier<int[]> mapping =
+                () -> new int[] {bdd.variableFunction(2), bdd.not(bdd.variableFunction(1)), mt.placeholder()};
+        int domain = bdd.or(bdd.variableFunction(1), bdd.variableFunction(2));
+
+        RegisteredOperation.Unary registeredCompose = mt.registerCompose(mapping.get());
+        assertEquals(mt.compose(f, mapping.get()), registeredCompose.applyAsInt(f));
+
+        RegisteredOperation.Binary registered = mt.registerComposeSimplify(mapping.get());
+        assertEquals(mt.composeSimplify(f, mapping.get(), domain), registered.applyAsInt(f, domain));
+        assertEquals(mt.composeSimplify(f, mapping.get(), domain), registered.applyAsInt(f, domain));
+        assertEquals(mt.compose(f, mapping.get()), registered.applyAsInt(f, bdd.trueFunction()));
+        assertTrue(mt.isConstant(registered.applyAsInt(f, bdd.falseFunction())));
+    }
+
+    @Test
+    void testPathIteratorReportsValuesAndReusesOnePathObject() {
+        BddImpl bdd = new BddImpl(config);
+        bdd.createVariables(2);
+        MtBddImpl mt = bdd.mtbdd();
+
+        int f = buildSharedLeafFunction(mt, 1, 2);
+
+        MtBdd.ValuedIterator<BinaryPath> iterator = mt.pathIterator(f);
+        BinaryPath first = null;
+        int count = 0;
+        while (iterator.hasNext()) {
+            BinaryPath path = iterator.next();
+            if (first == null) {
+                first = path;
+            } else {
+                // Mutated in place, never re-allocated (the point of handing the value out separately).
+                assertSame(first, path);
+            }
+            boolean[] assignment = {path.assignment().get(0), path.assignment().get(1)};
+            assertEquals(mt.evaluate(f, assignment), iterator.value());
+            count++;
+        }
+        assertEquals(4, count);
+
+        // A constant has exactly one, entirely unconstrained path carrying its value.
+        MtBdd.ValuedIterator<BinaryPath> constantIterator = mt.pathIterator(mt.of(42));
+        assertTrue(constantIterator.hasNext());
+        assertTrue(constantIterator.next().support().isEmpty());
+        assertEquals(42, constantIterator.value());
+        assertFalse(constantIterator.hasNext());
+    }
+
+    @Test
+    void testAssignmentIteratorReportsTheValueOfEachAssignment() {
+        BddImpl bdd = new BddImpl(config);
+        int numVars = 4;
+        bdd.createVariables(numVars);
+        MtBddImpl mt = bdd.mtbdd();
+
+        // Depends on x0, x1 only - x2, x3 are don't-cares, i.e. several assignments share one leaf.
+        int f = mt.of(0, mt.of(1, mt.of(1), mt.of(2)), mt.of(1, mt.of(2), mt.of(3)));
+        IntPredicate values = v -> v == 2;
+
+        MtBdd.ValuedIterator<BitSet> iterator = mt.assignmentIterator(f, values, fullSupport(numVars));
+        int count = 0;
+        while (iterator.hasNext()) {
+            BitSet assignment = iterator.next();
+            assertEquals(mt.evaluate(f, assignment), iterator.value());
+            assertTrue(values.test(iterator.value()));
+            count++;
+        }
+        // Two of the four (x0, x1) combinations lead to 2, times the four don't-care combinations.
+        assertEquals(8, count);
+
+        // A constant function: every assignment yields the one value.
+        MtBdd.ValuedIterator<BitSet> constantIterator = mt.assignmentIterator(mt.of(7), null, fullSupport(numVars));
+        assertTrue(constantIterator.hasNext());
+        constantIterator.next();
+        assertEquals(7, constantIterator.value());
+        constantIterator.forEachRemaining(assignment -> {});
     }
 }
