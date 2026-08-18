@@ -20,7 +20,7 @@ import org.immutables.value.Value;
 
 @SuppressWarnings("MethodReturnAlwaysConstant")
 @Value.Immutable
-public class BddConfiguration {
+public class BddConfiguration extends NodeTableConfiguration {
     public static final int DEFAULT_CACHE_UNARY_DIVIDER = 64;
     public static final int DEFAULT_CACHE_BINARY_DIVIDER = 32;
     public static final int DEFAULT_CACHE_TERNARY_DIVIDER = 32;
@@ -30,7 +30,6 @@ public class BddConfiguration {
     public static final int DEFAULT_MTBDD_CACHE_TERNARY_DIVIDER = 32;
     public static final int DEFAULT_MTBDD_CACHE_EPHEMERAL_MULTIPLIER = 32;
     public static final int DEFAULT_REGISTERED_OPERATION_DIVIDER = 8;
-    public static final double DEFAULT_NODE_TABLE_GROWTH_FACTOR = 2.0d;
 
     /** An optional, human-readable name for this configuration's instance - used to label diagnostics
      * (e.g. shutdown statistics) instead of falling back to an identity-based label; empty by default. */
@@ -115,22 +114,7 @@ public class BddConfiguration {
     }
 
     @Value.Default
-    public double growthFactor() {
-        return DEFAULT_NODE_TABLE_GROWTH_FACTOR;
-    }
-
-    @Value.Default
-    public boolean useGarbageCollection() {
-        return true;
-    }
-
-    @Value.Default
     public boolean useCachePreserve() {
         return true;
-    }
-
-    @Value.Default
-    public boolean threadSafetyCheck() {
-        return false;
     }
 }

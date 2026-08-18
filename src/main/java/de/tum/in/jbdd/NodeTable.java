@@ -55,6 +55,11 @@ public abstract class NodeTable {
     private static final int VARIABLE_OFFSET = REFERENCE_COUNT_OFFSET + REFERENCE_COUNT_BIT_SIZE;
     private static final int MINIMUM_NODE_TABLE_SIZE = Primes.nextPrime(1_000);
     private static final int MAXIMAL_NODE_COUNT = Integer.MAX_VALUE / 2 - 8;
+    /* Margin applied to the estimated memory requirement of a larger table, see availableMemory(). */
+    private static final double MEMORY_SAFETY_FACTOR = 1.25;
+    /* Live node ratio accepted before growing when the table cannot be grown within the available memory -
+     * a densely packed table which is collected often is still better than not being able to allocate. */
+    private static final double MEMORY_PRESSURE_LIVE_NODE_THRESHOLD = 0.9;
 
     static {
         //noinspection ConstantValue
@@ -95,7 +100,9 @@ public abstract class NodeTable {
     private int[] hashToChainStart;
     private int[] hashChain;
 
-    // Statistics
+    /* Statistics. Note that the counters describing the cost of memory management (marked / swept /
+     * rehashed nodes) are the interesting ones to watch: The collected node count alone says nothing about
+     * efficiency - a table which is collected far too often collects *more* nodes in total, not fewer. */
     private long createdNodes = 0;
     private long hashChainLookups = 0;
     private long hashChainLookupLength = 0;
@@ -103,6 +110,18 @@ public abstract class NodeTable {
     private int garbageCollectionCount = 0;
     private long garbageCollectedNodeCount = 0;
     private long garbageCollectionTime = 0;
+    /* Nodes visited by mark phases, i.e. what collecting costs. */
+    private long markedNodeCount = 0;
+    /* Node slots visited by sweeps, i.e. what reclaiming / invalidating costs. */
+    private long sweptNodeCount = 0;
+    /* Nodes re-inserted into the hash chains while growing, i.e. what growing costs. */
+    private long rehashedNodeCount = 0;
+    /* Largest number of live nodes observed during a mark phase. */
+    private int peakLiveNodeCount = 0;
+    /* Collections whose mark phase was discarded because the table had to be grown anyway. */
+    private int futileGarbageCollectionCount = 0;
+    /* Growths which were limited (possibly to nothing) by the available memory. */
+    private int memoryLimitedGrowthCount = 0;
 
     /* The work stack is used to store intermediate nodes created by operations. While constructing
      * a new node, e.g. "v1 AND v2", we may need to create multiple intermediate nodes. As
@@ -182,30 +201,35 @@ public abstract class NodeTable {
         return hashCode % size();
     }
 
-    protected void connectHashList(int node, int hash) {
+    /**
+     * Links {@code node} into the hash chain of the bucket {@code hash}, which must not contain it already.
+     *
+     * <p>Each node has exactly one chain slot ({@code hashChain[node]}), which is shared with the free node
+     * list - so a node is either free or in exactly one hash chain, and all three callers (fresh allocation
+     * plus the two chain rebuilds, which start from cleared buckets) insert every node exactly once.
+     * Scanning the chain for duplicates would therefore only cost an additional random-access walk per
+     * inserted node in the rebuild paths, hence it is done in an assertion instead.
+     */
+    protected void linkHashList(int node, int hash) {
         assert isValidDecisionNode(node);
-        int hashChainStart = hashToChainStart[hash];
-        int[] hashChain = this.hashChain;
+        assert !isInHashList(node, hash) : "Node " + node + " already in chain of " + hash;
 
-        // Search the hash list if this node is already in there in order to avoid loops
-        int chainLength = 1;
-        int currentChain = hashChainStart;
+        hashChain[node] = hashToChainStart[hash];
+        hashToChainStart[hash] = node;
+    }
+
+    private boolean isInHashList(int node, int hash) {
+        int currentChain = hashToChainStart[hash];
         while (currentChain != PLACEHOLDER) {
             assert isValidDecisionNode(currentChain);
             if (currentChain == node) {
-                // The node is already contained in the hash list
-                return;
+                return true;
             }
             int next = hashChain[currentChain];
             assert next != currentChain;
             currentChain = next;
-            chainLength += 1;
         }
-        this.hashChainLookupLength += chainLength;
-        this.hashChainLookups += 1;
-
-        hashChain[node] = hashChainStart;
-        hashToChainStart[hash] = node;
+        return false;
     }
 
     protected int findNode(int variable, int hash, IntPredicate lookupComparison) {
@@ -244,7 +268,7 @@ public abstract class NodeTable {
         if (biggestValidNode < freeNode) {
             biggestValidNode = freeNode;
         }
-        connectHashList(freeNode, modHash);
+        linkHashList(freeNode, modHash);
         return freeNode;
     }
 
@@ -514,14 +538,174 @@ public abstract class NodeTable {
         return approximateDeadNodeCount;
     }
 
-    abstract boolean ensureCapacity();
+    /** Configuration of the diagram owning this table. */
+    protected abstract NodeTableConfiguration configuration();
+
+    /** Notifies the owning diagram right before a mark phase, see {@code NodeLifecycleObserver#beforeGc}. */
+    protected abstract void notifyBeforeGc();
+
+    /** Notifies the owning diagram after nodes have been reclaimed. */
+    protected abstract void notifyAfterGc(int reclaimedNodes, BitSet reclaimedValues);
+
+    /** Notifies the owning diagram after the table has grown. */
+    protected abstract void notifyAfterTableGrowth(int invalidatedNodes, BitSet reclaimedValues);
+
+    /**
+     * Sweeps managed leaves (i.e. MTBDD terminal values) which are neither marked nor referenced, returning
+     * the freed values. Runs as part of the mark phase, i.e. <b>before</b> {@link #reclaimUnmarkedNodes()},
+     * whose closing {@code assert isNoneMarked()} also covers leaf marks.
+     */
+    protected BitSet sweepManagedLeaves() {
+        return BitSets.of();
+    }
+
+    /** Runs the owning diagram's integrity check, see {@link #check()}. Only called from assertions. */
+    protected boolean checkOwner() {
+        return true;
+    }
+
+    /**
+     * Ensures that a node can be allocated, by running a garbage collection and / or growing the table.
+     *
+     * @return Whether the table has grown (and hence hash values have to be recomputed).
+     */
+    final boolean ensureCapacity() {
+        if (freeNodeCount() > size() / 4) {
+            return false;
+        }
+
+        NodeTableConfiguration configuration = configuration();
+        int currentSize = size();
+        int invalidatedNodes = 0;
+        BitSet invalidatedLeaves = BitSets.of();
+
+        if (configuration.useGarbageCollection()) {
+            // Perform any pre-gc cleanup, e.g. releasing phantom references
+            notifyBeforeGc();
+
+            logger.log(Level.FINE, "Running GC on {0} of size {1}", new Object[] {this, currentSize});
+
+            // Leaves all live nodes marked
+            int liveNodes = markAllReferencedNodes();
+            invalidatedLeaves = sweepManagedLeaves();
+
+            @SuppressWarnings("NumericCastThatLosesPrecision")
+            int maximumLiveNodes = (int) (currentSize * liveNodeThreshold(configuration));
+            if (liveNodes <= maximumLiveNodes) {
+                int reclaimedNodes = reclaimUnmarkedNodes();
+                logger.log(Level.FINE, "Collected {0} nodes", reclaimedNodes);
+                notifyAfterGc(reclaimedNodes, invalidatedLeaves);
+                if (freeNodeCount() > size() / 4) {
+                    assert checkOwner();
+                    return false;
+                }
+                /* Only reachable under memory pressure (see liveNodeThreshold): The collection did not even
+                 * lift the table above the threshold which triggered it, so try to grow anyway instead of
+                 * collecting again on the very next allocation. Nodes and leaves are already reported. */
+                invalidatedLeaves = BitSets.of();
+            } else {
+                logger.log(Level.FINER, "Not enough free nodes");
+                futileGarbageCollectionCount += 1;
+                /* Drop the dead nodes anyway - they are of no use in the grown table either and rebuilding
+                 * their hash chain entries is the most expensive part of growing. */
+                invalidatedNodes = invalidateUnmarkedNodes();
+            }
+        }
+
+        int newSize = nextSize(currentSize, configuration);
+        if (newSize <= currentSize) {
+            // Growing is not possible - carry on with a densely packed table for as long as we can
+            checkState(freeNodeCount() > 0, "Node table %s is full and cannot grow", this);
+            assert checkOwner();
+            return false;
+        }
+
+        grow(newSize);
+        notifyAfterTableGrowth(invalidatedNodes, invalidatedLeaves);
+        assert checkOwner();
+        return true;
+    }
+
+    /**
+     * The fraction of the table which may be live for a garbage collection to be worth it (as opposed to
+     * growing the table).
+     *
+     * <p>Reclaiming has to leave enough headroom to be worth its cost: A collection is only triggered at
+     * 25% free nodes and costs a full mark (which is a random access traversal of all live nodes) plus a
+     * sweep of the whole table. Allowing, say, 70% live nodes means that the next collection is due after
+     * allocating a mere 5% of the table's size, i.e. tens of node visits amortized per created node.
+     *
+     * <p>Under memory pressure we accept exactly that instead of failing to allocate the larger table.
+     */
+    private double liveNodeThreshold(NodeTableConfiguration configuration) {
+        double threshold = configuration.gcLiveNodeThreshold();
+        if (threshold >= MEMORY_PRESSURE_LIVE_NODE_THRESHOLD) {
+            return threshold;
+        }
+        long required = (long) requiredSizeBytes(desiredSize(size(), configuration));
+        return required <= availableMemory() ? threshold : MEMORY_PRESSURE_LIVE_NODE_THRESHOLD;
+    }
+
+    /** Storage in bytes each node slot of this table occupies, used to keep growth within the heap. */
+    protected abstract int bytesPerSlot();
+
+    private double requiredSizeBytes(long size) {
+        /* The old arrays stay alive while the new ones are being filled, but they are already accounted for
+         * in the used memory - so only the new arrays have to fit. Add a safety margin, since the estimate
+         * ignores everything the caller may allocate in the meantime. */
+        return size * (double) bytesPerSlot() * MEMORY_SAFETY_FACTOR;
+    }
+
+    /**
+     * Approximation of the memory still available for allocation. Note that used memory includes garbage
+     * which the JVM has not collected yet, so this is an under-approximation - which is the safe direction,
+     * as it biases towards reclaiming instead of growing.
+     */
+    private static long availableMemory() {
+        Runtime runtime = Runtime.getRuntime();
+        long maximum = runtime.maxMemory();
+        if (maximum == Long.MAX_VALUE) {
+            // No bound configured
+            return Long.MAX_VALUE;
+        }
+        return maximum - (runtime.totalMemory() - runtime.freeMemory());
+    }
+
+    private static long desiredSize(int currentSize, NodeTableConfiguration configuration) {
+        return Math.min(MAXIMAL_NODE_COUNT, (long) (currentSize * configuration.growthFactor()));
+    }
+
+    /**
+     * The size the table should grow to, bounded by {@link #MAXIMAL_NODE_COUNT} and the memory available for
+     * the new arrays.
+     *
+     * @return The new size, or {@code currentSize} if the table cannot grow (at all) right now.
+     */
+    private int nextSize(int currentSize, NodeTableConfiguration configuration) {
+        long desired = desiredSize(currentSize, configuration);
+        long available = availableMemory();
+
+        long size;
+        if (available == Long.MAX_VALUE || requiredSizeBytes(desired) <= available) {
+            size = desired;
+        } else {
+            // Grow by as much as we can still afford
+            size = Math.min(desired, (long) (available / (bytesPerSlot() * MEMORY_SAFETY_FACTOR)));
+            memoryLimitedGrowthCount += 1;
+            logger.log(Level.FINE, "Limiting growth of {0} to {1} nodes, {2} bytes available", new Object[] {
+                this, size, available
+            });
+        }
+        return size <= currentSize ? currentSize : (int) size;
+    }
 
     public void grow(int size) {
         int currentSize = size();
 
         growCount += 1;
-        int newSize = Math.min(MAXIMAL_NODE_COUNT, Primes.nextPrime(size));
-        assert currentSize < newSize : "Got new size " + newSize + " with old size " + currentSize;
+        // Clamp before searching for a prime - nextPrime has no upper bound and would overflow
+        int newSize = Primes.nextPrime(Math.min(MAXIMAL_NODE_COUNT, size));
+        checkState(currentSize < newSize, "Got new size %s with old size %s", newSize, currentSize);
 
         // Could not free enough space by GC, start growing
         logger.log(Level.FINE, "Growing the table of {0} from {1} to {2}", new Object[] {this, currentSize, newSize});
@@ -564,14 +748,17 @@ public abstract class NodeTable {
         }
 
         // Need a second pass to build the existing nodes chain
+        int rehashedNodes = 0;
         for (int node = currentSize - 1; node >= FIRST_NODE; node--) {
             int data = nodeData[node];
             if (dataIsValid(data)) {
-                connectHashList(node, modHash(positiveHash(node, data)));
+                rehashedNodes++;
+                linkHashList(node, modHash(positiveHash(node, data)));
             } else {
                 freeNodeCount++;
             }
         }
+        this.rehashedNodeCount += rehashedNodes;
 
         this.firstFreeNode = firstFreeNode;
         this.freeNodeCount = freeNodeCount;
@@ -586,9 +773,19 @@ public abstract class NodeTable {
 
     protected abstract void growTo(int newSize);
 
+    /**
+     * Invalidates all unmarked nodes, clearing all marks. This deliberately does <b>not</b> fix up the free
+     * list or the hash chains and hence is only valid immediately before {@link #grow(int)}, which rebuilds
+     * both.
+     *
+     * @return The number of invalidated nodes.
+     */
     public int invalidateUnmarkedNodes() {
         int[] nodeData = this.nodeData;
         int count = 0;
+        // All dead nodes are removed by this, just as by reclaimUnmarkedNodes
+        approximateDeadNodeCount = 0;
+        sweptNodeCount += biggestValidNode;
         for (int node = biggestValidNode; node >= FIRST_NODE; node--) {
             int metadata = nodeData[node];
             int unmarkedData = dataClearMark(metadata);
@@ -613,9 +810,16 @@ public abstract class NodeTable {
         int[] nodeData = this.nodeData;
         int[] hashChain = this.hashChain;
 
-        // Clear chain starts (we need to rebuild them) and push referenced nodes on the mark stack.
-        // TODO Can we omit that complete invalidation / re-use the existing chains? Should be easy enough - its just
-        //   closed hashing
+        /* Clear the chain starts - they are rebuilt below, in one sequential sweep together with the free
+         * list. Note that re-using the existing chains instead (unlinking only the dead nodes) is not
+         * worthwhile, even though it looks like less work: a node has exactly one chain slot, shared with
+         * the free list, so dead nodes have to be unlinked precisely - and doing so means traversing the
+         * chains, which is a random access walk over nodeData and hashChain, whereas the rebuild below
+         * streams through the table sequentially. Chain traversal also cannot produce the ascending free
+         * list (see check()) which keeps allocation packed at low node indices, and it loses the chain
+         * locality that rebuilding restores. The only variant that beats the rebuild - repairing just those
+         * buckets which contain a dead node - pays off exclusively when very few nodes died, which
+         * ensureCapacity() now avoids by growing instead of collecting. */
         Arrays.fill(hashToChainStart, PLACEHOLDER);
 
         int previousFreeNodes = this.freeNodeCount; // NOPMD
@@ -646,7 +850,7 @@ public abstract class NodeTable {
                 // This node is used
                 referencedNodes += 1;
                 nodeData[node] = unmarkedData;
-                connectHashList(node, modHash(positiveHash(node, unmarkedData)));
+                linkHashList(node, modHash(positiveHash(node, unmarkedData)));
             }
         }
 
@@ -659,6 +863,8 @@ public abstract class NodeTable {
         this.garbageCollectionTime += System.currentTimeMillis() - startTimestamp;
         this.garbageCollectedNodeCount += collectedNodes;
         this.garbageCollectionCount += 1;
+        // The whole table is swept: the chain starts are cleared and every node slot is visited
+        this.sweptNodeCount += size();
 
         assert check();
         assert isNoneMarked();
@@ -821,6 +1027,10 @@ public abstract class NodeTable {
             }
         }
 
+        markedNodeCount += referencedNodes;
+        if (peakLiveNodeCount < referencedNodes) {
+            peakLiveNodeCount = referencedNodes;
+        }
         return referencedNodes;
     }
 
@@ -1224,7 +1434,31 @@ public abstract class NodeTable {
                 entry(prefix + "node_table_gc_count", String.valueOf(garbageCollectionCount)),
                 entry(prefix + "node_table_gc_time_milliseconds", String.valueOf(garbageCollectionTime)),
                 entry(prefix + "node_table_gc_collected_nodes", String.valueOf(garbageCollectedNodeCount)),
-                entry(prefix + "node_table_grow_count", String.valueOf(growCount)));
+                entry(prefix + "node_table_grow_count", String.valueOf(growCount)),
+                entry(prefix + "node_table_gc_marked_nodes", String.valueOf(markedNodeCount)),
+                entry(prefix + "node_table_gc_swept_nodes", String.valueOf(sweptNodeCount)),
+                entry(prefix + "node_table_grow_rehashed_nodes", String.valueOf(rehashedNodeCount)),
+                entry(prefix + "node_table_peak_live_nodes", String.valueOf(peakLiveNodeCount)),
+                entry(prefix + "node_table_futile_gc_count", String.valueOf(futileGarbageCollectionCount)),
+                entry(prefix + "node_table_memory_limited_grow_count", String.valueOf(memoryLimitedGrowthCount)),
+                /* The cost of memory management, amortized over the nodes it produced - the number to watch
+                 * for regressions. Rises sharply if the table is collected too often (see
+                 * NodeTableConfiguration#gcLiveNodeThreshold), which the collected node count does not show:
+                 * a table collected twice as often collects more nodes in total, not fewer. */
+                entry(
+                        prefix + "node_table_work_per_created_node",
+                        String.valueOf(ratio(markedNodeCount + sweptNodeCount + rehashedNodeCount, createdNodes))),
+                /* Fraction of each swept table which was actually reclaimed. Complements the above: keeping
+                 * the work per created node low by simply growing the table shows up as a low yield. */
+                entry(prefix + "node_table_gc_yield", String.valueOf(ratio(garbageCollectedNodeCount, sweptNodeCount))),
+                /* Table slots held per live node, i.e. the memory paid for the work per created node above.
+                 * Note that the live node count is only sampled during mark phases, so this and
+                 * node_table_peak_live_nodes are 0 for a table which never collected. */
+                entry(prefix + "node_table_slots_per_live_node", String.valueOf(ratio(size(), peakLiveNodeCount))));
+    }
+
+    private static double ratio(long value, long total) {
+        return total == 0 ? 0.0 : value / (double) total;
     }
 
     private static final class FunctionToStringSupplier {
@@ -1345,6 +1579,12 @@ public abstract class NodeTable {
             return new BinaryNode(variable(node), low(node), high(node));
         }
 
+        @Override
+        protected int bytesPerSlot() {
+            // nodeData, hashChain, hashToChainStart, low, high
+            return 5 * Integer.BYTES;
+        }
+
         public int low(int node) {
             assert isValidDecisionNode(node);
             return low[node];
@@ -1452,6 +1692,13 @@ public abstract class NodeTable {
         @Override
         protected Object representative(int node) {
             return new MultiNode(variable(node), tree[node]);
+        }
+
+        @Override
+        protected int bytesPerSlot() {
+            /* nodeData, hashChain, hashToChainStart and the spine of tree - the children arrays themselves
+             * are not re-allocated when growing, so they are not counted here. */
+            return 3 * Integer.BYTES + Long.BYTES;
         }
 
         public int follow(int node, int value) {

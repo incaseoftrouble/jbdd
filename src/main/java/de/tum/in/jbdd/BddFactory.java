@@ -24,8 +24,7 @@ public final class BddFactory {
     }
 
     public static Bdd buildBdd(BddConfiguration configuration) {
-        BddImpl bdd = new BddImpl(configuration);
-        return configuration.threadSafetyCheck() ? new CheckedBdd(bdd) : bdd;
+        return new BddImpl(configuration);
     }
 
     public static MtBdd buildMtBdd() {

@@ -31,12 +31,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.IntPredicate;
 import java.util.function.IntUnaryOperator;
 import java.util.function.Supplier;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 import java.util.stream.IntStream;
 import org.jspecify.annotations.Nullable;
 
@@ -44,11 +43,10 @@ import org.jspecify.annotations.Nullable;
  * Important differences to BDDs:
  *  - In a generic MTBDD we have no commutativity and neutral elements, hence much more "base case" branching is required
  */
-@SuppressWarnings({"PMD", "AssignmentToMethodParameter"})
+@SuppressWarnings({"PMD", "AssignmentToMethodParameter", "AssertWithSideEffects"})
 public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     private static final int INVERT_ARRAY_DOMAIN_THRESHOLD = 32;
     private static final int INITIAL_VALUE_CAPACITY = 1024;
-    private static final Logger logger = Logger.getLogger(MtBddImpl.class.getName());
 
     private final BddImpl bdd;
     private final MtBddTable table;
@@ -59,6 +57,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     private final BitSet allocatedValues = new BitSet();
     private final NodeLifecycleObserverGroup<NodeLifecycleObserver> observers = new NodeLifecycleObserverGroup<>();
     private final ProtectionTracker protectionTracker;
+    private final ConcurrentAccessGuard accessGuard = new ConcurrentAccessGuard();
 
     MtBddImpl(BddImpl bdd) {
         this.bdd = bdd;
@@ -123,15 +122,14 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     }
 
     public int forceGc() {
+        assert accessGuard.acquire();
         notifyBeforeGc();
         table.markAllReferencedNodes();
-        // Leaves first: reclaimUnmarkedNodes asserts that nothing is marked afterwards, and leaf marks
-        // live in their own BitSet which only the leaf sweep clears (see MtBddTable#ensureCapacity,
-        // which has the same two steps in this order).
         BitSet reclaimedValues = table.invalidateUnmarkedAndUnreferencedLeaves();
         int reclaimedNodes = table.reclaimUnmarkedNodes();
         assert table().isNoneMarked();
         notifyAfterGc(reclaimedNodes, reclaimedValues);
+        assert accessGuard.release();
         return reclaimedNodes;
     }
 
@@ -165,6 +163,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     @Override
     public int reference(int function) {
         assert isValidFunction(function);
+        assert accessGuard.acquire();
         if (isConstant(function)) {
             int value = constantFunctionToValue(function);
             ensureValueCapacity(value);
@@ -175,6 +174,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         } else {
             table.referenceNode(function);
         }
+        assert accessGuard.release();
         return function;
     }
 
@@ -182,6 +182,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     @Override
     public int dereference(int function) {
         assert isValidFunction(function);
+        assert accessGuard.acquire();
         if (isConstant(function)) {
             int value = constantFunctionToValue(function);
             assert value < valueReferenceCounts.length && valueReferenceCounts[value] > 0
@@ -193,6 +194,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         } else {
             table.dereferenceNode(function);
         }
+        assert accessGuard.release();
         return function;
     }
 
@@ -236,12 +238,16 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
 
     @Override
     public void forEachSupportVariable(int function, IntConsumer action) {
+        assert accessGuard.acquire();
         table.forEachVariable(function, action);
+        assert accessGuard.release();
     }
 
     @Override
     public void forEachSupportVariableFiltered(int function, BitSet filter, IntConsumer action) {
+        assert accessGuard.acquire();
         table.forEachVariable(function, filter, action);
+        assert accessGuard.release();
     }
 
     @Override
@@ -259,7 +265,10 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
 
     @Override
     public int nodeCount() {
-        return table.nodeCount() + allocatedValues.cardinality();
+        assert accessGuard.acquire();
+        int result = table.nodeCount() + allocatedValues.cardinality();
+        assert accessGuard.release();
+        return result;
     }
 
     @Override
@@ -277,7 +286,10 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     @Override
     public int size(int function) {
         assert isValidFunction(function);
-        return table.nodeCountBelow(function);
+        assert accessGuard.acquire();
+        int result = table.nodeCountBelow(function);
+        assert accessGuard.release();
+        return result;
     }
 
     @Override
@@ -346,8 +358,10 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     @Override
     public int of(int value) {
         assert value >= 0;
+        assert accessGuard.acquire();
         // TODO Heuristically trigger GC if too many values are allocated.
         allocatedValues.set(value);
+        assert accessGuard.release();
         return valueToConstantFunction(value);
     }
 
@@ -355,9 +369,11 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     public int of(int variable, int trueChild, int falseChild) {
         assert 0 <= variable && variable < numberOfVariables() : "Variable " + variable + " does not exist";
         assert isValidFunction(trueChild) && isValidFunction(falseChild);
+        assert accessGuard.acquire();
         table.pushToWorkStack(trueChild, falseChild);
         int result = makeFunction(variable, falseChild, trueChild);
         table.popFromWorkStack(2);
+        assert accessGuard.release();
         return result;
     }
 
@@ -372,10 +388,12 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
             return predicate.test(constantFunctionToValue(function));
         }
 
+        assert accessGuard.acquire();
         assert table.isNoneMarkedBelowNode(function);
         boolean result = allValuesMatchRecursive(function, predicate);
         table.doSetMarkBelow(function, false, false);
         assert table.isNoneMarkedBelowNode(function);
+        assert accessGuard.release();
         return result;
     }
 
@@ -395,10 +413,12 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
             return predicate.test(constantFunctionToValue(function));
         }
 
+        assert accessGuard.acquire();
         assert table.isNoneMarkedBelowNode(function);
         boolean result = anyValueMatchesRecursive(function, predicate);
         table.doSetMarkBelow(function, false, false);
         assert table.isNoneMarkedBelowNode(function);
+        assert accessGuard.release();
         return result;
     }
 
@@ -419,11 +439,13 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
             return;
         }
 
+        assert accessGuard.acquire();
         assert table.isNoneMarkedBelowNode(function);
         table.markAllBelowNode(function, true);
         BitSets.forEach(table.markedValues, action);
         table.unMarkAllBelowNode(function, true);
         assert table.isNoneMarkedBelowNode(function);
+        assert accessGuard.release();
     }
 
     @Override
@@ -435,21 +457,25 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
 
         // The mark phase computes exactly this set as a side effect, so copy it out directly instead of
         // going through forEachValue's IntConsumer round-trip.
+        assert accessGuard.acquire();
         assert table.isNoneMarkedBelowNode(function);
         table.markAllBelowNode(function, true);
         BitSet values = BitSets.copyOf(table.markedValues);
         table.unMarkAllBelowNode(function, true);
         assert table.isNoneMarkedBelowNode(function);
+        assert accessGuard.release();
         return values;
     }
 
     @Override
     public void forEachPath(int function, PathConsumer action) {
+        assert accessGuard.acquire();
         ValuedIterator<BinaryPath> iterator = pathIterator(function);
         while (iterator.hasNext()) {
             BinaryPath path = iterator.next();
             action.accept(path, iterator.value());
         }
+        assert accessGuard.release();
     }
 
     @Override
@@ -468,9 +494,11 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     public Optional<BitSet> anyAssignment(int function, IntPredicate values) {
         assert isValidFunction(function);
 
+        assert accessGuard.acquire();
         cache.initAnyValueMatches(values);
         BitSet assigment = new BitSet(numberOfVariables());
         boolean found = anyAssigmentRecursive(function, values, assigment);
+        assert accessGuard.release();
         return found ? Optional.of(assigment) : Optional.empty();
     }
 
@@ -516,9 +544,11 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
             return values.test(constantFunctionToValue(function)) ? TWO.pow(numberOfVariables()) : ZERO;
         }
 
+        assert accessGuard.acquire();
         cache.initCount(values);
         int variable = decisionVariable(function);
         BigInteger satisfyingBelow = countSatisfyingAssignmentsRecursive(function, values);
+        assert accessGuard.release();
         return TWO.pow(variable).multiply(satisfyingBelow);
     }
 
@@ -560,6 +590,17 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         BitSet support = new BitSet(numberOfVariables());
         support.set(0, numberOfVariables());
         return assignmentIterator(function, values, support);
+    }
+
+    // See BddImpl#forEachSolution: the MtBdd default (see MtBdd#forEachSolution) delegates to
+    // assignmentIterator(...).forEachRemaining(action), which would leave the guard released while action runs.
+    // Override it here so the whole traversal is guarded, consistent with the other forEach* methods.
+    @Override
+    public void forEachSolution(int function, @Nullable IntPredicate values, Consumer<? super BitSet> action) {
+        assert isValidFunction(function);
+        assert accessGuard.acquire();
+        assignmentIterator(function, values).forEachRemaining(action);
+        assert accessGuard.release();
     }
 
     @Override
@@ -615,13 +656,15 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
             MtBddCache.@Nullable ApplySimplifyCache registeredApplySimplifyCache) {
         assert isValidFunction(function1) && isValidFunction(function2);
         assert bdd.isValidFunction(bddDomain);
-        assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
 
         if (bddDomain == bdd.falseFunction()) {
             // Nothing is constrained, so any constant is a valid answer - pick one from the operands'
             // co-domains rather than recursing at all (see #simplify).
             return of(operator.applyAsInt(anyLeafValue(function1), anyLeafValue(function2)));
         }
+
+        assert accessGuard.acquire();
+        assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
 
         MtBddCache.BinaryToIntCache applyCache = registeredApplyCache;
         MtBddCache.ApplySimplifyCache applySimplifyCache = registeredApplySimplifyCache;
@@ -642,6 +685,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         bddTable.popFromWorkStack();
         table.popFromWorkStack(2);
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -770,11 +814,13 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     public int mapSimplify(int function, IntUnaryOperator map, int bddDomain) {
         assert isValidFunction(function);
         assert bdd.isValidFunction(bddDomain);
-        assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
 
         if (bddDomain == bdd.falseFunction()) {
             return of(map.applyAsInt(anyLeafValue(function)));
         }
+
+        assert accessGuard.acquire();
+        assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
 
         cache.initMap(map);
         table.pushToWorkStack(function);
@@ -784,6 +830,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         bddTable.popFromWorkStack();
         table.popFromWorkStack();
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -851,11 +898,17 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         if (functions.length == 0) {
             return placeholder();
         }
+
+        assert accessGuard.acquire();
         if (operator instanceof MtBddNaryOperator.Unary) {
-            return this.map(functions[0], (MtBddNaryOperator.Unary) operator);
+            int result = this.map(functions[0], (MtBddNaryOperator.Unary) operator);
+            assert accessGuard.release();
+            return result;
         }
         if (operator instanceof MtBddNaryOperator.Binary) {
-            return this.apply(functions[0], functions[1], (MtBddNaryOperator.Binary) operator);
+            int result = this.apply(functions[0], functions[1], (MtBddNaryOperator.Binary) operator);
+            assert accessGuard.release();
+            return result;
         }
         for (int function : functions) {
             assert isValidFunction(function);
@@ -875,6 +928,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         int result = computeNaryApply(copy, values, operator, 0, new DepthPool<>(() -> new int[functions.length]));
         table.popFromWorkStack(functions.length);
         assert table.workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -954,9 +1008,11 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     @Override
     public int agreement(int mtbddFunction1, int mtbddFunction2) {
         assert isValidFunction(mtbddFunction1) && isValidFunction(mtbddFunction2);
+        assert accessGuard.acquire();
         assert bdd.table().workStacksEmpty();
         int result = agreementRecursive(mtbddFunction1, mtbddFunction2);
         assert bdd.table().workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -1025,10 +1081,12 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     @Override
     public int mapBoolean(int mtbddFunction, IntPredicate values) {
         assert isValidFunction(mtbddFunction);
+        assert accessGuard.acquire();
         assert bdd.table().workStacksEmpty();
         cache.initMapBoolean(values);
         int result = mapBooleanRecursive(mtbddFunction, values);
         assert bdd.table().workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -1058,11 +1116,13 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         assert isValidFunction(mtbddFunction);
         assert bdd.isValidFunction(bddAssignments);
 
+        assert accessGuard.acquire();
         assert table.workStacksEmpty();
         table.pushToWorkStack(mtbddFunction);
         int result = updateRecursive(mtbddFunction, bddAssignments, value);
         table.popFromWorkStack();
         assert table.workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -1129,11 +1189,15 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
             return of(anyLeafValue(mtbddFunction));
         }
 
-        assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
+        assert accessGuard.acquire();
         BddImpl.ComposeAnalysis analysis = bdd.analyzeCompose(bddVariableMapping);
         if (analysis.highestReplacedVariable == -1) {
-            return simplify(mtbddFunction, bddDomain);
+            int result = simplify(mtbddFunction, bddDomain);
+            assert accessGuard.release();
+            return result;
         }
+
+        assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
 
         // Plain compose builds no Bdd nodes at all (ifThenElseRecursive only reads the replacements), but
         // narrowing a domain does - so from here on the replacement array needs the same Bdd-side
@@ -1160,6 +1224,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
                 cache.composeSimplifyCache());
         bddTable.popFromWorkStack(bddWorkStackCount);
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -1246,20 +1311,16 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
             return computeSimplify(mtbddNode, bddDomain);
         }
 
-        int lookup;
-        int hash;
-        if (bddDomain == bdd.trueFunction()) {
-            lookup = composeCache.lookup(mtbddNode);
-            hash = composeCache.lookupHash();
-        } else {
-            lookup = composeSimplifyCache.lookup(mtbddNode, bddDomain);
-            hash = composeSimplifyCache.lookupHash();
-        }
+        boolean domainIsTrue = bddDomain == bdd.trueFunction();
+        assert composeSimplifyCache != null || domainIsTrue;
+
+        int lookup = domainIsTrue ? composeCache.lookup(mtbddNode) : composeSimplifyCache.lookup(mtbddNode, bddDomain);
         if (lookup != placeholder()) {
             return lookup;
         }
+        int hash = domainIsTrue ? composeCache.lookupHash : composeSimplifyCache.lookupHash;
 
-        int domainVariable = bddDomain == bdd.trueFunction() ? Integer.MAX_VALUE : bdd.decisionVariable(bddDomain);
+        int domainVariable = domainIsTrue ? Integer.MAX_VALUE : bdd.decisionVariable(bddDomain);
         int domainLow = domainVariable <= variable ? bdd.lowOf(bddDomain) : bddDomain;
         int domainHigh = domainVariable <= variable ? bdd.highOf(bddDomain) : bddDomain;
 
@@ -1354,7 +1415,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
             }
         }
 
-        if (bddDomain == bdd.trueFunction()) {
+        if (domainIsTrue) {
             composeCache.put(hash, mtbddNode, result);
         } else {
             composeSimplifyCache.put(hash, mtbddNode, bddDomain, result);
@@ -1370,6 +1431,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
             return mtbddFunction;
         }
 
+        assert accessGuard.acquire();
         int highestRestrictedVariable = restrictedVariables.length() - 1;
         cache.initRestrict(restrictedVariables, restrictedVariableValues);
         assert table.workStacksEmpty();
@@ -1378,6 +1440,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
                 mtbddFunction, restrictedVariables, restrictedVariableValues, highestRestrictedVariable);
         table.popFromWorkStack();
         assert table.workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -1418,11 +1481,13 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         assert isValidFunction(mtbddThenFunction) && isValidFunction(mtbddElseFunction);
         assert bdd.isValidFunction(bddIfFunction);
 
+        assert accessGuard.acquire();
         assert table.workStacksEmpty();
         table.pushToWorkStack(mtbddThenFunction, mtbddElseFunction);
         int result = ifThenElseRecursive(bddIfFunction, mtbddThenFunction, mtbddElseFunction);
         table.popFromWorkStack(2);
         assert table.workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -1467,6 +1532,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     @Override
     public MtBdd.Inverse invert(int mtbddFunction) {
         assert isValidFunction(mtbddFunction);
+        assert accessGuard.acquire();
         assert bdd.table().workStacksEmpty();
 
         int domainSize = allocatedValues.length();
@@ -1493,6 +1559,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         }
 
         assert bdd.table().workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -1600,6 +1667,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     @Override
     public FunctionToFunctionMap split(int mtbddFunction, BitSet splitVariables) {
         assert isValidFunction(mtbddFunction);
+        assert accessGuard.acquire();
         assert table.workStacksEmpty();
 
         cache.initSplit();
@@ -1610,6 +1678,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         table.popFromWorkStack();
         table.popFromSecondaryWorkStack(bijection.size());
         assert table.workStacksEmpty();
+        assert accessGuard.release();
 
         BitSet indices = new BitSet();
         indices.set(0, bijection.size());
@@ -1634,6 +1703,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     @Override
     public int splitRelabeled(int mtbddFunction, BitSet splitVariables, IntUnaryOperator relabeler) {
         assert isValidFunction(mtbddFunction);
+        assert accessGuard.acquire();
         assert table.workStacksEmpty();
 
         // Relabel in two passes for simplicity: For one pass, we would need to be careful not to call the
@@ -1665,6 +1735,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
 
         table.popFromSecondaryWorkStack(bijection.size());
         assert table.workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -1812,6 +1883,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
             };
         }
 
+        assert accessGuard.acquire();
         assert table.workStacksEmpty();
         cache.initCartesianProduct();
         for (int function : functions) {
@@ -1827,6 +1899,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
                 bijection);
         table.popFromWorkStack(functions.length);
         assert table.workStacksEmpty();
+        assert accessGuard.release();
 
         BitSet indices = new BitSet();
         indices.set(0, bijection.size());
@@ -1959,6 +2032,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     }
 
     private int constrainSimplify(int mtbddFunction, int bddDomain, boolean constrain) {
+        assert accessGuard.acquire();
         assert table.workStacksEmpty();
         table.pushToWorkStack(mtbddFunction);
         // Simplify uses bdd.or to widen the domain; we need to protect it
@@ -1968,6 +2042,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         bddTable.popFromWorkStack();
         table.popFromWorkStack();
         assert table.workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -2049,9 +2124,11 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
 
     @Override
     public Map<String, Object> statistics() {
+        assert accessGuard.acquire();
         Map<String, Object> statistics = new HashMap<>(table.statistics("mtbdd_"));
         statistics.putAll(cache.statistics());
         statistics.put("mtbdd_allocated_values", allocatedValues.cardinality());
+        assert accessGuard.release();
         return DecisionDiagram.prefixStatistics(bdd.configuration().name(), statistics);
     }
 
@@ -2122,11 +2199,6 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         private final int[] path;
         private final BitSet pathSupport;
         private final BitSet assignment;
-
-        /**
-         * Handed out by every {@link #next()}: both of its bit sets are the ones mutated in place above, so
-         * the wrapper only has to be built once (its own state is entirely those two references).
-         */
         private final BinaryPath currentPath;
 
         private boolean firstRun = true;
@@ -2507,49 +2579,33 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         }
 
         @Override
-        boolean ensureCapacity() {
-            if (freeNodeCount() > size() / 4) {
-                return false;
-            }
+        protected BddConfiguration configuration() {
+            return mtbdd.bdd.configuration();
+        }
 
-            BddConfiguration configuration = mtbdd.bdd.configuration();
-            int currentSize = size();
-            int approximateDeadNodeCount = approximateDeadNodeCount();
-            int invalidatedNodes;
-            BitSet invalidatedLeaves;
-            if (configuration.useGarbageCollection() && approximateDeadNodeCount > 0) {
-                mtbdd.notifyBeforeGc();
+        @Override
+        protected void notifyBeforeGc() {
+            mtbdd.notifyBeforeGc();
+        }
 
-                logger.log(Level.FINE, "Running GC on {0} has size {1} and approximately {2} dead nodes", new Object[] {
-                    this, currentSize, approximateDeadNodeCount
-                });
+        @Override
+        protected void notifyAfterGc(int reclaimedNodes, BitSet reclaimedValues) {
+            mtbdd.notifyAfterGc(reclaimedNodes, reclaimedValues);
+        }
 
-                @SuppressWarnings("NumericCastThatLosesPrecision")
-                // If we only can free few nodes, it is not worth the effort
-                int maximumReferencedNodes = (int) (currentSize * 0.7);
+        @Override
+        protected void notifyAfterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
+            mtbdd.notifyAfterTableGrow(invalidatedNodes, reclaimedValues);
+        }
 
-                // Leaves all referenced nodes marked
-                int referencedNodes = markAllReferencedNodes();
-                invalidatedLeaves = invalidateUnmarkedAndUnreferencedLeaves();
-                if (referencedNodes <= maximumReferencedNodes) {
-                    invalidatedNodes = reclaimUnmarkedNodes();
-                    logger.log(Level.FINE, "Collected {0} nodes", invalidatedNodes);
-                    mtbdd.notifyAfterGc(invalidatedNodes, invalidatedLeaves);
-                    assert mtbdd.check();
-                    return false;
-                }
+        @Override
+        protected BitSet sweepManagedLeaves() {
+            return invalidateUnmarkedAndUnreferencedLeaves();
+        }
 
-                logger.log(Level.FINER, "Not enough free nodes");
-                invalidatedNodes = invalidateUnmarkedNodes();
-            } else {
-                invalidatedNodes = 0;
-                invalidatedLeaves = BitSets.of();
-            }
-            //noinspection NumericCastThatLosesPrecision
-            grow((int) (currentSize * configuration.growthFactor()));
-            mtbdd.notifyAfterTableGrow(invalidatedNodes, invalidatedLeaves);
-            assert mtbdd.check();
-            return true;
+        @Override
+        protected boolean checkOwner() {
+            return mtbdd.check();
         }
 
         BitSet invalidateUnmarkedAndUnreferencedLeaves() {

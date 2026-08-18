@@ -26,8 +26,6 @@ import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.Predicate;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 import java.util.stream.IntStream;
 import org.jspecify.annotations.Nullable;
 
@@ -39,10 +37,10 @@ import org.jspecify.annotations.Nullable;
     "ReassignedVariable",
     "AssignmentToMethodParameter",
     "SameParameterValue",
-    "DuplicatedCode"
+    "DuplicatedCode",
+    "AssertWithSideEffects"
 })
 public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
-    private static final Logger logger = Logger.getLogger(BddImpl.class.getName());
     private static final BitSet EMPTY_BIT_SET = new BitSet(0);
 
     private final BooleanCache cache;
@@ -112,6 +110,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
 
     @Override
     public int createVariable() {
+        assert accessGuard.acquire();
         int variableNode = table.saturateNode(makeFunction(numberOfVariables, FALSE, TRUE));
 
         if (numberOfVariables == variableNodes.length) {
@@ -123,6 +122,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         cache.variablesChanged();
         mtbdd.cache().variablesChanged();
 
+        assert accessGuard.release();
         return variableNode;
     }
 
@@ -135,6 +135,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             return new int[] {createVariable()};
         }
 
+        assert accessGuard.acquire();
         int newSize = numberOfVariables + count;
         if (newSize >= variableNodes.length) {
             variableNodes = Arrays.copyOf(variableNodes, Math.max(variableNodes.length * 2, newSize));
@@ -155,6 +156,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         mtbdd.cache().variablesChanged();
         // table.ensureWorkStackSize(numberOfVariables * 2);
 
+        assert accessGuard.release();
         return newVariableNodes;
     }
 
@@ -388,6 +390,28 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         return solutionIterator(and(function, domain), support);
     }
 
+    // The default forEachSolution/forEachSolutionIn overloads (see BooleanTerminalDecisionDiagram) delegate to
+    // solutionIterator(...).forEachRemaining(action) - since the guard can only bracket this class's own methods,
+    // and the iterator is driven from outside of solutionIterator() itself, those defaults would leave the guard
+    // released while the caller-supplied action runs. Override them here so the whole traversal - including every
+    // invocation of action - happens within a single guarded call, consistent with the other forEach* methods.
+
+    @Override
+    public void forEachSolution(int function, Consumer<? super BitSet> action) {
+        assert isValidFunction(function);
+        assert accessGuard.acquire();
+        solutionIterator(function).forEachRemaining(action);
+        assert accessGuard.release();
+    }
+
+    @Override
+    public void forEachSolution(int function, BitSet support, Consumer<? super BitSet> action) {
+        assert isValidFunction(function);
+        assert accessGuard.acquire();
+        solutionIterator(function, support).forEachRemaining(action);
+        assert accessGuard.release();
+    }
+
     @Override
     public void forEachSolutionIn(int function, int domain, Consumer<? super BitSet> action) {
         assert isValidFunction(function) && isValidFunction(domain);
@@ -395,8 +419,10 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         if (function == FALSE || domain == FALSE) {
             return;
         }
+        assert accessGuard.acquire();
         forEachSolutionInRecursive(
                 function, domain, null, numberOfVariables - 1, new BitSet(numberOfVariables), action);
+        assert accessGuard.release();
     }
 
     @Override
@@ -408,9 +434,11 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             return;
         }
 
+        assert accessGuard.acquire();
         int[] variables = support.stream().toArray();
         forEachSolutionInRecursive(
                 function, domain, variables, variables.length - 1, new BitSet(numberOfVariables), action);
+        assert accessGuard.release();
     }
 
     private void forEachSolutionInRecursive(
@@ -483,14 +511,17 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         if (function == FALSE) {
             return;
         }
+        assert accessGuard.acquire();
         if (function == TRUE) {
             action.accept(new BinaryPath(new BitSet(0), new BitSet(0)));
+            assert accessGuard.release();
             return;
         }
 
         int numberOfVariables = numberOfVariables();
         BinaryPath path = new BinaryPath(new BitSet(numberOfVariables), new BitSet(numberOfVariables));
         forEachPathRecursive(positive(function), null, numberOfVariables, path, action, isPositive(function));
+        assert accessGuard.release();
     }
 
     @Override
@@ -500,14 +531,17 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         if (function == FALSE) {
             return;
         }
+        assert accessGuard.acquire();
         if (function == TRUE || relevantSet.isEmpty()) {
             action.accept(new BinaryPath(new BitSet(0), new BitSet(0)));
+            assert accessGuard.release();
             return;
         }
 
         int highestVariable = relevantSet.length() - 1;
         BinaryPath path = new BinaryPath(new BitSet(highestVariable + 1), new BitSet(highestVariable + 1));
         forEachPathRecursive(positive(function), relevantSet, highestVariable, path, action, isPositive(function));
+        assert accessGuard.release();
     }
 
     private void forEachPathRecursive(
@@ -569,13 +603,18 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         if (function == FALSE) {
             return false;
         }
+        assert accessGuard.acquire();
         if (function == TRUE) {
-            return predicate.test(new BinaryPath(new BitSet(0), new BitSet(0)));
+            boolean result = predicate.test(new BinaryPath(new BitSet(0), new BitSet(0)));
+            assert accessGuard.release();
+            return result;
         }
 
         int numberOfVariables = numberOfVariables();
         BinaryPath path = new BinaryPath(new BitSet(numberOfVariables), new BitSet(numberOfVariables));
-        return anyPathMatchesRecursive(positive(function), path, predicate, isPositive(function));
+        boolean result = anyPathMatchesRecursive(positive(function), path, predicate, isPositive(function));
+        assert accessGuard.release();
+        return result;
     }
 
     private boolean anyPathMatchesRecursive(
@@ -613,7 +652,10 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     public BigInteger countSatisfyingAssignments(int function) {
         assert isValidFunction(function);
 
-        return countSatisfyingAssignmentsRecursive(function, -1);
+        assert accessGuard.acquire();
+        BigInteger result = countSatisfyingAssignmentsRecursive(function, -1);
+        assert accessGuard.release();
+        return result;
     }
 
     @Override
@@ -626,7 +668,10 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     public BigInteger countSatisfyingAssignmentsIn(int function, int domain) {
         assert isValidFunction(function) && isValidFunction(domain);
 
-        return countSatisfyingAssignmentsInRecursive(function, domain, -1);
+        assert accessGuard.acquire();
+        BigInteger result = countSatisfyingAssignmentsInRecursive(function, domain, -1);
+        assert accessGuard.release();
+        return result;
     }
 
     private BigInteger countSatisfyingAssignmentsRecursive(int function, int previousVar) {
@@ -741,16 +786,21 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             return FALSE;
         }
 
-        assert table.workStacksEmpty();
-
+        assert accessGuard.acquire();
         ComposeAnalysis analysis = analyzeCompose(variableMapping);
         if (analysis.highestReplacedVariable == -1) {
-            return simplify(function, domain);
+            int result = simplify(function, domain);
+            assert accessGuard.release();
+            return result;
         }
         if (analysis.isRestrict) {
             // TODO Native
-            return simplify(restrict(function, analysis.restrictSupport, analysis.restrictValues), domain);
+            int result = simplify(restrict(function, analysis.restrictSupport, analysis.restrictValues), domain);
+            assert accessGuard.release();
+            return result;
         }
+
+        assert table.workStacksEmpty();
 
         int arrayWorkStackCount = 0;
         for (int j : variableMapping) {
@@ -772,6 +822,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
                 cache.composeSimplifyCache());
         table.popFromWorkStack(arrayWorkStackCount);
         assert table.workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -894,7 +945,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
     }
 
-    // simplify is integrated directly due to most code path being shared
+    @SuppressWarnings("NullAway")
     private int computeComposeSimplify(
             int function,
             int[] variableNodes,
@@ -1035,6 +1086,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             return function;
         }
 
+        assert accessGuard.acquire();
         assert table.workStacksEmpty();
         int highestRestrictedVariable = restrictedVariables.length() - 1;
         table.pushToWorkStack(function);
@@ -1043,6 +1095,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
                 computeRestrict(function, restrictedVariables, restrictedVariableValues, highestRestrictedVariable);
         table.popFromWorkStack();
         assert table.workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -1086,28 +1139,33 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
 
     @Override
     public int conjunction(int... variables) {
+        assert accessGuard.acquire();
         int node = TRUE;
         for (int variable : variables) {
             // Variable nodes are saturated, no need to guard them
             node = computeAnd(table.pushToWorkStack(node), variableNodes[variable]);
             table.popFromWorkStack();
         }
+        assert accessGuard.release();
         return node;
     }
 
     @Override
     public int conjunction(BitSet variables) {
+        assert accessGuard.acquire();
         int node = TRUE;
         for (int variable = variables.nextSetBit(0); variable >= 0; variable = variables.nextSetBit(variable + 1)) {
             // Variable nodes are saturated, no need to guard them
             node = computeAnd(table.pushToWorkStack(node), variableNodes[variable]);
             table.popFromWorkStack();
         }
+        assert accessGuard.release();
         return node;
     }
 
     @Override
     public int disjunction(int... variables) {
+        assert accessGuard.acquire();
         int node = FALSE;
         for (int variable : variables) {
             // Variable nodes are saturated, no need to guard them
@@ -1115,11 +1173,13 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             node = computeOr(node1, variableNodes[variable]);
             table.popFromWorkStack();
         }
+        assert accessGuard.release();
         return node;
     }
 
     @Override
     public int disjunction(BitSet variables) {
+        assert accessGuard.acquire();
         int node = FALSE;
         for (int variable = variables.nextSetBit(0); variable >= 0; variable = variables.nextSetBit(variable + 1)) {
             // Variable nodes are saturated, no need to guard them
@@ -1127,6 +1187,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             node = computeOr(node1, variableNodes[variable]);
             table.popFromWorkStack();
         }
+        assert accessGuard.release();
         return node;
     }
 
@@ -1134,11 +1195,13 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     public int and(int function1, int function2) {
         assert isValidFunction(function1) && isValidFunction(function2);
 
+        assert accessGuard.acquire();
         assert table.workStacksEmpty();
         table.pushToWorkStack(function1, function2);
         int result = computeAnd(function1, function2);
         table.popFromWorkStack(2);
         assert table.workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -1150,11 +1213,13 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             return FALSE;
         }
 
+        assert accessGuard.acquire();
         assert table.workStacksEmpty();
         table.pushToWorkStack(function1, function2, domain);
         int result = computeAndSimplify(function1, function2, domain);
         table.popFromWorkStack(3);
         assert table.workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -1342,11 +1407,13 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     @Override
     public int xor(int function1, int function2) {
         assert isValidFunction(function1) && isValidFunction(function2);
+        assert accessGuard.acquire();
         assert table.workStacksEmpty();
         table.pushToWorkStack(function1, function2);
         int result = computeXor(function1, function2);
         table.popFromWorkStack(2);
         assert table.workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -1358,11 +1425,13 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             return FALSE;
         }
 
+        assert accessGuard.acquire();
         assert table.workStacksEmpty();
         table.pushToWorkStack(function1, function2, domain);
         int result = computeXorSimplify(function1, function2, domain);
         table.popFromWorkStack(3);
         assert table.workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -1558,12 +1627,14 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             return TRUE;
         }
 
+        assert accessGuard.acquire();
         assert table.workStacksEmpty();
         cache.initExists(quantifiedVariables);
         table.pushToWorkStack(function);
         int result = existsRecursive(function, quantifiedVariables);
         table.popFromWorkStack();
         assert table.workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -1617,11 +1688,13 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     public int ifThenElse(int ifFunction, int thenFunction, int elseFunction) {
         assert isValidFunction(ifFunction) && isValidFunction(thenFunction) && isValidFunction(elseFunction);
 
+        assert accessGuard.acquire();
         assert table.workStacksEmpty();
         table.pushToWorkStack(ifFunction, thenFunction, elseFunction);
         int result = computeIfThenElse(ifFunction, thenFunction, elseFunction);
         table.popFromWorkStack(3);
         assert table.workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -1636,11 +1709,13 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             return FALSE;
         }
 
+        assert accessGuard.acquire();
         assert table.workStacksEmpty();
         table.pushToWorkStack(ifFunction, thenFunction, elseFunction, domain);
         int result = computeIfThenElseSimplify(ifFunction, thenFunction, elseFunction, domain);
         table.popFromWorkStack(4);
         assert table.workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -1899,9 +1974,11 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     public boolean implies(int function1, int function2) {
         assert isValidFunction(function1) && isValidFunction(function2);
 
+        assert accessGuard.acquire();
         assert table.workStacksEmpty();
         boolean result = !intersectsRecursive(function1, complement(function2));
         assert table.workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -1909,9 +1986,11 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     public boolean intersects(int function1, int function2) {
         assert isValidFunction(function1) && isValidFunction(function2);
 
+        assert accessGuard.acquire();
         assert table.workStacksEmpty();
         boolean result = intersectsRecursive(function1, function2);
         assert table.workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -1979,11 +2058,13 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             return function;
         }
 
+        assert accessGuard.acquire();
         assert table.workStacksEmpty();
         table.pushToWorkStack(function, domain);
         int result = computeConstrainSimplify(function, domain, true);
         table.popFromWorkStack(2);
         assert table.workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -1998,11 +2079,13 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             return function;
         }
 
+        assert accessGuard.acquire();
         assert table.workStacksEmpty();
         table.pushToWorkStack(function, domain);
         int result = computeConstrainSimplify(function, domain, false);
         table.popFromWorkStack(2);
         assert table.workStacksEmpty();
+        assert accessGuard.release();
         return result;
     }
 
@@ -2501,45 +2584,28 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
 
         @Override
-        boolean ensureCapacity() {
-            if (freeNodeCount() > size() / 4) {
-                return false;
-            }
+        protected BddConfiguration configuration() {
+            return bdd.configuration;
+        }
 
-            NodeTable table = bdd.table;
-            int currentSize = table.size();
-            int approximateDeadNodeCount = table.approximateDeadNodeCount();
-            int invalidatedNodes;
-            if (bdd.configuration.useGarbageCollection() && approximateDeadNodeCount > 0) {
-                bdd.notifyBeforeGc();
+        @Override
+        protected void notifyBeforeGc() {
+            bdd.notifyBeforeGc();
+        }
 
-                logger.log(Level.FINE, "Running GC on {0} has size {1} and approximately {2} dead nodes", new Object[] {
-                    this, currentSize, approximateDeadNodeCount
-                });
+        @Override
+        protected void notifyAfterGc(int reclaimedNodes, BitSet reclaimedValues) {
+            bdd.notifyAfterGc(reclaimedNodes);
+        }
 
-                @SuppressWarnings("NumericCastThatLosesPrecision")
-                // If we only can free few nodes, it is not worth the effort
-                int maximumReferencedNodes = (int) (currentSize * 0.7);
-                // Leaves all referenced nodes marked
-                int referencedNodes = table.markAllReferencedNodes();
-                if (referencedNodes <= maximumReferencedNodes) {
-                    invalidatedNodes = table.reclaimUnmarkedNodes();
-                    logger.log(Level.FINE, "Collected {0} nodes", invalidatedNodes);
-                    bdd.notifyAfterGc(invalidatedNodes);
-                    assert bdd.check();
-                    return false;
-                }
-
-                logger.log(Level.FINER, "Not enough free nodes");
-                invalidatedNodes = table.invalidateUnmarkedNodes();
-            } else {
-                invalidatedNodes = 0;
-            }
-            //noinspection NumericCastThatLosesPrecision
-            table.grow((int) (currentSize * bdd.configuration.growthFactor()));
+        @Override
+        protected void notifyAfterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
             bdd.notifyAfterTableGrow(invalidatedNodes);
-            assert bdd.check();
-            return true;
+        }
+
+        @Override
+        protected boolean checkOwner() {
+            return bdd.check();
         }
 
         @Override

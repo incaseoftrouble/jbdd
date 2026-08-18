@@ -89,6 +89,12 @@ tasks.register<Task>("jmhSynthetic") {
   finalizedBy("jmh")
 }
 
+tasks.register<Task>("jmhDimacs") {
+  description = "Run DIMACS benchmarks"
+  doFirst { jmh.includes.add("DimacsBenchmark*") }
+  finalizedBy("jmh")
+}
+
 tasks.withType<JMHTask> { includeTests.set(true) }
 
 dependencies {

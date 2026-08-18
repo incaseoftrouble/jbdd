@@ -23,6 +23,7 @@ import java.util.function.IntConsumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+@SuppressWarnings("AssertWithSideEffects")
 public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>, NodeBasedDecisionDiagram {
     private static final BitSet NO_VALUES = new BitSet(0);
 
@@ -33,6 +34,7 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
 
     private final NodeLifecycleObserverGroup<NodeLifecycleObserver> observers = new NodeLifecycleObserverGroup<>();
     private final ProtectionTracker protectionTracker = new ProtectionTracker();
+    final ConcurrentAccessGuard accessGuard = new ConcurrentAccessGuard();
 
     BooleanBase() {
         observers.registerStrongly(protectionTracker);
@@ -68,10 +70,12 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
     @SuppressWarnings({"ClassReferencesSubclass", "InstanceofThis"})
     @Override
     public Map<String, Object> statistics() {
+        assert accessGuard.acquire();
         Map<String, Object> statistics = Stream.concat(
                         table().statistics((this instanceof BddImpl) ? "bdd_" : "mdd_").entrySet().stream(),
                         cache().statistics().entrySet().stream())
                 .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+        assert accessGuard.release();
         return DecisionDiagram.prefixStatistics(configuration().name(), statistics);
     }
 
@@ -106,11 +110,13 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
     }
 
     public int forceGc() {
+        assert accessGuard.acquire();
         notifyBeforeGc();
         table().markAllReferencedNodes();
         int reclaimedNodes = table().reclaimUnmarkedNodes();
         assert table().isNoneMarked();
         notifyAfterGc(reclaimedNodes);
+        assert accessGuard.release();
         return reclaimedNodes;
     }
 
@@ -124,9 +130,12 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
     public int reference(int function) {
         assert isValidFunction(function);
         int positive = positive(function);
-        if (positive != TRUE) {
-            table().referenceNode(positive);
+        if (positive == TRUE) {
+            return function;
         }
+        assert accessGuard.acquire();
+        table().referenceNode(positive);
+        assert accessGuard.release();
         return function;
     }
 
@@ -134,9 +143,12 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
     public int dereference(int function) {
         assert isValidFunction(function);
         int positive = positive(function);
-        if (positive != TRUE) {
-            table().dereferenceNode(positive);
+        if (positive == TRUE) {
+            return function;
         }
+        assert accessGuard.acquire();
+        table().dereferenceNode(positive);
+        assert accessGuard.release();
         return function;
     }
 
@@ -149,14 +161,17 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
     public int updateWith(int result, int input) {
         int resultNode = positive(result);
         int node1 = positive(input);
-        if (resultNode != node1) {
-            if (resultNode != TRUE) {
-                table().referenceNode(resultNode);
-            }
-            if (node1 != TRUE) {
-                table().dereferenceNode(node1);
-            }
+        if (resultNode == node1) {
+            return result;
         }
+        assert accessGuard.acquire();
+        if (resultNode != TRUE) {
+            table().referenceNode(resultNode);
+        }
+        if (node1 != TRUE) {
+            table().dereferenceNode(node1);
+        }
+        assert accessGuard.release();
         return result;
     }
 
@@ -166,6 +181,7 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
         int resultNode = positive(result);
         int node1 = positive(input1);
         int node2 = positive(input2);
+        assert accessGuard.acquire();
         if (resultNode == node1) {
             if (node2 != TRUE) {
                 table().dereferenceNode(node2);
@@ -183,6 +199,7 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
                 table().dereferenceNode(node1);
             }
         }
+        assert accessGuard.release();
         return result;
     }
 
@@ -198,12 +215,16 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
 
     @Override
     public void forEachSupportVariable(int function, IntConsumer action) {
+        assert accessGuard.acquire();
         table().forEachVariable(function, action);
+        assert accessGuard.release();
     }
 
     @Override
     public void forEachSupportVariableFiltered(int function, BitSet filter, IntConsumer action) {
+        assert accessGuard.acquire();
         table().forEachVariable(function, filter, action);
+        assert accessGuard.release();
     }
 
     @Override
@@ -213,7 +234,10 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
 
     @Override
     public int nodeCount() {
-        return table().nodeCount();
+        assert accessGuard.acquire();
+        int result = table().nodeCount();
+        assert accessGuard.release();
+        return result;
     }
 
     // Nodes
@@ -262,7 +286,10 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
 
     @Override
     public int size(int function) {
-        return table().nodeCountBelow(nodeFor(function));
+        assert accessGuard.acquire();
+        int result = table().nodeCountBelow(nodeFor(function));
+        assert accessGuard.release();
+        return result;
     }
 
     @Override

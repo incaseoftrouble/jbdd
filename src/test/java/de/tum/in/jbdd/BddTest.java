@@ -19,7 +19,6 @@ package de.tum.in.jbdd;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.core.Is.is;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.google.common.collect.Lists;
 import java.util.ArrayList;
@@ -30,6 +29,8 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -345,13 +346,40 @@ class BddTest {
     }
 
     @Test
-    void testConcurrentAccessChecked() {
-        Bdd bdd = new CheckedBdd(new BddImpl(config));
+    void testConcurrentAccessChecked() throws InterruptedException {
+        Bdd bdd = new BddImpl(config);
         bdd.createVariables(2);
         int node = bdd.reference(bdd.disjunction(0, 1));
-        assertThrows(
-                IllegalStateException.class,
-                () -> bdd.forEachSolution(node, solution -> bdd.implies(bdd.trueFunction(), bdd.falseFunction())));
+
+        CountDownLatch holdingGuard = new CountDownLatch(1);
+        CountDownLatch releaseGuard = new CountDownLatch(1);
+        AtomicBoolean otherThreadRejected = new AtomicBoolean(false);
+
+        Thread other = new Thread(() -> {
+            try {
+                holdingGuard.await();
+                bdd.implies(bdd.trueFunction(), bdd.falseFunction());
+            } catch (AssertionError e) {
+                otherThreadRejected.set(true);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                releaseGuard.countDown();
+            }
+        });
+        other.start();
+
+        bdd.forEachSolution(node, solution -> {
+            holdingGuard.countDown();
+            try {
+                releaseGuard.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        other.join();
+
+        assertThat(otherThreadRejected.get(), is(true));
     }
 
     @Test
