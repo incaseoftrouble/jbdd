@@ -141,11 +141,11 @@ tasks.withType<JavaCompile> {
         "StringSplitter",
         "ReferenceEquality",
     )
+    excludedPaths.set(".*/build/generated/.*")
     disableWarningsInGeneratedCode.set(true)
 
     nullaway {
       assertsEnabled = true
-      disableWarningsInGeneratedCode.set(true)
     }
   }
 }

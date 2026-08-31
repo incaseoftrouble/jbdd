@@ -24,7 +24,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.jspecify.annotations.Nullable;
 
-abstract class CacheBase {
+public abstract class CacheBase {
     private static final double USAGE_GROWTH_LOAD_FACTOR = 0.75;
     private static final int USAGE_GROWTH_FACTOR = 2;
     private static final int MINIMUM_SIZE = 16;

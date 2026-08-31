@@ -39,6 +39,7 @@ import org.junit.jupiter.api.Test;
  * a full theory suite (that will follow separately, mirroring {@code BddTheories} once the interface is
  * complete), just basic cross-checks of the pieces implemented so far.
  */
+@SuppressWarnings("PMD.CouplingBetweenObjects")
 class MtBddTest {
     private static final BddConfiguration config =
             ImmutableBddConfiguration.builder().build();

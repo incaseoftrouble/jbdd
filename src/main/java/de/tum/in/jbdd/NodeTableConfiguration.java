@@ -23,7 +23,7 @@ import org.immutables.value.Value;
  * {@code ensureCapacity()}. Split out from {@link BddConfiguration} so that the table does not depend on
  * the configuration of any particular kind of diagram.
  */
-@SuppressWarnings("MethodReturnAlwaysConstant")
+@SuppressWarnings({"MethodReturnAlwaysConstant", "PMD.AbstractClassWithoutAbstractMethod"})
 public abstract class NodeTableConfiguration {
     public static final double DEFAULT_NODE_TABLE_GROWTH_FACTOR = 2.0d;
     public static final double DEFAULT_GC_LIVE_NODE_THRESHOLD = 0.5d;

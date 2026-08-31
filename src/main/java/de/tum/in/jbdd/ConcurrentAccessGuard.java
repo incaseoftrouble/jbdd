@@ -31,7 +31,7 @@ final class ConcurrentAccessGuard {
     boolean acquire() {
         Thread current = Thread.currentThread();
         Thread previous = owner.compareAndExchange(null, current);
-        if (previous != null && previous != current) {
+        if (previous != null && previous != current) { // NOPMD
             Throwable otherStack = new Throwable("Currently accessed by " + previous);
             otherStack.setStackTrace(previous.getStackTrace());
             logger.log(Level.SEVERE, "Concurrent access by " + current, otherStack);

@@ -1109,7 +1109,9 @@ final class MtBddCache {
         }
 
         @Override
-        public void clearInvalidBddNodes(boolean attemptPruning) {}
+        public void clearInvalidBddNodes(boolean attemptPruning) {
+            // Purely mtbbd nodes
+        }
 
         @Override
         public void clearInvalidMtbddNodes(boolean attemptPruning) {
