@@ -10,7 +10,6 @@
     <exclude name="AccessorMethodGeneration"/>
     <exclude name="UseVarargs"/>
     <exclude name="GuardLogStatement"/>
-    <exclude name="JUnit5TestShouldBePackagePrivate"/>
     <exclude name="MissingOverride"/> <!-- Bug: Static methods -->
     <exclude name="ArrayIsStoredDirectly"/>
     <exclude name="MethodReturnsInternalArray"/>
@@ -46,6 +45,11 @@
       <property name="ignoreElseIf">
         <value>true</value>
       </property>
+    </properties>
+  </rule>
+  <rule ref="category/java/codestyle.xml/TypeParameterNamingConventions">
+    <properties>
+      <property name="typeParameterNamePattern" value="[A-Z]+" />
     </properties>
   </rule>
   <rule ref="category/java/codestyle.xml/ClassNamingConventions">

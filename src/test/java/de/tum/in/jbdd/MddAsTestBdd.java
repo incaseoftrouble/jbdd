@@ -27,13 +27,12 @@ import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.Predicate;
 
-@EverythingIsNonnullByDefault
 class MddAsTestBdd implements TestBdd {
     private final MddImpl mdd;
     private static final int TRUE = 1;
     private static final int FALSE = 0;
 
-    public MddAsTestBdd(MddImpl mdd) {
+    MddAsTestBdd(MddImpl mdd) {
         this.mdd = mdd;
     }
 
@@ -100,6 +99,11 @@ class MddAsTestBdd implements TestBdd {
     @Override
     public boolean isConstant(int function) {
         return mdd.isConstant(function);
+    }
+
+    @Override
+    public boolean isUnmanaged(int function) {
+        return mdd.isUnmanaged(function);
     }
 
     @Override
@@ -280,25 +284,6 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public Iterator<BinaryPath> pathIteratorIn(int function, int domain) {
-        BitSet assignment = new BitSet(mdd.numberOfVariables());
-        BitSet support = new BitSet(mdd.numberOfVariables());
-        return Iterators.transform(mdd.pathIteratorIn(function, domain), a -> {
-            for (int i = 0; i < a.length; i++) {
-                assert a[i] == TRUE || a[i] == FALSE || a[i] == -1;
-                if (a[i] == -1) {
-                    support.clear(i);
-                    assignment.clear(i);
-                } else {
-                    support.set(i);
-                    assignment.set(i, a[i] == TRUE);
-                }
-            }
-            return new BinaryPath(assignment, support);
-        });
-    }
-
-    @Override
     public void forEachPath(int function, Consumer<? super BinaryPath> action) {
         BitSet everything = new BitSet();
         everything.set(0, mdd.numberOfVariables());
@@ -350,29 +335,8 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public boolean anyPathMatchesIn(int function, int domain, Predicate<? super BinaryPath> predicate) {
-        int variables = mdd.numberOfVariables();
-        BitSet values = new BitSet(variables);
-        BitSet support = new BitSet(variables);
-        BinaryPath bddPath = new BinaryPath(values, support);
-        return mdd.anyPathMatchesIn(function, domain, path -> {
-            for (int var = 0; var < path.length; var++) {
-                assert path[var] == -1 || path[var] == TRUE || path[var] == FALSE;
-                if (path[var] == -1) {
-                    values.clear(var);
-                    support.clear(var);
-                } else {
-                    support.set(var);
-                    values.set(var, path[var] == TRUE);
-                }
-            }
-            return predicate.test(bddPath);
-        });
-    }
-
-    @Override
-    public void forEachSupportFiltered(int function, BitSet filter, IntConsumer action) {
-        mdd.forEachSupportFiltered(function, filter, action);
+    public void forEachSupportVariableFiltered(int function, BitSet filter, IntConsumer action) {
+        mdd.forEachSupportVariableFiltered(function, filter, action);
     }
 
     @Override
@@ -456,6 +420,17 @@ class MddAsTestBdd implements TestBdd {
     @Override
     public boolean intersects(int function1, int function2) {
         return mdd.intersects(function1, function2);
+    }
+
+    @Override
+    public RegisteredOperation.Unary registerCompose(int[] variableMapping) {
+        // Registered compose is tied to a real BddImpl; this adapter has none to bind to.
+        throw new UnsupportedOperationException("registerCompose is not supported on an MDD-backed TestBdd");
+    }
+
+    @Override
+    public RegisteredOperation.Binary registerComposeSimplify(int[] variableMapping) {
+        throw new UnsupportedOperationException("registerComposeSimplify is not supported on an MDD-backed TestBdd");
     }
 
     @Override

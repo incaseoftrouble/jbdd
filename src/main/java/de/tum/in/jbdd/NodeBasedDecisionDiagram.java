@@ -43,6 +43,9 @@ public interface NodeBasedDecisionDiagram extends DecisionDiagram {
         return nodeReferenceCount(nodeFor(node)) > 0;
     }
 
+    /**
+     * Returns the number of referenced nodes.
+     */
     int referencedNodeCount();
 
     int nodeCount();

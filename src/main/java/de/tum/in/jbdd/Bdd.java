@@ -28,7 +28,6 @@ import java.util.BitSet;
  * time after an invalid call.</p>
  */
 // TODO AndExists and similar (quantify + apply at the same time)
-// TODO Register caches for compose / simplify arrays
 public interface Bdd extends BooleanDecisionDiagram, BooleanTerminalDecisionDiagram<BitSet, BinaryPath> {
     /**
      * Creates a new variable and returns the BDD function representing it. The implementation guarantees that
@@ -102,6 +101,16 @@ public interface Bdd extends BooleanDecisionDiagram, BooleanTerminalDecisionDiag
     default int composeSimplify(int function, int[] variableMapping, int domain) {
         return simplify(compose(function, variableMapping), domain);
     }
+
+    /**
+     * Registers a {@code compose} operation bound to a fixed {@code variableMapping}.
+     */
+    RegisteredOperation.Unary registerCompose(int[] variableMapping);
+
+    /**
+     * Like {@link #registerCompose}, but for the domain-restricted {@link #composeSimplify} form.
+     */
+    RegisteredOperation.Binary registerComposeSimplify(int[] variableMapping);
 
     /**
      * Computes the restriction of the given boolean {@code function}, where all variables specified by {@code

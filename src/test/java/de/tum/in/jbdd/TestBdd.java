@@ -19,6 +19,7 @@ package de.tum.in.jbdd;
 public interface TestBdd extends Bdd, NodeBasedDecisionDiagram {
     void invalidateCache();
 
+    @Override
     boolean isValidFunction(int function);
 
     boolean isValidNonConstantFunction(int function);

@@ -28,28 +28,49 @@ final class HashUtil {
     private HashUtil() {}
 
     static int hash(int key) {
+        // int h = key * 0x9E3779B1;
+        // return h & Integer.MAX_VALUE;
         return key;
     }
 
+    static int hash(int firstKey, boolean secondKey) {
+        int h = firstKey;
+        h = h * 0x9E3779B1 + Boolean.hashCode(secondKey);
+        return h & Integer.MAX_VALUE;
+    }
+
+    static int hash(int firstKey, int secondKey) {
+        int h = firstKey;
+        h = h * 0x9E3779B1 + secondKey;
+        return h & Integer.MAX_VALUE;
+    }
+
     static int hash(int firstKey, int secondKey, int thirdKey) {
-        // return firstKey + P1 * secondKey + thirdKey;
-        return P3 * (P2 * (P1 * firstKey + secondKey) + thirdKey);
+        int h = firstKey;
+        h = h * 0x9E3779B1 + secondKey;
+        h = h * 0x9E3779B1 + thirdKey;
+        return h & Integer.MAX_VALUE;
     }
 
     static int hash(int firstKey, int secondKey, int thirdKey, int fourthKey) {
-        // return firstKey + P1 * secondKey + thirdKey;
-        return P4 * (P3 * (P2 * (P1 * firstKey + secondKey) + thirdKey) + fourthKey);
+        int h = firstKey;
+        h = h * 0x9E3779B1 + secondKey;
+        h = h * 0x9E3779B1 + thirdKey;
+        h = h * 0x9E3779B1 + fourthKey;
+        return h & Integer.MAX_VALUE;
     }
 
-    static int hash(byte primeKey, int secondKey, int thirdKey) {
-        return P1 * (primeKey * secondKey + thirdKey);
-    }
-
-    public static int hash(int firstKey, int secondKey) {
-        return P2 * (P1 * firstKey + secondKey);
-    }
-
-    public static int hash(int firstKey, boolean secondKey) {
-        return P1 * (firstKey + Boolean.hashCode(secondKey));
+    static int hashArray(int first, int... keys) {
+        if (keys.length == 0) {
+            return hash(first);
+        }
+        if (keys.length == 1) {
+            return hash(first, keys[0]);
+        }
+        int h = first;
+        for (int key : keys) {
+            h = h * 0x9E3779B1 + key;
+        }
+        return h & Integer.MAX_VALUE;
     }
 }

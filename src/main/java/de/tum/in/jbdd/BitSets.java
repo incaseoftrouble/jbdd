@@ -31,6 +31,10 @@ import java.util.stream.IntStream;
 public final class BitSets {
     private BitSets() {}
 
+    public static BitSet of() {
+        return new BitSet(0);
+    }
+
     public static BitSet of(int value) {
         BitSet set = new BitSet(value + 1);
         set.set(value);
@@ -167,6 +171,18 @@ public final class BitSets {
         return true;
     }
 
+    public static BitSet lazyUnion(BitSet... sets) {
+        return sets.length == 1 ? sets[0] : union(sets);
+    }
+
+    public static BitSet union(BitSet... sets) {
+        BitSet result = copyOf(sets[0]);
+        for (int i = 1; i < sets.length; i++) {
+            result.or(sets[i]);
+        }
+        return result;
+    }
+
     private static final class PowerIteratorShift implements Iterator<BitSet> {
         private final BitSet bitSet;
         private final int[] restrictionPositions;
@@ -226,6 +242,7 @@ public final class BitSets {
             iteration = new BitSet(size);
         }
 
+        @SuppressWarnings("UnusedMethod")
         private PowerIterator(BitSet base) {
             this.base = toArray(base);
             iteration = new BitSet(base.length());

@@ -23,9 +23,9 @@ import java.util.Arrays;
 import java.util.Random;
 import org.junit.jupiter.api.Test;
 
-public class HashTest {
+class HashTest {
     @Test
-    public void testCollisionRate() {
+    void testCollisionRate() {
         Random random = new Random(0);
 
         int iterations = 1024;

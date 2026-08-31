@@ -1,6 +1,6 @@
 /*
  * This file is part of JBDD (https://github.com/incaseoftrouble/jbdd).
- * Copyright (c) 2018-2023 Tobias Meggendorfer.
+ * Copyright (c) 2026 Tobias Meggendorfer.
  *
  * JBDD is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,27 +16,23 @@
  */
 package de.tum.in.jbdd;
 
-import java.util.concurrent.atomic.AtomicBoolean;
-
-public final class CheckedBdd extends DelegatingBdd {
-    private final AtomicBoolean access;
-
-    public CheckedBdd(Bdd delegate) {
-        super(delegate);
-        access = new AtomicBoolean(false);
+public interface BddContext {
+    static BddContext create() {
+        return create(ImmutableBddConfiguration.builder().build());
     }
 
-    @Override
-    protected void onEnter(String name) {
-        if (!access.compareAndSet(false, true)) {
-            throw new IllegalStateException("Concurrent access to " + name);
-        }
+    static BddContext create(BddConfiguration configuration) {
+        return new BddContextImpl(configuration);
     }
 
-    @Override
-    protected void onExit() {
-        if (!access.getAndSet(false)) {
-            throw new IllegalStateException("Concurrently accessed");
-        }
+    /** Like {@link #create()}, with {@code variables} many variables already declared. */
+    static BddContext create(BddConfiguration configuration, int variables) {
+        return new BddContextImpl(configuration, variables);
     }
+
+    /** The unique {@link BddSetFactory}. */
+    BddSetFactory bddSets();
+
+    /** A fresh {@link BddMapFactory}. */
+    <V> BddMapFactory<V> bddMaps();
 }

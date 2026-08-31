@@ -1,6 +1,6 @@
 /*
  * This file is part of JBDD (https://github.com/incaseoftrouble/jbdd).
- * Copyright (c) 2017-2023 Tobias Meggendorfer.
+ * Copyright (c) 2026 Tobias Meggendorfer.
  *
  * JBDD is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,15 +16,18 @@
  */
 package de.tum.in.jbdd;
 
-import java.lang.annotation.Documented;
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import javax.annotation.Nonnull;
-import javax.annotation.meta.TypeQualifierDefault;
+import java.util.BitSet;
 
-@Documented
-@Nonnull
-@TypeQualifierDefault({ElementType.FIELD, ElementType.METHOD, ElementType.PARAMETER})
-@Retention(RetentionPolicy.SOURCE)
-@interface EverythingIsNonnullByDefault {}
+interface NodeLifecycleObserver {
+    default void beforeGc() {
+        // Default: nothing to release ahead of time.
+    }
+
+    default void afterGc(int reclaimedNodes, BitSet reclaimedValues) {
+        // Default: nothing depends on which nodes/values were reclaimed.
+    }
+
+    default void afterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
+        // Default: nothing depends on the table's size.
+    }
+}

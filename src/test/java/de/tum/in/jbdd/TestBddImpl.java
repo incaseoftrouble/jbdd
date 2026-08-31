@@ -17,9 +17,8 @@
 package de.tum.in.jbdd;
 
 @SuppressWarnings("PMD.TestClassWithoutTestCases")
-@EverythingIsNonnullByDefault
 class TestBddImpl extends DelegatingBdd implements TestBdd {
-    public TestBddImpl(BddImpl delegate) {
+    TestBddImpl(BddImpl delegate) {
         super(delegate);
     }
 

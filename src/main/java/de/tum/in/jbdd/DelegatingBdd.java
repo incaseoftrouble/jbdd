@@ -120,6 +120,18 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
+    public boolean isUnmanaged(int function) {
+        onEnter("isUnmanaged");
+        return onExit(delegate.isUnmanaged(function));
+    }
+
+    @Override
+    public boolean isValidFunction(int function) {
+        onEnter("isValidFunction");
+        return onExit(delegate.isValidFunction(function));
+    }
+
+    @Override
     public boolean isVariable(int function) {
         onEnter("isVariable");
         return onExit(delegate.isVariable(function));
@@ -269,12 +281,6 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
-    public Iterator<BinaryPath> pathIteratorIn(int function, int domain) {
-        onEnter("pathIteratorIn");
-        return onExit(delegate.pathIteratorIn(function, domain));
-    }
-
-    @Override
     public void forEachPath(int function, Consumer<? super BinaryPath> action) {
         onEnter("forEachPath");
         delegate.forEachPath(function, action);
@@ -292,12 +298,6 @@ public class DelegatingBdd implements Bdd {
     public boolean anyPathMatches(int function, Predicate<? super BinaryPath> predicate) {
         onEnter("anyPathMatches");
         return onExit(delegate.anyPathMatches(function, predicate));
-    }
-
-    @Override
-    public boolean anyPathMatchesIn(int function, int domain, Predicate<? super BinaryPath> predicate) {
-        onEnter("anyPathMatchesIn");
-        return onExit(delegate.anyPathMatchesIn(function, domain, predicate));
     }
 
     @Override
@@ -326,9 +326,9 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
-    public void forEachSupportFiltered(int function, BitSet filter, IntConsumer action) {
+    public void forEachSupportVariableFiltered(int function, BitSet filter, IntConsumer action) {
         onEnter("forEachSupportFiltered");
-        delegate.forEachSupportFiltered(function, filter, action);
+        delegate.forEachSupportVariableFiltered(function, filter, action);
         onExit();
     }
 
@@ -390,6 +390,18 @@ public class DelegatingBdd implements Bdd {
     public int compose(int function, int[] variableMapping) {
         onEnter("compose");
         return onExit(delegate.compose(function, variableMapping));
+    }
+
+    @Override
+    public RegisteredOperation.Unary registerCompose(int[] variableMapping) {
+        onEnter("registerCompose");
+        return onExit(delegate.registerCompose(variableMapping));
+    }
+
+    @Override
+    public RegisteredOperation.Binary registerComposeSimplify(int[] variableMapping) {
+        onEnter("registerComposeSimplify");
+        return onExit(delegate.registerComposeSimplify(variableMapping));
     }
 
     @Override

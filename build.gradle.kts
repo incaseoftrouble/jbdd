@@ -1,4 +1,6 @@
 import me.champeau.jmh.JMHTask
+import net.ltgt.gradle.errorprone.errorprone
+import net.ltgt.gradle.nullaway.nullaway
 
 plugins {
   `java-library`
@@ -11,10 +13,14 @@ plugins {
 
   // https://plugins.gradle.org/plugin/io.github.gradle-nexus.publish-plugin
   id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
-  // https://plugins.gradle.org/plugin/com.diffplug.spotless
-  id("com.diffplug.spotless") version "8.3.0"
   // https://plugins.gradle.org/plugin/me.champeau.jmh
   id("me.champeau.jmh") version "0.7.3"
+  // https://plugins.gradle.org/plugin/com.diffplug.spotless
+  id("com.diffplug.spotless") version "8.9.0"
+  // https://plugins.gradle.org/plugin/net.ltgt.errorprone
+  id("net.ltgt.errorprone") version "5.1.0"
+  // https://plugins.gradle.org/plugin/net.ltgt.nullaway
+  id("net.ltgt.nullaway") version "3.1.0"
 }
 
 group = "de.tum.in"
@@ -31,7 +37,10 @@ java {
 
 var defaultEncoding = "UTF-8"
 
-tasks.withType<JavaCompile> { options.encoding = defaultEncoding }
+tasks.withType<JavaCompile> {
+  options.encoding = defaultEncoding
+  options.release.set(11)
+}
 
 tasks.withType<Javadoc> {
   options.encoding = defaultEncoding
@@ -54,14 +63,18 @@ repositories { mavenCentral() }
 
 spotless {
   java {
-    licenseHeaderFile("${project.rootDir}/config/LICENCE_HEADER")
     // https://central.sonatype.com/artifact/com.palantir.javaformat/palantir-java-format
-    palantirJavaFormat("2.73.0")
+    palantirJavaFormat("2.89.0")
+    licenseHeaderFile("${project.rootDir}/config/LICENCE_HEADER")
   }
-  kotlinGradle { ktfmt() }
+  kotlinGradle {
+    ktlint()
+    ktfmt()
+  }
 }
 
 tasks.register<Task>("jmhRandom") {
+  description = "Run randomized benchmarks"
   doFirst {
     jmh.includes.add("RandomBenchmark*")
     jmh.warmupIterations = 5
@@ -71,15 +84,26 @@ tasks.register<Task>("jmhRandom") {
 }
 
 tasks.register<Task>("jmhSynthetic") {
+  description = "Run synthetic benchmarks"
   doFirst { jmh.includes.add("SyntheticBenchmark*") }
+  finalizedBy("jmh")
+}
+
+tasks.register<Task>("jmhDimacs") {
+  description = "Run DIMACS benchmarks"
+  doFirst { jmh.includes.add("DimacsBenchmark*") }
   finalizedBy("jmh")
 }
 
 tasks.withType<JMHTask> { includeTests.set(true) }
 
 dependencies {
-  compileOnly("com.google.code.findbugs:jsr305:3.0.2")
-  testCompileOnly("com.google.code.findbugs:jsr305:3.0.2")
+  compileOnlyApi("org.jspecify:jspecify:1.0.0") // Apache 2.0
+  // https://mvnrepository.com/artifact/com.google.errorprone/error_prone_core
+  errorprone("com.google.errorprone:error_prone_core:2.50.0")
+  compileOnlyApi("com.google.errorprone:error_prone_annotations:2.50.0")
+  // https://mvnrepository.com/artifact/com.uber.nullaway/nullaway
+  errorprone("com.uber.nullaway:nullaway:0.13.8")
 
   // https://mvnrepository.com/artifact/com.google.guava/guava
   testImplementation("com.google.guava:guava:33.6.0-jre")
@@ -104,13 +128,35 @@ tasks.test {
   maxHeapSize = "16g"
 }
 
+nullaway {
+  annotatedPackages.add("de.tum.in.jbdd")
+  jspecifyMode = true
+}
+
+tasks.withType<JavaCompile> {
+  options.errorprone {
+    disable(
+        "ArrayRecordComponent",
+        "EffectivelyPrivate",
+        "StringSplitter",
+        "ReferenceEquality",
+    )
+    excludedPaths.set(".*/build/generated/.*")
+    disableWarningsInGeneratedCode.set(true)
+
+    nullaway {
+      assertsEnabled = true
+    }
+  }
+}
+
 // PMD
 // https://docs.gradle.org/current/dsl/org.gradle.api.plugins.quality.Pmd.html
 
 pmd {
-  toolVersion = "7.16.0" // https://pmd.github.io/
+  toolVersion = "7.26.0" // https://pmd.github.io/
   reportsDir = project.layout.buildDirectory.dir("reports/pmd").get().asFile
-  ruleSetFiles = files("${project.rootDir}/config/pmd-rules.xml")
+  ruleSetFiles = project.layout.projectDirectory.files("config/pmd-rules.xml")
   ruleSets = listOf() // We specify all rules in rules.xml
   isConsoleOutput = false
   isIgnoreFailures = false

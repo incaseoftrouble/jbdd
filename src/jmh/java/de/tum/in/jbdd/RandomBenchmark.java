@@ -33,7 +33,6 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.infra.Blackhole;
 
 public class RandomBenchmark extends BaseBddBenchmark {
-    @SuppressWarnings("StaticCollection")
     private static final List<BddOperation> OPERATION_LIST = List.of(
             n -> n.add(n.bdd.createVariable()),
             n -> n.add(n.bdd.not(n.get())),
