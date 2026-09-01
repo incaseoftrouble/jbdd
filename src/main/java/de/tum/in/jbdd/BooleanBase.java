@@ -42,12 +42,12 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
         // NodeLifecycleObserverGroup#registerStrongly.
         observers.registerStrongly(new NodeLifecycleObserver() {
             @Override
-            public void afterGc(int reclaimedNodes, BitSet reclaimedValues) {
+            public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
                 cache().onBddNodesInvalidated(reclaimedNodes);
             }
 
             @Override
-            public void afterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
+            public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
                 cache().tableSizeChanged(invalidatedNodes);
             }
         });
@@ -98,15 +98,15 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
     }
 
     void notifyBeforeGc() {
-        observers.dispatch(NodeLifecycleObserver::beforeGc);
+        observers.dispatch(observer -> observer.beforeGc(this));
     }
 
     void notifyAfterGc(int reclaimedNodes) {
-        observers.dispatch(observer -> observer.afterGc(reclaimedNodes, NO_VALUES));
+        observers.dispatch(observer -> observer.afterGc(this, reclaimedNodes, NO_VALUES));
     }
 
     void notifyAfterTableGrow(int reclaimedNodes) {
-        observers.dispatch(observer -> observer.afterTableGrowth(reclaimedNodes, NO_VALUES));
+        observers.dispatch(observer -> observer.afterTableGrowth(this, reclaimedNodes, NO_VALUES));
     }
 
     public int forceGc() {

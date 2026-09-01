@@ -71,23 +71,23 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         // NodeLifecycleObserverGroup#registerStrongly.
         observers.registerStrongly(new NodeLifecycleObserver() {
             @Override
-            public void afterGc(int reclaimedNodes, BitSet reclaimedValues) {
-                cache.onMultiTerminalNodesInvalidated(reclaimedNodes);
+            public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
+                cache.onMultiTerminalNodesInvalidated(reclaimedNodes, reclaimedValues);
             }
 
             @Override
-            public void afterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
-                cache.tableSizeChanged(invalidatedNodes);
+            public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+                cache.tableSizeChanged(invalidatedNodes, reclaimedValues);
             }
         });
         bdd.registerOwnedObserver(new NodeLifecycleObserver() {
             @Override
-            public void afterGc(int reclaimedNodes, BitSet reclaimedValues) {
+            public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
                 cache.onBooleanNodesInvalidated(reclaimedNodes);
             }
 
             @Override
-            public void afterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
+            public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
                 cache.onBooleanNodesInvalidated(invalidatedNodes);
             }
         });
@@ -110,15 +110,15 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     }
 
     void notifyBeforeGc() {
-        observers.dispatch(NodeLifecycleObserver::beforeGc);
+        observers.dispatch(observer -> observer.beforeGc(this));
     }
 
     void notifyAfterGc(int reclaimedNodes, BitSet reclaimedValues) {
-        observers.dispatch(observer -> observer.afterGc(reclaimedNodes, reclaimedValues));
+        observers.dispatch(observer -> observer.afterGc(this, reclaimedNodes, reclaimedValues));
     }
 
     void notifyAfterTableGrow(int reclaimedNodes, BitSet reclaimedValues) {
-        observers.dispatch(observer -> observer.afterTableGrowth(reclaimedNodes, reclaimedValues));
+        observers.dispatch(observer -> observer.afterTableGrowth(this, reclaimedNodes, reclaimedValues));
     }
 
     public int forceGc() {

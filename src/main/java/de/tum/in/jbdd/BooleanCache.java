@@ -16,6 +16,7 @@
  */
 package de.tum.in.jbdd;
 
+import static de.tum.in.jbdd.Util.*;
 import static java.util.Map.entry;
 
 import java.math.BigInteger;
@@ -113,12 +114,8 @@ final class BooleanCache {
         tableSizeChanged(0);
 
         if (bdd.configuration().logStatisticsOnShutdown()) {
-            Util.registerForCleanupStatistics(bdd, bdd.configuration().name());
+            registerForCleanupStatistics(bdd, bdd.configuration().name());
         }
-    }
-
-    boolean binarySymmetricWellOrdered(int node1, int node2) {
-        return Util.symmetricCanonicallyOrdered(node1, bdd.decisionVariable(node1), node2, bdd.decisionVariable(node2));
     }
 
     int lookupHash() {

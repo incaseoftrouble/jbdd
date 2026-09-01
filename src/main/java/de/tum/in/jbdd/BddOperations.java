@@ -94,23 +94,31 @@ final class BddOperations {
         }
 
         @Override
-        public void afterGc(int reclaimedNodes, BitSet reclaimedValues) {
+        public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
             if (isReleased()) {
                 return;
             }
-            boolean preserve = bdd.configuration().useCachePreserve() && reclaimedNodes < bdd.tableSize() / 2;
+            pruneInvalidNodes(reclaimedNodes);
+        }
+
+        @Override
+        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            if (isReleased()) {
+                return;
+            }
+            pruneInvalidNodes(invalidatedNodes);
+            growToTableFloor();
+        }
+
+        private void pruneInvalidNodes(int invalidatedNodes) {
+            if (invalidatedNodes == 0) {
+                return;
+            }
+            boolean preserve = bdd.configuration().useCachePreserve() && invalidatedNodes < bdd.tableSize() / 2;
             composeCache.clearInvalidNodes(preserve);
             if (composeSimplifyCache != null) {
                 composeSimplifyCache.clearInvalidNodes(preserve);
             }
-        }
-
-        @Override
-        public void afterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
-            if (isReleased()) {
-                return;
-            }
-            growToTableFloor();
         }
     }
 }

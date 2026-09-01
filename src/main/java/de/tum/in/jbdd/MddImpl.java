@@ -565,17 +565,10 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
 
         assert !isConstant(function1) && !isConstant(function2);
 
-        int fun1var = decisionVariable(function1);
-        int fun2var = decisionVariable(function2);
-
-        if (fun2var < fun1var || (fun2var == fun1var && function2 < function1)) {
+        if (function1 > function2) {
             int nodeSwap = function1;
             function1 = function2;
             function2 = nodeSwap;
-
-            int varSwap = fun1var;
-            fun1var = fun2var;
-            fun2var = varSwap;
         }
 
         int lookup = cache.lookupAnd(function1, function2);
@@ -584,26 +577,23 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
         int hash = cache.lookupHash();
 
+        int fun1var = decisionVariable(function1);
+        int fun2var = decisionVariable(function2);
+        int variable = Math.min(fun1var, fun2var);
+        int domain = variableDomain[variable];
+
         boolean fun1c = isComplementFunction(function1);
-        int node1 = complementIf(function1, fun1c);
-        int[] node1children = table.children(node1);
-        int domain = node1children.length;
+        boolean fun2c = isComplementFunction(function2);
+        int[] children1 = fun1var == variable ? table.children(positive(function1)) : EMPTY_INT_ARRAY;
+        int[] children2 = fun2var == variable ? table.children(positive(function2)) : EMPTY_INT_ARRAY;
+
         int[] resultChildren = new int[domain];
-        if (fun1var == fun2var) {
-            boolean fun2c = isComplementFunction(function2);
-            int node2 = complementIf(function2, fun2c);
-            int[] node2children = table.children(node2);
-            for (int val = 0; val < domain; val++) {
-                resultChildren[val] = table.pushToWorkStack(
-                        computeAnd(complementIf(node1children[val], fun1c), complementIf(node2children[val], fun2c)));
-            }
-        } else { // v < getVariable(node2)
-            for (int val = 0; val < domain; val++) {
-                resultChildren[val] =
-                        table.pushToWorkStack(computeAnd(complementIf(node1children[val], fun1c), function2));
-            }
+        for (int val = 0; val < domain; val++) {
+            resultChildren[val] = table.pushToWorkStack(computeAnd(
+                    fun1var == variable ? complementIf(children1[val], fun1c) : function1,
+                    fun2var == variable ? complementIf(children2[val], fun2c) : function2));
         }
-        int resultNode = makeFunction(fun1var, resultChildren);
+        int resultNode = makeFunction(variable, resultChildren);
         table.popFromWorkStack(domain);
         cache.putAnd(hash, function1, function2, resultNode);
         return resultNode;
@@ -627,76 +617,51 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     }
 
     private int computeXor(int function1, int function2) {
+        boolean negate = isComplementFunction(function1) ^ isComplementFunction(function2);
+        function1 = positive(function1);
+        function2 = positive(function2);
+
         if (function1 == function2) {
-            return FALSE;
+            return complementIf(FALSE, negate);
         }
-        if (function1 == complement(function2)) {
-            return TRUE;
-        }
-
-        if (isComplementFunction(function1)) {
-            function1 = positive(function1);
-            function2 = complement(function2);
-        }
-        // TODO Should be possible to exploit this knowledge a bit more
-        assert isPositive(function1);
-
         if (function1 == TRUE) {
-            return complement(function2);
+            return complementIf(complement(function2), negate);
         }
         if (function2 == TRUE) {
-            return complement(function1);
-        }
-        if (function2 == FALSE) {
-            return function1;
+            return complementIf(complement(function1), negate);
         }
 
-        int node1 = function1;
-        int node2 = positive(function2);
-        int node1var = decisionVariable(node1);
-        int node2var = decisionVariable(node2);
-
-        if (node2var < node1var || (node2var == node1var && function2 < function1)) {
+        if (function1 > function2) {
             int functionSwap = function1;
             function1 = function2;
             function2 = functionSwap;
-
-            int nodeSwap = node1;
-            node1 = node2;
-            node2 = nodeSwap;
-
-            int varSwap = node1var;
-            node1var = node2var;
-            node2var = varSwap;
         }
 
         int lookup = cache.lookupXor(function1, function2);
         if (lookup != placeholder()) {
-            return lookup;
+            return complementIf(lookup, negate);
         }
         int hash = cache.lookupHash();
 
-        int[] node1children = table.children(node1);
-        int domain = node1children.length;
+        int fun1var = decisionVariable(function1);
+        int fun2var = decisionVariable(function2);
+        int variable = Math.min(fun1var, fun2var);
+        int domain = variableDomain[variable];
+
+        // Both operands are positive here, so their children need no parity fix-up on the way down.
+        int[] children1 = fun1var == variable ? table.children(function1) : EMPTY_INT_ARRAY;
+        int[] children2 = fun2var == variable ? table.children(function2) : EMPTY_INT_ARRAY;
+
         int[] resultChildren = new int[domain];
-        boolean node1c = function1 != node1;
-        if (node1var == node2var) {
-            boolean node2c = function2 != node2;
-            int[] node2children = table.children(node2);
-            for (int val = 0; val < domain; val++) {
-                resultChildren[val] = table.pushToWorkStack(
-                        computeXor(complementIf(node1children[val], node1c), complementIf(node2children[val], node2c)));
-            }
-        } else { // node1var < node2var
-            for (int val = 0; val < domain; val++) {
-                resultChildren[val] =
-                        table.pushToWorkStack(computeXor(complementIf(node1children[val], node1c), function2));
-            }
+        for (int val = 0; val < domain; val++) {
+            resultChildren[val] = table.pushToWorkStack(computeXor(
+                    fun1var == variable ? children1[val] : function1,
+                    fun2var == variable ? children2[val] : function2));
         }
-        int resultNode = makeFunction(node1var, resultChildren);
+        int resultNode = makeFunction(variable, resultChildren);
         table.popFromWorkStack(domain);
         cache.putXor(hash, function1, function2, resultNode);
-        return resultNode;
+        return complementIf(resultNode, negate);
     }
 
     @Override
@@ -822,17 +787,10 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
 
         assert !isConstant(function1) && !isConstant(function2);
 
-        int fun1var = decisionVariable(function1);
-        int fun2var = decisionVariable(function2);
-
-        if (fun2var < fun1var || (fun2var == fun1var && function2 < function1)) {
+        if (function1 > function2) {
             int nodeSwap = function1;
             function1 = function2;
             function2 = nodeSwap;
-
-            int varSwap = fun1var;
-            fun1var = fun2var;
-            fun2var = varSwap;
         }
 
         int lookup = cache.lookupIntersects(function1, function2);
@@ -841,29 +799,23 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
         int hash = cache.lookupHash();
 
-        int node1 = positive(function1);
-        boolean fun1c = function1 != node1;
-        int[] node1children = table.children(node1);
+        int fun1var = decisionVariable(function1);
+        int fun2var = decisionVariable(function2);
+        int variable = Math.min(fun1var, fun2var);
+        int domain = variableDomain[variable];
+
+        boolean fun1c = isComplementFunction(function1);
+        boolean fun2c = isComplementFunction(function2);
+        int[] children1 = fun1var == variable ? table.children(positive(function1)) : EMPTY_INT_ARRAY;
+        int[] children2 = fun2var == variable ? table.children(positive(function2)) : EMPTY_INT_ARRAY;
 
         boolean result = false;
-        if (fun1var == fun2var) {
-            int node2 = positive(function2);
-            boolean fun2c = function2 != node2;
-
-            int[] node2children = table.children(node2);
-            for (int val = 0; val < node1children.length; val++) {
-                if (intersectsRecursive(
-                        complementIf(node1children[val], fun1c), complementIf(node2children[val], fun2c))) {
-                    result = true;
-                    break;
-                }
-            }
-        } else {
-            for (int node1child : node1children) {
-                if (intersectsRecursive(complementIf(node1child, fun1c), function2)) {
-                    result = true;
-                    break;
-                }
+        for (int val = 0; val < domain; val++) {
+            if (intersectsRecursive(
+                    fun1var == variable ? complementIf(children1[val], fun1c) : function1,
+                    fun2var == variable ? complementIf(children2[val], fun2c) : function2)) {
+                result = true;
+                break;
             }
         }
         cache.putIntersects(hash, function1, function2, result);

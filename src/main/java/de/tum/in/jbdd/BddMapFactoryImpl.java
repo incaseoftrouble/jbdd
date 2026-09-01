@@ -205,7 +205,7 @@ final class BddMapFactoryImpl<V> extends GcReferenceManager<BddMapFactoryImpl.Bd
         }
 
         @Override
-        public void afterGc(int reclaimedNodes, BitSet reclaimedValues) {
+        public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
             sweepValues(reclaimedValues);
         }
 

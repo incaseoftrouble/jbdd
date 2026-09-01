@@ -73,25 +73,36 @@ spotless {
   }
 }
 
+val requestedTaskNames = gradle.startParameter.taskNames
+
+fun isRequested(task: String) = requestedTaskNames.any { it == task || it.endsWith(":$task") }
+
+jmh {
+  if (isRequested("jmhRandom")) {
+    includes.add("RandomBenchmark*")
+    warmupIterations = 5
+    iterations = 15
+  }
+  if (isRequested("jmhSynthetic")) {
+    includes.add("SyntheticBenchmark*")
+  }
+  if (isRequested("jmhDimacs")) {
+    includes.add("DimacsBenchmark*")
+  }
+}
+
 tasks.register<Task>("jmhRandom") {
   description = "Run randomized benchmarks"
-  doFirst {
-    jmh.includes.add("RandomBenchmark*")
-    jmh.warmupIterations = 5
-    jmh.iterations = 15
-  }
   finalizedBy("jmh")
 }
 
 tasks.register<Task>("jmhSynthetic") {
   description = "Run synthetic benchmarks"
-  doFirst { jmh.includes.add("SyntheticBenchmark*") }
   finalizedBy("jmh")
 }
 
 tasks.register<Task>("jmhDimacs") {
   description = "Run DIMACS benchmarks"
-  doFirst { jmh.includes.add("DimacsBenchmark*") }
   finalizedBy("jmh")
 }
 

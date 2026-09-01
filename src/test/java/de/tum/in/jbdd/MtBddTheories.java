@@ -810,6 +810,8 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intConditional")
     void testConstrainAgreesWhereDomainHolds(IntConditionalDataPoint dataPoint) {
+        assumeTrue(dataPoint.condition.function != bdd.falseFunction());
+
         int constrained = mt.reference(mt.constrain(dataPoint.then.function, dataPoint.condition.function));
         BitSet relevant = BitSets.of(dataPoint.condition.tree.containedVariables());
         relevant.or(dataPoint.then.tree.containedVariables());

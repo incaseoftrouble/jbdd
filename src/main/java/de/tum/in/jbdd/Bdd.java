@@ -27,7 +27,7 @@ import java.util.BitSet;
  * occur with invalid arguments. Especially, the BDD may appear to be in a working state for a long
  * time after an invalid call.</p>
  */
-// TODO AndExists and similar (quantify + apply at the same time)
+// TODO AndExistsSimplify and similar (quantify + apply + simplify at the same time)
 public interface Bdd extends BooleanDecisionDiagram, BooleanTerminalDecisionDiagram<BitSet, BinaryPath> {
     /**
      * Creates a new variable and returns the BDD function representing it. The implementation guarantees that

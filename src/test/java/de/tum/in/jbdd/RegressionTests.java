@@ -45,6 +45,7 @@ class RegressionTests {
     private static final BddConfiguration config =
             ImmutableBddConfiguration.builder().build();
 
+    @SuppressWarnings({"AssignmentToNull", "UnusedAssignment", "ReuseOfLocalVariable"})
     private static void forceJvmGarbageCollection() {
         // Force to clear weak references
         Object sentinel = new Object();
@@ -111,11 +112,6 @@ class RegressionTests {
     void testHashArrayWithASingleKey() {
         assertEquals(HashUtil.hash(7, 11), HashUtil.hashArray(7, 11));
     }
-
-    // A diagram's own cache-invalidation hook must survive a JVM garbage collection. It is owned by the
-    // diagram and referenced by nothing else, so registering it weakly let the JVM drop it - after which
-    // node-table GC stopped pruning the operation caches entirely, and an entry whose result node had been
-    // reclaimed and whose id had been recycled silently returned a different function.
 
     @Test
     void testBooleanCacheIsPrunedAfterAJvmGarbageCollection() {
@@ -193,9 +189,6 @@ class RegressionTests {
         assertTrue(mt.check());
     }
 
-    // Assignment counts are keyed on the node alone, but count over [decisionVariable, numberOfVariables),
-    // so creating a variable makes every cached entry wrong.
-
     @Test
     void testSatisfactionCountIsRecomputedAfterCreatingVariables() {
         BddImpl bdd = new BddImpl(config);
@@ -237,14 +230,13 @@ class RegressionTests {
 
         BddMap<String> kept = maps.of("kept");
         for (int i = 0; i < 32; i++) {
-            maps.of("transient" + i);
+            maps.of("transient_" + i);
         }
 
         forceJvmGarbageCollection();
         // Any further protect() drains the reference queue, dereferencing the collected wrappers.
         maps.of("kept");
-        // Reclaims the now-unreferenced values, which drives ValueIndex#sweepValues - whose invariant
-        // assertion used to demand the complement of what it actually maintains.
+        // Reclaims the now-unreferenced values
         assertDoesNotThrow(mt::forceGc);
 
         assertEquals("kept", kept.evaluate(BitSets.of()));
@@ -254,8 +246,6 @@ class RegressionTests {
 
     @Test
     void testAssignmentIteratorRejectsAnInterleavedQuery() {
-        // The iterator is lazy and reads a memo that is keyed on the last predicate handed to the diagram.
-        // Interleaving is not supported; it used to silently drop solutions, now it fails loudly.
         assumeTrue(assertionsEnabled(), "Guarded by an assertion");
 
         BddImpl bdd = new BddImpl(config);
@@ -321,8 +311,6 @@ class RegressionTests {
 
     @Test
     void testUpdateMatchesIfThenElseOnTheOriginalFunction() {
-        // Pins the semantics MtBdd#update's own default implementation got wrong (it passed the condition
-        // where the original function belongs).
         BddImpl bdd = new BddImpl(config);
         int[] v = bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
@@ -653,6 +641,68 @@ class RegressionTests {
             mt.dereference(simplified);
         }
         assertTrue(bdd.check());
+        assertTrue(mt.check());
+    }
+
+    @Test
+    void testMtBddCacheIsPrunedWhenOnlyValuesAreReclaimed() {
+        BddImpl bdd = new BddImpl(config);
+        bdd.createVariables(2);
+        MtBddImpl mt = bdd.mtbdd();
+
+        // One operator instance throughout, so initApply never invalidates the cache for that reason.
+        IntBinaryOperator constant = (a, b) -> 42;
+        int left = mt.reference(mt.of(0, mt.of(1), mt.of(2)));
+        int right = mt.reference(mt.of(1, mt.of(10), mt.of(20)));
+
+        int stale = mt.apply(left, right, constant);
+        assertTrue(mt.isConstant(stale), "the result has to be a bare terminal for this to be the 0-node case");
+
+        // left and right keep every node alive, so nothing is reclaimed - but value 42 is held by neither a
+        // reference nor a node, so the leaf sweep takes it.
+        assertEquals(0, mt.forceGc());
+        assertFalse(mt.isValidFunction(stale));
+
+        int again = mt.apply(left, right, constant);
+        assertTrue(mt.isValidFunction(again), "apply returned a terminal whose value is no longer allocated");
+        assertEquals(42, mt.evaluate(again, assignment(true, true)));
+        assertTrue(mt.check());
+    }
+
+    @Test
+    void testRegisteredApplyCacheIsPrunedWhenTheTableGrows() {
+        // A live-node threshold of 0 sends every collection down the grow branch.
+        BddConfiguration growAlways =
+                ImmutableBddConfiguration.builder().gcLiveNodeThreshold(0.0d).build();
+        BddImpl bdd = new BddImpl(growAlways);
+        bdd.createVariables(4);
+        MtBddImpl mt = bdd.mtbdd();
+
+        IntBinaryOperator sum = Integer::sum;
+        RegisteredOperation.Binary apply = mt.registerApply(MtBddBinaryOperator.of(sum));
+
+        int left = mt.reference(mt.of(0, mt.of(1), mt.of(2)));
+        int right = mt.reference(mt.of(1, mt.of(10), mt.of(20)));
+
+        // Unreferenced, so these nodes are dead by the time the table grows - while the private cache still
+        // maps (left, right), and every intermediate pair, onto them.
+        int dead = apply.applyAsInt(left, right);
+        assertTrue(mt.isValidFunction(dead));
+
+        int sizeBefore = mt.tableSize();
+        // Churn with throw-away structure until the table has grown, recycling the invalidated ids.
+        // MINIMUM_NODE_TABLE_SIZE is a thousand-odd slots, so this needs to be well past that.
+        for (int i = 0; i < 4096; i++) {
+            mt.of(i % 4, mt.of(i), mt.of(i + 1000));
+        }
+        assertTrue(mt.tableSize() > sizeBefore, "the table never grew, so the hook under test never fired");
+
+        int again = apply.applyAsInt(left, right);
+        assertTrue(mt.isValidFunction(again));
+        assertEquals(11, mt.evaluate(again, assignment(true, true, false, false)));
+        assertEquals(21, mt.evaluate(again, assignment(true, false, false, false)));
+        assertEquals(12, mt.evaluate(again, assignment(false, true, false, false)));
+        assertEquals(22, mt.evaluate(again, assignment(false, false, false, false)));
         assertTrue(mt.check());
     }
 }

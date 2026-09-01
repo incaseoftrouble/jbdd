@@ -32,16 +32,9 @@ import org.jspecify.annotations.Nullable;
 final class MtBddOperations {
     private MtBddOperations() {}
 
-    /**
-     * A simplify-capable registered operation additionally keys its cache on a {@code Bdd} domain, so it has
-     * to be pruned when <em>either</em> table collects - hence the registration with both diagrams, and
-     * hence this shared heuristic: the {@code afterGc} callbacks are indistinguishable once both are
-     * registered, so the (purely advisory) "is it worth preserving entries" decision is taken against
-     * whichever table is larger.
-     */
-    private static boolean preserveOnGc(MtBddImpl mtbdd, int reclaimedNodes) {
-        return mtbdd.bddImpl().configuration().useCachePreserve()
-                && reclaimedNodes < Math.max(mtbdd.tableSize(), mtbdd.bddImpl().tableSize()) / 2;
+    private static boolean preserveEntries(MtBddImpl mtbdd, boolean mtbddOrigin, int invalidatedNodes) {
+        int tableSize = mtbddOrigin ? mtbdd.tableSize() : mtbdd.bddImpl().tableSize();
+        return mtbdd.bddImpl().configuration().useCachePreserve() && invalidatedNodes < tableSize / 2;
     }
 
     static final class Compose extends ProtectedOperation
@@ -120,24 +113,41 @@ final class MtBddOperations {
         }
 
         @Override
-        public void afterGc(int reclaimedNodes, BitSet reclaimedValues) {
+        public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
             if (isReleased()) {
                 return;
             }
-            boolean preserve = preserveOnGc(mtbdd, reclaimedNodes);
-            composeCache.clearInvalidMtbddNodes(preserve);
-            if (composeSimplifyCache != null) {
-                composeSimplifyCache.clearInvalidMtbddNodes(preserve);
-                composeSimplifyCache.clearInvalidBddNodes(preserve);
-            }
+            pruneInvalidNodes(origin, reclaimedNodes, reclaimedValues);
         }
 
         @Override
-        public void afterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
+        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
             if (isReleased()) {
                 return;
             }
-            growToTableFloor();
+            pruneInvalidNodes(origin, invalidatedNodes, reclaimedValues);
+            //noinspection ObjectEquality
+            if (origin == mtbdd) { // NOPMD
+                growToTableFloor();
+            }
+        }
+
+        @SuppressWarnings({"PMD.CompareObjectsWithEquals", "ObjectEquality"})
+        private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            if (invalidatedNodes == 0 && reclaimedValues.isEmpty()) {
+                return;
+            }
+            boolean mtbddOrigin = origin == mtbdd;
+            boolean preserve = preserveEntries(mtbdd, mtbddOrigin, invalidatedNodes);
+            if (mtbddOrigin) {
+                composeCache.clearInvalidMtbddNodes(preserve);
+                if (composeSimplifyCache != null) {
+                    composeSimplifyCache.clearInvalidMtbddNodes(preserve);
+                }
+            } else {
+                assert composeSimplifyCache != null : "Registered with the Bdd only when simplify-capable";
+                composeSimplifyCache.clearInvalidBddNodes(preserve);
+            }
         }
     }
 
@@ -191,18 +201,34 @@ final class MtBddOperations {
         }
 
         @Override
-        public void afterGc(int reclaimedNodes, BitSet reclaimedValues) {
-            boolean preserve = preserveOnGc(mtbdd, reclaimedNodes);
-            applyCache.clearInvalidMtbddNodes(preserve);
-            if (applySimplifyCache != null) {
-                applySimplifyCache.clearInvalidMtbddNodes(preserve);
-                applySimplifyCache.clearInvalidBddNodes(preserve);
-            }
+        public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
+            pruneInvalidNodes(origin, reclaimedNodes, reclaimedValues);
         }
 
         @Override
-        public void afterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
-            growToTableFloor();
+        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            pruneInvalidNodes(origin, invalidatedNodes, reclaimedValues);
+            if (origin == mtbdd) {
+                growToTableFloor();
+            }
+        }
+
+        @SuppressWarnings({"PMD.CompareObjectsWithEquals", "ObjectEquality"})
+        private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            if (invalidatedNodes == 0 && reclaimedValues.isEmpty()) {
+                return;
+            }
+            boolean mtbddOrigin = origin == mtbdd;
+            boolean preserve = preserveEntries(mtbdd, mtbddOrigin, invalidatedNodes);
+            if (mtbddOrigin) {
+                applyCache.clearInvalidMtbddNodes(preserve);
+                if (applySimplifyCache != null) {
+                    applySimplifyCache.clearInvalidMtbddNodes(preserve);
+                }
+            } else {
+                assert applySimplifyCache != null;
+                applySimplifyCache.clearInvalidBddNodes(preserve);
+            }
         }
     }
 }

@@ -146,7 +146,7 @@ final class MtBddCache {
                 entry("cartesian_product", cartesianProductCache),
                 entry("count", satisfactionCache));
 
-        tableSizeChanged(0);
+        tableSizeChanged(0, BitSets.of());
 
         if (bdd.configuration().logStatisticsOnShutdown()) {
             Util.registerForCleanupStatistics(mtbdd, bdd.configuration().name());
@@ -175,8 +175,8 @@ final class MtBddCache {
 
     // Size and invalidation
 
-    void tableSizeChanged(int reclaimedNodes) {
-        onMultiTerminalNodesInvalidated(reclaimedNodes);
+    void tableSizeChanged(int reclaimedNodes, BitSet reclaimedValues) {
+        onMultiTerminalNodesInvalidated(reclaimedNodes, reclaimedValues);
 
         BddConfiguration configuration = bdd.configuration();
         int size = mtbdd.tableSize();
@@ -244,8 +244,8 @@ final class MtBddCache {
         }
     }
 
-    void onMultiTerminalNodesInvalidated(int invalidatedNodes) {
-        if (invalidatedNodes == 0) {
+    void onMultiTerminalNodesInvalidated(int invalidatedNodes, BitSet reclaimedValues) {
+        if (invalidatedNodes == 0 && reclaimedValues.isEmpty()) {
             return;
         }
         boolean preserve = bdd.configuration().useCachePreserve() && invalidatedNodes < mtbdd.tableSize() / 2;

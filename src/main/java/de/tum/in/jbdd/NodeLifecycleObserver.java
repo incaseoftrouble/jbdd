@@ -19,15 +19,15 @@ package de.tum.in.jbdd;
 import java.util.BitSet;
 
 interface NodeLifecycleObserver {
-    default void beforeGc() {
+    default void beforeGc(DecisionDiagram origin) {
         // Default: nothing to release ahead of time.
     }
 
-    default void afterGc(int reclaimedNodes, BitSet reclaimedValues) {
+    default void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
         // Default: nothing depends on which nodes/values were reclaimed.
     }
 
-    default void afterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
+    default void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
         // Default: nothing depends on the table's size.
     }
 }

@@ -38,7 +38,7 @@ final class ProtectionTracker implements NodeLifecycleObserver {
     }
 
     @Override
-    public void beforeGc() {
+    public void beforeGc(DecisionDiagram origin) {
         drain();
     }
 

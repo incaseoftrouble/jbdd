@@ -107,15 +107,17 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      *     The action to be performed on these solutions.
      */
     default void forEachSolution(int function, Consumer<? super S> action) {
-        solutionIterator(function).forEachRemaining(action);
+        forEachSolutionIn(function, trueFunction(), action);
     }
 
     default void forEachSolution(int function, BitSet support, Consumer<? super S> action) {
-        solutionIterator(function, support).forEachRemaining(action);
+        forEachSolutionIn(function, trueFunction(), support, action);
     }
 
     default void forEachSolutionIn(int function, int domain, Consumer<? super S> action) {
-        solutionIteratorIn(function, domain).forEachRemaining(action);
+        BitSet support = new BitSet(numberOfVariables());
+        support.set(0, numberOfVariables());
+        forEachSolutionIn(function, domain, support, action);
     }
 
     default void forEachSolutionIn(int function, int domain, BitSet support, Consumer<? super S> action) {

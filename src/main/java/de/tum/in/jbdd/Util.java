@@ -39,8 +39,8 @@ final class Util {
         return val < 0 ? val + modulus : val;
     }
 
-    static boolean symmetricCanonicallyOrdered(int node1, int node1var, int node2, int node2var) {
-        return node1var < node2var || (node1var == node2var && node1 < node2);
+    static boolean binarySymmetricWellOrdered(int node1, int node2) {
+        return node1 <= node2;
     }
 
     static void registerForCleanupStatistics(DecisionDiagram owner, @Nullable String name) {
