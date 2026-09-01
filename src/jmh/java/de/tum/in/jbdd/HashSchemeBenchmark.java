@@ -44,8 +44,8 @@ import org.openjdk.jmh.infra.Blackhole;
 @BenchmarkMode(Mode.AverageTime)
 public class HashSchemeBenchmark {
     static int simpleHash(int variable, int low, int high) {
-        int hashCode = low < 0 ? -low + high + variable : low + high + variable;
-        return hashCode < 0 ? ~hashCode : hashCode;
+        int hashCode = (low < 0 ? -low : low) + (high < 0 ? -high : high) + variable;
+        return hashCode & Integer.MAX_VALUE;
     }
 
     static int fibonacciHash(int variable, int low, int high) {
@@ -110,8 +110,13 @@ public class HashSchemeBenchmark {
 
     @State(Scope.Benchmark)
     public static class TripleState {
+        @SuppressWarnings("NullAway.Init")
         int[] variable;
+
+        @SuppressWarnings("NullAway.Init")
         int[] low;
+
+        @SuppressWarnings("NullAway.Init")
         int[] high;
 
         @Setup(Level.Trial)
@@ -187,7 +192,7 @@ public class HashSchemeBenchmark {
          * construction traffic, not synthetic guesses.
          */
         static Triples fromAdder(int bits) {
-            BddImpl bdd = new BddImpl(ImmutableBddConfiguration.builder().build());
+            BddImpl bdd = new BddContextImpl(ImmutableBddConfiguration.builder().build()).bdd();
             BddBuilder.makeAdder(bdd, bits);
 
             NodeTable.Binary table = (NodeTable.Binary) bdd.table();

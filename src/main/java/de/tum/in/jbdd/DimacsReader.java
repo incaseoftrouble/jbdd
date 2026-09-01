@@ -42,7 +42,8 @@ public final class DimacsReader {
         }
     }
 
-    public static int loadDimacs(Bdd bdd, BufferedReader reader) throws IOException, InvalidFormatException {
+    public static int loadDimacs(BinaryDecisionDiagram bdd, BufferedReader reader)
+            throws IOException, InvalidFormatException {
         String header = nextLine(reader);
         if (header == null) {
             throw new InvalidFormatException("Stream is empty");

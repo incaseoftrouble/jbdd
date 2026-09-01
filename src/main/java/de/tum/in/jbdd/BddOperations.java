@@ -24,10 +24,10 @@ final class BddOperations {
     private BddOperations() {}
 
     static final class Compose extends ProtectedOperation
-            implements RegisteredOperation.Unary, RegisteredOperation.Binary, NodeLifecycleObserver {
+            implements RegisteredOperation.Unary, RegisteredOperation.Binary, NodeTableObserver {
         private final BddImpl bdd;
         private final int[] variableMapping;
-        private final int highestReplacedVariable;
+        private int maxReplacedLevel;
         private final BooleanCache.UnaryToIntCache composeCache;
 
         /**
@@ -39,17 +39,12 @@ final class BddOperations {
         private final BooleanCache.@Nullable BinaryToIntCache composeSimplifyCache;
 
         @SuppressWarnings("AssignmentOrReturnOfFieldWithMutableType")
-        Compose(
-                BddImpl bdd,
-                int[] resolvedMapping,
-                int highestReplacedVariable,
-                int[] protectedNodes,
-                boolean withSimplify) {
+        Compose(BddImpl bdd, int[] resolvedMapping, int maxReplacedLevel, int[] protectedNodes, boolean withSimplify) {
             super(bdd.protectionTracker(), () -> bdd.dereference(protectedNodes));
             assert Arrays.stream(protectedNodes).allMatch(bdd::nodeIsReferenced);
             this.bdd = bdd;
             this.variableMapping = resolvedMapping;
-            this.highestReplacedVariable = highestReplacedVariable;
+            this.maxReplacedLevel = maxReplacedLevel;
             this.composeCache = new BooleanCache.UnaryToIntCache(bdd);
             this.composeSimplifyCache = withSimplify ? new BooleanCache.BinaryToIntCache(bdd) : null;
             bdd.registerObserver(this);
@@ -64,6 +59,44 @@ final class BddOperations {
             if (composeSimplifyCache != null) {
                 composeSimplifyCache.grow(floor);
             }
+        }
+
+        private boolean isReplaced(int variable) {
+            return variable < variableMapping.length && variableMapping[variable] != bdd.variableFunction(variable);
+        }
+
+        @Override
+        public void levelsSwapped(DecisionDiagram origin, int level) {
+            /* The cut-off this holds is a level, so it may name something else now; and its caches were
+             * filled with results which used the old one. The mapping itself is by variable, so it stands.
+             *
+             * Only the two swapped variables changed level, and they exchanged exactly these two, so the
+             * greatest replaced level moves only when one of them is replaced and the other is not - and
+             * then only if the bound was sitting on the level that one just left. Everything else replaced
+             * is at some level outside {level, level + 1} and did not move. */
+            boolean upperReplaced = isReplaced(bdd.variableAtLevel(level));
+            boolean lowerReplaced = isReplaced(bdd.variableAtLevel(level + 1));
+            if (upperReplaced && !lowerReplaced && maxReplacedLevel == level + 1) {
+                maxReplacedLevel = level;
+            } else if (lowerReplaced && !upperReplaced && maxReplacedLevel == level) {
+                maxReplacedLevel = level + 1;
+            }
+            assert maxReplacedLevel == bdd.maxReplacedLevel(variableMapping);
+
+            composeCache.invalidate();
+            if (composeSimplifyCache != null) {
+                composeSimplifyCache.invalidate();
+            }
+        }
+
+        @Override
+        public void variableInserted(DecisionDiagram origin, int level) {
+            /* Everything at or below the insertion point moved down by one, this bound included; every
+             * comparison against it therefore answers exactly as it did, so the caches stand. */
+            if (maxReplacedLevel >= level) {
+                maxReplacedLevel += 1;
+            }
+            assert maxReplacedLevel == bdd.maxReplacedLevel(variableMapping);
         }
 
         @Override
@@ -85,7 +118,7 @@ final class BddOperations {
             assert domain == bdd.trueFunction() || composeSimplifyCache != null
                     : "A domain-carrying compose must be registered through registerComposeSimplify";
             int result = bdd.composeGeneral(
-                    function, domain, variableMapping, highestReplacedVariable, composeCache, composeSimplifyCache);
+                    function, domain, variableMapping, maxReplacedLevel, composeCache, composeSimplifyCache);
             composeCache.growOnUsage();
             if (composeSimplifyCache != null) {
                 composeSimplifyCache.growOnUsage();
@@ -94,23 +127,31 @@ final class BddOperations {
         }
 
         @Override
-        public void afterGc(int reclaimedNodes, BitSet reclaimedValues) {
+        public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
             if (isReleased()) {
                 return;
             }
-            boolean preserve = bdd.configuration().useCachePreserve() && reclaimedNodes < bdd.tableSize() / 2;
+            pruneInvalidNodes(reclaimedNodes);
+        }
+
+        @Override
+        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            if (isReleased()) {
+                return;
+            }
+            pruneInvalidNodes(invalidatedNodes);
+            growToTableFloor();
+        }
+
+        private void pruneInvalidNodes(int invalidatedNodes) {
+            if (invalidatedNodes == 0) {
+                return;
+            }
+            boolean preserve = bdd.configuration().useCachePreserve() && invalidatedNodes < bdd.tableSize() / 2;
             composeCache.clearInvalidNodes(preserve);
             if (composeSimplifyCache != null) {
                 composeSimplifyCache.clearInvalidNodes(preserve);
             }
-        }
-
-        @Override
-        public void afterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
-            if (isReleased()) {
-                return;
-            }
-            growToTableFloor();
         }
     }
 }

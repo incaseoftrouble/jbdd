@@ -20,14 +20,12 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 import java.util.function.IntPredicate;
@@ -54,7 +52,7 @@ class MtBddTest {
 
     @Test
     void testOfConstantEvaluatesToValueEverywhere() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int numVars = 3;
         bdd.createVariables(numVars);
         MtBddImpl mt = bdd.mtbdd();
@@ -68,7 +66,7 @@ class MtBddTest {
 
     @Test
     void testOfCollapsesEqualChildren() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariable();
         MtBddImpl mt = bdd.mtbdd();
 
@@ -78,7 +76,7 @@ class MtBddTest {
 
     @Test
     void testOfChildOrderMatchesTrueHighFalseLow() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariable();
         MtBddImpl mt = bdd.mtbdd();
 
@@ -92,7 +90,7 @@ class MtBddTest {
 
     @Test
     void testHighOfAndLowOfMatchTrueHighFalseLow() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariable();
         MtBddImpl mt = bdd.mtbdd();
 
@@ -107,7 +105,7 @@ class MtBddTest {
 
     @Test
     void testSizeCountsDecisionNodesOnly() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -126,7 +124,7 @@ class MtBddTest {
 
     @Test
     void testReferenceCounting() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariable();
         MtBddImpl mt = bdd.mtbdd();
 
@@ -150,7 +148,7 @@ class MtBddTest {
 
     @Test
     void testEvaluateOverMultiLevelFunction() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -171,7 +169,7 @@ class MtBddTest {
 
     @Test
     void testBinaryApplyDoesNotAssumeIdempotence() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariable();
         MtBddImpl mt = bdd.mtbdd();
 
@@ -187,7 +185,7 @@ class MtBddTest {
 
     @Test
     void testMap() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariable();
         MtBddImpl mt = bdd.mtbdd();
 
@@ -204,7 +202,7 @@ class MtBddTest {
 
     @Test
     void testNaryApply() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -241,7 +239,7 @@ class MtBddTest {
 
     @Test
     void testAnyAssignmentAndCountAssignmentsAgreeWithEvaluate() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int numVars = 3;
         bdd.createVariables(numVars);
         MtBddImpl mt = bdd.mtbdd();
@@ -274,7 +272,7 @@ class MtBddTest {
 
     @Test
     void testAssignmentIteratorMatchesBruteForce() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int numVars = 4;
         bdd.createVariables(numVars);
         MtBddImpl mt = bdd.mtbdd();
@@ -288,12 +286,12 @@ class MtBddTest {
         checkAgainstBruteForce(mt, f, v -> true, numVars, fullSupport(numVars));
 
         // f's leaves are 1..3, so nothing can match a predicate that's always false.
-        assertFalse(mt.assignmentIterator(f, v -> false).hasNext());
+        assertFalse(mt.assignmentCursor(f, v -> false).valid());
 
         // Constant function: every full assignment matches iff the predicate matches the one value.
         int constant = mt.of(2);
         checkAgainstBruteForce(mt, constant, v -> v == 2, numVars, fullSupport(numVars));
-        assertFalse(mt.assignmentIterator(constant, v -> v != 2).hasNext());
+        assertFalse(mt.assignmentCursor(constant, v -> v != 2).valid());
 
         // A support smaller than the full variable set, but still a superset of f's real dependencies.
         BitSet minimalSupport = new BitSet(numVars);
@@ -339,19 +337,18 @@ class MtBddTest {
         }
 
         List<BitSet> actualList = new ArrayList<>();
-        Iterator<BitSet> iterator = mt.assignmentIterator(function, values, support);
-        while (iterator.hasNext()) {
-            actualList.add(BitSets.copyOf(iterator.next()));
+        for (Cursor<BitSet> cursor = mt.assignmentCursor(function, values, support); cursor.valid(); cursor.advance()) {
+            actualList.add(BitSets.copyOf(cursor.current()));
         }
         Set<BitSet> actual = new HashSet<>(actualList);
 
-        assertEquals(actualList.size(), actual.size(), "duplicate assignment produced by iterator");
+        assertEquals(actualList.size(), actual.size(), "duplicate assignment produced by the cursor");
         assertEquals(expected, actual);
     }
 
     @Test
     void testGarbageCollectionUnderPressureFromApplyAndValues() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(3);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -407,7 +404,7 @@ class MtBddTest {
 
     @Test
     void testEmptyNaryApplyReturnsPlaceholder() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         MtBddImpl mt = bdd.mtbdd();
         assertEquals(mt.placeholder(), mt.apply(EMPTY_INTS, values -> 42));
     }
@@ -422,7 +419,7 @@ class MtBddTest {
 
     @Test
     void testForEachPathVisitsEveryPathAndAgreesWithEvaluate() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -451,7 +448,7 @@ class MtBddTest {
 
     @Test
     void testForEachPathOnConstant() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         MtBddImpl mt = bdd.mtbdd();
 
         List<BinaryPath> paths = new ArrayList<>();
@@ -469,7 +466,7 @@ class MtBddTest {
 
     @Test
     void testForEachValueDedupesSharedLeaves() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -488,7 +485,7 @@ class MtBddTest {
 
     @Test
     void testAllValuesMatchAndAnyValueMatches() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -526,7 +523,7 @@ class MtBddTest {
 
     @Test
     void testAllValuesMatchShortCircuitsWithoutVisitingWholeTree() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int depth = 20;
         bdd.createVariables(depth + 1);
         MtBddImpl mt = bdd.mtbdd();
@@ -546,7 +543,7 @@ class MtBddTest {
 
     @Test
     void testAnyValueMatchesShortCircuitsWithoutVisitingWholeTree() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int depth = 20;
         bdd.createVariables(depth + 1);
         MtBddImpl mt = bdd.mtbdd();
@@ -566,7 +563,7 @@ class MtBddTest {
 
     @Test
     void testAgreementMatchesBruteForceEqualityOfValues() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int numVars = 3;
         bdd.createVariables(numVars);
         MtBddImpl mt = bdd.mtbdd();
@@ -586,7 +583,7 @@ class MtBddTest {
 
     @Test
     void testMapBooleanMatchesPredicateOverEvaluate() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int numVars = 3;
         bdd.createVariables(numVars);
         MtBddImpl mt = bdd.mtbdd();
@@ -603,7 +600,7 @@ class MtBddTest {
 
     @Test
     void testUpdateOverridesExactlyWhereAssignmentsHolds() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int numVars = 3;
         bdd.createVariables(numVars);
         MtBddImpl mt = bdd.mtbdd();
@@ -633,7 +630,7 @@ class MtBddTest {
 
     @Test
     void testComposeMatchesSubstitutionOfEvaluatedMapping() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int numVars = 3;
         bdd.createVariables(numVars);
         MtBddImpl mt = bdd.mtbdd();
@@ -666,7 +663,7 @@ class MtBddTest {
 
     @Test
     void testRestrictMatchesComposeWithConstantMapping() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int numVars = 3;
         bdd.createVariables(numVars);
         MtBddImpl mt = bdd.mtbdd();
@@ -694,13 +691,13 @@ class MtBddTest {
 
     @Test
     void testInvertMapsEachValueToItsAgreementBddFunction() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int numVars = 3;
         bdd.createVariables(numVars);
         MtBddImpl mt = bdd.mtbdd();
 
         int f = mt.of(0, mt.of(1, mt.of(1), mt.of(2)), mt.of(2, mt.of(3), mt.of(4)));
-        MtBdd.Inverse inverse = mt.invert(f);
+        MultiTerminalDecisionDiagram.Inverse inverse = mt.invert(f);
 
         // invert()'s co-domain must be exactly f's actual co-domain (values 1..4 here, nothing else).
         assertEquals(mt.valuesOf(f), inverse.codomain());
@@ -721,7 +718,7 @@ class MtBddTest {
 
     @Test
     void testInvertUsesMapPathForLargeValueDomains() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int numVars = 6;
         bdd.createVariables(numVars);
         MtBddImpl mt = bdd.mtbdd();
@@ -729,7 +726,7 @@ class MtBddTest {
         // 64 distinct values (0..63), comfortably above invert()'s array/map size threshold - forces the
         // Map-based path (the smaller test above, with only 4 values, only ever exercises the array path).
         int f = buildValueFunction(mt, numVars, 0, 0);
-        MtBdd.Inverse inverse = mt.invert(f);
+        MultiTerminalDecisionDiagram.Inverse inverse = mt.invert(f);
 
         assertEquals(mt.valuesOf(f), inverse.codomain());
         for (int mask = 0; mask < (1 << numVars); mask++) {
@@ -745,7 +742,7 @@ class MtBddTest {
 
     @Test
     void testSplitHandlesConstantResidualFunctions() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariable();
         MtBddImpl mt = bdd.mtbdd();
 
@@ -756,7 +753,7 @@ class MtBddTest {
         BitSet splitVariables = new BitSet(1);
         splitVariables.set(0);
 
-        MtBdd.FunctionToFunctionMap result = mt.split(f, splitVariables);
+        MultiTerminalDecisionDiagram.FunctionToFunctionMap result = mt.split(f, splitVariables);
         int g = result.function();
 
         int indexWhenTrue = mt.evaluate(g, new boolean[] {true});
@@ -767,7 +764,7 @@ class MtBddTest {
 
     @Test
     void testSplitResidualFunctionsRecombineToOriginalFunction() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int numVars = 4;
         bdd.createVariables(numVars);
         MtBddImpl mt = bdd.mtbdd();
@@ -779,7 +776,7 @@ class MtBddTest {
         BitSet splitVariables = new BitSet(numVars);
         splitVariables.set(0);
         splitVariables.set(2);
-        MtBdd.FunctionToFunctionMap result = mt.split(f, splitVariables);
+        MultiTerminalDecisionDiagram.FunctionToFunctionMap result = mt.split(f, splitVariables);
         int g = result.function();
 
         for (int mask = 0; mask < (1 << numVars); mask++) {
@@ -822,7 +819,7 @@ class MtBddTest {
 
     @Test
     void testCartesianProductDeduplicatesRepeatedTuples() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -831,7 +828,7 @@ class MtBddTest {
         // f2(x0,x1): (T,T)->9 (T,F)->8 (F,T)->8 (F,F)->9
         int f2 = mt.of(0, mt.of(1, mt.of(9), mt.of(8)), mt.of(1, mt.of(8), mt.of(9)));
 
-        MtBdd.FunctionToFunctionsMap product = mt.cartesianProduct(new int[] {f1, f2});
+        MultiTerminalDecisionDiagram.FunctionToFunctionsMap product = mt.cartesianProduct(new int[] {f1, f2});
         int g = product.function();
 
         // (T,T) and (F,F) both produce the tuple [1,9]; (T,F) and (F,T) both produce [2,8] - this needs
@@ -855,14 +852,14 @@ class MtBddTest {
 
     @Test
     void testCartesianProductAgreesWithComponentFunctions() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int numVars = 3;
         bdd.createVariables(numVars);
         MtBddImpl mt = bdd.mtbdd();
 
         int f1 = mt.of(0, mt.of(1, mt.of(1), mt.of(2)), mt.of(2, mt.of(3), mt.of(4)));
         int f2 = mt.of(1, mt.of(5), mt.of(2, mt.of(6), mt.of(7)));
-        MtBdd.FunctionToFunctionsMap product = mt.cartesianProduct(new int[] {f1, f2});
+        MultiTerminalDecisionDiagram.FunctionToFunctionsMap product = mt.cartesianProduct(new int[] {f1, f2});
         int g = product.function();
 
         // For every assignment, g must select an index whose tuple matches each component's own value.
@@ -876,7 +873,7 @@ class MtBddTest {
 
     @Test
     void testCartesianProductMemoIsPerCall() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int numVars = 3;
         bdd.createVariables(numVars);
         MtBddImpl mt = bdd.mtbdd();
@@ -898,7 +895,7 @@ class MtBddTest {
     }
 
     private static void assertCartesianProductAgrees(MtBddImpl mt, int f1, int f2, int numVars) {
-        MtBdd.FunctionToFunctionsMap product = mt.cartesianProduct(new int[] {f1, f2});
+        MultiTerminalDecisionDiagram.FunctionToFunctionsMap product = mt.cartesianProduct(new int[] {f1, f2});
         int g = product.function();
         for (int mask = 0; mask < (1 << numVars); mask++) {
             boolean[] assignment = maskToAssignment(mask, numVars);
@@ -912,18 +909,18 @@ class MtBddTest {
 
     @Test
     void testCartesianProductEmptyFunctionsReturnsPlaceholder() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         MtBddImpl mt = bdd.mtbdd();
 
         // Mirrors apply()'s own convention for 0 operands: not a meaningful function, just the sentinel.
-        MtBdd.FunctionToFunctionsMap product = mt.cartesianProduct(EMPTY_INTS);
+        MultiTerminalDecisionDiagram.FunctionToFunctionsMap product = mt.cartesianProduct(EMPTY_INTS);
         assertEquals(mt.placeholder(), product.function());
         assertTrue(product.codomain().isEmpty());
     }
 
     @Test
     void testSimplifyPreservesFunctionWhereDomainHolds() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int numVars = 3;
         bdd.createVariables(numVars);
         MtBddImpl mt = bdd.mtbdd();
@@ -943,7 +940,7 @@ class MtBddTest {
 
     @Test
     void testSimplifyEliminatesVariableUnconstrainedByDomain() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -966,7 +963,7 @@ class MtBddTest {
 
     @Test
     void testSimplifyNeverDependsOnAVariableOutsideFunctionsOwnSupport() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(3);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -990,7 +987,7 @@ class MtBddTest {
 
     @Test
     void testConstrainMayDependOnAVariableOutsideFunctionsOwnSupport() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(3);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -1015,7 +1012,7 @@ class MtBddTest {
 
     @Test
     void testSimplifyWithTrueDomainReturnsFunctionUnchanged() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -1027,7 +1024,7 @@ class MtBddTest {
 
     @Test
     void testSimplifyWithFalseDomainCollapsesToASingleConstant() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -1047,7 +1044,7 @@ class MtBddTest {
 
     @Test
     void testApplySimplifyAgreesWithApplyWhereDomainHolds() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int numVars = 3;
         bdd.createVariables(numVars);
         MtBddImpl mt = bdd.mtbdd();
@@ -1077,7 +1074,7 @@ class MtBddTest {
 
     @Test
     void testApplySimplifyEliminatesVariableUnconstrainedByDomain() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -1099,7 +1096,7 @@ class MtBddTest {
 
     @Test
     void testApplySimplifyUsesOperatorShortcutsUnderADomain() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -1116,7 +1113,7 @@ class MtBddTest {
 
     @Test
     void testRegisteredApplyAndApplySimplifyMatchTheDirectCalls() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(3);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -1138,7 +1135,7 @@ class MtBddTest {
 
     @Test
     void testMapSimplifyAgreesWithMapWhereDomainHolds() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int numVars = 2;
         bdd.createVariables(numVars);
         MtBddImpl mt = bdd.mtbdd();
@@ -1165,7 +1162,7 @@ class MtBddTest {
 
     @Test
     void testComposeSimplifyAgreesWithComposeWhereDomainHolds() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int numVars = 3;
         bdd.createVariables(numVars);
         MtBddImpl mt = bdd.mtbdd();
@@ -1200,7 +1197,7 @@ class MtBddTest {
 
     @Test
     void testComposeSimplifyDropsBranchesTheDomainExcludes() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -1218,7 +1215,7 @@ class MtBddTest {
 
     @Test
     void testRegisteredComposeAndComposeSimplifyMatchTheDirectCalls() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int numVars = 3;
         bdd.createVariables(numVars);
         MtBddImpl mt = bdd.mtbdd();
@@ -1239,41 +1236,36 @@ class MtBddTest {
     }
 
     @Test
-    void testPathIteratorReportsValuesAndReusesOnePathObject() {
-        BddImpl bdd = new BddImpl(config);
+    void testPathCursorReportsValuesForEachPath() {
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
 
         int f = buildSharedLeafFunction(mt, 1, 2);
 
-        MtBdd.ValuedIterator<BinaryPath> iterator = mt.pathIterator(f);
-        BinaryPath first = null;
         int count = 0;
-        while (iterator.hasNext()) {
-            BinaryPath path = iterator.next();
-            if (first == null) {
-                first = path;
-            } else {
-                // Mutated in place, never re-allocated (the point of handing the value out separately).
-                assertSame(first, path);
-            }
+        for (MultiTerminalDecisionDiagram.ValuedCursor<BinaryPath> cursor = mt.pathCursor(f);
+                cursor.valid();
+                cursor.advance()) {
+            BinaryPath path = cursor.current();
             boolean[] assignment = {path.assignment().get(0), path.assignment().get(1)};
-            assertEquals(mt.evaluate(f, assignment), iterator.value());
+            assertEquals(mt.evaluate(f, assignment), cursor.value());
             count++;
         }
         assertEquals(4, count);
 
         // A constant has exactly one, entirely unconstrained path carrying its value.
-        MtBdd.ValuedIterator<BinaryPath> constantIterator = mt.pathIterator(mt.of(42));
-        assertTrue(constantIterator.hasNext());
-        assertTrue(constantIterator.next().support().isEmpty());
-        assertEquals(42, constantIterator.value());
-        assertFalse(constantIterator.hasNext());
+        MultiTerminalDecisionDiagram.ValuedCursor<BinaryPath> constantCursor = mt.pathCursor(mt.of(42));
+        assertTrue(constantCursor.valid());
+        assertTrue(constantCursor.current().support().isEmpty());
+        assertEquals(42, constantCursor.value());
+        assertFalse(constantCursor.advance());
+        assertFalse(constantCursor.valid());
     }
 
     @Test
-    void testAssignmentIteratorReportsTheValueOfEachAssignment() {
-        BddImpl bdd = new BddImpl(config);
+    void testAssignmentCursorReportsTheValueOfEachAssignment() {
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int numVars = 4;
         bdd.createVariables(numVars);
         MtBddImpl mt = bdd.mtbdd();
@@ -1282,22 +1274,25 @@ class MtBddTest {
         int f = mt.of(0, mt.of(1, mt.of(1), mt.of(2)), mt.of(1, mt.of(2), mt.of(3)));
         IntPredicate values = v -> v == 2;
 
-        MtBdd.ValuedIterator<BitSet> iterator = mt.assignmentIterator(f, values, fullSupport(numVars));
         int count = 0;
-        while (iterator.hasNext()) {
-            BitSet assignment = iterator.next();
-            assertEquals(mt.evaluate(f, assignment), iterator.value());
-            assertTrue(values.test(iterator.value()));
+        for (MultiTerminalDecisionDiagram.ValuedCursor<BitSet> cursor =
+                        mt.assignmentCursor(f, values, fullSupport(numVars));
+                cursor.valid();
+                cursor.advance()) {
+            assertEquals(mt.evaluate(f, cursor.current()), cursor.value());
+            assertTrue(values.test(cursor.value()));
             count++;
         }
         // Two of the four (x0, x1) combinations lead to 2, times the four don't-care combinations.
         assertEquals(8, count);
 
         // A constant function: every assignment yields the one value.
-        MtBdd.ValuedIterator<BitSet> constantIterator = mt.assignmentIterator(mt.of(7), null, fullSupport(numVars));
-        assertTrue(constantIterator.hasNext());
-        constantIterator.next();
-        assertEquals(7, constantIterator.value());
-        constantIterator.forEachRemaining(assignment -> {});
+        MultiTerminalDecisionDiagram.ValuedCursor<BitSet> constantCursor =
+                mt.assignmentCursor(mt.of(7), null, fullSupport(numVars));
+        assertTrue(constantCursor.valid());
+        assertEquals(7, constantCursor.value());
+        while (constantCursor.advance()) {
+            assertEquals(7, constantCursor.value());
+        }
     }
 }

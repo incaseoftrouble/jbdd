@@ -19,7 +19,6 @@ package de.tum.in.jbdd;
 import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.BitSet;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -90,7 +89,7 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         return make(variableFunction(variable));
     }
 
-    int bddFunction(BddSet set) {
+    int functionOf(BddSet set) {
         assert (set instanceof BddSetImpl) && (this == ((BddSetImpl) set).factory); // NOPMD
         // assert bdd.nodeReferenceCount(node) > 0 || bdd.nodeReferenceCount(node) == -1;
         return ((BddSetImpl) set).function;
@@ -158,17 +157,17 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
 
         @Override
         public BddSet union(BddSet other) {
-            return make(factory.dd.or(function, factory.bddFunction(other)));
+            return make(factory.dd.or(function, factory.functionOf(other)));
         }
 
         @Override
         public boolean intersects(BddSet other) {
-            return factory.dd.intersects(function, factory.bddFunction(other));
+            return factory.dd.intersects(function, factory.functionOf(other));
         }
 
         @Override
         public BddSet intersection(BddSet other) {
-            return make(factory.dd.and(function, factory.bddFunction(other)));
+            return make(factory.dd.and(function, factory.functionOf(other)));
         }
 
         @Override
@@ -178,12 +177,12 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
 
         @Override
         public BddSet symmetricDifference(BddSet other) {
-            return make(factory.dd.xor(function, factory.bddFunction(other)));
+            return make(factory.dd.xor(function, factory.functionOf(other)));
         }
 
         @Override
         public BddSet difference(BddSet other) {
-            return make(factory.dd.andNot(function, factory.bddFunction(other)));
+            return make(factory.dd.andNot(function, factory.functionOf(other)));
         }
 
         @Override
@@ -207,9 +206,11 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         public BddSet replaceVariables(IntFunction<BddSet> mapping) {
             BitSet support = support();
             int[] substitutions = new int[support.length()];
-            Arrays.fill(substitutions, -1);
+            // As relabelVariables: a gap in the support means "leave this variable alone", which compose
+            // spells placeholder() - not -1, which it would read as a replacement and protect as a node.
+            Arrays.fill(substitutions, factory.dd.placeholder());
             for (int i = support.nextSetBit(0); i >= 0; i = support.nextSetBit(i + 1)) {
-                substitutions[i] = factory.bddFunction(mapping.apply(i));
+                substitutions[i] = factory.functionOf(mapping.apply(i));
             }
             return make(factory.dd.compose(function, substitutions));
         }
@@ -229,8 +230,8 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         }
 
         @Override
-        public Iterator<BitSet> iterator(BitSet support) {
-            return factory.dd.solutionIterator(function, support);
+        public Cursor<BitSet> cursor(BitSet support) {
+            return factory.dd.solutionCursor(function, support);
         }
 
         @Override

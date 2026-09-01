@@ -16,7 +16,7 @@
  */
 package de.tum.in.jbdd;
 
-public interface NodeBasedDecisionDiagram extends DecisionDiagram {
+public interface NodeBasedDd extends DecisionDiagram {
     /**
      * Returns the <em>node</em> which is used to represent the given {@code function} internally
      *
@@ -49,4 +49,24 @@ public interface NodeBasedDecisionDiagram extends DecisionDiagram {
     int referencedNodeCount();
 
     int nodeCount();
+
+    /**
+     * Returns the number of decision nodes used to represent this function in the decision diagram
+     */
+    int size(int function);
+
+    /**
+     * Tells the diagram that now is a good time to reclaim what is no longer reachable from a
+     * referenced function.
+     *
+     * <p>The other half of the contract {@link #reference(int)} opens: a dereferenced function is not
+     * gone, only collectable, and the diagram decides on its own when to act on that. This is a hint at
+     * that decision, not a command - an implementation is free to conclude that collecting now is not
+     * worth it and reclaim nothing. It is in any case a semantic no-op: no function changes its
+     * meaning, no handle is invalidated, so a caller who does not care about the memory never has to
+     * call it.
+     *
+     * @return How many nodes were reclaimed - zero if the implementation declined.
+     */
+    int gc();
 }

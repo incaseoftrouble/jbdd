@@ -23,43 +23,28 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import org.jspecify.annotations.Nullable;
 
 public class GcReferenceManager<V extends GcReferenceManager.DdContainer, DD extends DecisionDiagram> {
     private static final Logger logger = Logger.getLogger(GcReferenceManager.class.getName());
 
     protected final DD dd;
-
-    private final Map<Integer, DdReference<V>> gcObjects = new HashMap<>();
-    private final Map<Integer, V> nonGcObjects = new HashMap<>();
+    private final Map<Object, DdReference<V>> objects = new HashMap<>();
     private final ReferenceQueue<V> queue = new ReferenceQueue<>();
 
     public GcReferenceManager(DD dd) {
         this.dd = dd;
     }
 
-    @Nullable
-    protected V get(int function) {
-        V wrapper = nonGcObjects.get(function);
-
-        if (wrapper != null) {
-            return wrapper;
-        }
-
-        DdReference<V> reference = gcObjects.get(function);
-        return reference == null ? null : reference.get();
+    int protectedObjectCount() {
+        return objects.size();
     }
 
     // This is not thread safe!
     protected V protect(V container) {
         int function = container.function();
+        Object key = container.canonicalKey();
 
-        // Constants and variables are exempt from GC but still canonical
-        if (dd.isUnmanaged(function)) {
-            return nonGcObjects.merge(function, container, (oldW, newW) -> oldW);
-        }
-
-        DdReference<V> canonicalReference = gcObjects.get(function);
+        DdReference<V> canonicalReference = objects.get(key);
         if (canonicalReference == null) {
             // The object was created and needs a reference to be protected.
             dd.reference(function);
@@ -78,14 +63,14 @@ public class GcReferenceManager<V extends GcReferenceManager.DdContainer, DD ext
         }
 
         // Remove queued functions from the mapping.
-        processReferenceQueue(function);
+        processReferenceQueue(key);
 
         // Insert function into mapping.
-        gcObjects.put(function, new DdReference<>(container, queue));
+        objects.put(key, new DdReference<>(container, key, queue));
         return container;
     }
 
-    private void processReferenceQueue(int protectedNode) {
+    private void processReferenceQueue(Object protectedKey) {
         Reference<? extends V> reference = queue.poll();
         if (reference == null) {
             // Queue is empty
@@ -94,13 +79,11 @@ public class GcReferenceManager<V extends GcReferenceManager.DdContainer, DD ext
 
         int count = 0;
         do {
-            int node = ((DdReference<?>) reference).node;
-            gcObjects.remove(node);
+            DdReference<?> dead = (DdReference<?>) reference;
+            objects.remove(dead.key);
 
-            if (node != protectedNode) {
-                // assert bdd.nodeReferenceCount(node) == 1;
-                dd.dereference(node);
-                // assert bdd.nodeReferenceCount(node) == 0;
+            if (!dead.key.equals(protectedKey)) {
+                dd.dereference(dead.node);
                 count += 1;
             }
 
@@ -112,15 +95,21 @@ public class GcReferenceManager<V extends GcReferenceManager.DdContainer, DD ext
 
     private static final class DdReference<V extends DdContainer> extends WeakReference<V> {
         private final int node;
+        private final Object key;
 
-        private DdReference(V node, ReferenceQueue<? super V> queue) {
-            super(node, queue);
-            this.node = node.function();
+        private DdReference(V container, Object key, ReferenceQueue<? super V> queue) {
+            super(container, queue);
+            this.node = container.function();
+            this.key = key;
         }
     }
 
     @SuppressWarnings({"InterfaceMayBeAnnotatedFunctional", "PMD.ImplicitFunctionalInterface"})
     public interface DdContainer {
         int function();
+
+        default Object canonicalKey() {
+            return function();
+        }
     }
 }

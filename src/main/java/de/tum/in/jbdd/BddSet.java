@@ -18,11 +18,11 @@ package de.tum.in.jbdd;
 
 import java.math.BigInteger;
 import java.util.BitSet;
-import java.util.Iterator;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.IntFunction;
 import java.util.function.IntUnaryOperator;
+import java.util.function.UnaryOperator;
 
 /**
  * Symbolic representation of a {@code Set<BitSet>}. Deliberately exposes no operation that assumes or
@@ -102,12 +102,33 @@ public interface BddSet {
      * that specific valuation, possibly much smaller than {@link #support()}. */
     BitSet supportAt(BitSet valuation);
 
-    /** Iterates elements, treating every variable outside {@code support} as "don't care" (doubling the count). */
-    Iterator<BitSet> iterator(BitSet support);
+    /** Walks elements, treating every variable outside {@code support} as "don't care" (doubling the count). */
+    Cursor<BitSet> cursor(BitSet support);
 
-    /** Counts elements the same way {@link #iterator(BitSet)} does. */
+    /** Counts elements the same way {@link #cursor(BitSet)} does. */
     BigInteger size(BitSet support);
 
     /** Calls {@code consumer} once per element, treating variables outside {@code support} as "don't care". */
     void forEach(BitSet support, Consumer<? super BitSet> consumer);
+
+    /**
+     * A pre-built {@link BddSet#exists(BitSet)} over a fixed variable set, created by
+     * {@link BddSetFactory#registerExists} - see {@link RegisteredOperation} for when to prefer one.
+     */
+    @FunctionalInterface
+    interface Quantifier extends UnaryOperator<BddSet>, RegisteredOperation {
+        @Override
+        BddSet apply(BddSet set);
+    }
+
+    /**
+     * A pre-built {@link BddSet#replaceVariables(IntFunction)} or
+     * {@link BddSet#relabelVariables(IntUnaryOperator)}, created by
+     * {@link BddSetFactory#registerReplaceVariables} / {@link BddSetFactory#registerRelabelVariables}.
+     */
+    @FunctionalInterface
+    interface VariableReplacer extends UnaryOperator<BddSet>, RegisteredOperation {
+        @Override
+        BddSet apply(BddSet set);
+    }
 }

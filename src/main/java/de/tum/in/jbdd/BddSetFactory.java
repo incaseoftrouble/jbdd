@@ -18,9 +18,11 @@ package de.tum.in.jbdd;
 
 import java.util.BitSet;
 import java.util.Map;
+import java.util.function.IntFunction;
+import java.util.function.IntUnaryOperator;
 
-/** Obtained from {@link BddContext#bddSets()} - there's no standalone way to build one, since every
- * {@code BddSetFactory} needs a {@link Bdd} to share (see {@link BddContext}). */
+/** Obtained from {@link BinaryFactoryContext#bddSets()} - there's no standalone way to build one,
+ * since every {@code BddSetFactory} needs a {@link Bdd} to share (see {@link BddContext}). */
 public interface BddSetFactory {
     /** The empty set. */
     BddSet empty();
@@ -66,6 +68,28 @@ public interface BddSetFactory {
             set = set.intersection(sets[i]);
         }
         return set;
+    }
+
+    /**
+     * Binds {@code quantifiedVariables} once - see {@link BddSet.Quantifier}.
+     */
+    default BddSet.Quantifier registerExists(BitSet quantifiedVariables) {
+        BitSet quantified = BitSets.copyOf(quantifiedVariables);
+        return set -> set.exists(quantified);
+    }
+
+    /**
+     * Binds {@code mapping} once - see {@link BddSet.VariableReplacer}.
+     */
+    default BddSet.VariableReplacer registerReplaceVariables(IntFunction<BddSet> mapping) {
+        return set -> set.replaceVariables(mapping);
+    }
+
+    /**
+     * Binds {@code mapping} once - see {@link BddSet.VariableReplacer}.
+     */
+    default BddSet.VariableReplacer registerRelabelVariables(IntUnaryOperator mapping) {
+        return set -> set.relabelVariables(mapping);
     }
 
     Map<String, Object> statistics();

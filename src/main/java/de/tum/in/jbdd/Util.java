@@ -39,8 +39,8 @@ final class Util {
         return val < 0 ? val + modulus : val;
     }
 
-    static boolean symmetricCanonicallyOrdered(int node1, int node1var, int node2, int node2var) {
-        return node1var < node2var || (node1var == node2var && node1 < node2);
+    static boolean binarySymmetricWellOrdered(int node1, int node2) {
+        return node1 <= node2;
     }
 
     static void registerForCleanupStatistics(DecisionDiagram owner, @Nullable String name) {
@@ -72,6 +72,10 @@ final class Util {
             }
         }
         return count == toProtect.length ? toProtect : Arrays.copyOf(toProtect, count);
+    }
+
+    static double ratio(long value, long total) {
+        return total == 0 ? 0.0 : value / (double) total;
     }
 
     private static final class CleanupStatisticsRef extends WeakReference<DecisionDiagram> {

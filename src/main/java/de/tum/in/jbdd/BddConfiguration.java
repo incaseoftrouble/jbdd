@@ -50,6 +50,18 @@ public class BddConfiguration extends NodeTableConfiguration {
     }
 
     /**
+     * Whether the Bdd maintains structures required for reordering.
+     *
+     * <p>Building it is one linear pass, so a workload that reorders occasionally is better off not
+     * keeping it: the structures cost three ints per node slot, and maintaining them puts work on every
+     * node created. Set this when reordering is frequent enough that rebuilding dominates.
+     */
+    @Value.Default
+    public boolean keepReorderingStructures() {
+        return false;
+    }
+
+    /**
      * Initial node-table size of the companion MTBDD (see {@code MtBddImpl}); defaults to
      * {@link #initialSize()}. Separate from {@link #bddInitialSize()} because every {@code Bdd} carries an
      * MTBDD whether or not it is ever used, so the two tables' useful starting sizes rarely match.

@@ -23,11 +23,12 @@ import org.openjdk.jmh.annotations.State;
 
 @State(Scope.Benchmark)
 public class BddFactoryState {
+    @SuppressWarnings("NullAway.Init")
     private BddSetFactory factory;
 
     @Setup(Level.Iteration)
     public void setUpBdd() {
-        factory = BddContext.create().bddSets();
+        factory = BinaryFactoryContext.create().bddSets();
     }
 
     public BddSetFactory factory() {

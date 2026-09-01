@@ -53,6 +53,7 @@ final class MtBddCache {
     private int applyReuseCount = 0;
     private int mapReuseCount = 0;
     private int mapBooleanReuseCount = 0;
+    private int applyBooleanReuseCount = 0;
     private int composeReuseCount = 0;
     private int restrictReuseCount = 0;
     private int reachesMatchReuseCount = 0;
@@ -67,6 +68,8 @@ final class MtBddCache {
     private final UnaryToBddCache mapBooleanCache;
     private @Nullable IntPredicate currentMapBooleanPredicate;
     private final BinaryToBddCache agreementCache;
+    private final BinaryToBddCache applyBooleanCache;
+    private @Nullable MtBddBinaryPredicate currentApplyBooleanPredicate;
     private final MtbddBddToIntCache simplifyCache;
     private final MtbddBddToIntCache constrainCache;
     private final UpdateCache updateCache;
@@ -100,6 +103,7 @@ final class MtBddCache {
         mapSimplifyCache = new MtbddBddToIntCache(mtbdd, bdd);
         mapBooleanCache = new UnaryToBddCache(mtbdd, bdd);
         agreementCache = new BinaryToBddCache(mtbdd, bdd);
+        applyBooleanCache = new BinaryToBddCache(mtbdd, bdd);
         simplifyCache = new MtbddBddToIntCache(mtbdd, bdd);
         constrainCache = new MtbddBddToIntCache(mtbdd, bdd);
         updateCache = new UpdateCache(mtbdd, bdd);
@@ -135,6 +139,7 @@ final class MtBddCache {
                 entry("compose_simplify", composeSimplifyCache),
                 entry("map_boolean", mapBooleanCache),
                 entry("agreement", agreementCache),
+                entry("apply_boolean", applyBooleanCache),
                 entry("simplify", simplifyCache),
                 entry("constrain", constrainCache),
                 entry("update", updateCache),
@@ -146,7 +151,7 @@ final class MtBddCache {
                 entry("cartesian_product", cartesianProductCache),
                 entry("count", satisfactionCache));
 
-        tableSizeChanged(0);
+        tableSizeChanged(0, BitSets.of());
 
         if (bdd.configuration().logStatisticsOnShutdown()) {
             Util.registerForCleanupStatistics(mtbdd, bdd.configuration().name());
@@ -175,8 +180,8 @@ final class MtBddCache {
 
     // Size and invalidation
 
-    void tableSizeChanged(int reclaimedNodes) {
-        onMultiTerminalNodesInvalidated(reclaimedNodes);
+    void tableSizeChanged(int reclaimedNodes, BitSet reclaimedValues) {
+        onMultiTerminalNodesInvalidated(reclaimedNodes, reclaimedValues);
 
         BddConfiguration configuration = bdd.configuration();
         int size = mtbdd.tableSize();
@@ -197,6 +202,7 @@ final class MtBddCache {
 
         int ephemeralSize = size / configuration.mtbddCacheEphemeralMultiplier();
         applyCache.grow(ephemeralSize);
+        applyBooleanCache.grow(ephemeralSize);
         applySimplifyCache.grow(ephemeralSize);
         mapCache.grow(ephemeralSize);
         mapSimplifyCache.grow(ephemeralSize);
@@ -222,6 +228,19 @@ final class MtBddCache {
         restrictCache.grow(ephemeralSize);
     }
 
+    /**
+     * See {@link BooleanCache#levelsSwapped}, which this mirrors, including why it drops everything rather
+     * than only what it must. The ones that would survive are {@code apply}, {@code map},
+     * {@code map_boolean}, {@code agreement}, {@code update} and {@code ite}, all of which stop at
+     * constants and never compare a level. The ones that could not are {@code compose}, {@code restrict}
+     * and {@code split} (an early return on a level comparison), {@code split_combine} (a level in its
+     * very key), {@code count} (ranges over the variables below the node) and the simplify family (picks
+     * a representative by level).
+     */
+    void levelsSwapped() {
+        invalidate();
+    }
+
     private Collection<MtbddCacheStorage> caches() {
         return caches.values();
     }
@@ -237,6 +256,8 @@ final class MtBddCache {
         if (invalidatedNodes == 0) {
             return;
         }
+        // See BooleanCache#onBddNodesInvalidated: a freed id is exactly when the mapping can lie.
+        composeArray = EMPTY_INT_ARRAY;
         // If we reclaimed a lot of nodes, we won't be able to save much, so don't try
         boolean preserve = bdd.configuration().useCachePreserve() && invalidatedNodes < bdd.tableSize() / 2;
         for (MtbddCacheStorage cache : caches()) {
@@ -244,8 +265,8 @@ final class MtBddCache {
         }
     }
 
-    void onMultiTerminalNodesInvalidated(int invalidatedNodes) {
-        if (invalidatedNodes == 0) {
+    void onMultiTerminalNodesInvalidated(int invalidatedNodes, BitSet reclaimedValues) {
+        if (invalidatedNodes == 0 && reclaimedValues.isEmpty()) {
             return;
         }
         boolean preserve = bdd.configuration().useCachePreserve() && invalidatedNodes < mtbdd.tableSize() / 2;
@@ -277,6 +298,15 @@ final class MtBddCache {
         mapSimplifyCache.invalidate();
     }
 
+    void initApplyBoolean(MtBddBinaryPredicate predicate) {
+        if (predicate.equals(currentApplyBooleanPredicate)) {
+            applyBooleanReuseCount += 1;
+            return;
+        }
+        currentApplyBooleanPredicate = predicate;
+        applyBooleanCache.invalidate();
+    }
+
     void initMapBoolean(IntPredicate predicate) {
         if (predicate.equals(currentMapBooleanPredicate)) {
             mapBooleanReuseCount += 1;
@@ -286,15 +316,34 @@ final class MtBddCache {
         mapBooleanCache.invalidate();
     }
 
-    void initCompose(int[] replacements, int highestReplacement) {
-        if (composeArray.length - 1 == highestReplacement) {
-            int mismatch = Arrays.mismatch(composeArray, replacements);
-            if (mismatch == -1 || mismatch > highestReplacement) {
-                composeReuseCount += 1;
-                return;
-            }
+    /**
+     * Points the compose caches at {@code replacements}, keeping their contents only if that mapping is
+     * the one they were filled under.
+     *
+     * <p>Sameness is judged on the whole resolved mapping, not on a prefix of it. Truncating to what the
+     * recursion can reach would have to be by <em>index</em>, and the cut-off available here is a
+     * <em>level</em> - the same thing only while nothing has reordered. Once they part company a replaced
+     * variable can have a small level and a large index, so its entry falls outside the prefix: a differing
+     * mapping compares equal and the cache is reused for it, and the dependency check below never looks at
+     * that replacement, so the cache is not invalidated when it dies. Both give wrong answers rather than
+     * stale ones. One copy of an array at most as long as the variable count is the price of not having to
+     * reason about that; the cut-off stays a level, but only where it belongs, as the recursion's own bound.
+     *
+     * <p>Matching contents is still not enough on its own. The entries are function ids the caller supplies,
+     * and an ephemeral compose protects them only for the duration of one call, so between two calls a
+     * replacement can be collected and its slot handed to an unrelated function - the new mapping then
+     * compares equal while denoting something else, and validity cannot see it, a recycled id being a
+     * perfectly valid function. So {@link #onBooleanNodesInvalidated} forgets the mapping whenever an id
+     * came free, which is precisely when that can happen; the empty array is a sound sentinel because a
+     * mapping that replaces nothing never gets here.
+     */
+    void initCompose(int[] replacements) {
+        assert replacements.length > 0 : "A mapping replacing nothing must not reach the compose caches";
+        if (Arrays.equals(composeArray, replacements)) {
+            composeReuseCount += 1;
+            return;
         }
-        this.composeArray = Arrays.copyOf(replacements, highestReplacement + 1);
+        this.composeArray = replacements.clone();
         composeCache.invalidate();
         composeSimplifyCache.invalidate();
     }
@@ -386,11 +435,24 @@ final class MtBddCache {
         return result;
     }
 
-    int lookupAgreement(int function1, int function2) {
+    BinaryToBddCache agreementCache() {
+        return agreementCache;
+    }
+
+    BinaryToBddCache applyBooleanCache() {
+        return applyBooleanCache;
+    }
+
+    int lookupBinaryToBdd(BinaryToBddCache cache, int function1, int function2) {
         assert mtbdd.isValidFunction(function1) && mtbdd.isValidFunction(function2);
-        int result = agreementCache.lookup(function1, function2);
-        lookupHash = agreementCache.lookupHash();
+        int result = cache.lookup(function1, function2);
+        lookupHash = cache.lookupHash();
         return result;
+    }
+
+    void putBinaryToBdd(BinaryToBddCache cache, int hash, int function1, int function2, int result) {
+        assert mtbdd.isValidFunction(function1) && mtbdd.isValidFunction(function2) && bdd.isValidFunction(result);
+        cache.put(hash, function1, function2, result);
     }
 
     int lookupSimplify(int function, int domain) {
@@ -491,11 +553,6 @@ final class MtBddCache {
         mapBooleanCache.put(hash, function, result);
     }
 
-    void putAgreement(int hash, int function1, int function2, int result) {
-        assert mtbdd.isValidFunction(function1) && mtbdd.isValidFunction(function2) && bdd.isValidFunction(result);
-        agreementCache.put(hash, function1, function2, result);
-    }
-
     void putSimplify(int hash, int function, int domain, int result) {
         assert mtbdd.isValidFunction(function) && bdd.isValidFunction(domain) && mtbdd.isValidFunction(result);
         simplifyCache.put(hash, function, domain, result);
@@ -569,6 +626,7 @@ final class MtBddCache {
         statistics.put("mtbdd_cache_apply_reuse_count", String.valueOf(applyReuseCount));
         statistics.put("mtbdd_cache_map_reuse_count", String.valueOf(mapReuseCount));
         statistics.put("mtbdd_cache_map_boolean_reuse_count", String.valueOf(mapBooleanReuseCount));
+        statistics.put("mtbdd_cache_apply_boolean_reuse_count", String.valueOf(applyBooleanReuseCount));
         statistics.put("mtbdd_cache_compose_reuse_count", String.valueOf(composeReuseCount));
         statistics.put("mtbdd_cache_restrict_reuse_count", String.valueOf(restrictReuseCount));
         statistics.put("mtbdd_cache_reaches_match_reuse_count", String.valueOf(reachesMatchReuseCount));

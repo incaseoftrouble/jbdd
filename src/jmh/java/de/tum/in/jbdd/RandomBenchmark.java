@@ -87,13 +87,13 @@ public class RandomBenchmark extends BaseBddBenchmark {
     }
 
     public static class BddNodes {
-        public final Bdd bdd;
+        public final BinaryDecisionDiagram bdd;
         public final Random random;
         private final Set<Integer> nodeSet = new HashSet<>();
         private final List<Integer> nodes = new ArrayList<>();
         private int counter = 0;
 
-        public BddNodes(Bdd bdd, Random random) {
+        public BddNodes(BinaryDecisionDiagram bdd, Random random) {
             this.bdd = bdd;
             this.random = random;
         }
@@ -152,7 +152,10 @@ public class RandomBenchmark extends BaseBddBenchmark {
         private static final int SEED = 1234;
         private static final int OPERATION_COUNT = 18_000;
 
+        @SuppressWarnings("NullAway.Init")
         public BddNodes nodes;
+
+        @SuppressWarnings("NullAway.Init")
         public List<BddOperation> bddOperations;
 
         @Setup(Level.Trial)
@@ -183,10 +186,11 @@ public class RandomBenchmark extends BaseBddBenchmark {
     }
 
     public static void main(String[] args) {
-        BddImpl bdd = new BddImpl(ImmutableBddConfiguration.builder()
-                .growthFactor(4)
-                .initialSize(65_536)
-                .build());
+        BddImpl bdd = new BddContextImpl(ImmutableBddConfiguration.builder()
+                        .growthFactor(4)
+                        .initialSize(65_536)
+                        .build())
+                .bdd();
         var nodes = new BddNodes(bdd, new Random(1234));
         nodes.createVariables(64);
         for (BddOperation operation : makeOperations(10_000, new Random(1234))) {

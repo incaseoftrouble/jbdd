@@ -24,7 +24,7 @@ public final class BddFactory {
     }
 
     public static Bdd buildBdd(BddConfiguration configuration) {
-        return new BddImpl(configuration);
+        return BddContext.create(configuration).bdd();
     }
 
     public static MtBdd buildMtBdd() {
@@ -32,6 +32,18 @@ public final class BddFactory {
     }
 
     public static MtBdd buildMtBdd(BddConfiguration configuration) {
-        return new BddImpl(configuration).mtbdd();
+        return BddContext.create(configuration).mtBdd();
+    }
+
+    public static Mdd buildMdd() {
+        return buildMdd(ImmutableBddConfiguration.builder().build());
+    }
+
+    /**
+     * An MDD stands alone - unlike the MTBDD it shares no variable order with anything - so it needs no
+     * {@link BddContext}, and there is nothing to hand out but the diagram itself.
+     */
+    public static Mdd buildMdd(BddConfiguration configuration) {
+        return new MddImpl(configuration);
     }
 }

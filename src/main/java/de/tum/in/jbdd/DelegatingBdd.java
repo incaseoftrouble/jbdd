@@ -18,7 +18,7 @@ package de.tum.in.jbdd;
 
 import java.math.BigInteger;
 import java.util.BitSet;
-import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -75,6 +75,42 @@ public class DelegatingBdd implements Bdd {
     public int numberOfVariables() {
         onEnter("numberOfVariables");
         return onExit(delegate.numberOfVariables());
+    }
+
+    @Override
+    public int gc() {
+        onEnter("gc");
+        return onExit(delegate.gc());
+    }
+
+    @Override
+    public int nodeFor(int function) {
+        onEnter("nodeFor");
+        return onExit(delegate.nodeFor(function));
+    }
+
+    @Override
+    public int nodeReferenceCount(int node) {
+        onEnter("nodeReferenceCount");
+        return onExit(delegate.nodeReferenceCount(node));
+    }
+
+    @Override
+    public boolean isSaturatedNode(int node) {
+        onEnter("isSaturatedNode");
+        return onExit(delegate.isSaturatedNode(node));
+    }
+
+    @Override
+    public int referencedNodeCount() {
+        onEnter("referencedNodeCount");
+        return onExit(delegate.referencedNodeCount());
+    }
+
+    @Override
+    public int nodeCount() {
+        onEnter("nodeCount");
+        return onExit(delegate.nodeCount());
     }
 
     @Override
@@ -223,30 +259,6 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
-    public Iterator<BitSet> solutionIterator(int function) {
-        onEnter("solutionIterator");
-        return onExit(delegate.solutionIterator(function));
-    }
-
-    @Override
-    public Iterator<BitSet> solutionIterator(int function, BitSet support) {
-        onEnter("solutionIterator");
-        return onExit(delegate.solutionIterator(function, support));
-    }
-
-    @Override
-    public Iterator<BitSet> solutionIteratorIn(int function, int domain) {
-        onEnter("solutionIteratorIn");
-        return onExit(delegate.solutionIteratorIn(function, domain));
-    }
-
-    @Override
-    public Iterator<BitSet> solutionIteratorIn(int function, int domain, BitSet support) {
-        onEnter("solutionIteratorIn");
-        return onExit(delegate.solutionIteratorIn(function, domain, support));
-    }
-
-    @Override
     public void forEachSolution(int function, Consumer<? super BitSet> action) {
         onEnter("forEachSolution");
         delegate.forEachSolution(function, action);
@@ -275,9 +287,33 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
-    public Iterator<BinaryPath> pathIterator(int function) {
-        onEnter("pathIterator");
-        return onExit(delegate.pathIterator(function));
+    public Cursor<BitSet> solutionCursor(int function) {
+        onEnter("solutionCursor");
+        return onExit(delegate.solutionCursor(function));
+    }
+
+    @Override
+    public Cursor<BitSet> solutionCursor(int function, BitSet support) {
+        onEnter("solutionCursor");
+        return onExit(delegate.solutionCursor(function, support));
+    }
+
+    @Override
+    public Cursor<BitSet> solutionCursorIn(int function, int domain) {
+        onEnter("solutionCursorIn");
+        return onExit(delegate.solutionCursorIn(function, domain));
+    }
+
+    @Override
+    public Cursor<BitSet> solutionCursorIn(int function, int domain, BitSet support) {
+        onEnter("solutionCursorIn");
+        return onExit(delegate.solutionCursorIn(function, domain, support));
+    }
+
+    @Override
+    public Cursor<BinaryPath> pathCursor(int function) {
+        onEnter("pathCursor");
+        return onExit(delegate.pathCursor(function));
     }
 
     @Override
@@ -540,5 +576,58 @@ public class DelegatingBdd implements Bdd {
     public int placeholder() {
         onEnter("placeholder");
         return onExit(delegate.placeholder());
+    }
+
+    @Override
+    public int level(int variable) {
+        return delegate.level(variable);
+    }
+
+    @Override
+    public int variableAtLevel(int level) {
+        return delegate.variableAtLevel(level);
+    }
+
+    @Override
+    public int reorder() {
+        onEnter("reorder");
+        return onExit(delegate.reorder());
+    }
+
+    @Override
+    public int reorder(List<BitSet> groups) {
+        onEnter("reorder");
+        return onExit(delegate.reorder(groups));
+    }
+
+    @Override
+    public void reorderTo(List<BitSet> blocks) {
+        onEnter("reorderTo");
+        delegate.reorderTo(blocks);
+        onExit();
+    }
+
+    @Override
+    public void reorderToIdentity() {
+        onEnter("reorderToIdentity");
+        delegate.reorderToIdentity();
+        onExit();
+    }
+
+    @Override
+    public int createVariableAtLevel(int level) {
+        onEnter("createVariableAtLevel");
+        return onExit(delegate.createVariableAtLevel(level));
+    }
+
+    @Override
+    public int[] createVariablesAtLevel(int level, int count) {
+        onEnter("createVariablesAtLevel");
+        return onExit(delegate.createVariablesAtLevel(level, count));
+    }
+
+    @Override
+    public void dropReorderStructures() {
+        delegate.dropReorderStructures();
     }
 }

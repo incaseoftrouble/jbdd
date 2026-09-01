@@ -28,7 +28,6 @@ import java.util.Set;
  * Utility class used to represent propositional formulas.
  */
 @SuppressWarnings({"unused", "WeakerAccess"})
-// TODO Add a "toBddNode(BDD bdd)" method
 public final class SyntaxTree {
     private final SyntaxTreeNode rootNode;
 

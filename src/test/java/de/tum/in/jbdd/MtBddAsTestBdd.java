@@ -26,6 +26,7 @@ import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.Predicate;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Emulates a {@link Bdd} on top of an {@link MtBddImpl}, restricting the MTBDD's terminal values to
@@ -46,7 +47,7 @@ import java.util.function.Predicate;
  * result - see {@link #exists}, {@link #conjunction}, {@link #disjunction}, {@link #ifThenElse} and
  * {@link #compose} for that pattern.</p>
  */
-class MtBddAsTestBdd implements TestBdd {
+class MtBddAsTestBdd implements TestBdd, ReorderableDd {
     private static final int TRUE = 1;
     private static final int FALSE = 0;
 
@@ -107,6 +108,11 @@ class MtBddAsTestBdd implements TestBdd {
     }
 
     @Override
+    public int gc() {
+        return mt.gc();
+    }
+
+    @Override
     public int reference(int function) {
         return mt.reference(function);
     }
@@ -164,6 +170,69 @@ class MtBddAsTestBdd implements TestBdd {
         return mt.of(variableNumber, mt.of(TRUE), mt.of(FALSE));
     }
 
+    /* The MTBDD shares its companion BDD's variable order, so reordering through either moves the nodes
+     * of both - which is exactly what makes this adapter worth reordering: it puts MTBDD enumeration,
+     * apply and compose under a non-identity order, which nothing else does. */
+
+    @Override
+    public int level(int variable) {
+        return mt.level(variable);
+    }
+
+    @Override
+    public int variableAtLevel(int level) {
+        return mt.variableAtLevel(level);
+    }
+
+    @Override
+    public int reorder() {
+        return mt.reorder();
+    }
+
+    @Override
+    public int reorder(List<BitSet> groups) {
+        return mt.reorder(groups);
+    }
+
+    @Override
+    public void reorderTo(List<BitSet> blocks) {
+        mt.reorderTo(blocks);
+    }
+
+    @Override
+    public void reorderToIdentity() {
+        mt.reorderToIdentity();
+    }
+
+    @Override
+    public int createVariableAtLevel(int level) {
+        // As createVariable(), but placed: MtBdd#createVariableAtLevel hands back the companion BDD's
+        // function, and this adapter's currency is MTBDD functions.
+        int variableNode = mt.bdd().createVariableAtLevel(level);
+        int variable = mt.bdd().decisionVariable(variableNode);
+        int variableFunction = variableFunction(variable);
+        mt.table().saturateNode(mt.nodeFor(variableFunction));
+        return variableFunction;
+    }
+
+    @Override
+    public int[] createVariablesAtLevel(int level, int count) {
+        // As above, one MTBDD function per variable the companion BDD just created.
+        int[] variableNodes = mt.bdd().createVariablesAtLevel(level, count);
+        int[] variableFunctions = new int[variableNodes.length];
+        for (int index = 0; index < variableNodes.length; index++) {
+            int variable = mt.bdd().decisionVariable(variableNodes[index]);
+            variableFunctions[index] = variableFunction(variable);
+            mt.table().saturateNode(mt.nodeFor(variableFunctions[index]));
+        }
+        return variableFunctions;
+    }
+
+    @Override
+    public void dropReorderStructures() {
+        mt.dropReorderStructures();
+    }
+
     @Override
     public int decisionVariable(int function) {
         return mt.decisionVariable(function);
@@ -215,30 +284,52 @@ class MtBddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public Iterator<BitSet> solutionIterator(int function) {
-        return mt.assignmentIterator(function, v -> v != FALSE);
+    public Cursor<BitSet> solutionCursor(int function) {
+        return mt.assignmentCursor(function, v -> v != FALSE);
     }
 
     @Override
-    public Iterator<BitSet> solutionIterator(int function, BitSet support) {
-        return mt.assignmentIterator(function, v -> v != FALSE, support);
+    public Cursor<BitSet> solutionCursor(int function, BitSet support) {
+        return mt.assignmentCursor(function, v -> v != FALSE, support);
     }
 
     @Override
-    public Iterator<BitSet> solutionIteratorIn(int function, int domain) {
-        return mt.assignmentIterator(and(function, domain), v -> v != FALSE);
+    public Cursor<BitSet> solutionCursorIn(int function, int domain) {
+        return mt.assignmentCursor(and(function, domain), v -> v != FALSE);
     }
 
     @Override
-    public Iterator<BitSet> solutionIteratorIn(int function, int domain, BitSet support) {
-        return mt.assignmentIterator(and(function, domain), v -> v != FALSE, support);
+    public Cursor<BitSet> solutionCursorIn(int function, int domain, BitSet support) {
+        return mt.assignmentCursor(and(function, domain), v -> v != FALSE, support);
     }
 
     @Override
-    public Iterator<BinaryPath> pathIterator(int function) {
+    public Cursor<BinaryPath> pathCursor(int function) {
         List<BinaryPath> paths = new ArrayList<>();
         forEachPath(function, path -> paths.add(path.copy()));
-        return paths.iterator();
+        Iterator<BinaryPath> iterator = paths.iterator();
+        // A collected list, so this one really does own each element it hands out.
+        return new Cursor<>() {
+            private @Nullable BinaryPath current = iterator.hasNext() ? iterator.next() : null;
+
+            @Override
+            public boolean valid() {
+                return current != null;
+            }
+
+            @Override
+            public BinaryPath current() {
+                BinaryPath path = current;
+                assert path != null;
+                return path;
+            }
+
+            @Override
+            public boolean advance() {
+                current = iterator.hasNext() ? iterator.next() : null;
+                return current != null;
+            }
+        };
     }
 
     @Override
@@ -259,9 +350,15 @@ class MtBddAsTestBdd implements TestBdd {
             action.accept(new BinaryPath(new BitSet(0), new BitSet(0)));
             return;
         }
-        int highestVariable = relevantSet.length() - 1;
-        BinaryPath path = new BinaryPath(new BitSet(highestVariable + 1), new BitSet(highestVariable + 1));
-        forEachPathRecursive(function, relevantSet, highestVariable, path, action);
+        /* By level, not by variable: the cut-off is "the walk is past everything relevant", which is a
+         * statement about the order. The two coincide only until something reorders. */
+        int maxRelevantLevel = -1;
+        for (int v = relevantSet.nextSetBit(0); v >= 0; v = relevantSet.nextSetBit(v + 1)) {
+            maxRelevantLevel = Math.max(maxRelevantLevel, mt.level(v));
+        }
+        int variables = mt.numberOfVariables();
+        BinaryPath path = new BinaryPath(new BitSet(variables), new BitSet(variables));
+        forEachPathRecursive(function, relevantSet, maxRelevantLevel, path, action);
     }
 
     private void forEachPathRecursive(
@@ -271,7 +368,7 @@ class MtBddAsTestBdd implements TestBdd {
             return;
         }
         int variable = mt.decisionVariable(node);
-        if (variable > depthLimit) {
+        if (mt.level(variable) > depthLimit) {
             // There must exist at least one satisfying completion beyond depthLimit.
             action.accept(path);
             return;
@@ -526,6 +623,12 @@ class MtBddAsTestBdd implements TestBdd {
     @Override
     public Map<String, Object> statistics() {
         return mt.statistics();
+    }
+
+    @Override
+    public String toString() {
+        String name = mt.bddImpl().configuration().name();
+        return name.isEmpty() ? "mtbdd" : name;
     }
 
     @Override

@@ -16,7 +16,7 @@
  */
 package de.tum.in.jbdd;
 
-public interface TestBdd extends Bdd, NodeBasedDecisionDiagram {
+public interface TestBdd extends BinaryDecisionDiagram, NodeBasedDd {
     void invalidateCache();
 
     @Override

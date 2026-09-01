@@ -1,6 +1,6 @@
 /*
  * This file is part of JBDD (https://github.com/incaseoftrouble/jbdd).
- * Copyright (c) 2026 Tobias Meggendorfer.
+ * Copyright (c) 2017-2023 Tobias Meggendorfer.
  *
  * JBDD is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,18 +16,12 @@
  */
 package de.tum.in.jbdd;
 
-import java.util.BitSet;
+public interface MultiValuedDecisionDiagram extends BooleanTerminalDecisionDiagram<int[], int[]> {
+    int declareVariable(int domain);
 
-interface NodeLifecycleObserver {
-    default void beforeGc() {
-        // Default: nothing to release ahead of time.
-    }
+    int makeVariableFunction(int variable, boolean[] values);
 
-    default void afterGc(int reclaimedNodes, BitSet reclaimedValues) {
-        // Default: nothing depends on which nodes/values were reclaimed.
-    }
+    int follow(int function, int value);
 
-    default void afterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
-        // Default: nothing depends on the table's size.
-    }
+    int restrict(int function, int[] values);
 }
