@@ -16,6 +16,13 @@
  */
 package de.tum.in.jbdd;
 
+/**
+ * A {@link Bdd} and the {@link MtBdd} over it, sharing one variable order.
+ *
+ * <p>The order is the context's, not either diagram's: reordering through {@link Bdd#reorder()} and
+ * through {@link MtBdd#reorder()} is the same act, and moves the nodes of both. Everything else - the
+ * node tables, the caches, reference counting - is per diagram.
+ */
 public interface BddContext {
     static BddContext create() {
         return create(ImmutableBddConfiguration.builder().build());
@@ -30,9 +37,24 @@ public interface BddContext {
         return new BddContextImpl(configuration, variables);
     }
 
-    /** The unique {@link BddSetFactory}. */
-    BddSetFactory bddSets();
+    /** The unique {@link Bdd}. */
+    Bdd bdd();
 
-    /** A fresh {@link BddMapFactory}. */
-    <V> BddMapFactory<V> bddMaps();
+    /** The unique {@link MtBdd}, over the same variables and the same order. */
+    MtBdd mtBdd();
+
+    /**
+     * Moves the variable at {@code level} one position deeper, exchanging it with the one at
+     * {@code level + 1} and rewriting exactly the nodes that have to change - in both diagrams, which is
+     * why it lives here and not on either of them.
+     *
+     * <p>The primitive every reordering policy is built from: {@link Bdd#reorder()} and
+     * {@link Bdd#reorderTo(java.util.List)} are sequences of these. It is deliberately not on the
+     * diagrams - those say <em>what</em> order is wanted, this says <em>how</em> to move, and a caller
+     * only needs it to drive a policy of its own.
+     *
+     * <p>Every function keeps its id and its meaning; only the shape of the diagrams changes. Like every
+     * reordering it must run while no operation is in flight, and never from inside a callback.
+     */
+    void siftDown(int level);
 }

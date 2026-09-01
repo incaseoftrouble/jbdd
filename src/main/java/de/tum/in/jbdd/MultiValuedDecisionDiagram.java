@@ -16,22 +16,13 @@
  */
 package de.tum.in.jbdd;
 
-public final class BddFactory {
-    private BddFactory() {}
+public interface MultiValuedDecisionDiagram
+        extends BooleanTerminalDecisionDiagram<int[], int[]>, NodeBasedDecisionDiagram {
+    int declareVariable(int domain);
 
-    public static Bdd buildBdd() {
-        return buildBdd(ImmutableBddConfiguration.builder().build());
-    }
+    int makeVariableFunction(int variable, boolean[] values);
 
-    public static Bdd buildBdd(BddConfiguration configuration) {
-        return BddContext.create(configuration).bdd();
-    }
+    int follow(int function, int value);
 
-    public static MtBdd buildMtBdd() {
-        return buildMtBdd(ImmutableBddConfiguration.builder().build());
-    }
-
-    public static MtBdd buildMtBdd(BddConfiguration configuration) {
-        return BddContext.create(configuration).mtBdd();
-    }
+    int restrict(int function, int[] values);
 }

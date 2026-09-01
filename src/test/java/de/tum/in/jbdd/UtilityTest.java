@@ -18,6 +18,8 @@ package de.tum.in.jbdd;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.BitSet;
 import java.util.Random;
@@ -39,5 +41,18 @@ class UtilityTest {
         AtomicLong counter = new AtomicLong();
         iterator.forEachRemaining(i -> counter.incrementAndGet());
         assertThat(counter.get(), is(1L << set.cardinality()));
+    }
+
+    @Test
+    void testNextPrimeAgreesAcrossTheTableBoundary() {
+        // The tabulated range and the Miller-Rabin search must not disagree at the seam.
+        for (int n = 0; n < 9000; n++) {
+            int next = Primes.nextPrime(n);
+            assertTrue(next >= Math.max(n, 2), "nextPrime(" + n + ") = " + next);
+            assertTrue(Primes.isPrime(next), next + " is not prime");
+            for (int between = Math.max(n, 2); between < next; between++) {
+                assertFalse(Primes.isPrime(between), between + " is a smaller prime than " + next);
+            }
+        }
     }
 }

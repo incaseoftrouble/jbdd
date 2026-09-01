@@ -29,54 +29,55 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.BiFunction;
-import java.util.function.BinaryOperator;
 import java.util.function.Function;
 import java.util.function.IntBinaryOperator;
 import java.util.function.IntUnaryOperator;
 import java.util.function.Predicate;
-import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.jspecify.annotations.Nullable;
 
-@SuppressWarnings({
-    "MethodOnlyUsedFromInnerClass",
-    "ObjectEquality",
-    "OverlyStrongTypeCast",
-    "PMD.CouplingBetweenObjects"
-})
-final class BddMapFactoryImpl<V> extends GcReferenceManager<BddMapFactoryImpl.BddMapImpl<V>, MtBddImpl>
-        implements BddMapFactory<V> {
+@SuppressWarnings({"MethodOnlyUsedFromInnerClass", "ObjectEquality", "PMD.CouplingBetweenObjects"})
+final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMapImpl<?>, MtBddImpl>
+        implements BddMapFactory {
     private final BddSetFactoryImpl bddSets;
-    private final ValueIndex<V> valueIndex;
 
     BddMapFactoryImpl(BddSetFactoryImpl bddSets) {
-        this(bddSets.dd.mtbdd(), bddSets, new ValueIndex<>());
-    }
-
-    private BddMapFactoryImpl(MtBddImpl dd, BddSetFactoryImpl bddSets, ValueIndex<V> valueIndex) {
-        super(dd);
+        super(bddSets.dd.mtbdd());
         this.bddSets = bddSets;
-        this.valueIndex = valueIndex;
-        dd.registerObserver(valueIndex);
     }
 
-    BddMapImpl<V> make(int node) {
-        return protect(new BddMapImpl<>(this, node));
+    @Override
+    public <V> Values<V> create() {
+        return new ValuesImpl<>(this);
     }
 
-    private int mtbddFunction(BddMap<?> map) {
+    @SuppressWarnings("unchecked")
+    <V> BddMapImpl<V> make(int function, ValuesImpl<V> values) {
+        return (BddMapImpl<V>) protect(new BddMapImpl<>(this, function, values));
+    }
+
+    /** The raw MTBDD function of {@code map}, which must be over {@code values}. */
+    private <V> int functionOf(BddMap<V> map, ValuesImpl<V> values) {
+        assert (map instanceof BddMapImpl<?>) && (this == ((BddMapImpl<?>) map).factory); // NOPMD
+        assert values == ((BddMapImpl<?>) map).values
+                : "Maps over different value numberings cannot be combined; relabel one into the other";
+        return ((BddMapImpl<?>) map).function;
+    }
+
+    /** As above, for the cross-typed operations, which are inherently over two numberings. */
+    private int functionOf(BddMap<?> map) {
         assert (map instanceof BddMapImpl<?>) && (this == ((BddMapImpl<?>) map).factory); // NOPMD
         return ((BddMapImpl<?>) map).function;
     }
 
-    private <O> BddMapFactoryImpl<O> otherFactory(BddMap<O> map) {
-        return otherFactory(map.factory());
+    private <O> ValuesImpl<O> valuesOf(BddMap<O> map) {
+        return valuesOf(map.valueDomain());
     }
 
-    private <O> BddMapFactoryImpl<O> otherFactory(BddMapFactory<O> other) {
-        assert (other instanceof BddMapFactoryImpl<?>) && (dd == ((BddMapFactoryImpl<?>) other).dd); // NOPMD
-        return (BddMapFactoryImpl<O>) other;
+    private <O> ValuesImpl<O> valuesOf(Values<O> values) {
+        assert (values instanceof ValuesImpl<?>) && (this == ((ValuesImpl<?>) values).factory); // NOPMD
+        return (ValuesImpl<O>) values;
     }
 
     /** Mirrors {@code BddSetFactoryImpl}'s own private helper of the same name - auto-creates {@code
@@ -91,52 +92,12 @@ final class BddMapFactoryImpl<V> extends GcReferenceManager<BddMapFactoryImpl.Bd
     }
 
     @Override
-    public BddMap<V> of(V value) {
-        return make(dd.of(valueIndex.indexOf(value)));
-    }
-
-    @Override
-    public BddMap<V> ifThenElse(BddSet condition, BddMap<V> then, BddMap<V> otherwise) {
-        return make(dd.ifThenElse(bddSets.bddFunction(condition), mtbddFunction(then), mtbddFunction(otherwise)));
-    }
-
-    @Override
-    public BddMap<List<V>> cartesianProduct(List<BddMap<V>> maps, BddMapFactory<List<V>> destination) {
-        BddMapFactoryImpl<List<V>> resultFactory = otherFactory(destination);
-
-        int[] functions = new int[maps.size()];
-        for (int i = 0; i < maps.size(); i++) {
-            functions[i] = mtbddFunction(maps.get(i));
-        }
-
-        int result = dd.apply(functions, values -> {
-            List<V> combined = new ArrayList<>(values.length);
-            for (int rawValue : values) {
-                combined.add(valueIndex.valueOf(rawValue));
-            }
-            return resultFactory.valueIndex.indexOf(List.copyOf(combined));
-        });
-        return resultFactory.make(result);
-    }
-
-    @Override
-    public <O> BddMap.Relabeler<V, O> createRelabeling(Function<V, O> bijection) {
-        BddMapFactoryImpl<O> resultFactory = new BddMapFactoryImpl<>(dd, bddSets, valueIndex.relabel(bijection));
-        return new RelabelerImpl<>(this, resultFactory);
-    }
-
-    @Override
-    public <O> BddMap<V> relabelInto(BddMap<O> map, Function<O, V> injection) {
-        assert isInjective(map.values(), injection);
-        return map.map(injection, this);
-    }
-
-    @Override
     public Map<String, Object> statistics() {
         return dd.statistics();
     }
 
-    private static <A, B> boolean isInjective(Collection<A> values, Function<A, B> function) {
+    private static <A, B> boolean isInjective(
+            Collection<? extends A> values, Function<? super A, ? extends B> function) {
         Set<B> seen = new HashSet<>(values.size());
         for (A value : values) {
             if (!seen.add(function.apply(value))) {
@@ -151,29 +112,61 @@ final class BddMapFactoryImpl<V> extends GcReferenceManager<BddMapFactoryImpl.Bd
         return String.format("MtBddF{%s}", dd);
     }
 
-    private static final class ValueIndex<V> implements NodeLifecycleObserver {
+    private static final class MapKey {
+        private final int function;
+        private final ValuesImpl<?> values;
+
+        MapKey(int function, ValuesImpl<?> values) {
+            this.function = function;
+            this.values = values;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) {
+                return true;
+            }
+            if (!(o instanceof MapKey)) {
+                return false;
+            }
+            MapKey that = (MapKey) o;
+            return function == that.function && values == that.values;
+        }
+
+        @Override
+        public int hashCode() {
+            return HashUtil.hash(function, System.identityHashCode(values));
+        }
+    }
+
+    static final class ValuesImpl<V> implements Values<V>, NodeTableObserver {
+        private final BddMapFactoryImpl factory;
         private final Map<V, Integer> toIndex;
         private final List<@Nullable V> toValue;
-        private final Deque<Integer> freeSlots;
+        private final Deque<Integer> freeGaps;
         private int biggestAliveIndex = -1;
 
-        ValueIndex() {
-            this.toIndex = new HashMap<>();
-            this.toValue = new ArrayList<>();
-            this.freeSlots = new ArrayDeque<>();
+        ValuesImpl(BddMapFactoryImpl factory) {
+            this(factory, new HashMap<>(), new ArrayList<@Nullable V>(), new ArrayDeque<>());
         }
 
-        private ValueIndex(Map<V, Integer> toIndex, List<@Nullable V> toValue, Deque<Integer> freeSlots) {
+        private ValuesImpl(
+                BddMapFactoryImpl factory,
+                Map<V, Integer> toIndex,
+                List<@Nullable V> toValue,
+                Deque<Integer> freeGaps) {
+            this.factory = factory;
             this.toIndex = toIndex;
             this.toValue = toValue;
-            this.freeSlots = freeSlots;
+            this.freeGaps = freeGaps;
+            factory.dd.registerObserver(this);
         }
 
-        int indexOf(V value) {
+        int getOrAssignIndex(V value) {
             //noinspection ConstantValue
             assert value != null : "BddMap values must not be null";
             return toIndex.computeIfAbsent(value, v -> {
-                Integer reused = freeSlots.poll();
+                Integer reused = freeGaps.poll();
                 int index;
                 if (reused == null) {
                     index = toValue.size();
@@ -205,11 +198,68 @@ final class BddMapFactoryImpl<V> extends GcReferenceManager<BddMapFactoryImpl.Bd
         }
 
         @Override
-        public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
-            sweepValues(reclaimedValues);
+        public BddMapFactory factory() {
+            return factory;
         }
 
-        void sweepValues(BitSet reclaimedValues) {
+        @Override
+        public BddMap<V> of(V value) {
+            return factory.make(factory.dd.of(getOrAssignIndex(value)), this);
+        }
+
+        @Override
+        public BddMap<V> ifThenElse(BddSet condition, BddMap<V> then, BddMap<V> otherwise) {
+            int result = factory.dd.ifThenElse(
+                    factory.bddSets.functionOf(condition),
+                    factory.functionOf(then, this),
+                    factory.functionOf(otherwise, this));
+            return factory.make(result, this);
+        }
+
+        @Override
+        public BddMap<List<V>> cartesianProduct(List<? extends BddMap<V>> maps, Values<List<V>> destination) {
+            ValuesImpl<List<V>> resultValues = factory.valuesOf(destination);
+
+            int[] functions = new int[maps.size()];
+            for (int i = 0; i < maps.size(); i++) {
+                functions[i] = factory.functionOf(maps.get(i), this);
+            }
+
+            // TODO Use "native" cartesian product?
+            int result = factory.dd.apply(functions, rawValues -> {
+                // TODO Avoid the copy? Raw array + Arrays.asList(...)?
+                List<V> combined = new ArrayList<>(rawValues.length);
+                for (int rawValue : rawValues) {
+                    combined.add(valueOf(rawValue));
+                }
+                return resultValues.getOrAssignIndex(List.copyOf(combined));
+            });
+            return factory.make(result, resultValues);
+        }
+
+        @Override
+        public <O> BddMap.Relabeler<V, O> createRelabeling(Function<? super V, ? extends O> injection) {
+            return new RelabelerImpl<>(this, relabel(injection));
+        }
+
+        @Override
+        public <O> BddMap<V> relabelInto(BddMap<O> map, Function<? super O, ? extends V> injection) {
+            assert isInjective(map.values(), injection);
+            return map.map(injection, this);
+        }
+
+        @SuppressWarnings("unchecked")
+        @Override
+        public BddMap<V> adopt(BddMap<? extends V> map) {
+            if (map.valueDomain() == this) {
+                // Already over this numbering, hence already a BddMap<V> - the wildcard is only static.
+                return (BddMap<V>) map;
+            }
+            return map.map(value -> value, this);
+        }
+
+        @Override
+        public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
             int first = reclaimedValues.nextSetBit(0);
             if (first < 0) {
                 return;
@@ -221,7 +271,7 @@ final class BddMapFactoryImpl<V> extends GcReferenceManager<BddMapFactoryImpl.Bd
                 if (value != null) {
                     toValue.set(index, null);
                     toIndex.remove(value);
-                    freeSlots.add(index);
+                    freeGaps.add(index);
                 }
             }
             while (biggestAliveIndex >= 0 && toValue.get(biggestAliveIndex) == null) {
@@ -229,17 +279,17 @@ final class BddMapFactoryImpl<V> extends GcReferenceManager<BddMapFactoryImpl.Bd
                 biggestAliveIndex -= 1;
             }
             assert toValue.size() == biggestAliveIndex + 1;
-            freeSlots.removeIf(i -> i > biggestAliveIndex);
-            assert new HashSet<>(freeSlots).size() == freeSlots.size();
+            freeGaps.removeIf(i -> i > biggestAliveIndex);
+            assert new HashSet<>(freeGaps).size() == freeGaps.size();
             // freeSlots is exactly the set of indices whose slot is currently vacant.
-            assert new HashSet<>(freeSlots)
+            assert new HashSet<>(freeGaps)
                     .equals(IntStream.range(0, biggestAliveIndex + 1)
                             .filter(i -> toValue.get(i) == null)
                             .boxed()
                             .collect(Collectors.toSet()));
         }
 
-        <O> ValueIndex<O> relabel(Function<V, O> injection) {
+        <O> ValuesImpl<O> relabel(Function<? super V, ? extends O> injection) {
             List<@Nullable O> newToValue = new ArrayList<>(toValue.size());
             Map<O, Integer> newToIndex = new HashMap<>(toValue.size());
             for (int index = 0; index < toValue.size(); index++) {
@@ -258,34 +308,45 @@ final class BddMapFactoryImpl<V> extends GcReferenceManager<BddMapFactoryImpl.Bd
                                 "Function is not injective: %s and %s both map to %s",
                                 toValue.get(collision), value, relabeled);
             }
-            return new ValueIndex<>(newToIndex, newToValue, new ArrayDeque<>(freeSlots));
+            ValuesImpl<O> relabeled = new ValuesImpl<>(factory, newToIndex, newToValue, new ArrayDeque<>(freeGaps));
+            // The numbering is copied verbatim, so the watermark has to come along - sweepValues asserts
+            // toValue.size() == biggestAliveIndex + 1, and would trip on the first reclaimed value without it.
+            relabeled.biggestAliveIndex = biggestAliveIndex;
+            return relabeled;
+        }
+
+        @Override
+        public String toString() {
+            return String.format("Values@%x{%d}", System.identityHashCode(this), toIndex.size());
         }
     }
 
     private static final class RelabelerImpl<V, O> implements BddMap.Relabeler<V, O> {
-        private final BddMapFactoryImpl<V> source;
-        private final BddMapFactoryImpl<O> destination;
+        private final ValuesImpl<V> source;
+        private final ValuesImpl<O> destination;
 
-        RelabelerImpl(BddMapFactoryImpl<V> source, BddMapFactoryImpl<O> destination) {
+        RelabelerImpl(ValuesImpl<V> source, ValuesImpl<O> destination) {
             this.source = source;
             this.destination = destination;
         }
 
         @Override
-        public BddMapFactory<O> into() {
+        public Values<O> into() {
             return destination;
         }
 
         @Override
         public BddMap<O> relabel(BddMap<V> map) {
-            return destination.make(source.mtbddFunction(map));
+            // The numbering is identical by construction, so the MTBDD carries over verbatim.
+            return destination.factory.make(destination.factory.functionOf(map, source), destination);
         }
     }
 
     @SuppressWarnings("PMD.CouplingBetweenObjects")
     static final class BddMapImpl<V> implements BddMap<V>, DdContainer {
-        private final BddMapFactoryImpl<V> factory;
+        private final BddMapFactoryImpl factory;
         private final int function;
+        private final ValuesImpl<V> values;
 
         @Nullable
         private BitSet supportCache;
@@ -293,13 +354,14 @@ final class BddMapFactoryImpl<V> extends GcReferenceManager<BddMapFactoryImpl.Bd
         @Nullable
         private Set<V> valueCache;
 
-        BddMapImpl(BddMapFactoryImpl<V> factory, int function) {
+        BddMapImpl(BddMapFactoryImpl factory, int function, ValuesImpl<V> values) {
             this.factory = factory;
             this.function = function;
+            this.values = values;
         }
 
         private BddMapImpl<V> make(int node) {
-            return node == this.function ? this : factory.make(node);
+            return node == this.function ? this : factory.make(node, values);
         }
 
         @Override
@@ -308,13 +370,23 @@ final class BddMapFactoryImpl<V> extends GcReferenceManager<BddMapFactoryImpl.Bd
         }
 
         @Override
-        public BddMapFactory<V> factory() {
+        public Object canonicalKey() {
+            return new MapKey(function, values);
+        }
+
+        @Override
+        public BddMapFactory factory() {
             return factory;
         }
 
         @Override
+        public Values<V> valueDomain() {
+            return values;
+        }
+
+        @Override
         public V evaluate(BitSet assignment) {
-            return factory.valueIndex.valueOf(factory.dd.evaluate(function, assignment));
+            return values.valueOf(factory.dd.evaluate(function, assignment));
         }
 
         @Override
@@ -335,12 +407,12 @@ final class BddMapFactoryImpl<V> extends GcReferenceManager<BddMapFactoryImpl.Bd
         @Override
         public Set<V> values() {
             if (valueCache == null) {
-                Set<V> values = new HashSet<>();
-                factory.dd.forEachValue(function, raw -> values.add(factory.valueIndex.valueOf(raw)));
-                valueCache = Set.copyOf(values);
+                Set<V> collected = new HashSet<>();
+                factory.dd.forEachValue(function, raw -> collected.add(values.valueOf(raw)));
+                valueCache = Set.copyOf(collected);
             }
             assert factory.dd.valuesOf(function).stream()
-                    .mapToObj(factory.valueIndex::valueOf)
+                    .mapToObj(values::valueOf)
                     .collect(Collectors.toSet())
                     .equals(valueCache);
             return valueCache;
@@ -353,53 +425,52 @@ final class BddMapFactoryImpl<V> extends GcReferenceManager<BddMapFactoryImpl.Bd
 
         @Override
         public BddSet domainOf(V value) {
-            Integer index = factory.valueIndex.peek(value);
+            Integer index = values.peek(value);
             if (index == null) {
-                // value never occurred in any map from this factory - can't be this map's either.
+                // value never occurred in any map over this numbering - can't be this map's either.
                 return factory.bddSets.empty();
             }
             return factory.bddSets.make(factory.dd.where(function, index));
         }
 
         @Override
-        public BddSet where(Predicate<V> predicate) {
-            return factory.bddSets.make(
-                    factory.dd.mapBoolean(function, raw -> predicate.test(factory.valueIndex.valueOf(raw))));
+        public BddSet where(Predicate<? super V> predicate) {
+            return factory.bddSets.make(factory.dd.mapBoolean(function, raw -> predicate.test(values.valueOf(raw))));
         }
 
         @Override
         public BddMap<V> update(BddSet domain, V value) {
-            int bddFunction = factory.bddSets.bddFunction(domain);
-            int rawValue = factory.valueIndex.indexOf(value);
+            int bddFunction = factory.bddSets.functionOf(domain);
+            int rawValue = values.getOrAssignIndex(value);
             return make(factory.dd.update(function, bddFunction, rawValue));
         }
 
         @Override
-        public BddMap<V> apply(BddMap<V> other, BinaryOperator<V> combiner) {
+        public BddMap<V> apply(BddMap<V> other, BiFunction<? super V, ? super V, ? extends V> combiner) {
+            int otherFunction = factory.functionOf(other, values);
             int result = factory.dd.apply(
                     function,
-                    factory.mtbddFunction(other),
-                    (rawV, rawW) -> factory.valueIndex.indexOf(
-                            combiner.apply(factory.valueIndex.valueOf(rawV), factory.valueIndex.valueOf(rawW))));
+                    otherFunction,
+                    (rawV, rawW) ->
+                            values.getOrAssignIndex(combiner.apply(values.valueOf(rawV), values.valueOf(rawW))));
             return make(result);
         }
 
         @Override
         public BddMap<V> apply(BddMap<V> other, BddMapBinaryOperator<V> operator) {
-            int otherFunction = factory.mtbddFunction(other);
+            int otherFunction = factory.functionOf(other, values);
 
             // operator.neutral/absorbing only translate into a real raw shortcut once that V has actually
-            // been indexed before - see BddMapBinaryOperator's javadoc for why that's not a gap: if it
-            // never has, no operand's raw terminal could equal it anyway.
-            Integer neutralRaw = operator.neutral == null ? null : factory.valueIndex.peek(operator.neutral);
-            Integer absorbingRaw = operator.absorbing == null ? null : factory.valueIndex.peek(operator.absorbing);
+            // been indexed before: if it never has, no operand's raw terminal could equal it anyway.
+            Integer neutralRaw = operator.neutral == null ? null : values.peek(operator.neutral);
+            Integer absorbingRaw = operator.absorbing == null ? null : values.peek(operator.absorbing);
             int rawNeutral = neutralRaw == null ? -1 : neutralRaw;
             int rawAbsorbing = absorbingRaw == null ? -1 : absorbingRaw;
 
             IntBinaryOperator rawOp = (rawV, rawW) -> {
-                V v1 = factory.valueIndex.valueOf(rawV);
-                V v2 = factory.valueIndex.valueOf(rawW);
-                return factory.valueIndex.indexOf(operator.apply(v1, v2));
+                V v1 = values.valueOf(rawV);
+                V v2 = values.valueOf(rawW);
+                return values.getOrAssignIndex(operator.apply(v1, v2));
             };
             MtBddBinaryOperator rawOperator = operator.commutative
                     ? MtBddBinaryOperator.monoid(rawOp, rawNeutral, rawAbsorbing)
@@ -410,35 +481,35 @@ final class BddMapFactoryImpl<V> extends GcReferenceManager<BddMapFactoryImpl.Bd
         }
 
         @Override
-        public <W, O> BddMap<O> apply(BddMap<W> other, BiFunction<V, W, O> combiner, BddMapFactory<O> destination) {
-            BddMapFactoryImpl<W> otherFactory = factory.otherFactory(other);
-            BddMapFactoryImpl<O> resultFactory = factory.otherFactory(destination);
+        public <W, O> BddMap<O> apply(
+                BddMap<W> other, BiFunction<? super V, ? super W, ? extends O> combiner, Values<O> destination) {
+            ValuesImpl<W> otherValues = factory.valuesOf(other);
+            ValuesImpl<O> resultValues = factory.valuesOf(destination);
 
             int result = factory.dd.apply(
                     function,
-                    otherFactory.mtbddFunction(other),
-                    (rawV, rawW) -> resultFactory.valueIndex.indexOf(
-                            combiner.apply(factory.valueIndex.valueOf(rawV), otherFactory.valueIndex.valueOf(rawW))));
-            return resultFactory.make(result);
+                    factory.functionOf(other),
+                    (rawV, rawW) -> resultValues.getOrAssignIndex(
+                            combiner.apply(values.valueOf(rawV), otherValues.valueOf(rawW))));
+            return factory.make(result, resultValues);
         }
 
         @Override
-        public BddMap<V> map(UnaryOperator<V> mapper) {
-            return make(factory.dd.map(
-                    function, raw -> factory.valueIndex.indexOf(mapper.apply(factory.valueIndex.valueOf(raw)))));
+        public BddMap<V> map(Function<? super V, ? extends V> mapper) {
+            return make(factory.dd.map(function, raw -> values.getOrAssignIndex(mapper.apply(values.valueOf(raw)))));
         }
 
         @Override
-        public <O> BddMap<O> map(Function<V, O> mapper, BddMapFactory<O> destination) {
-            BddMapFactoryImpl<O> resultFactory = factory.otherFactory(destination);
-            int result = factory.dd.map(
-                    function, raw -> resultFactory.valueIndex.indexOf(mapper.apply(factory.valueIndex.valueOf(raw))));
-            return resultFactory.make(result);
+        public <O> BddMap<O> map(Function<? super V, ? extends O> mapper, Values<O> destination) {
+            ValuesImpl<O> resultValues = factory.valuesOf(destination);
+            int result =
+                    factory.dd.map(function, raw -> resultValues.getOrAssignIndex(mapper.apply(values.valueOf(raw))));
+            return factory.make(result, resultValues);
         }
 
         @Override
         public BddSet agreement(BddMap<V> other) {
-            return factory.bddSets.make(factory.dd.agreement(function, factory.mtbddFunction(other)));
+            return factory.bddSets.make(factory.dd.agreement(function, factory.functionOf(other, values)));
         }
 
         @Override
@@ -451,7 +522,7 @@ final class BddMapFactoryImpl<V> extends GcReferenceManager<BddMapFactoryImpl.Bd
             int[] rawMapping = new int[variableMapping.length];
             for (int i = 0; i < variableMapping.length; i++) {
                 BddSet mapping = variableMapping[i];
-                rawMapping[i] = mapping == null ? factory.dd.placeholder() : factory.bddSets.bddFunction(mapping);
+                rawMapping[i] = mapping == null ? factory.dd.placeholder() : factory.bddSets.functionOf(mapping);
             }
             return make(factory.dd.compose(function, rawMapping));
         }
@@ -473,26 +544,29 @@ final class BddMapFactoryImpl<V> extends GcReferenceManager<BddMapFactoryImpl.Bd
 
         @Override
         public BddMap<V> constrain(BddSet domain) {
-            return make(factory.dd.constrain(function, factory.bddSets.bddFunction(domain)));
+            return make(factory.dd.constrain(function, factory.bddSets.functionOf(domain)));
         }
 
         @Override
         public BddMap<V> simplify(BddSet domain) {
-            return make(factory.dd.simplify(function, factory.bddSets.bddFunction(domain)));
+            return make(factory.dd.simplify(function, factory.bddSets.functionOf(domain)));
         }
 
         @Override
-        public BddMap<BddMap<V>> split(BitSet splitVariables, BddMapFactory<BddMap<V>> destination) {
-            BddMapFactoryImpl<BddMap<V>> resultFactory = factory.otherFactory(destination);
+        public BddMap<BddMap<V>> split(BitSet splitVariables, Values<BddMap<V>> destination) {
+            ValuesImpl<BddMap<V>> resultValues = factory.valuesOf(destination);
             int result = factory.dd.splitRelabeled(
-                    function, splitVariables, sub -> resultFactory.valueIndex.indexOf(factory.make(sub)));
-            return resultFactory.make(result);
+                    function, splitVariables, sub -> resultValues.getOrAssignIndex(factory.make(sub, values)));
+            return factory.make(result, resultValues);
         }
 
         @Override
         public boolean equals(Object o) {
+            // Canonicalized on (function, values) - see BddMapFactoryImpl.MapKey.
             assert (this == o)
-                    == (o instanceof BddMapFactoryImpl.BddMapImpl && function == ((BddMapImpl<?>) o).function);
+                    == (o instanceof BddMapFactoryImpl.BddMapImpl
+                            && function == ((BddMapImpl<?>) o).function
+                            && values == ((BddMapImpl<?>) o).values);
             assert !(o instanceof BddMapFactoryImpl.BddMapImpl) || factory == ((BddMapImpl<?>) o).factory;
             return this == o;
         }
@@ -504,7 +578,7 @@ final class BddMapFactoryImpl<V> extends GcReferenceManager<BddMapFactoryImpl.Bd
 
         @Override
         public String toString() {
-            return String.format("%d@[%s]", function, factory);
+            return String.format("%d@%s", function, values);
         }
     }
 }

@@ -18,7 +18,6 @@ package de.tum.in.jbdd;
 
 import java.math.BigInteger;
 import java.util.BitSet;
-import java.util.Iterator;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.IntFunction;
@@ -102,10 +101,10 @@ public interface BddSet {
      * that specific valuation, possibly much smaller than {@link #support()}. */
     BitSet supportAt(BitSet valuation);
 
-    /** Iterates elements, treating every variable outside {@code support} as "don't care" (doubling the count). */
-    Iterator<BitSet> iterator(BitSet support);
+    /** Walks elements, treating every variable outside {@code support} as "don't care" (doubling the count). */
+    Cursor<BitSet> cursor(BitSet support);
 
-    /** Counts elements the same way {@link #iterator(BitSet)} does. */
+    /** Counts elements the same way {@link #cursor(BitSet)} does. */
     BigInteger size(BitSet support);
 
     /** Calls {@code consumer} once per element, treating variables outside {@code support} as "don't care". */

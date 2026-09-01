@@ -42,6 +42,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -49,6 +50,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -81,7 +83,7 @@ class BddTheories {
     private static final Comparator<BitSet> LEXICOGRAPHIC = new BitSetComparator();
     private static final Logger logger = Logger.getLogger(BddTheories.class.getName());
 
-    private static final Map<TestBdd, ExtendedInfo> infoMap = new HashMap<>();
+    private static final Map<TestBdd, ExtendedInfo> infoMap = new LinkedHashMap<>();
     private static final int SKIP_CHECK_RANDOM_BOUND = 500;
     private static final double FACTOR = 0.25;
     private static final int binaryCount = (int) (4_000 * FACTOR);
@@ -98,16 +100,64 @@ class BddTheories {
     private static final Collection<TernaryDataPoint<TestBdd>> ternary;
     private final Random skipCheckRandom = new Random(0L);
 
+    /* Stresses the variable order against everything the theories hold: a swap rewrites nodes in place,
+     * so every data point's function id has to keep denoting the same function afterwards - which the next
+     * theory, and doCheckInvariants, then verify. What matters is *having* a non-identity order, which is
+     * what catches level/variable confusions; a handful of swaps gives that for a fraction of what a full
+     * reorder() costs. reorder() itself is covered by ReorderTest, on diagrams small enough to be quick.
+     *
+     * Every so many theories, not at random: skipCheckRandom is a per-instance field and JUnit builds a
+     * fresh instance per test, so drawing from it gives the same answer every time - "occasionally" would
+     * come out as "always". Only the diagrams in reorderStressed are touched; see the static block. */
+    private static final int REORDER_EVERY = 200;
+    private static final int REORDER_SWAPS = 4;
+
+    /* The swaps are cheap and are what the stress is for - they leave the theories running against a
+     * non-identity order, which is what catches level/variable confusions. Verifying the node tables
+     * afterwards is not cheap: doCheckInvariants walks every table in full, so doing it on each round
+     * costs several times what the whole rest of the suite does. Every fifth round still pins a
+     * corruption to within a few hundred theories, and checkInvariants samples in between. */
+    private static final int REORDER_CHECK_EVERY = 5;
+    private static final AtomicInteger THEORIES_RUN = new AtomicInteger();
+    private static final Random reorderRandom = new Random(1L);
+
+    /** The subset of {@link #infoMap}'s diagrams the stress hook reorders; the rest stay at the identity. */
+    /* The contexts of the stressed diagrams, not the diagrams: siftDown is the context's, and one
+     * context is one order - a BDD and its MTBDD move together. */
+    private static final List<BddContextImpl> reorderStressed;
+
     static {
         /* The @DataPoints annotated methods are called multiple times - which would create
          * new variables each time, exploding the runtime of the tests. Hence, we create the
          * structure once. */
 
-        BddConfiguration config = ImmutableBddConfiguration.builder().build();
-        List<TestBdd> bdds = List.of(
-                new TestBddImpl(new BddImpl(config)),
-                new MddAsTestBdd(new MddImpl(config)),
-                new MtBddAsTestBdd(new BddImpl(config).mtbdd()));
+        /* Three variants per reorderable engine, because the three fail differently:
+         *   - plain: never reordered, so level == variable throughout. The control - a failure here is an
+         *     ordinary bug, a failure only in the other two is a level/variable confusion.
+         *   - reordered: default config, so the reordering bookkeeping is rebuilt per reorder. Exercises
+         *     that rebuild and the "reordered" fast-path switches.
+         *   - reorderedKeeping: keeps the bookkeeping across operations, so its incremental maintenance in
+         *     makeNode, rewriteNode and the collections is exercised, not only the one-off rebuild.
+         * The MTBDD adapter shares its companion BDD's order, so reordering it reorders both; it is the
+         * only thing that puts MTBDD enumeration, apply and compose under a non-identity order. MddImpl
+         * does not implement ReorderableDecisionDiagram (MDDs do not reorder), so it has one variant. */
+        BddContextImpl bddReorderedContext = new BddContextImpl(named("bdd-reordered", false));
+        BddContextImpl bddReorderedKeepingContext = new BddContextImpl(named("bdd-reordered-keeping", true));
+        BddContextImpl mtReorderedContext = new BddContextImpl(named("mtbdd-reordered", false));
+        BddContextImpl mtReorderedKeepingContext = new BddContextImpl(named("mtbdd-reordered-keeping", true));
+
+        TestBdd bddPlain = new TestBddImpl(new BddContextImpl(named("bdd", false)).bdd());
+        TestBdd bddReordered = new TestBddImpl(bddReorderedContext.bdd());
+        TestBdd bddReorderedKeeping = new TestBddImpl(bddReorderedKeepingContext.bdd());
+        TestBdd mdd = new MddAsTestBdd(new MddImpl(named("mdd", false)));
+        TestBdd mtPlain = new MtBddAsTestBdd(new BddContextImpl(named("mtbdd", false)).mtBdd());
+        TestBdd mtReordered = new MtBddAsTestBdd(mtReorderedContext.mtBdd());
+        TestBdd mtReorderedKeeping = new MtBddAsTestBdd(mtReorderedKeepingContext.mtBdd());
+
+        List<TestBdd> bdds =
+                List.of(bddPlain, bddReordered, bddReorderedKeeping, mdd, mtPlain, mtReordered, mtReorderedKeeping);
+        reorderStressed =
+                List.of(bddReorderedContext, bddReorderedKeepingContext, mtReorderedContext, mtReorderedKeepingContext);
 
         int bddCount = bdds.size();
         List<Set<UnaryDataPoint<TestBdd>>> unaryPoints = new ArrayList<>(bddCount);
@@ -142,6 +192,14 @@ class BddTheories {
         valuations = () -> new ScopedAssignments.SimplePowerSetIterator(variableCount);
 
         logger.log(Level.INFO, "Finished initialization");
+    }
+
+    /** A configuration whose {@link BddConfiguration#name()} labels the diagram in logs and failures. */
+    private static BddConfiguration named(String name, boolean keepReorderingStructures) {
+        return ImmutableBddConfiguration.builder()
+                .name(name)
+                .keepReorderingStructures(keepReorderingStructures)
+                .build();
     }
 
     @SuppressWarnings("TypeMayBeWeakened")
@@ -194,7 +252,37 @@ class BddTheories {
         return unary.stream();
     }
 
-    private void testSimplify(Bdd bdd, int direct, int indirect, int domain) {
+    /** {@code assignment} re-indexed by the level each variable sits at; the identity unless reordered. */
+    private static BitSet byLevel(BinaryDecisionDiagram bdd, BitSet assignment) {
+        if (!(bdd instanceof ReorderableDecisionDiagram)) {
+            return assignment;
+        }
+        ReorderableDecisionDiagram reorderable = (ReorderableDecisionDiagram) bdd;
+        BitSet levels = new BitSet(bdd.numberOfVariables());
+        for (int variable = assignment.nextSetBit(0); variable >= 0; variable = assignment.nextSetBit(variable + 1)) {
+            levels.set(reorderable.level(variable));
+        }
+        return levels;
+    }
+
+    private static void checkTree(TestBdd bdd, int function, SyntaxTree tree, String what) {
+        Iterator<boolean[]> all = getArrayIterator(fullSupport(bdd));
+        while (all.hasNext()) {
+            boolean[] point = all.next();
+            assertThat(
+                    what + " disagrees at " + java.util.Arrays.toString(point) + " for function " + function,
+                    bdd.evaluate(function, point),
+                    is(tree.evaluate(point)));
+        }
+    }
+
+    private static BitSet fullSupport(TestBdd bdd) {
+        BitSet all = new BitSet(bdd.numberOfVariables());
+        all.set(0, bdd.numberOfVariables());
+        return all;
+    }
+
+    private void testSimplify(BinaryDecisionDiagram bdd, int direct, int indirect, int domain) {
         int directOnDomain = bdd.reference(bdd.and(direct, domain));
         int indirectOnDomain = bdd.reference(bdd.and(indirect, domain));
         assertThat(directOnDomain, is(indirectOnDomain));
@@ -215,6 +303,21 @@ class BddTheories {
     @AfterAll
     static void check() {
         doCheckInvariants();
+        /* The stress is only worth its runtime if it actually moved something - a swap that silently
+         * became a no-op would leave every "reordered" variant running at the identity order, which is
+         * exactly the blind spot these variants exist to close. */
+        for (BddContextImpl context : reorderStressed) {
+            assertThat(context + " never left the identity order", isReordered(context), is(true));
+        }
+    }
+
+    private static boolean isReordered(BddContextImpl diagram) {
+        for (int variable = 0; variable < diagram.numberOfVariables(); variable++) {
+            if (diagram.level(variable) != variable) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @AfterAll
@@ -234,10 +337,65 @@ class BddTheories {
     }
 
     @AfterEach
+    void occasionallyReorder() {
+        if (THEORIES_RUN.incrementAndGet() % REORDER_EVERY != 0) {
+            return;
+        }
+        int round = THEORIES_RUN.get() / REORDER_EVERY;
+        for (BddContextImpl context : reorderStressed) {
+            if (context.numberOfVariables() < 2) {
+                continue;
+            }
+            for (int i = 0; i < REORDER_SWAPS; i++) {
+                context.siftDown(reorderRandom.nextInt(context.numberOfVariables() - 1));
+            }
+        }
+        // Once, after every diagram has been swapped - doCheckInvariants covers all of them, so calling
+        // it per diagram would cost a multiple of what it verifies.
+        if (round % REORDER_CHECK_EVERY == 0) {
+            doCheckInvariants();
+        }
+    }
+
+    @AfterEach
     void checkInvariants() {
         if (skipCheckRandom.nextInt(SKIP_CHECK_RANDOM_BOUND) == 0) {
             doCheckInvariants();
         }
+    }
+
+    /**
+     * Enumerating in a domain walks the function and the domain together instead of conjoining them
+     * first, so it has a failure mode the plain walk does not: two nodes that are both satisfiable on
+     * their own need not be satisfiable together, and the descent has to be able to retract. Checked
+     * against the conjunction it replaces, and against the callback form.
+     */
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("binary")
+    void testSolutionIteratorIn(BinaryDataPoint<TestBdd> dataPoint) {
+        TestBdd bdd = dataPoint.bdd;
+        int function = dataPoint.left;
+        int domain = dataPoint.right;
+        assumeTrue(bdd.isValidFunction(function));
+        assumeTrue(bdd.isValidFunction(domain));
+
+        int conjunction = bdd.reference(bdd.and(function, domain));
+        Set<BitSet> expected = new HashSet<>();
+        for (Cursor<BitSet> cursor = bdd.solutionCursor(conjunction); cursor.valid(); cursor.advance()) {
+            expected.add(BitSets.copyOf(cursor.current()));
+        }
+
+        Set<BitSet> fromCursor = new HashSet<>();
+        for (Cursor<BitSet> cursor = bdd.solutionCursorIn(function, domain); cursor.valid(); cursor.advance()) {
+            fromCursor.add(BitSets.copyOf(cursor.current()));
+        }
+        assertThat(fromCursor, is(expected));
+
+        Set<BitSet> fromCallback = new HashSet<>();
+        bdd.forEachSolutionIn(function, domain, solution -> fromCallback.add(BitSets.copyOf(solution)));
+        assertThat(fromCallback, is(expected));
+
+        bdd.dereference(conjunction);
     }
 
     @ParameterizedTest(name = "{index}")
@@ -485,6 +643,10 @@ class BddTheories {
         }
 
         int composeNode = bdd.reference(bdd.compose(function, composeArray));
+        /* Exhaustive, not just over the support: composing has to agree with substituting into the
+         * syntax tree everywhere. Guards the class of bug where a compose cache is reused across
+         * mappings that only look compatible. */
+        checkTree(bdd, composeNode, SyntaxTree.buildReplacementTree(syntaxTree, replacementMap), "one substitution");
         int repeatedNode = bdd.reference(bdd.compose(function, composeArray));
         assertThat(composeNode, is(repeatedNode));
         bdd.dereference(repeatedNode);
@@ -897,14 +1059,16 @@ class BddTheories {
         });
         assertThat(supportFromPathSupport, is(support));
 
-        Iterator<BitSet> solutionIterator = paths.iterator();
+        Iterator<BitSet> pathIterator = paths.iterator();
         BitSet previous = null;
         Set<BitSet> solutionBitSets = new HashSet<>();
 
-        while (solutionIterator.hasNext()) {
-            BitSet next = solutionIterator.next();
+        while (pathIterator.hasNext()) {
+            BitSet next = pathIterator.next();
             if (previous != null) {
-                assertThat(LEXICOGRAPHIC.compare(previous, next), is(-1));
+                // Paths come out in the order the diagram is laid out in, which is by level - the same
+                // thing as by variable index only while nothing has reordered.
+                assertThat(LEXICOGRAPHIC.compare(byLevel(bdd, previous), byLevel(bdd, next)), is(-1));
             }
             previous = next;
             // No solution is generated twice
@@ -1008,10 +1172,12 @@ class BddTheories {
         List<BinaryPath> paths = new ArrayList<>();
         bdd.forEachPath(function, path -> paths.add(path.copy()));
 
-        List<BinaryPath> iteratorPaths = new ArrayList<>();
-        bdd.pathIterator(function).forEachRemaining(path -> iteratorPaths.add(path.copy()));
+        List<BinaryPath> cursorPaths = new ArrayList<>();
+        for (Cursor<BinaryPath> cursor = bdd.pathCursor(function); cursor.valid(); cursor.advance()) {
+            cursorPaths.add(cursor.current().copy());
+        }
 
-        assertThat(iteratorPaths, is(paths));
+        assertThat(cursorPaths, is(paths));
     }
 
     @ParameterizedTest(name = "{index}")
@@ -1273,10 +1439,11 @@ class BddTheories {
             }
         }
 
-        bdd.solutionIterator(function).forEachRemaining(valuation -> {
+        for (Cursor<BitSet> cursor = bdd.solutionCursor(function); cursor.valid(); cursor.advance()) {
+            BitSet valuation = cursor.current();
             assertThat("Invalid solution", bdd.evaluate(function, valuation), is(true));
             assertThat("Duplicate solution", satisfyingAssignments.remove(valuation), is(true));
-        });
+        }
         assertThat("Missing solution", satisfyingAssignments, empty());
     }
 
@@ -1805,9 +1972,9 @@ class BddTheories {
 
     private static final class BddPathExplorer {
         private final Set<BitSet> assignments;
-        private final Bdd bdd;
+        private final BinaryDecisionDiagram bdd;
 
-        BddPathExplorer(Bdd bdd, int startingFunction) {
+        BddPathExplorer(BinaryDecisionDiagram bdd, int startingFunction) {
             this.bdd = bdd;
             this.assignments = new HashSet<>();
             if (startingFunction == bdd.trueFunction()) {

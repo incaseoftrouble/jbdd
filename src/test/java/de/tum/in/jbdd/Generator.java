@@ -275,11 +275,11 @@ public final class Generator {
 
         @Override
         public String toString() {
-            return String.format("%s: %s", bdd.getClass().getSimpleName(), tree);
+            return String.format("%s: %s", bdd, tree);
         }
     }
 
-    public static final class BinaryDataPoint<T extends Bdd> {
+    public static final class BinaryDataPoint<T extends BinaryDecisionDiagram> {
         public final T bdd;
         public final int left;
         public final SyntaxTree leftTree;
@@ -313,11 +313,11 @@ public final class Generator {
 
         @Override
         public String toString() {
-            return String.format("%s: %s ### %s", bdd.getClass().getSimpleName(), leftTree, rightTree);
+            return String.format("%s: %s ### %s", bdd, leftTree, rightTree);
         }
     }
 
-    public static final class TernaryDataPoint<T extends Bdd> {
+    public static final class TernaryDataPoint<T extends BinaryDecisionDiagram> {
         public final T bdd;
         public final int first;
         public final SyntaxTree firstTree;
@@ -365,8 +365,7 @@ public final class Generator {
 
         @Override
         public String toString() {
-            return String.format(
-                    "%s: %s ### %s ### %s", bdd.getClass().getSimpleName(), firstTree, secondTree, thirdTree);
+            return String.format("%s: %s ### %s ### %s", bdd, firstTree, secondTree, thirdTree);
         }
     }
 }

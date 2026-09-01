@@ -18,7 +18,6 @@ package de.tum.in.jbdd;
 
 import java.math.BigInteger;
 import java.util.BitSet;
-import java.util.Iterator;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
@@ -70,33 +69,6 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
     BigInteger countSatisfyingAssignmentsIn(int function, int domain);
 
     /**
-     * Returns an iterator over all satisfying assignments of the given boolean {@code function}. In other words,
-     * this call is equivalent to
-     * {@code
-     *   Set<S> solutions = new HashSet<>();
-     *   for (S valuation : valuations) {
-     *     if (this.evaluate(function, valuation)) {
-     *       solutions.add(valuation);
-     *     }
-     *   }
-     *   return solutions.iterator();
-     * }
-     * where {@code valuations} is the set of all possible valuations.
-     *
-     * <p>The assignments are generated in lexicographic ascending order.</p>
-     *
-     * <p><b>Note:</b> The passed objects may be modified in-place. If all assignments should be gathered
-     * into a set or similar, they have to be cloned after each call to {@link Iterator#next()}.</p>
-     */
-    Iterator<S> solutionIterator(int function);
-
-    Iterator<S> solutionIterator(int function, BitSet support);
-
-    Iterator<S> solutionIteratorIn(int function, int domain);
-
-    Iterator<S> solutionIteratorIn(int function, int domain, BitSet support);
-
-    /**
      * Executes the given action for each satisfying assignment of the given boolean {@code function}.
      *
      * <p>The solutions are generated in lexicographic ascending order.</p>
@@ -121,10 +93,35 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
     }
 
     default void forEachSolutionIn(int function, int domain, BitSet support, Consumer<? super S> action) {
-        solutionIteratorIn(function, domain, support).forEachRemaining(action);
+        for (Cursor<S> cursor = solutionCursorIn(function, domain, support); cursor.valid(); cursor.advance()) {
+            action.accept(cursor.current());
+        }
     }
 
-    Iterator<P> pathIterator(int function);
+    /**
+     * A {@link Cursor} over the solutions of {@code function}.
+     *
+     * <p>Enumeration is by cursor rather than by {@code Iterator} throughout. An iterator has to answer
+     * {@code hasNext()} without disturbing what it last returned, which forces the walk to run a step
+     * ahead and every element to be copied out of its way - for solutions that copy is most of the cost.
+     * A cursor hands out the walk's own state instead; see {@link Cursor} for what that asks of the caller.
+     *
+     * <p>Solutions come out in lexicographic ascending order by level: the variables the walk decides on
+     * vary slowest, and those a path leaves free are counted off underneath them.
+     */
+    Cursor<S> solutionCursor(int function);
+
+    /** As {@link #solutionCursor(int)}, over the given support rather than every variable. */
+    Cursor<S> solutionCursor(int function, BitSet support);
+
+    /** As {@link #solutionCursor(int)}, restricted to the solutions that also satisfy {@code domain}. */
+    Cursor<S> solutionCursorIn(int function, int domain);
+
+    /** As {@link #solutionCursorIn(int, int)}, over the given support rather than every variable. */
+    Cursor<S> solutionCursorIn(int function, int domain, BitSet support);
+
+    /** A {@link Cursor} over the paths of {@code function}; see {@link #solutionCursor(int)}. */
+    Cursor<P> pathCursor(int function);
 
     /**
      * Executes the given {@code action} for all <em>minimal</em> solutions of the given boolean {@code function}.

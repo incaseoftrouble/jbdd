@@ -24,7 +24,8 @@ import java.io.StringReader;
 import org.junit.jupiter.api.Test;
 
 class DimacsReaderTest {
-    private static int load(Bdd bdd, String dimacs) throws IOException, DimacsReader.InvalidFormatException {
+    private static int load(BinaryDecisionDiagram bdd, String dimacs)
+            throws IOException, DimacsReader.InvalidFormatException {
         try (BufferedReader reader = new BufferedReader(new StringReader(dimacs))) {
             return DimacsReader.loadDimacs(bdd, reader);
         }

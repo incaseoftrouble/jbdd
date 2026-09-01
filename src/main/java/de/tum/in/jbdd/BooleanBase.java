@@ -32,7 +32,7 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
     static final int TRUE = Integer.MAX_VALUE;
     static final int FALSE = complement(TRUE);
 
-    private final NodeLifecycleObserverGroup<NodeLifecycleObserver> observers = new NodeLifecycleObserverGroup<>();
+    private final NodeTableObserverGroup<NodeTableObserver> observers = new NodeTableObserverGroup<>();
     private final ProtectionTracker protectionTracker = new ProtectionTracker();
     final ConcurrentAccessGuard accessGuard = new ConcurrentAccessGuard();
 
@@ -40,7 +40,7 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
         observers.registerStrongly(protectionTracker);
         // Strongly: this hook is owned by the diagram, nothing else holds it - see
         // NodeLifecycleObserverGroup#registerStrongly.
-        observers.registerStrongly(new NodeLifecycleObserver() {
+        observers.registerStrongly(new NodeTableObserver() {
             @Override
             public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
                 cache().onBddNodesInvalidated(reclaimedNodes);
@@ -50,6 +50,14 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
             public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
                 cache().tableSizeChanged(invalidatedNodes);
             }
+
+            @Override
+            public void levelsSwapped(DecisionDiagram origin, int level) {
+                cache().levelsSwapped();
+            }
+
+            /* Nothing: an insertion preserves every level comparison, so no cached value goes stale by it.
+             * The variable count does change, which is what variablesChanged already covers. */
         });
     }
 
@@ -71,12 +79,19 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
     @Override
     public Map<String, Object> statistics() {
         assert accessGuard.acquire();
-        Map<String, Object> statistics = Stream.concat(
+        Map<String, Object> statistics = Stream.of(
                         table().statistics((this instanceof BddImpl) ? "bdd_" : "mdd_").entrySet().stream(),
-                        cache().statistics().entrySet().stream())
+                        cache().statistics().entrySet().stream(),
+                        ownStatistics().entrySet().stream())
+                .flatMap(stream -> stream)
                 .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
         assert accessGuard.release();
         return DecisionDiagram.prefixStatistics(configuration().name(), statistics);
+    }
+
+    /** Whatever the concrete diagram wants to report beyond its table's and its caches'. */
+    Map<String, Object> ownStatistics() {
+        return Map.of();
     }
 
     public void invalidateCache() {
@@ -88,17 +103,25 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
         return protectionTracker;
     }
 
-    void registerObserver(NodeLifecycleObserver observer) {
+    void registerObserver(NodeTableObserver observer) {
         observers.register(observer);
     }
 
-    /** Registers an observer owned by this diagram, see {@link NodeLifecycleObserverGroup#registerStrongly}. */
-    void registerOwnedObserver(NodeLifecycleObserver observer) {
+    /** Registers an observer owned by this diagram, see {@link NodeTableObserverGroup#registerStrongly}. */
+    void registerOwnedObserver(NodeTableObserver observer) {
         observers.registerStrongly(observer);
     }
 
     void notifyBeforeGc() {
         observers.dispatch(observer -> observer.beforeGc(this));
+    }
+
+    void notifyLevelsSwapped(int level) {
+        observers.dispatch(observer -> observer.levelsSwapped(this, level));
+    }
+
+    void notifyVariableInserted(int level) {
+        observers.dispatch(observer -> observer.variableInserted(this, level));
     }
 
     void notifyAfterGc(int reclaimedNodes) {

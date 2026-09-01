@@ -68,7 +68,7 @@ public class DimacsBenchmark extends BaseBddBenchmark {
     @Benchmark
     public static void benchmarkDimacs(DimacsState state, Blackhole bh)
             throws IOException, DimacsReader.InvalidFormatException {
-        Bdd bdd = state.bdd();
+        BinaryDecisionDiagram bdd = state.bdd();
         int node = DimacsReader.loadDimacs(bdd, state.reader());
         bh.consume(node == bdd.falseFunction());
     }

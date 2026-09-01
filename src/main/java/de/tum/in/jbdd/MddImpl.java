@@ -21,8 +21,6 @@ import static de.tum.in.jbdd.NodeTable.PLACEHOLDER;
 import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.BitSet;
-import java.util.Collections;
-import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -37,7 +35,7 @@ import org.jspecify.annotations.Nullable;
     "DuplicatedCode",
     "AssertWithSideEffects"
 })
-public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
+public class MddImpl extends BooleanBase<int[], int[]> implements MultiValuedDecisionDiagram {
 
     private final BooleanCache cache;
     private int numberOfVariables;
@@ -75,11 +73,19 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     public int follow(int function, int value) {
         assert isValidNonConstantFunction(function) && isValidValue(function, value);
         int node = positive(function);
-        return complementIf(table.follow(node, value), node != function);
+        return complementIf(table.followUnchecked(node, value), node != function);
     }
 
     private boolean isValidValue(int function, int value) {
         return 0 <= value && value < variableDomain[decisionVariable(function)];
+    }
+
+    int @Nullable [] childrenIf(int function, boolean decides) {
+        return decides ? table.childrenUnchecked(positive(function)) : null;
+    }
+
+    static int childAt(int function, int @Nullable [] children, int value) {
+        return children == null ? function : complementIf(children[value], isComplementFunction(function));
     }
 
     // Variables and base nodes
@@ -155,7 +161,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             assert table.isValidDecisionNode(currentNode);
             int value = assignment[decisionVariable(currentNode)];
             assert isValidValue(currentNode, value);
-            int child = table.follow(currentNode, value);
+            int child = table.followUnchecked(currentNode, value);
             currentNode = positive(child);
             if (currentNode != child) {
                 lookingFor = !lookingFor;
@@ -185,7 +191,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         boolean lookingFor = currentNode == function;
 
         while (currentNode != TRUE) {
-            int[] children = table.children(currentNode);
+            int[] children = table.childrenUnchecked(currentNode);
             for (int val = 0; val < children.length; val++) {
                 int child = children[val];
                 if (!isFalse(child, lookingFor)) {
@@ -213,80 +219,112 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     }
 
     @Override
-    public Iterator<int[]> solutionIterator(int function) {
-        assert isValidFunction(function);
+    public void forEachSolutionIn(int function, int domain, Consumer<? super int[]> action) {
+        assert isValidFunction(function) && isValidFunction(domain);
 
-        if (function == FALSE) {
-            return Collections.emptyIterator();
+        if (function == FALSE || domain == FALSE) {
+            return;
         }
-        if (function == TRUE) {
-            return new PowerIteratorArray(Arrays.copyOf(variableDomain, numberOfVariables));
+        assert accessGuard.acquire();
+        forEachSolutionInRecursive(function, domain, null, 0, new int[numberOfVariables], action);
+        assert accessGuard.release();
+    }
+
+    @Override
+    public void forEachSolutionIn(int function, int domain, BitSet support, Consumer<? super int[]> action) {
+        assert isValidFunction(function) && isValidFunction(domain);
+        assert BitSets.isSubset(support(function), support) && BitSets.isSubset(support(domain), support);
+
+        if (function == FALSE || domain == FALSE) {
+            return;
         }
 
+        assert accessGuard.acquire();
+        int[] variables = support.stream().toArray();
+        forEachSolutionInRecursive(function, domain, variables, 0, new int[numberOfVariables], action);
+        assert accessGuard.release();
+    }
+
+    private void forEachSolutionInRecursive(
+            int function1,
+            int function2,
+            int @Nullable [] support,
+            int index,
+            int[] assignment,
+            Consumer<? super int[]> action) {
+        if (function1 == FALSE || function2 == FALSE) {
+            return;
+        }
+        if (index == (support == null ? numberOfVariables : support.length)) {
+            assert function1 == TRUE && function2 == TRUE;
+            action.accept(assignment);
+            return;
+        }
+
+        int variable = support == null ? index : support[index];
+
+        int[] children1 = childrenIf(function1, !isConstant(function1) && decisionVariable(function1) == variable);
+        int[] children2 = childrenIf(function2, !isConstant(function2) && decisionVariable(function2) == variable);
+
+        int domain = variableDomain[variable];
+        for (int value = 0; value < domain; value++) {
+            assignment[variable] = value;
+            forEachSolutionInRecursive(
+                    childAt(function1, children1, value),
+                    childAt(function2, children2, value),
+                    support,
+                    index + 1,
+                    assignment,
+                    action);
+        }
+        assignment[variable] = 0;
+    }
+
+    @Override
+    public Cursor<int[]> solutionCursor(int function) {
         BitSet support = new BitSet(numberOfVariables);
         support.set(0, numberOfVariables);
-        return new NodeSolutionIterator(this, function, support);
+        return solutionCursor(function, support);
     }
 
     @Override
-    public Iterator<int[]> solutionIterator(int function, BitSet support) {
+    public Cursor<int[]> solutionCursor(int function, BitSet support) {
         assert isValidFunction(function);
 
         if (function == FALSE) {
-            return Collections.emptyIterator();
+            return Cursors.empty();
         }
         if (function == TRUE) {
-            return new PowerIteratorArray(variableDomain, support);
+            return Cursors.powerSet(variableDomain, support);
         }
-
-        return new NodeSolutionIterator(this, function, support);
-    }
-
-    // See BddImpl#forEachSolution: the default (see BooleanTerminalDecisionDiagram#forEachSolution) delegates to
-    // solutionIterator(...).forEachRemaining(action), which would leave the guard released while action runs.
-    // Override it here so the whole traversal is guarded, consistent with the other forEach* methods.
-    @Override
-    public void forEachSolution(int function, Consumer<? super int[]> action) {
-        assert isValidFunction(function);
-        assert accessGuard.acquire();
-        solutionIterator(function).forEachRemaining(action);
-        assert accessGuard.release();
+        return new SolutionCursor(this, function, support);
     }
 
     @Override
-    public void forEachSolution(int function, BitSet support, Consumer<? super int[]> action) {
-        assert isValidFunction(function);
-        assert accessGuard.acquire();
-        solutionIterator(function, support).forEachRemaining(action);
-        assert accessGuard.release();
+    public Cursor<int[]> solutionCursorIn(int function, int domain) {
+        // TODO Native - see BddImpl, which walks the two together instead of conjoining them
+        return solutionCursor(and(function, domain));
     }
 
     @Override
-    public Iterator<int[]> solutionIteratorIn(int function, int domain) {
-        // TODO Native
-        return solutionIterator(and(function, domain));
+    public Cursor<int[]> solutionCursorIn(int function, int domain, BitSet support) {
+        // TODO Native - see BddImpl, which walks the two together instead of conjoining them
+        return solutionCursor(and(function, domain), support);
     }
 
     @Override
-    public Iterator<int[]> solutionIteratorIn(int function, int domain, BitSet support) {
-        // TODO Native
-        return solutionIterator(and(function, domain), support);
-    }
-
-    @Override
-    public Iterator<int[]> pathIterator(int function) {
+    public Cursor<int[]> pathCursor(int function) {
         assert isValidFunction(function);
 
         if (function == FALSE) {
-            return Collections.emptyIterator();
+            return Cursors.empty();
         }
         if (function == TRUE) {
             int[] path = new int[numberOfVariables];
             Arrays.fill(path, -1);
-            return Collections.singleton(path).iterator();
+            return Cursors.singleton(path);
         }
-
-        return new NodePathIterator(this, function);
+        return new PathCursor(this, function);
     }
 
     @Override
@@ -358,7 +396,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
 
         boolean relevant = support == null || support.get(variable);
 
-        int[] children = table.children(node);
+        int[] children = table.childrenUnchecked(node);
         for (int val = 0; val < children.length; val++) {
             int child = children[val];
             if (!isFalse(child, lookingFor)) {
@@ -408,7 +446,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
 
         int variable = table.variable(node);
 
-        int[] children = table.children(node);
+        int[] children = table.childrenUnchecked(node);
         for (int val = 0; val < children.length; val++) {
             int child = children[val];
             if (!isFalse(child, lookingFor)) {
@@ -493,7 +531,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
         int hash = cache.lookupHash();
 
-        int[] children = table.children(node);
+        int[] children = table.childrenUnchecked(node);
         BigInteger result = BigInteger.ZERO;
         for (int child : children) {
             result =
@@ -582,16 +620,13 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         int variable = Math.min(fun1var, fun2var);
         int domain = variableDomain[variable];
 
-        boolean fun1c = isComplementFunction(function1);
-        boolean fun2c = isComplementFunction(function2);
-        int[] children1 = fun1var == variable ? table.children(positive(function1)) : EMPTY_INT_ARRAY;
-        int[] children2 = fun2var == variable ? table.children(positive(function2)) : EMPTY_INT_ARRAY;
+        int[] children1 = childrenIf(function1, fun1var == variable);
+        int[] children2 = childrenIf(function2, fun2var == variable);
 
         int[] resultChildren = new int[domain];
         for (int val = 0; val < domain; val++) {
-            resultChildren[val] = table.pushToWorkStack(computeAnd(
-                    fun1var == variable ? complementIf(children1[val], fun1c) : function1,
-                    fun2var == variable ? complementIf(children2[val], fun2c) : function2));
+            resultChildren[val] = table.pushToWorkStack(
+                    computeAnd(childAt(function1, children1, val), childAt(function2, children2, val)));
         }
         int resultNode = makeFunction(variable, resultChildren);
         table.popFromWorkStack(domain);
@@ -648,15 +683,14 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         int variable = Math.min(fun1var, fun2var);
         int domain = variableDomain[variable];
 
-        // Both operands are positive here, so their children need no parity fix-up on the way down.
-        int[] children1 = fun1var == variable ? table.children(function1) : EMPTY_INT_ARRAY;
-        int[] children2 = fun2var == variable ? table.children(function2) : EMPTY_INT_ARRAY;
+        // Both operands are positive here, so childAt's parity fix-up is a no-op on the way down.
+        int[] children1 = childrenIf(function1, fun1var == variable);
+        int[] children2 = childrenIf(function2, fun2var == variable);
 
         int[] resultChildren = new int[domain];
         for (int val = 0; val < domain; val++) {
-            resultChildren[val] = table.pushToWorkStack(computeXor(
-                    fun1var == variable ? children1[val] : function1,
-                    fun2var == variable ? children2[val] : function2));
+            resultChildren[val] = table.pushToWorkStack(
+                    computeXor(childAt(function1, children1, val), childAt(function2, children2, val)));
         }
         int resultNode = makeFunction(variable, resultChildren);
         table.popFromWorkStack(domain);
@@ -702,7 +736,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             return function;
         }
 
-        int[] children = table.children(node);
+        int[] children = table.childrenUnchecked(node);
         boolean currentVariableIsQuantified = variable == currentCubeNodeVariable;
 
         if (currentVariableIsQuantified) {
@@ -804,16 +838,12 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         int variable = Math.min(fun1var, fun2var);
         int domain = variableDomain[variable];
 
-        boolean fun1c = isComplementFunction(function1);
-        boolean fun2c = isComplementFunction(function2);
-        int[] children1 = fun1var == variable ? table.children(positive(function1)) : EMPTY_INT_ARRAY;
-        int[] children2 = fun2var == variable ? table.children(positive(function2)) : EMPTY_INT_ARRAY;
+        int[] children1 = childrenIf(function1, fun1var == variable);
+        int[] children2 = childrenIf(function2, fun2var == variable);
 
         boolean result = false;
         for (int val = 0; val < domain; val++) {
-            if (intersectsRecursive(
-                    fun1var == variable ? complementIf(children1[val], fun1c) : function1,
-                    fun2var == variable ? complementIf(children2[val], fun2c) : function2)) {
+            if (intersectsRecursive(childAt(function1, children1, val), childAt(function2, children2, val))) {
                 result = true;
                 break;
             }
@@ -871,7 +901,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         //        }
         //        int hash = cache.lookupHash();
 
-        int[] children = table.children(node);
+        int[] children = table.childrenUnchecked(node);
         int domain = children.length;
         int resultNode;
 
@@ -964,22 +994,19 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         int hash = cache.lookupHash();
         int ifVar = table.variable(ifNormalized);
         int thenVar = table.variable(thenNormalized);
-        int elseNode = positive(elseNormalized);
-        int elseVar = table.variable(elseNode);
+        int elseVar = table.variable(positive(elseNormalized));
 
         int minVar = Math.min(ifVar, Math.min(thenVar, elseVar));
-        int[] ifTree = ifVar == minVar ? table.children(ifNormalized) : null;
-        int[] thenTree = thenVar == minVar ? table.children(thenNormalized) : null;
-        int[] elseTree = elseVar == minVar ? table.children(elseNode) : null;
-        boolean elsec = elseTree != null && elseNode != elseNormalized;
+        int[] ifTree = childrenIf(ifNormalized, ifVar == minVar);
+        int[] thenTree = childrenIf(thenNormalized, thenVar == minVar);
+        int[] elseTree = childrenIf(elseNormalized, elseVar == minVar);
         int minVarDomain = variableDomain[minVar];
         int[] resultChildren = new int[minVarDomain];
         for (int val = 0; val < minVarDomain; val++) {
-            int elseBranch = elseTree == null ? elseNormalized : complementIf(elseTree[val], elsec);
             resultChildren[val] = table.pushToWorkStack(computeIfThenElse(
-                    ifTree == null ? ifNormalized : ifTree[val],
-                    thenTree == null ? thenNormalized : thenTree[val],
-                    elseBranch));
+                    childAt(ifNormalized, ifTree, val),
+                    childAt(thenNormalized, thenTree, val),
+                    childAt(elseNormalized, elseTree, val)));
         }
         int result = makeFunction(minVar, resultChildren);
         table.popFromWorkStack(minVarDomain);
@@ -1051,8 +1078,8 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
 
         int result;
         if (functionVar == domainVar) {
-            int[] functionChildren = table.children(node);
-            int[] domainChildren = table.children(domainNode);
+            int[] functionChildren = table.childrenUnchecked(node);
+            int[] domainChildren = table.childrenUnchecked(domainNode);
             int variableDomainSize = functionChildren.length;
 
             int[] resultChildren = new int[variableDomainSize];
@@ -1081,7 +1108,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             }
             table.popFromWorkStack(workStack);
         } else if (functionVar < domainVar) {
-            int[] functionChildren = table.children(node);
+            int[] functionChildren = table.childrenUnchecked(node);
             int variableDomainSize = functionChildren.length;
             int[] resultChildren = new int[variableDomainSize];
             for (int i = 0; i < variableDomainSize; i++) {
@@ -1091,7 +1118,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             result = makeFunction(functionVar, resultChildren);
             table.popFromWorkStack(variableDomainSize);
         } else {
-            int[] domainChildren = table.children(domainNode);
+            int[] domainChildren = table.childrenUnchecked(domainNode);
             int disjunction = complementIf(domainChildren[0], domc);
             for (int i = 1; i < domainChildren.length; i++) {
                 table.pushToWorkStack(disjunction);
@@ -1114,362 +1141,121 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
 
     // Utility
 
-    static final class NodeSolutionIterator implements Iterator<int[]> {
+    /**
+     * The traversal both iterators run on: it walks the paths to {@code TRUE} of a function, one at a
+     * time, in the order the diagram is laid out in.
+     *
+     * <p>Not a {@link Cursor} itself: it hands nothing out, it only moves. {@link #advance()} steps it on,
+     * and the state it exposes describes where it now is. The cursors below differ only in what they make
+     * of that state, which is why the descent and the backtracking live here and nowhere else. It is a
+     * final class held in fields of its own type, so nothing here is dispatched virtually.
+     */
+    static final class PathWalk {
         private static final int NON_PATH_NODE = PLACEHOLDER;
+        /** What {@link #assignment} holds for a variable the current path does not decide. */
+        static final int UNDECIDED = -1;
 
         private final MddImpl mdd;
-        private final int[] assignment;
-        private final BitSet support;
-        private final int variableCount;
         private final int[] path;
         private final boolean[] pathLookingFor;
-        private boolean firstRun = true;
-        private int highestSwitchableVariable = 0;
-        private int leafNodeVariable;
-        private boolean hasNextPath;
-        private boolean hasNextAssignment;
-        private final int rootVariable;
-
-        NodeSolutionIterator(MddImpl mdd, int function, BitSet support) {
-            // Require at least one possible solution to exist.
-            assert mdd.isValidNonConstantFunction(function) || function == TRUE;
-            variableCount = mdd.numberOfVariables();
-
-            // Assignments don't make much sense otherwise
-            assert variableCount > 0 && support.length() <= variableCount;
-            assert BitSets.isSubset(mdd.support(function), support);
-
-            this.mdd = mdd;
-            this.support = support;
-            this.path = new int[variableCount];
-            this.pathLookingFor = new boolean[variableCount];
-            this.assignment = new int[variableCount];
-            rootVariable = mdd.decisionVariable(function);
-            assert support.get(rootVariable);
-
-            Arrays.fill(path, NON_PATH_NODE);
-            path[rootVariable] = positive(function);
-            pathLookingFor[rootVariable] = mdd.isPositive(function);
-
-            leafNodeVariable = 0;
-            hasNextPath = true;
-            hasNextAssignment = true;
-        }
-
-        @Override
-        public boolean hasNext() {
-            assert !hasNextPath || hasNextAssignment;
-            return hasNextAssignment;
-        }
-
-        @SuppressWarnings("AssignmentOrReturnOfFieldWithMutableType")
-        @Override
-        public int[] next() {
-            assert IntStream.range(0, variableCount).allMatch(i -> support.get(i) || path[i] == NON_PATH_NODE);
-
-            int currentNode;
-            boolean currentLookingFor;
-            if (firstRun) {
-                firstRun = false;
-                currentNode = path[rootVariable];
-                currentLookingFor = pathLookingFor[rootVariable];
-            } else {
-                // Check if we can flip any non-path variable in the support
-                boolean clearedAny = false;
-                for (int var = support.nextSetBit(0); var >= 0; var = support.nextSetBit(var + 1)) {
-                    // Strategy: Perform "addition" on the NON_PATH_NODEs over the support
-                    // The tricky bit is to determine whether there is a "next element": Either there is
-                    // another real path in the BDD or there is some variable which we still can increase
-
-                    if (path[var] == NON_PATH_NODE) {
-                        assert assignment[var] < mdd.variableDomain[var];
-                        if (assignment[var] == mdd.variableDomain[var] - 1) {
-                            assignment[var] = 0;
-                            clearedAny = true;
-                        } else {
-                            assignment[var] += 1;
-                            if (hasNextPath || clearedAny || assignment[var] < mdd.variableDomain[var] - 1) {
-                                hasNextAssignment = true;
-                            } else {
-                                hasNextAssignment = false; // NOPMD
-
-                                // TODO This should be constant time to determine?
-                                // TODO This only needs to run if we set the first non-path variable to 1
-                                for (int i = support.nextSetBit(var + 1); i >= 0; i = support.nextSetBit(i + 1)) {
-                                    if (path[i] == NON_PATH_NODE && assignment[i] < mdd.variableDomain[i] - 1) {
-                                        hasNextAssignment = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            assert mdd.evaluate(
-                                    complementIf(path[rootVariable], !pathLookingFor[rootVariable]), assignment);
-                            return assignment;
-                        }
-                    }
-                }
-
-                // Situation: All non-path variables are set to zero, and we need to find a new path
-                assert IntStream.range(0, variableCount)
-                        .noneMatch(var -> path[var] == NON_PATH_NODE && assignment[var] > 0);
-                assert hasNextPath
-                        : "Expected another path after " + Arrays.toString(assignment) + ", node:\n"
-                                + mdd.table.treeToString(path[rootVariable]);
-
-                // Backtrack on the current path until we find a node that we can increase to non-false branch
-                // to find a new path
-                // TODO Use highestLowVariableWithNonFalseHighBranch?
-                currentNode = path[leafNodeVariable];
-                currentLookingFor = pathLookingFor[leafNodeVariable];
-                int branchVar = leafNodeVariable;
-
-                //noinspection LabeledStatement
-                outer:
-                while (true) {
-                    assert path[branchVar] != NON_PATH_NODE;
-
-                    int[] children = mdd.table.children(currentNode);
-                    int val = assignment[branchVar] + 1;
-                    while (val < children.length) {
-                        if (!isFalse(children[val], currentLookingFor)) {
-                            assignment[branchVar] = val;
-                            //noinspection BreakStatementWithLabel
-                            break outer;
-                        }
-                        val += 1;
-                    }
-                    assert val == children.length;
-
-                    // This node does not give us another branch, backtrack over the path until we get to
-                    // the next element of the path
-                    // TODO Could track the previous path element in int[]
-                    do {
-                        branchVar = support.previousSetBit(branchVar - 1);
-                        if (branchVar == -1) {
-                            throw new NoSuchElementException("No next element");
-                        }
-                    } while (path[branchVar] == NON_PATH_NODE);
-                    currentNode = path[branchVar];
-                    currentLookingFor = pathLookingFor[branchVar];
-                }
-                assert assignment[branchVar] < mdd.variableDomain[branchVar];
-                assert leafNodeVariable >= highestSwitchableVariable;
-                assert mdd.decisionVariable(currentNode) == branchVar;
-
-                // currentNode is the deepest node we could increase; set the value and descend the tree
-                Arrays.fill(assignment, branchVar + 1, leafNodeVariable + 1, 0);
-                Arrays.fill(path, branchVar + 1, leafNodeVariable + 1, NON_PATH_NODE);
-
-                assert path[branchVar] == currentNode;
-                int child = mdd.follow(currentNode, assignment[branchVar]);
-                currentNode = positive(child);
-                if (currentNode != child) {
-                    currentLookingFor = !currentLookingFor;
-                }
-                assert mdd.isPositive(currentNode);
-                assert !isFalse(currentNode, currentLookingFor);
-                leafNodeVariable = branchVar;
-
-                // We maxed out the candidate for increase, clear this information
-                if (highestSwitchableVariable == branchVar) {
-                    highestSwitchableVariable = -1;
-                    /*for (int val = assignment[branchVar] + 1; val < children.length; val++) {
-                        if (children[val] != FALSE_NODE) {
-                            highestSwitchableVariable = branchVar;
-                            break;
-                        }
-                    }*/
-                }
-            }
-
-            // Situation: Either the currentNode valuation was just increased or we are in initial state.
-            // Descend the tree, searching for a solution and determine if there is a next assignment.
-
-            // If there is a possible path higher up, there definitely are more solutions
-            hasNextPath = highestSwitchableVariable > -1 && highestSwitchableVariable < leafNodeVariable;
-
-            while (!isTrue(currentNode, currentLookingFor)) {
-                assert mdd.isPositive(currentNode) && !mdd.isConstant(currentNode);
-
-                leafNodeVariable = mdd.table.variable(currentNode);
-                path[leafNodeVariable] = currentNode;
-                pathLookingFor[leafNodeVariable] = currentLookingFor;
-                assert support.get(leafNodeVariable);
-
-                int[] children = mdd.table.children(currentNode);
-                int domain = children.length;
-                int val = 0;
-                while (isFalse(children[val], currentLookingFor)) {
-                    val += 1;
-                }
-                assignment[leafNodeVariable] = val;
-                int child = mdd.follow(currentNode, val);
-
-                if (!hasNextPath) {
-                    val += 1;
-                    while (val < domain) {
-                        if (isFalse(children[val], currentLookingFor)) {
-                            val += 1;
-                        } else {
-                            hasNextPath = true;
-                            highestSwitchableVariable = leafNodeVariable; // NOPMD
-                            break;
-                        }
-                    }
-                }
-
-                currentNode = positive(child);
-                if (currentNode != child) {
-                    currentLookingFor = !currentLookingFor;
-                }
-            }
-            assert mdd.evaluate(complementIf(path[rootVariable], !pathLookingFor[rootVariable]), assignment);
-
-            // If this is a unique path, there won't be any trivial assignments
-            // TODO We can make this faster!
-            for (int var = support.nextSetBit(0); var >= 0; var = support.nextSetBit(var + 1)) {
-                if (path[var] == NON_PATH_NODE) {
-                    // We switched path so every non-path variable is low
-                    assert path[var] != NON_PATH_NODE || assignment[var] == 0;
-                    hasNextAssignment = true;
-                    return assignment;
-                }
-            }
-            hasNextAssignment = hasNextPath;
-            return assignment;
-        }
-    }
-
-    static final class NodePathIterator implements Iterator<int[]> {
-        private static final int NON_PATH_NODE = PLACEHOLDER;
-
-        private final MddImpl mdd;
-        private final int variableCount;
         private final int[] assignment;
         private final BitSet pathSupport;
-        private final int[] path;
-        private final boolean[] pathLookingFor;
-        private boolean firstRun = true;
-        private int highestSwitchableVariable = 0;
-        private int leafNodeVariable;
-        private boolean hasNextPath;
         private final int rootVariable;
+        private boolean onPath;
+        private int leafNodeVariable;
 
-        NodePathIterator(MddImpl mdd, int function) {
-            // Require at least one possible solution to exist.
+        PathWalk(MddImpl mdd, int function) {
             assert mdd.isValidNonConstantFunction(function);
-            variableCount = mdd.numberOfVariables();
 
+            int variableCount = mdd.numberOfVariables();
             this.mdd = mdd;
             this.path = new int[variableCount];
             this.pathLookingFor = new boolean[variableCount];
             this.assignment = new int[variableCount];
             this.pathSupport = new BitSet(variableCount);
-            rootVariable = mdd.decisionVariable(function);
+            this.rootVariable = mdd.decisionVariable(function);
 
-            Arrays.fill(assignment, -1);
+            Arrays.fill(assignment, UNDECIDED);
             Arrays.fill(path, NON_PATH_NODE);
             path[rootVariable] = positive(function);
             pathSupport.set(rootVariable);
             pathLookingFor[rootVariable] = mdd.isPositive(function);
-
-            leafNodeVariable = 0;
-            hasNextPath = true;
+            this.leafNodeVariable = 0;
+            /* Positioned on the first path right away, so there is no "have we started yet" state to
+             * carry: whoever holds the cursor asks onPath(), and advance() only ever means "the next
+             * one". A single diagram cannot dead end, so the first descent always lands somewhere. */
+            descend(path[rootVariable], pathLookingFor[rootVariable]);
+            this.onPath = true;
         }
 
-        @Override
-        public boolean hasNext() {
-            return hasNextPath;
+        /** The variables the current path decides. */
+        BitSet pathSupport() {
+            return pathSupport;
         }
 
-        @SuppressWarnings("AssignmentOrReturnOfFieldWithMutableType")
-        @Override
-        public int[] next() {
-            assert IntStream.range(0, variableCount).allMatch(i -> pathSupport.get(i) != (path[i] == NON_PATH_NODE));
+        /** The values it decides them to, {@link #UNDECIDED} for every variable it leaves free. */
+        int[] assignment() {
+            return assignment;
+        }
 
-            int currentNode;
-            boolean currentLookingFor;
-            if (firstRun) {
-                firstRun = false;
-                currentNode = path[rootVariable];
-                currentLookingFor = pathLookingFor[rootVariable];
-            } else {
-                assert IntStream.range(0, variableCount)
-                        .noneMatch(var -> path[var] == NON_PATH_NODE && assignment[var] > 0);
-                assert hasNextPath
-                        : "Expected another path after " + Arrays.toString(assignment) + ", node:\n"
-                                + mdd.table.treeToString(path[rootVariable]);
+        /** The function being enumerated, as the assertions want it: signed, at the root. */
+        int rootFunction() {
+            return complementIf(path[rootVariable], !pathLookingFor[rootVariable]);
+        }
 
-                // Backtrack on the current path until we find a node that we can increase to non-false branch
-                // to find a new path
-                // TODO Use highestLowVariableWithNonFalseHighBranch?
-                currentNode = path[leafNodeVariable];
-                currentLookingFor = pathLookingFor[leafNodeVariable];
-                int branchVar = leafNodeVariable;
+        /** Whether the cursor is on a path: false once the enumeration is over. */
+        boolean onPath() {
+            return onPath;
+        }
 
-                //noinspection LabeledStatement
-                outer:
-                while (true) {
-                    assert path[branchVar] != NON_PATH_NODE;
+        /** Moves to the next path. Returns {@code false} when there are none left. */
+        boolean advance() {
+            assert IntStream.range(0, path.length).allMatch(i -> pathSupport.get(i) == (path[i] != NON_PATH_NODE));
 
-                    int[] children = mdd.table.children(currentNode);
-                    int val = assignment[branchVar] + 1;
-                    while (val < children.length) {
-                        if (!isFalse(children[val], currentLookingFor)) {
-                            assignment[branchVar] = val;
-                            //noinspection BreakStatementWithLabel
-                            break outer;
-                        }
-                        val += 1;
+            /* Backtrack to the deepest node on the path that has a value left to take which does not fall
+             * into false, take it, and retract everything the old path had below it. */
+            int currentNode = path[leafNodeVariable];
+            boolean currentLookingFor = pathLookingFor[leafNodeVariable];
+            int branchVar = leafNodeVariable;
+
+            while (true) {
+                assert path[branchVar] != NON_PATH_NODE;
+
+                int[] children = mdd.table.children(currentNode);
+                int value = assignment[branchVar] + 1;
+                while (value < children.length) {
+                    if (!isFalse(children[value], currentLookingFor)) {
+                        assert mdd.decisionVariable(currentNode) == branchVar;
+                        assignment[branchVar] = value;
+                        assert assignment[branchVar] < mdd.variableDomain[branchVar];
+
+                        Arrays.fill(assignment, branchVar + 1, leafNodeVariable + 1, UNDECIDED);
+                        Arrays.fill(path, branchVar + 1, leafNodeVariable + 1, NON_PATH_NODE);
+                        pathSupport.clear(branchVar + 1, leafNodeVariable + 1);
+                        leafNodeVariable = branchVar;
+
+                        int child = mdd.follow(currentNode, value);
+                        assert !isFalse(child, currentLookingFor);
+                        descend(child, currentLookingFor);
+                        return true;
                     }
-                    assert val == children.length;
-
-                    // This node does not give us another branch, backtrack over the path until we get to
-                    // the next element of the path
-                    branchVar = pathSupport.previousSetBit(branchVar - 1);
-                    if (branchVar == -1) {
-                        throw new NoSuchElementException("No next element");
-                    }
-                    currentNode = path[branchVar];
-                    currentLookingFor = pathLookingFor[branchVar];
+                    value += 1;
                 }
-                assert assignment[branchVar] < mdd.variableDomain[branchVar];
-                assert leafNodeVariable >= highestSwitchableVariable;
-                assert mdd.decisionVariable(currentNode) == branchVar;
-                assert pathSupport.get(branchVar);
 
-                // currentNode is the deepest node we could increase; set the value and descend the tree
-                Arrays.fill(assignment, branchVar + 1, leafNodeVariable + 1, -1);
-                Arrays.fill(path, branchVar + 1, leafNodeVariable + 1, NON_PATH_NODE);
-                pathSupport.clear(branchVar + 1, leafNodeVariable + 1);
-
-                assert path[branchVar] == currentNode;
-                int child = mdd.follow(currentNode, assignment[branchVar]);
-                currentNode = positive(child);
-                if (currentNode != child) {
-                    currentLookingFor = !currentLookingFor;
+                branchVar = pathSupport.previousSetBit(branchVar - 1);
+                if (branchVar == -1) {
+                    onPath = false;
+                    return false;
                 }
-                assert mdd.isPositive(currentNode);
-                assert !isFalse(currentNode, currentLookingFor);
-                leafNodeVariable = branchVar;
-
-                // We maxed out the candidate for increase, clear this information
-                if (highestSwitchableVariable == branchVar) {
-                    highestSwitchableVariable = -1;
-                    /*for (int val = assignment[branchVar] + 1; val < children.length; val++) {
-                        if (children[val] != FALSE_NODE) {
-                            highestSwitchableVariable = branchVar;
-                            break;
-                        }
-                    }*/
-                }
+                currentNode = path[branchVar];
+                currentLookingFor = pathLookingFor[branchVar];
             }
+        }
 
-            // Situation: Either the currentNode valuation was just increased or we are in initial state.
-            // Descend the tree, searching for a solution and determine if there is a next assignment.
-
-            // If there is a possible path higher up, there definitely are more solutions
-            hasNextPath = highestSwitchableVariable > -1 && highestSwitchableVariable < leafNodeVariable;
+        /** Walks down to a leaf, taking the lowest value at each node that does not fall into false. */
+        private void descend(int startNode, boolean startLookingFor) {
+            int currentNode = positive(startNode);
+            boolean currentLookingFor = startNode == currentNode ? startLookingFor : !startLookingFor;
 
             while (!isTrue(currentNode, currentLookingFor)) {
                 assert mdd.isPositive(currentNode) && !mdd.isConstant(currentNode);
@@ -1480,35 +1266,148 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
                 pathLookingFor[leafNodeVariable] = currentLookingFor;
 
                 int[] children = mdd.table.children(currentNode);
-                int domain = children.length;
-                int val = 0;
-                while (isFalse(children[val], currentLookingFor)) {
-                    val += 1;
+                int value = 0;
+                while (isFalse(children[value], currentLookingFor)) {
+                    value += 1;
                 }
-                assignment[leafNodeVariable] = val;
-                int child = mdd.follow(currentNode, val);
+                assignment[leafNodeVariable] = value;
 
-                if (!hasNextPath) {
-                    val += 1;
-                    while (val < domain) {
-                        if (isFalse(children[val], currentLookingFor)) {
-                            val += 1;
-                        } else {
-                            hasNextPath = true;
-                            highestSwitchableVariable = leafNodeVariable; // NOPMD
-                            break;
-                        }
-                    }
-                }
-
+                int child = mdd.follow(currentNode, value);
                 currentNode = positive(child);
                 if (currentNode != child) {
                     currentLookingFor = !currentLookingFor;
                 }
             }
-            assert mdd.evaluate(complementIf(path[rootVariable], !pathLookingFor[rootVariable]), assignment);
+        }
+    }
 
-            return assignment;
+    /**
+     * Walks the solutions of a function: every path, and for each of them every way of filling in the
+     * support variables that path leaves free.
+     *
+     * <p>Hands out its own working array, updated in place - see {@link Cursor}. A path change rewrites it;
+     * a step of the free-variable counter touches only the entries that changed.
+     */
+    static final class SolutionCursor implements Cursor<int[]> {
+        private final MddImpl mdd;
+        private final PathWalk path;
+        private final BitSet support;
+        /* The support variables the current path leaves free, recomputed whenever the path moves. Worked
+         * out once per path rather than rediscovered per solution: there are far more solutions. */
+        private final BitSet freeVariables;
+        /** Path values where the path decides, the counter's own where it does not. */
+        private final int[] solution;
+
+        private boolean valid;
+
+        SolutionCursor(MddImpl mdd, int function, BitSet support) {
+            int variableCount = mdd.numberOfVariables();
+            // Assignments don't make much sense otherwise
+            assert variableCount > 0 && support.length() <= variableCount;
+            assert BitSets.isSubset(mdd.support(function), support);
+
+            this.mdd = mdd;
+            this.path = new PathWalk(mdd, function);
+            this.support = support;
+            this.freeVariables = new BitSet(variableCount);
+            this.solution = new int[variableCount];
+            this.valid = path.onPath();
+            if (valid) {
+                refreshFreeVariables();
+                syncPath();
+            }
+        }
+
+        @Override
+        public boolean valid() {
+            return valid;
+        }
+
+        @Override
+        public int[] current() {
+            assert valid : "current() is only defined while the cursor is valid";
+            return solution;
+        }
+
+        @Override
+        public boolean advance() {
+            if (!valid) {
+                return false;
+            }
+
+            /* Addition over the support variables the current path does not decide: those are free, so
+             * every combination of their values extends this path to a solution. Carrying past the last
+             * one leaves them all at zero and means the path itself has to move on. */
+            for (int var = freeVariables.nextSetBit(0); var >= 0; var = freeVariables.nextSetBit(var + 1)) {
+                assert solution[var] < mdd.variableDomain[var];
+                if (solution[var] == mdd.variableDomain[var] - 1) {
+                    solution[var] = 0;
+                } else {
+                    solution[var] += 1;
+                    assert mdd.evaluate(path.rootFunction(), solution);
+                    return true;
+                }
+            }
+            if (!path.advance()) {
+                valid = false;
+                return false;
+            }
+            refreshFreeVariables();
+            syncPath();
+            return true;
+        }
+
+        private void refreshFreeVariables() {
+            BitSets.difference(freeVariables, support, path.pathSupport());
+        }
+
+        /** Takes the new path's values over, and puts every variable it leaves free back to zero. */
+        private void syncPath() {
+            assert BitSets.isSubset(path.pathSupport(), support);
+            int[] assignment = path.assignment();
+            for (int var = 0; var < solution.length; var++) {
+                int decided = assignment[var];
+                solution[var] = decided == PathWalk.UNDECIDED ? 0 : decided;
+            }
+            assert mdd.evaluate(path.rootFunction(), solution);
+        }
+    }
+
+    /**
+     * Walks the paths to {@code true} of a function - the same walk as {@link SolutionCursor},
+     * stopping at each path instead of filling in the variables it leaves free, which stay at
+     * {@link PathWalk#UNDECIDED}.
+     */
+    static final class PathCursor implements Cursor<int[]> {
+        private final MddImpl mdd;
+        private final PathWalk path;
+        private boolean valid;
+
+        PathCursor(MddImpl mdd, int function) {
+            this.mdd = mdd;
+            this.path = new PathWalk(mdd, function);
+            this.valid = path.onPath();
+        }
+
+        @Override
+        public boolean valid() {
+            return valid;
+        }
+
+        @Override
+        public int[] current() {
+            assert valid : "current() is only defined while the cursor is valid";
+            assert mdd.evaluate(path.rootFunction(), path.assignment());
+            return path.assignment();
+        }
+
+        @Override
+        public boolean advance() {
+            if (!valid) {
+                return false;
+            }
+            valid = path.advance();
+            return valid;
         }
     }
 
@@ -1518,6 +1417,12 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         MddTable(MddImpl mdd, int initialSize) {
             super(initialSize);
             this.mdd = mdd;
+        }
+
+        @Override
+        protected int level(int variable) {
+            // MDDs do not reorder, so a variable is its own level.
+            return variable;
         }
 
         @Override
@@ -1620,6 +1525,11 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         @Override
         protected void notifyAfterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
             mdd.notifyAfterTableGrow(invalidatedNodes);
+        }
+
+        @Override
+        protected BitSet sweepManagedLeaves() {
+            return BitSets.of();
         }
 
         @Override

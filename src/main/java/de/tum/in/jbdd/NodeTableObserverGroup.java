@@ -21,7 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
-final class NodeLifecycleObserverGroup<O extends NodeLifecycleObserver> {
+final class NodeTableObserverGroup<O extends NodeTableObserver> {
     private final List<WeakReference<O>> observers = new ArrayList<>();
     private final List<O> ownedObservers = new ArrayList<>();
 

@@ -19,8 +19,8 @@ package de.tum.in.jbdd;
 import java.util.BitSet;
 import java.util.Map;
 
-/** Obtained from {@link BddContext#bddSets()} - there's no standalone way to build one, since every
- * {@code BddSetFactory} needs a {@link Bdd} to share (see {@link BddContext}). */
+/** Obtained from {@link BinaryFactoryContext#bddSets()} - there's no standalone way to build one,
+ * since every {@code BddSetFactory} needs a {@link Bdd} to share (see {@link BddContext}). */
 public interface BddSetFactory {
     /** The empty set. */
     BddSet empty();

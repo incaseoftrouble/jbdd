@@ -137,6 +137,12 @@ tasks.test {
   useJUnitPlatform()
   minHeapSize = "2g"
   maxHeapSize = "16g"
+  // Forward -Djbdd.* to the test JVM, so an ad-hoc switch set on the command line actually arrives.
+  System.getProperties().forEach { key, value ->
+    if (key.toString().startsWith("jbdd.")) {
+      systemProperty(key.toString(), value.toString())
+    }
+  }
 }
 
 nullaway {

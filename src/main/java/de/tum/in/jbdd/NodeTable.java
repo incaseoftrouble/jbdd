@@ -35,6 +35,8 @@ import org.jspecify.annotations.Nullable;
 @SuppressWarnings("PMD.TooManyFields")
 public abstract class NodeTable {
     private static final Logger logger = Logger.getLogger(NodeTable.class.getName());
+    private static final int[] EMPTY_INT_ARRAY = new int[0];
+    private static final int[][] EMPTY_INT_ARRAY_ARRAY = new int[0][];
 
     // Use 0 as "not a node" to make re-allocations slightly more efficient (arrays are always filled with zeroes)
     public static final int PLACEHOLDER = 0;
@@ -54,6 +56,9 @@ public abstract class NodeTable {
     private static final int INVALID_NODE_VARIABLE = (1 << VARIABLE_BIT_SIZE) - 1;
     private static final int VARIABLE_OFFSET = REFERENCE_COUNT_OFFSET + REFERENCE_COUNT_BIT_SIZE;
     private static final int MINIMUM_NODE_TABLE_SIZE = Primes.nextPrime(1_000);
+    /* Variables the per-variable list is sized for initially; it grows as variables appear. */
+    private static final int MINIMUM_VARIABLE_SLOTS = 16;
+    private static final int MINIMUM_CHAIN_SLOTS = 8;
     private static final int MAXIMAL_NODE_COUNT = Integer.MAX_VALUE / 2 - 8;
     /* Margin applied to the estimated memory requirement of a larger table, see availableMemory(). */
     private static final double MEMORY_SAFETY_FACTOR = 1.25;
@@ -100,9 +105,29 @@ public abstract class NodeTable {
     private int[] hashToChainStart;
     private int[] hashChain;
 
-    /* Statistics. Note that the counters describing the cost of memory management (marked / swept /
-     * rehashed nodes) are the interesting ones to watch: The collected node count alone says nothing about
-     * efficiency - a table which is collected far too often collects *more* nodes in total, not fewer. */
+    // Reordering structures, required for a level swap. Only maintained once enableReorderingSupport() is called
+
+    /*
+     * variableChains / variableChainSize collect the nodes of each variable in a plain array, so a level
+     * can be enumerated without scanning the table - sequentially, and counted without walking at all.
+     * Nothing ever removes a single node from one: a swap takes a whole list and appends what it produces,
+     * and both a collection and a growth rebuild all of them from the table. */
+    private boolean reorderBookkeeping = false;
+    private int[][] variableChains = EMPTY_INT_ARRAY_ARRAY;
+    private int[] variableChainSize = EMPTY_INT_ARRAY;
+    /* The buffer the last detach handed out, taken back as the empty replacement for the next one, so a
+     * swap neither allocates nor copies. */
+    private int[] detachedBuffer = EMPTY_INT_ARRAY;
+
+    /* How many *live* nodes name this one as a child - live, not merely valid: a node nothing can reach
+     * still structurally names its children, but it no longer keeps them alive. With it, "is this node
+     * still reachable" is an O(1) question instead of a mark from the roots. */
+    private int[] parentCount = EMPTY_INT_ARRAY;
+    private int deadNodeCount = 0;
+
+    /* Statistics. Counters describing the cost of memory management (marked / swept / rehashed nodes) are
+     * the interesting ones to watch: Collected node count alone says nothing about efficiency - a table
+     * which is collected far too often collects *more* nodes in total, not fewer. */
     private long createdNodes = 0;
     private long hashChainLookups = 0;
     private long hashChainLookupLength = 0;
@@ -127,8 +152,7 @@ public abstract class NodeTable {
      * a new node, e.g. "v1 AND v2", we may need to create multiple intermediate nodes. As
      * during each creation, the node table may run out of space, GC might be called and could
      * delete the intermediately created nodes. Increasing and decreasing the reference counter
-     * every time is more expensive than just putting the values on the stack, thus we use this data
-     *  */
+     * every time is more expensive than just putting the values on the stack.*/
     private int[] workStack;
     /* Current top of the work stack. */
     private int workStackIndex = 0;
@@ -195,6 +219,12 @@ public abstract class NodeTable {
 
     // Creating nodes
 
+    /**
+     * The position of {@code variable} in the owning diagram's variable order. The identity unless that
+     * diagram reorders; used only by the ordering assertions, which are about levels, not variable numbers.
+     */
+    protected abstract int level(int variable);
+
     protected abstract int positiveHash(int node, int metaData);
 
     protected int modHash(int hashCode) {
@@ -203,19 +233,120 @@ public abstract class NodeTable {
 
     /**
      * Links {@code node} into the hash chain of the bucket {@code hash}, which must not contain it already.
-     *
-     * <p>Each node has exactly one chain slot ({@code hashChain[node]}), which is shared with the free node
-     * list - so a node is either free or in exactly one hash chain, and all three callers (fresh allocation
-     * plus the two chain rebuilds, which start from cleared buckets) insert every node exactly once.
-     * Scanning the chain for duplicates would therefore only cost an additional random-access walk per
-     * inserted node in the rebuild paths, hence it is done in an assertion instead.
      */
     protected void linkHashList(int node, int hash) {
         assert isValidDecisionNode(node);
-        assert !isInHashList(node, hash) : "Node " + node + " already in chain of " + hash;
+        // Each node has exactly one chain slot (hashChain[node]), which is shared with the free node
+        // list - so a node is either free or in exactly one hash chain, and all three callers (fresh
+        // allocation plus the two chain rebuilds, which start from cleared buckets) insert every node
+        // exactly once.
+        assert !isInHashList(node, hash) : String.format("Node %d already in chain of %d", node, hash);
 
         hashChain[node] = hashToChainStart[hash];
         hashToChainStart[hash] = node;
+    }
+
+    /** Replaces {@code node}'s variable, preserving its reference count and mark. */
+    protected final void setVariable(int node, int variable) {
+        assert isValidDecisionNode(node) && 0 <= variable && variable < INVALID_NODE_VARIABLE;
+        nodeData[node] = (nodeData[node] & ~(-1 << VARIABLE_OFFSET)) | (variable << VARIABLE_OFFSET);
+    }
+
+    /**
+     * Hands over {@code variable}'s nodes and empties its list. The caller must put each one back with
+     * {@link #addToVariableList}, under whichever variable it ends up carrying - which is how a swap moves
+     * nodes between two levels.
+     *
+     * <p>The array is the table's own buffer, not a copy: it holds {@link #nodesWithVariable} entries -
+     * ask before detaching - may be longer than that, and stays the caller's only until the next detach.
+     */
+    protected final int[] detachNodesWithVariable(int variable) {
+        enableReorderingBookkeeping();
+        if (variable >= variableChainSize.length) {
+            return EMPTY_INT_ARRAY;
+        }
+        int[] detached = variableChains[variable];
+        /* Put back the buffer handed out last time rather than a fresh array - but not this one: the
+         * caller appends to this very variable while walking what it was given (a node that merely
+         * descends a level keeps its variable), so the two must not be the same array. */
+        variableChains[variable] = detachedBuffer;
+        variableChainSize[variable] = 0;
+        detachedBuffer = detached;
+        return detached;
+    }
+
+    /** How many nodes carry {@code variable}. */
+    public final int nodesWithVariable(int variable) {
+        enableReorderingBookkeeping();
+        return variable < variableChainSize.length ? variableChainSize[variable] : 0;
+    }
+
+    /*
+     * Depth of the in-place rewrites currently running - a level swap, in practice. Two things follow.
+     * A collection cannot run: the caller holds the nodes it is rewriting in a plain int[], which is no
+     * root, so they would be reclaimed underneath it; ensureCapacity therefore grows instead, and the
+     * caller needs no reservation up front. And findNode has to skip the nodes flagged for rewriting,
+     * which is the only use of the mark bit outside a collection - safe exactly because no collection
+     * can run while this is set, and free while it is not.
+     */
+    private int rewriteDepth = 0;
+    /* How many nodes are flagged right now - O(1), where isNoneMarked() would sweep the whole table on
+     * every swap and assertion-enabled runs do thousands of them. */
+    private int hiddenForRewriteCount = 0;
+
+    public final void beginRewrite() {
+        rewriteDepth += 1;
+    }
+
+    public final void endRewrite() {
+        checkState(rewriteDepth > 0, "Unbalanced rewrite bracket");
+        rewriteDepth -= 1;
+        assert rewriteDepth > 0 || hiddenForRewriteCount == 0 : "A node is still flagged for rewriting";
+    }
+
+    /**
+     * Hides {@code node} from {@link #findNode} until the swap rewriting it puts it back, so nothing can
+     * be handed a node that still carries its old variable and is about to be rewritten out from under
+     * its new parent. It stays in its hash chain, so a growth in between rehashes it like any other.
+     */
+    public final void hideForRewrite(int node) {
+        assert isValidDecisionNode(node) && rewriteDepth > 0;
+        boolean hidden = markNodeIfUnmarked(node);
+        assert hidden : "Node " + node + " is already flagged";
+        hiddenForRewriteCount += 1;
+    }
+
+    /** Makes {@code node} visible to {@link #findNode} again, once its rewrite is done. */
+    protected final void unhideAfterRewrite(int node) {
+        assert rewriteDepth > 0 && dataIsMarked(nodeData[node]);
+        nodeData[node] = dataClearMark(nodeData[node]);
+        hiddenForRewriteCount -= 1;
+    }
+
+    /** The bucket {@code node} is currently linked in - what {@link #unlinkHashList} has to be given. */
+    protected final int bucketOf(int node) {
+        assert isValidDecisionNode(node);
+        return modHash(positiveHash(node, nodeData[node]));
+    }
+
+    /**
+     * Removes {@code node} from the chain of bucket {@code hash}, which must be the one it is linked in.
+     */
+    protected void unlinkHashList(int node, int hash) {
+        assert isValidDecisionNode(node);
+        assert isInHashList(node, hash) : String.format("Node %d not in chain of %d", node, hash);
+
+        // We find the position by forward scan: Empirically, the chains have an average length of 1.x,
+        // so this is faster than maintaining a doubly linked list
+        int previous = PLACEHOLDER;
+        for (int current = hashToChainStart[hash]; current != node; current = hashChain[current]) {
+            previous = current;
+        }
+        if (previous == PLACEHOLDER) {
+            hashToChainStart[hash] = hashChain[node];
+        } else {
+            hashChain[previous] = hashChain[node];
+        }
     }
 
     private boolean isInHashList(int node, int hash) {
@@ -232,6 +363,224 @@ public abstract class NodeTable {
         return false;
     }
 
+    /**
+     * Drops the nodes a sweep just invalidated from the per-variable lists, keeping the rest in place.
+     */
+    private void compactVariableLists() {
+        assert reorderBookkeeping;
+        for (int variable = 0; variable < variableChainSize.length; variable++) {
+            int[] chain = variableChains[variable];
+            int size = variableChainSize[variable];
+            int kept = 0;
+            for (int index = 0; index < size; index++) {
+                int node = chain[index];
+                if (dataIsValid(nodeData[node])) {
+                    chain[kept] = node;
+                    kept += 1;
+                }
+            }
+            variableChainSize[variable] = kept;
+            /* A level that lost most of its nodes would otherwise keep the array it once grew to - and
+             * detachNodesWithVariable passes these buffers between variables, so the widest level's
+             * capacity would spread to all of them. Shrink with hysteresis, so a level that refills does
+             * not pay for it: only once three quarters of it is empty, and only to twice what is left. */
+            if (kept * 4 < chain.length && chain.length > MINIMUM_CHAIN_SLOTS) {
+                variableChains[variable] = Arrays.copyOf(chain, Math.max(MINIMUM_CHAIN_SLOTS, kept * 2));
+            }
+        }
+    }
+
+    /** Appends {@code node}, which must already carry {@code variable}, to that variable's list. */
+    public final void addToVariableList(int node, int variable) {
+        assert reorderBookkeeping && isValidDecisionNode(node) && variable(node) == variable;
+        if (variable >= variableChainSize.length) {
+            int oldLength = variableChainSize.length;
+            int newLength = Math.max(variable + 1, Math.max(oldLength * 2, MINIMUM_VARIABLE_SLOTS));
+            variableChains = Arrays.copyOf(variableChains, newLength);
+            // Never null, so nothing below has to ask - an empty list and a missing one are the same thing
+            Arrays.fill(variableChains, oldLength, newLength, EMPTY_INT_ARRAY);
+            variableChainSize = Arrays.copyOf(variableChainSize, newLength);
+        }
+        int[] chain = variableChains[variable];
+        int size = variableChainSize[variable];
+        if (size == chain.length) {
+            chain = Arrays.copyOf(chain, Math.max(MINIMUM_CHAIN_SLOTS, size * 2));
+            variableChains[variable] = chain;
+        }
+        chain[size] = node;
+        variableChainSize[variable] = size + 1;
+    }
+
+    final void enableReorderingBookkeeping() {
+        if (reorderBookkeeping) {
+            return;
+        }
+        parentCount = new int[size()];
+        variableChains = new int[MINIMUM_VARIABLE_SLOTS][];
+        Arrays.fill(variableChains, EMPTY_INT_ARRAY);
+        variableChainSize = new int[MINIMUM_VARIABLE_SLOTS];
+        reorderBookkeeping = true;
+        deadNodeCount = computeLiveParentCounts(parentCount);
+        for (int node = FIRST_NODE; node <= biggestValidNode; node++) {
+            int data = nodeData[node];
+            if (dataIsValid(data)) {
+                addToVariableList(node, dataGetVariable(data));
+            }
+        }
+        assert check();
+    }
+
+    /**
+     * Releases the reordering bookkeeping and stops maintaining it.
+     */
+    public final void dropReorderingBookkeeping() {
+        reorderBookkeeping = false;
+        variableChains = EMPTY_INT_ARRAY_ARRAY;
+        variableChainSize = EMPTY_INT_ARRAY;
+        detachedBuffer = EMPTY_INT_ARRAY;
+        parentCount = EMPTY_INT_ARRAY;
+        deadNodeCount = 0;
+    }
+
+    /** Valid nodes, live or not - O(1), unlike {@link #nodeCount()}, which marks from the roots. */
+    public final int validNodeCount() {
+        return size() - freeNodeCount() - FIRST_NODE;
+    }
+
+    /** How much of the table is unreachable - what a reordering pass watches to decide when to collect. */
+    public final double deadNodeFraction() {
+        assert reorderBookkeeping;
+        return Util.ratio(deadNodeCount, validNodeCount());
+    }
+
+    @SuppressWarnings("AssertWithSideEffects")
+    public final int liveNodeCount() {
+        assert reorderBookkeeping;
+        assert deadNodeCount == computeLiveParentCounts(new int[parentCount.length]) : "Parent counts drifted";
+        int validNodes = size() - freeNodeCount() - FIRST_NODE;
+        assert validNodes - deadNodeCount == markedNodeCount()
+                : String.format(
+                        "Live count %d disagrees with a mark: %d", validNodes - deadNodeCount, markedNodeCount());
+        return validNodes - deadNodeCount;
+    }
+
+    /**
+     * Fills {@code counts} with each node's live-parent count and returns how many valid nodes are dead.
+     * A node is live if something outside holds it, or a live node names it - so this walks down from the
+     * roots, and only edges leaving a live node are counted.
+     */
+    private int computeLiveParentCounts(int[] counts) {
+        Arrays.fill(counts, 0);
+        BitSet live = new BitSet(biggestValidNode + 1);
+        for (int node = FIRST_NODE; node <= biggestValidNode; node++) {
+            int data = nodeData[node];
+            if (dataIsValid(data) && dataIsReferencedOrSaturated(data) && !live.get(node)) {
+                live.set(node);
+                countChildrenBelow(node, counts, live);
+            }
+        }
+
+        int dead = 0;
+        for (int node = FIRST_NODE; node <= biggestValidNode; node++) {
+            if (dataIsValid(nodeData[node]) && !live.get(node)) {
+                dead += 1;
+            }
+        }
+        return dead;
+    }
+
+    /** Nothing names this node and nothing outside holds it - so nothing can reach it. */
+    boolean isUnreached(int node) {
+        assert reorderBookkeeping;
+        return parentCount[node] == 0 && !dataIsSaturated(nodeData[node]) && dataGetReferenceCount(nodeData[node]) == 0;
+    }
+
+    /**
+     * Records that {@code pointer} gained a parent. If nothing reached it before, it and whatever it
+     * reaches come back to life - a walk down the diagram, so it recurses like the rest of them.
+     */
+    final void addParent(int pointer) {
+        assert reorderBookkeeping;
+        int node = treeNodeFor(pointer);
+        if (isLeafNode(node)) {
+            return;
+        }
+        boolean wasUnreached = isUnreached(node);
+        parentCount[node] += 1;
+        if (wasUnreached) {
+            // Back in reach, so it starts keeping its own children alive again.
+            deadNodeCount -= 1;
+            forEachChildPointer(node, this::addParent);
+        }
+    }
+
+    /** Records that {@code pointer} lost a parent, and with it whatever only it still reached. */
+    final void removeParent(int pointer) {
+        assert reorderBookkeeping;
+        int node = treeNodeFor(pointer);
+        if (isLeafNode(node)) {
+            return;
+        }
+        assert parentCount[node] > 0 : String.format("Node %d lost a parent it never had", node);
+        parentCount[node] -= 1;
+        if (isUnreached(node)) {
+            // Out of reach, so it stops keeping its own children alive.
+            deadNodeCount += 1;
+            forEachChildPointer(node, this::removeParent);
+        }
+    }
+
+    /* Recursive, like every other walk down a diagram here (markAllBelowNode, recurseNoneMarkedBelow,
+     * addParent, removeParent): children are strictly deeper than their parent, so the depth is the
+     * number of levels. */
+    private void countChildrenBelow(int node, int[] counts, BitSet live) {
+        forEachChildPointer(node, child -> {
+            int childNode = treeNodeFor(child);
+            if (isLeafNode(childNode)) {
+                return;
+            }
+            counts[childNode] += 1;
+            if (!live.get(childNode)) {
+                live.set(childNode);
+                countChildrenBelow(childNode, counts, live);
+            }
+        });
+    }
+
+    /**
+     * A node was just built. Nothing names it and nothing outside holds it yet, so it is not live and
+     * therefore keeps nothing alive either - its children are only credited once something reaches it.
+     */
+    final void onNodeCreated(int node) {
+        if (reorderBookkeeping) {
+            parentCount[node] = 0;
+            deadNodeCount += 1;
+        }
+    }
+
+    boolean reorderingBookkeeping() {
+        return reorderBookkeeping;
+    }
+
+    /**
+     * Visits every node currently carrying {@code variable}, in no particular order. Builds the
+     * per-variable lists if they are not around, so this is the entry point a reordering pass starts from;
+     * {@link #dropReorderingBookkeeping()} releases them again afterwards.
+     */
+    public void forEachNodeWithVariable(int variable, IntConsumer action) {
+        enableReorderingBookkeeping();
+        if (variable >= variableChainSize.length) {
+            return;
+        }
+        int[] chain = variableChains[variable];
+        int size = variableChainSize[variable];
+        for (int index = 0; index < size; index++) {
+            int node = chain[index];
+            assert isValidDecisionNode(node) && variable(node) == variable;
+            action.accept(node);
+        }
+    }
+
     protected int findNode(int variable, int hash, IntPredicate lookupComparison) {
         int currentLookupNode = hashToChainStart[hash];
         assert currentLookupNode < size() : "Invalid previous entry for " + hash;
@@ -239,8 +588,10 @@ public abstract class NodeTable {
         int chainLookups = 1;
         this.hashChainLookups += 1;
         // Search for the node in the hash chain
+        boolean rewriting = rewriteDepth > 0;
         while (currentLookupNode != PLACEHOLDER) {
             if ((nodeData[currentLookupNode] >>> VARIABLE_OFFSET) == variable
+                    && !(rewriting && dataIsMarked(nodeData[currentLookupNode]))
                     && lookupComparison.test(currentLookupNode)) {
                 this.hashChainLookupLength += chainLookups;
                 return currentLookupNode;
@@ -269,6 +620,9 @@ public abstract class NodeTable {
             biggestValidNode = freeNode;
         }
         linkHashList(freeNode, modHash);
+        if (reorderBookkeeping) {
+            addToVariableList(freeNode, variable);
+        }
         return freeNode;
     }
 
@@ -288,6 +642,11 @@ public abstract class NodeTable {
         }
         assert 0 <= dataGetReferenceCount(metadata);
 
+        if (reorderBookkeeping && isUnreached(node)) {
+            // An outside reference reaches it just as a live parent would.
+            deadNodeCount -= 1;
+            forEachChildPointer(node, this::addParent);
+        }
         nodeData[node] = dataIncreaseReferenceCount(metadata);
         // Can't decrease approximateDeadNodeCount here - we may reference a node for the first time.
         if (node > biggestReferencedNode) {
@@ -321,6 +680,11 @@ public abstract class NodeTable {
             }
         }
         nodeData[node] = dataDecreaseReferenceCount(metadata);
+        if (reorderBookkeeping && isUnreached(node)) {
+            // The outside let go and nothing names it, so it and its subtree are out of reach.
+            deadNodeCount += 1;
+            forEachChildPointer(node, this::removeParent);
+        }
     }
 
     /**
@@ -346,7 +710,12 @@ public abstract class NodeTable {
         if (node > biggestReferencedNode) {
             biggestReferencedNode = node;
         }
+        boolean wasUnreached = reorderBookkeeping && isUnreached(node);
         nodeData[node] = dataSaturate(nodeData[node]);
+        if (wasUnreached) {
+            deadNodeCount -= 1;
+            forEachChildPointer(node, this::addParent);
+        }
         return node;
     }
 
@@ -366,12 +735,22 @@ public abstract class NodeTable {
     // Counting
 
     /**
-     * Counts the number of active nodes in the structure (i.e. the ones which are not invalid),
-     * <b>excluding</b> constant nodes.
+     * Counts the number of active decision nodes in the structure (i.e. the ones which are not invalid),
+     * <b>excluding</b> leafs.
      *
      * @return Number of active nodes.
      */
     public int nodeCount() {
+        /* Already known when the reordering bookkeeping is around: a node is live exactly when something
+         * outside holds it or a live node names it, which is what the mark below computes - liveNodeCount
+         * asserts the two agree. */
+        if (reorderBookkeeping) {
+            return validNodeCount() - deadNodeCount;
+        }
+        return markedNodeCount();
+    }
+
+    private int markedNodeCount() {
         // Strategy: We gather all root nodes (i.e. nodes which are referenced) on the mark stack, mark
         // all of their children, count all marked nodes and un-mark them.
         assert isNoneMarked();
@@ -393,7 +772,7 @@ public abstract class NodeTable {
     }
 
     /**
-     * Counts the number of nodes below the specified {@code node}.
+     * Counts the number of nodes below the specified {@code node} (including the node itself).
      *
      * @param node The node to be counted.
      * @return The number of non-leaf nodes below {@code node}.
@@ -552,20 +931,17 @@ public abstract class NodeTable {
 
     /**
      * Sweeps managed leaves (i.e. MTBDD terminal values) which are neither marked nor referenced, returning
-     * the freed values. Runs as part of the mark phase, i.e. <b>before</b> {@link #reclaimUnmarkedNodes()},
-     * whose closing {@code assert isNoneMarked()} also covers leaf marks.
+     * the freed values.
      */
-    protected BitSet sweepManagedLeaves() {
-        return BitSets.of();
-    }
-
-    /** Runs the owning diagram's integrity check, see {@link #check()}. Only called from assertions. */
-    protected boolean checkOwner() {
-        return true;
-    }
+    protected abstract BitSet sweepManagedLeaves();
 
     /**
-     * Ensures that a node can be allocated, by running a garbage collection and / or growing the table.
+     * Runs integrity checks of the owning diagram (triggered e.g. after GC)
+     */
+    protected abstract boolean checkOwner();
+
+    /**
+     * Ensures that a node can be allocated by running a garbage collection and / or growing the table.
      *
      * @return Whether the table has grown (and hence hash values have to be recomputed).
      */
@@ -579,7 +955,9 @@ public abstract class NodeTable {
         int invalidatedNodes = 0;
         BitSet invalidatedLeaves = BitSets.of();
 
-        if (configuration.useGarbageCollection()) {
+        /* Growing rather than collecting while a rewrite is running - see rewriteDepth. Growing moves no
+         * node and rehashes the flagged ones like any other, so it needs nothing special. */
+        if (configuration.useGarbageCollection() && rewriteDepth == 0) {
             // Perform any pre-gc cleanup, e.g. releasing phantom references
             notifyBeforeGc();
 
@@ -596,7 +974,7 @@ public abstract class NodeTable {
                 logger.log(Level.FINE, "Collected {0} nodes", reclaimedNodes);
                 notifyAfterGc(reclaimedNodes, invalidatedLeaves);
                 if (freeNodeCount() > size() / 4) {
-                    assert checkOwner();
+                    assert rewriteDepth > 0 || checkOwner();
                     return false;
                 }
                 /* Only reachable under memory pressure (see liveNodeThreshold): The collection did not even
@@ -606,9 +984,33 @@ public abstract class NodeTable {
             } else {
                 logger.log(Level.FINER, "Not enough free nodes");
                 futileGarbageCollectionCount += 1;
-                /* Drop the dead nodes anyway - they are of no use in the grown table either and rebuilding
+                /* Drop the dead nodes anyway - they are of no use in the grown table, and rebuilding
                  * their hash chain entries is the most expensive part of growing. */
-                invalidatedNodes = invalidateUnmarkedNodes();
+                int[] nodeData = this.nodeData;
+                int invalidatedCount = 0;
+                approximateDeadNodeCount = 0;
+                sweptNodeCount += biggestValidNode;
+                for (int node = biggestValidNode; node >= FIRST_NODE; node--) {
+                    int metadata = nodeData[node];
+                    int unmarkedData = dataClearMark(metadata);
+                    if (metadata == unmarkedData) {
+                        // Node was unmarked, invalidate
+                        if (node == biggestValidNode) {
+                            biggestValidNode--;
+                        }
+                        invalidatedCount += 1;
+                        nodeData[node] = dataMakeInvalid();
+                    } else {
+                        nodeData[node] = unmarkedData;
+                    }
+                }
+                /* Same argument as in reclaimUnmarkedNodes: the nodes dropped here are exactly the ones the parent
+                 * counts already call dead, so the survivors keep their counts. */
+                if (reorderBookkeeping) {
+                    compactVariableLists();
+                    deadNodeCount -= invalidatedCount;
+                }
+                invalidatedNodes = invalidatedCount;
             }
         }
 
@@ -616,38 +1018,44 @@ public abstract class NodeTable {
         if (newSize <= currentSize) {
             // Growing is not possible - carry on with a densely packed table for as long as we can
             checkState(freeNodeCount() > 0, "Node table %s is full and cannot grow", this);
-            assert checkOwner();
+            assert rewriteDepth > 0 || checkOwner();
             return false;
         }
 
         grow(newSize);
         notifyAfterTableGrowth(invalidatedNodes, invalidatedLeaves);
-        assert checkOwner();
+        assert rewriteDepth > 0 || checkOwner();
         return true;
     }
 
-    /**
+    /*
      * The fraction of the table which may be live for a garbage collection to be worth it (as opposed to
-     * growing the table).
-     *
-     * <p>Reclaiming has to leave enough headroom to be worth its cost: A collection is only triggered at
+     * growing the table). Reclaiming has to leave enough headroom to be worth its cost: A collection is only triggered at
      * 25% free nodes and costs a full mark (which is a random access traversal of all live nodes) plus a
-     * sweep of the whole table. Allowing, say, 70% live nodes means that the next collection is due after
-     * allocating a mere 5% of the table's size, i.e. tens of node visits amortized per created node.
-     *
-     * <p>Under memory pressure we accept exactly that instead of failing to allocate the larger table.
+     * sweep of the whole table.
      */
     private double liveNodeThreshold(NodeTableConfiguration configuration) {
         double threshold = configuration.gcLiveNodeThreshold();
         if (threshold >= MEMORY_PRESSURE_LIVE_NODE_THRESHOLD) {
             return threshold;
         }
+        //noinspection NumericCastThatLosesPrecision
         long required = (long) requiredSizeBytes(desiredSize(size(), configuration));
         return required <= availableMemory() ? threshold : MEMORY_PRESSURE_LIVE_NODE_THRESHOLD;
     }
 
-    /** Storage in bytes each node slot of this table occupies, used to keep growth within the heap. */
-    protected abstract int bytesPerSlot();
+    /** Storage per node slot of the columns this table's shape defines, ignoring the reordering ones. */
+    protected abstract int structuralBytesPerSlot();
+
+    /**
+     * Storage in bytes each node slot of this table occupies, used to keep growth within the heap: the
+     * columns {@link #structuralBytesPerSlot()} names, plus the reordering bookkeeping while it is live.
+     */
+    private int bytesPerSlot() {
+        /* parentCount is as long as the table and is grown with it, so it is part of what a grow has to
+         * fit; the per-variable node lists hold only the valid nodes, not the slots. */
+        return structuralBytesPerSlot() + (reorderBookkeeping ? Integer.BYTES : 0);
+    }
 
     private double requiredSizeBytes(long size) {
         /* The old arrays stay alive while the new ones are being filled, but they are already accounted for
@@ -672,15 +1080,11 @@ public abstract class NodeTable {
     }
 
     private static long desiredSize(int currentSize, NodeTableConfiguration configuration) {
+        //noinspection NumericCastThatLosesPrecision
         return Math.min(MAXIMAL_NODE_COUNT, (long) (currentSize * configuration.growthFactor()));
     }
 
-    /**
-     * The size the table should grow to, bounded by {@link #MAXIMAL_NODE_COUNT} and the memory available for
-     * the new arrays.
-     *
-     * @return The new size, or {@code currentSize} if the table cannot grow (at all) right now.
-     */
+    @SuppressWarnings("NumericCastThatLosesPrecision")
     private int nextSize(int currentSize, NodeTableConfiguration configuration) {
         long desired = desiredSize(currentSize, configuration);
         long available = availableMemory();
@@ -712,13 +1116,15 @@ public abstract class NodeTable {
 
         nodeData = Arrays.copyOf(this.nodeData, newSize);
         hashChain = Arrays.copyOf(this.hashChain, newSize);
+        if (reorderBookkeeping) {
+            parentCount = Arrays.copyOf(this.parentCount, newSize);
+        }
         growTo(newSize);
 
         // We need to re-build hashToChainStart completely
         hashToChainStart = new int[newSize];
 
-        //noinspection ConstantValue
-        assert PLACEHOLDER == 0;
+        assert hashToChainStart[0] == PLACEHOLDER;
         // Otherwise: Arrays.fill(hashToChainStart, NOT_A_NODE);
 
         // Chain start and next is used in calls to connectHashList so first enlarge and then copy to local reference
@@ -766,42 +1172,18 @@ public abstract class NodeTable {
         this.hashToChainStart = hashToChainStart;
         this.hashChain = hashChain;
 
-        assert check();
+        /* Nothing is rebuilt here: growing moves no node, so the parent counts (copied above, node
+         * indexed) and the per-variable lists (node ids, not slots) are still exactly right. Only the
+         * hash chains depend on the size, and they are rebuilt above. The one caller that invalidates
+         * nodes first, invalidateUnmarkedNodes, drops the bookkeeping itself. */
+        // Mid-rewrite the diagram is deliberately inconsistent - the order is already flipped while the
+        // nodes still carry the old variable - so there is nothing for check() to agree with yet.
+        assert rewriteDepth > 0 || check();
 
         logger.log(Level.FINE, "Finished growing the table");
     }
 
     protected abstract void growTo(int newSize);
-
-    /**
-     * Invalidates all unmarked nodes, clearing all marks. This deliberately does <b>not</b> fix up the free
-     * list or the hash chains and hence is only valid immediately before {@link #grow(int)}, which rebuilds
-     * both.
-     *
-     * @return The number of invalidated nodes.
-     */
-    public int invalidateUnmarkedNodes() {
-        int[] nodeData = this.nodeData;
-        int count = 0;
-        // All dead nodes are removed by this, just as by reclaimUnmarkedNodes
-        approximateDeadNodeCount = 0;
-        sweptNodeCount += biggestValidNode;
-        for (int node = biggestValidNode; node >= FIRST_NODE; node--) {
-            int metadata = nodeData[node];
-            int unmarkedData = dataClearMark(metadata);
-            if (metadata == unmarkedData) {
-                // Node was unmarked, invalidate
-                if (node == biggestValidNode) {
-                    biggestValidNode--;
-                }
-                count += 1;
-                nodeData[node] = dataMakeInvalid();
-            } else {
-                nodeData[node] = unmarkedData;
-            }
-        }
-        return count;
-    }
 
     public int reclaimUnmarkedNodes() {
         long startTimestamp = System.currentTimeMillis();
@@ -817,9 +1199,7 @@ public abstract class NodeTable {
          * chains, which is a random access walk over nodeData and hashChain, whereas the rebuild below
          * streams through the table sequentially. Chain traversal also cannot produce the ascending free
          * list (see check()) which keeps allocation packed at low node indices, and it loses the chain
-         * locality that rebuilding restores. The only variant that beats the rebuild - repairing just those
-         * buckets which contain a dead node - pays off exclusively when very few nodes died, which
-         * ensureCapacity() now avoids by growing instead of collecting. */
+         * locality that rebuilding restores. */
         Arrays.fill(hashToChainStart, PLACEHOLDER);
 
         int previousFreeNodes = this.freeNodeCount; // NOPMD
@@ -865,6 +1245,16 @@ public abstract class NodeTable {
         this.garbageCollectionCount += 1;
         // The whole table is swept: the chain starts are cleared and every node slot is visited
         this.sweptNodeCount += size();
+
+        /* The parent counts are kept, not re-derived. A collection reclaims exactly the nodes nothing
+         * reaches, which are precisely the ones the counts already call dead - and a dead node is counted
+         * as a parent of nothing, so every survivor keeps the count it had and the dead ones simply stop
+         * existing. (A node reachable only from a work stack survives while staying dead by that
+         * definition, which is consistent: it stays valid and stays counted.) */
+        if (reorderBookkeeping) {
+            compactVariableLists();
+            deadNodeCount -= collectedNodes;
+        }
 
         assert check();
         assert isNoneMarked();
@@ -1047,10 +1437,19 @@ public abstract class NodeTable {
         assert isNoneMarkedBelowNode(node);
     }
 
+    /** The deepest level any variable of {@code variables} sits at, or -1 if there is none. */
+    private int deepestLevelOf(BitSet variables) {
+        int deepest = -1;
+        for (int variable = variables.nextSetBit(0); variable >= 0; variable = variables.nextSetBit(variable + 1)) {
+            deepest = Math.max(deepest, level(variable));
+        }
+        return deepest;
+    }
+
     public void forEachVariable(int pointer, BitSet filter, IntConsumer action) {
         assert isValidPointer(pointer);
 
-        int depthLimit = filter.length();
+        int depthLimit = deepestLevelOf(filter) + 1;
         if (depthLimit == 0) {
             return;
         }
@@ -1071,7 +1470,7 @@ public abstract class NodeTable {
 
         int metadata = nodeData[node];
         int variable = dataGetVariable(metadata);
-        if (variable >= depthLimit) {
+        if (level(variable) >= depthLimit) {
             return;
         }
         int markedData = dataSetMark(metadata);
@@ -1173,7 +1572,7 @@ public abstract class NodeTable {
                             pointerToStringSupplier(child));
                     if (!isValidConstant(child)) {
                         checkState(
-                                dataGetVariable(metadata) < dataGetVariable(nodeData[treeNodeFor(child)]),
+                                level(dataGetVariable(metadata)) < level(dataGetVariable(nodeData[treeNodeFor(child)])),
                                 "(%s) -> (%s) does not descend tree",
                                 pointerToStringSupplier(node),
                                 pointerToStringSupplier(child));
@@ -1212,6 +1611,47 @@ public abstract class NodeTable {
                 if (isValidDecisionNode(node)) {
                     checkState(nodes.add(representative(node)), "Duplicate entry (%s)", pointerToStringSupplier(node));
                 }
+            }
+        }
+
+        if (reorderBookkeeping) {
+            int[] counted = new int[parentCount.length];
+            int expectedDead = computeLiveParentCounts(counted);
+            for (int node = FIRST_NODE; node <= biggestValidNode; node++) {
+                if (dataIsValid(nodeData[node])) {
+                    checkState(
+                            counted[node] == parentCount[node],
+                            "Node (%s) has %s parents but is counted as %s",
+                            pointerToStringSupplier(node),
+                            counted[node],
+                            parentCount[node]);
+                }
+            }
+            checkState(
+                    deadNodeCount == expectedDead, "Dead node count is %s, should be %s", deadNodeCount, expectedDead);
+
+            // Every valid node appears exactly once in its variable's list.
+            BitSet listed = new BitSet();
+            for (int variable = 0; variable < variableChainSize.length; variable++) {
+                int[] chain = variableChains[variable];
+                for (int index = 0; index < variableChainSize[variable]; index++) {
+                    int node = chain[index];
+                    checkState(
+                            isValidDecisionNode(node) && variable(node) == variable,
+                            "Node (%s) in the list of variable %s",
+                            pointerToStringSupplier(node),
+                            variable);
+                    checkState(!listed.get(node), "Node (%s) listed twice", pointerToStringSupplier(node));
+                    listed.set(node);
+                }
+            }
+            for (int node = FIRST_NODE; node <= biggestValidNode; node++) {
+                checkState(
+                        dataIsValid(nodeData[node]) == listed.get(node),
+                        "Node (%s) is %s but %s listed",
+                        pointerToStringSupplier(node),
+                        dataIsValid(nodeData[node]) ? "valid" : "invalid",
+                        listed.get(node) ? "is" : "is not");
             }
         }
 
@@ -1441,24 +1881,22 @@ public abstract class NodeTable {
                 entry(prefix + "node_table_peak_live_nodes", String.valueOf(peakLiveNodeCount)),
                 entry(prefix + "node_table_futile_gc_count", String.valueOf(futileGarbageCollectionCount)),
                 entry(prefix + "node_table_memory_limited_grow_count", String.valueOf(memoryLimitedGrowthCount)),
-                /* The cost of memory management, amortized over the nodes it produced - the number to watch
-                 * for regressions. Rises sharply if the table is collected too often (see
-                 * NodeTableConfiguration#gcLiveNodeThreshold), which the collected node count does not show:
-                 * a table collected twice as often collects more nodes in total, not fewer. */
+                /* The cost of memory management, amortized over the nodes produced, prime indicator
+                 * for regressions; rises sharply if the table is collected too often. */
                 entry(
                         prefix + "node_table_work_per_created_node",
-                        String.valueOf(ratio(markedNodeCount + sweptNodeCount + rehashedNodeCount, createdNodes))),
+                        String.valueOf(Util.ratio(markedNodeCount + sweptNodeCount + rehashedNodeCount, createdNodes))),
                 /* Fraction of each swept table which was actually reclaimed. Complements the above: keeping
                  * the work per created node low by simply growing the table shows up as a low yield. */
-                entry(prefix + "node_table_gc_yield", String.valueOf(ratio(garbageCollectedNodeCount, sweptNodeCount))),
+                entry(
+                        prefix + "node_table_gc_yield",
+                        String.valueOf(Util.ratio(garbageCollectedNodeCount, sweptNodeCount))),
                 /* Table slots held per live node, i.e. the memory paid for the work per created node above.
                  * Note that the live node count is only sampled during mark phases, so this and
                  * node_table_peak_live_nodes are 0 for a table which never collected. */
-                entry(prefix + "node_table_slots_per_live_node", String.valueOf(ratio(size(), peakLiveNodeCount))));
-    }
-
-    private static double ratio(long value, long total) {
-        return total == 0 ? 0.0 : value / (double) total;
+                entry(
+                        prefix + "node_table_slots_per_live_node",
+                        String.valueOf(Util.ratio(size(), peakLiveNodeCount))));
     }
 
     private static final class FunctionToStringSupplier {
@@ -1580,7 +2018,7 @@ public abstract class NodeTable {
         }
 
         @Override
-        protected int bytesPerSlot() {
+        protected int structuralBytesPerSlot() {
             // nodeData, hashChain, hashToChainStart, low, high
             return 5 * Integer.BYTES;
         }
@@ -1592,6 +2030,14 @@ public abstract class NodeTable {
 
         public int high(int node) {
             assert isValidDecisionNode(node);
+            return high[node];
+        }
+
+        int lowUnchecked(int node) {
+            return low[node];
+        }
+
+        int highUnchecked(int node) {
             return high[node];
         }
 
@@ -1608,10 +2054,51 @@ public abstract class NodeTable {
             return hashCode & Integer.MAX_VALUE;
         }
 
+        /**
+         * Replaces {@code node}'s variable and children in place and puts it back.
+         */
+        void rewriteNode(int node, int variable, int lowPointer, int highPointer) {
+            assert isValidDecisionNode(node);
+            assert lowPointer != highPointer;
+
+            // Still in the chain its old variable and children hash to - take it out before changing them.
+            unlinkHashList(node, bucketOf(node));
+
+            /* Only a node something can reach keeps its children alive, so only then does re-pointing it
+             * move credit from the old children to the new. Skipping the pair when a child pointer did
+             * not actually change - 8% of rewrites on the adder, 76% of the high edges on queens - was
+             * measured *slower*: the cascade it would avoid needs the node to be its child's last live
+             * parent, which sharing makes rare, so the two tests cost more than they save. */
+            boolean live = !isUnreached(node);
+            if (live) {
+                removeParent(low[node]);
+                removeParent(high[node]);
+            }
+            setVariable(node, variable);
+            low[node] = lowPointer;
+            high[node] = highPointer;
+            if (live) {
+                addParent(lowPointer);
+                addParent(highPointer);
+            }
+
+            unhideAfterRewrite(node);
+            int hash = bucketOf(node);
+            //noinspection AssertWithSideEffects
+            assert findNode(
+                                    variable,
+                                    hash,
+                                    other -> other != node && low[other] == lowPointer && high[other] == highPointer)
+                            == PLACEHOLDER
+                    : "Rewriting node " + node + " would duplicate an existing one";
+            linkHashList(node, hash);
+            addToVariableList(node, variable);
+        }
+
         public int makeNode(int variable, int lowPointer, int highPointer) {
             assert 0 <= variable && variable < INVALID_NODE_VARIABLE;
-            assert isValidConstant(lowPointer) || variable < variable(treeNodeFor(lowPointer));
-            assert isValidConstant(highPointer) || variable < variable(treeNodeFor(highPointer));
+            assert isValidConstant(lowPointer) || level(variable) < level(variable(treeNodeFor(lowPointer)));
+            assert isValidConstant(highPointer) || level(variable) < level(variable(treeNodeFor(highPointer)));
             assert highPointer != lowPointer;
 
             int hash = hash(variable, lowPointer, highPointer);
@@ -1627,6 +2114,7 @@ public abstract class NodeTable {
             int freeNode = allocateNode(variable, modHash);
             this.low[freeNode] = lowPointer;
             this.high[freeNode] = highPointer;
+            onNodeCreated(freeNode);
             return freeNode;
         }
 
@@ -1695,7 +2183,7 @@ public abstract class NodeTable {
         }
 
         @Override
-        protected int bytesPerSlot() {
+        protected int structuralBytesPerSlot() {
             /* nodeData, hashChain, hashToChainStart and the spine of tree - the children arrays themselves
              * are not re-allocated when growing, so they are not counted here. */
             return 3 * Integer.BYTES + Long.BYTES;
@@ -1723,7 +2211,7 @@ public abstract class NodeTable {
         public int makeNode(int variable, int[] children) {
             assert 0 <= variable;
             assert Arrays.stream(children)
-                    .allMatch(child -> isValidConstant(child) || variable < variable(treeNodeFor(child)));
+                    .allMatch(child -> isValidConstant(child) || level(variable) < level(variable(treeNodeFor(child))));
             assert Arrays.stream(children).distinct().count() > 1;
 
             int hash = hash(variable, children);
@@ -1738,12 +2226,22 @@ public abstract class NodeTable {
             }
             int freeNode = allocateNode(variable, modHash);
             this.tree[freeNode] = children;
+            onNodeCreated(freeNode);
             return freeNode;
         }
 
         public int[] children(int node) {
             assert isValidDecisionNode(node);
             return tree[node];
+        }
+
+        // Assertion-free reads for the recursion hot paths, as NodeTable.Binary#lowUnchecked.
+        int[] childrenUnchecked(int node) {
+            return tree[node];
+        }
+
+        int followUnchecked(int node, int value) {
+            return tree[node][value];
         }
 
         private static final class MultiNode {

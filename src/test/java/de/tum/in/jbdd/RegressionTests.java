@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -32,8 +33,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
+import java.util.function.Function;
 import java.util.function.IntBinaryOperator;
 import java.util.function.IntPredicate;
 import org.junit.jupiter.api.Test;
@@ -75,7 +76,7 @@ class RegressionTests {
 
     @Test
     void testReferenceOverflow() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int and = bdd.and(v1, v2);
@@ -91,19 +92,21 @@ class RegressionTests {
 
     @Test
     void testIteratorUniquePath() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int and = bdd.and(v1, v2);
 
-        bdd.solutionIterator(and).forEachRemaining(bitSet -> {});
+        for (Cursor<BitSet> cursor = bdd.solutionCursor(and); cursor.valid(); cursor.advance()) {
+            // Drained purely for its side effects on the diagram.
+        }
     }
 
     @Test
     void testCheckSucceedsOnAFreshTable() {
         // biggestValidNode / biggestReferencedNode are PLACEHOLDER while nothing has been built yet, and
         // slot 0 is never a node - check() must not demand that it be a valid, referenced one.
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         assertTrue(bdd.check());
         assertTrue(bdd.mtbdd().check());
     }
@@ -115,7 +118,7 @@ class RegressionTests {
 
     @Test
     void testBooleanCacheIsPrunedAfterAJvmGarbageCollection() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int[] v = bdd.createVariables(6);
         forceJvmGarbageCollection();
 
@@ -136,7 +139,7 @@ class RegressionTests {
 
     @Test
     void testMtBddCacheIsPrunedAfterAJvmGarbageCollection() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(3);
         MtBddImpl mt = bdd.mtbdd();
         forceJvmGarbageCollection();
@@ -165,7 +168,7 @@ class RegressionTests {
 
     @Test
     void testMtBddForceGcReclaimsUnreferencedNodesAndValues() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -191,7 +194,7 @@ class RegressionTests {
 
     @Test
     void testSatisfactionCountIsRecomputedAfterCreatingVariables() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int[] v = bdd.createVariables(2);
         int and = bdd.reference(bdd.and(v[0], v[1]));
 
@@ -207,7 +210,7 @@ class RegressionTests {
 
     @Test
     void testMtBddAssignmentCountIsRecomputedAfterCreatingVariables() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
         // 1 exactly where both variables hold, 0 elsewhere.
@@ -221,10 +224,141 @@ class RegressionTests {
     }
 
     @Test
-    void testBddMapValueIndexSurvivesAValueSweep() {
-        BddImpl bdd = new BddImpl(config);
+    void testPerVariableNodeEnumerationMatchesTheTable() {
+        BddImpl bdd = new BddContextImpl(config).bdd();
+        int[] v = bdd.createVariables(6);
+        NodeTable table = bdd.table();
+        // Enabled before anything is built, so the incremental maintenance in allocateNode and in both
+        // rebuild sweeps is what produces the lists, not the one-off derivation in enableReorderingSupport.
+        table.enableReorderingBookkeeping();
+
+        // Something with nodes spread over every level, plus a collection to exercise the rebuild path.
+        int f = bdd.reference(bdd.and(bdd.or(v[0], v[1]), bdd.xor(v[2], bdd.and(v[3], bdd.or(v[4], v[5])))));
+        bdd.or(v[1], v[4]); // unreferenced, so the following collection actually reclaims something
+        bdd.forceGc();
+
+        int total = 0;
+        for (int variable = 0; variable < 6; variable++) {
+            List<Integer> enumerated = new ArrayList<>();
+            table.forEachNodeWithVariable(variable, enumerated::add);
+
+            List<Integer> scanned = new ArrayList<>();
+            for (int node = 1; node < table.size(); node++) {
+                if (table.isValidDecisionNode(node) && table.variable(node) == variable) {
+                    scanned.add(node);
+                }
+            }
+
+            assertEquals(new HashSet<>(scanned), new HashSet<>(enumerated));
+            assertEquals(scanned.size(), enumerated.size(), "duplicates for variable " + variable);
+            total += enumerated.size();
+        }
+        // Guards against the comparison above passing because both sides are empty
+        assertEquals(bdd.nodeCount(), total, "expected every node in the table to be enumerated exactly once");
+
+        // Nothing was disturbed by walking the chains
+        assertTrue(bdd.check());
+        assertTrue(bdd.evaluate(f, assignment(true, false, true, false, false, false)));
+    }
+
+    @Test
+    void testReorderingSupportSurvivesDropAndRebuild() {
+        BddImpl bdd = new BddContextImpl(config).bdd();
+        int[] v = bdd.createVariables(5);
+        int f = bdd.reference(bdd.and(bdd.or(v[0], v[1]), bdd.xor(v[2], bdd.or(v[3], v[4]))));
+        NodeTable table = bdd.table();
+
+        List<Integer> before = new ArrayList<>();
+        table.forEachNodeWithVariable(2, before::add);
+        assertFalse(before.isEmpty());
+
+        table.dropReorderingBookkeeping();
+        assertTrue(bdd.check());
+
+        // Building more structure while the bookkeeping is gone must not leave it stale - the next
+        // enumeration derives it from the table again.
+        bdd.reference(bdd.or(v[1], bdd.and(v[2], v[4])));
+        bdd.forceGc();
+
+        List<Integer> after = new ArrayList<>();
+        table.forEachNodeWithVariable(2, after::add);
+        assertTrue(bdd.check());
+        assertTrue(after.containsAll(before), "nodes of variable 2 went missing across a drop");
+        assertTrue(bdd.evaluate(f, assignment(true, false, true, false, false)));
+    }
+
+    @Test
+    void testUnlinkAndRelinkPreservesTheHashChains() {
+        BddImpl bdd = new BddContextImpl(config).bdd();
+        int[] v = bdd.createVariables(5);
+        int f = bdd.reference(bdd.and(bdd.or(v[0], v[1]), bdd.xor(v[2], bdd.or(v[3], v[4]))));
+        NodeTable table = bdd.table();
+
+        // Derived after the fact here, rather than maintained from the start - the other half of the
+        // lazy-enable contract.
+        table.enableReorderingBookkeeping();
+        assertTrue(bdd.check());
+
+        List<Integer> nodes = new ArrayList<>();
+        table.forEachNodeWithVariable(2, nodes::add);
+        assertFalse(nodes.isEmpty());
+
+        // What a level swap does to every node it rewrites, minus the rewriting.
+        for (int node : nodes) {
+            table.unlinkHashList(node, table.bucketOf(node));
+        }
+        for (int node : nodes) {
+            table.linkHashList(node, table.bucketOf(node));
+        }
+
+        assertTrue(bdd.check());
+        assertTrue(bdd.evaluate(f, assignment(true, false, true, false, false)));
+        assertFalse(bdd.evaluate(f, assignment(false, false, true, false, false)));
+    }
+
+    @Test
+    void testSaturatedTerminalWrappersStayCollectible() {
+        BddImpl bdd = new BddContextImpl(config).bdd();
         BddSetFactoryImpl sets = new BddSetFactoryImpl(bdd);
-        BddMapFactoryImpl<String> maps = new BddMapFactoryImpl<>(sets);
+        BddMapFactoryImpl maps = new BddMapFactoryImpl(sets);
+        MtBddImpl mt = bdd.mtbdd();
+
+        // Every numbering hands out raw index 0 for its first value, so all of these maps are the very
+        // same MTBDD terminal under different keys - enough of them to saturate its reference count
+        // (Byte.MAX_VALUE), past which reference/dereference are no-ops. Wrappers must stay canonical
+        // and, unlike under a separate "unmanaged" map, must stay collectible.
+        List<BddMap<String>> held = new ArrayList<>();
+        for (int i = 0; i < 200; i++) {
+            held.add(maps.<String>create().of("v" + i));
+        }
+        assertTrue(mt.isUnmanaged(((GcReferenceManager.DdContainer) held.get(0)).function()));
+        for (int i = 0; i < held.size(); i++) {
+            BddMap<String> map = held.get(i);
+            assertEquals("v" + i, map.evaluate(BitSets.of()));
+            assertSame(map, map.valueDomain().of("v" + i));
+        }
+
+        assertEquals(held.size(), maps.protectedObjectCount());
+
+        held.clear();
+        forceJvmGarbageCollection();
+
+        // Draining the queue dereferences the saturated terminal once per collected wrapper; that is a
+        // no-op, but it must not trip the "dereferencing a value that was never referenced" assertion.
+        Values<String> fresh = maps.create();
+        assertEquals("after", fresh.of("after").evaluate(BitSets.of()));
+        assertTrue(mt.check());
+
+        // The point of the exercise: a saturated function's wrapper is held weakly like any other, so
+        // dropping it releases both the wrapper and the numbering it points at.
+        assertTrue(maps.protectedObjectCount() < 10, "wrappers were pinned: " + maps.protectedObjectCount());
+    }
+
+    @Test
+    void testBddMapValuesSurviveAValueSweep() {
+        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddSetFactoryImpl sets = new BddSetFactoryImpl(bdd);
+        Values<String> maps = new BddMapFactoryImpl(sets).create();
         MtBddImpl mt = bdd.mtbdd();
         bdd.createVariables(2);
 
@@ -248,7 +382,7 @@ class RegressionTests {
     void testAssignmentIteratorRejectsAnInterleavedQuery() {
         assumeTrue(assertionsEnabled(), "Guarded by an assertion");
 
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(3);
         MtBddImpl mt = bdd.mtbdd();
         int a = mt.reference(mt.of(1, mt.of(5), mt.of(7)));
@@ -257,25 +391,24 @@ class RegressionTests {
 
         IntPredicate isFive = value -> value == 5;
         int solutions = 0;
-        for (Iterator<BitSet> iterator = mt.assignmentIterator(function, isFive); iterator.hasNext(); ) {
-            iterator.next();
+        for (Cursor<BitSet> cursor = mt.assignmentCursor(function, isFive); cursor.valid(); cursor.advance()) {
             solutions++;
         }
         assertEquals(4, solutions);
 
-        Iterator<BitSet> iterator = mt.assignmentIterator(function, isFive);
-        iterator.next();
+        Cursor<BitSet> cursor = mt.assignmentCursor(function, isFive);
+        assertTrue(cursor.valid());
         mt.anyAssignment(function, value -> value == 100);
         assertThrows(AssertionError.class, () -> {
-            while (iterator.hasNext()) {
-                iterator.next();
+            while (cursor.advance()) {
+                // Interleaving another query with a live cursor is checked, not supported.
             }
         });
     }
 
     @Test
     void testSplitRelabeledCallsTheRelabelerOncePerDistinctResidual() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(3);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -311,7 +444,7 @@ class RegressionTests {
 
     @Test
     void testUpdateMatchesIfThenElseOnTheOriginalFunction() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int[] v = bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -327,7 +460,7 @@ class RegressionTests {
 
     @Test
     void testRegisterComposeDoesNotShareTheCallersMapping() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int[] v = bdd.createVariables(3);
         int function = bdd.reference(bdd.and(v[0], v[2]));
 
@@ -345,7 +478,7 @@ class RegressionTests {
 
     @Test
     void testMtBddRegisterComposeShortcuts() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int[] v = bdd.createVariables(3);
         MtBddImpl mt = bdd.mtbdd();
         int function = mt.reference(mt.of(0, mt.of(2, mt.of(1), mt.of(2)), mt.of(3)));
@@ -377,7 +510,7 @@ class RegressionTests {
         BddConfiguration tiny = ImmutableBddConfiguration.builder()
                 .registeredOperationDivider(1 << 20)
                 .build();
-        BddImpl bdd = new BddImpl(tiny);
+        BddImpl bdd = new BddContextImpl(tiny).bdd();
         int[] v = bdd.createVariables(3);
         int function = bdd.reference(bdd.and(v[0], v[2]));
 
@@ -400,7 +533,7 @@ class RegressionTests {
         // domain TRUE all the way down: it carries no domain-keyed cache to look anything else up in. (The
         // recursion used to narrow the domain to the current branch condition regardless, which both
         // needed that cache and, since it wasn't allocated, tripped an assertion on the very first use.)
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int[] v = bdd.createVariables(4);
         int function = bdd.reference(bdd.or(bdd.and(v[0], v[2]), bdd.and(v[1], v[3])));
         int[] mapping = {bdd.and(v[1], v[3]), bdd.placeholder(), bdd.not(v[3]), bdd.placeholder()};
@@ -421,7 +554,7 @@ class RegressionTests {
         // When the two operands' top variables differ, the recursion used to fall back to the plain
         // (domain-less) xor, abandoning simplification for that whole subtree - unlike its `and`
         // counterpart, which carries the domain. Correct either way, just needlessly large.
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int[] v = bdd.createVariables(3);
 
         // xor(v0, v2) restricted to !v2 is just v0.
@@ -445,7 +578,7 @@ class RegressionTests {
         // constrain is precomposition with the projection onto the domain, which is codomain-agnostic -
         // so on an MTBDD it must still be the canonical representative of "agrees on the domain", and
         // must commute with pointwise operations. simplify satisfies neither; it is the control here.
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int[] v = bdd.createVariables(3);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -496,7 +629,7 @@ class RegressionTests {
         // there everything is don't-care, so any constant is a valid answer.
         assumeTrue(assertionsEnabled(), "Guarded by an assertion");
 
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
         int f = mt.reference(mt.of(0, mt.of(1), mt.of(2)));
@@ -511,7 +644,7 @@ class RegressionTests {
         // not aligned with the domain's cofactors on it: the low branch governs wherever the replacement is
         // false, which is unrelated to where the variable is. Cofactoring the domain here dropped exactly
         // the part of the domain the discarded branch was responsible for.
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int[] v = bdd.createVariables(3);
 
         // f branches on v0, and v0 is replaced by v1 - so the domain v0 (same top variable) must be
@@ -548,7 +681,7 @@ class RegressionTests {
         // A mapping shorter than numberOfVariables() leaves the remaining variables unchanged, so an
         // all-constant mapping does not make the result constant. It used to be answered by evaluating the
         // function against the mapping, reading every uncovered variable as false.
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int[] v = bdd.createVariables(3);
         int function = bdd.reference(bdd.and(v[0], bdd.or(v[1], v[2])));
 
@@ -568,7 +701,7 @@ class RegressionTests {
 
     @Test
     void testAgreementOfAFunctionWithItselfIsTrue() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(3);
         MtBddImpl mt = bdd.mtbdd();
         int shared = mt.reference(mt.of(2, mt.of(7), mt.of(8)));
@@ -582,7 +715,7 @@ class RegressionTests {
 
     @Test
     void testNaryOperatorUnwrapsToTheCachedUnaryAndBinaryImplementations() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
         int left = mt.reference(mt.of(0, mt.of(1), mt.of(2)));
@@ -617,7 +750,7 @@ class RegressionTests {
         // simplify widens its domain with bdd.computeOr, which allocates Bdd nodes and can therefore
         // trigger a Bdd GC mid-recursion; the domain has to be protected on the Bdd work stack for that.
         // Stress rather than proof: it forces many collections while the domain is held only by a local.
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int[] v = bdd.createVariables(8);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -646,7 +779,7 @@ class RegressionTests {
 
     @Test
     void testMtBddCacheIsPrunedWhenOnlyValuesAreReclaimed() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -674,7 +807,7 @@ class RegressionTests {
         // A live-node threshold of 0 sends every collection down the grow branch.
         BddConfiguration growAlways =
                 ImmutableBddConfiguration.builder().gcLiveNodeThreshold(0.0d).build();
-        BddImpl bdd = new BddImpl(growAlways);
+        BddImpl bdd = new BddContextImpl(growAlways).bdd();
         bdd.createVariables(4);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -704,5 +837,60 @@ class RegressionTests {
         assertEquals(12, mt.evaluate(again, assignment(false, true, false, false)));
         assertEquals(22, mt.evaluate(again, assignment(false, false, false, false)));
         assertTrue(mt.check());
+    }
+
+    /**
+     * A cursor hands out its own working state, so the contract is narrower than an iterator's: reading it
+     * twice without advancing must give the same thing, and a cursor that has run out has to stay run out.
+     */
+    private static <T> void checkCursorContract(Cursor<T> cursor, Function<T, Object> snapshot) {
+        assertTrue(cursor.valid());
+        Object first = snapshot.apply(cursor.current());
+        assertEquals(first, snapshot.apply(cursor.current()), "current() changed without advancing");
+
+        assertTrue(cursor.advance());
+        assertNotEquals(first, snapshot.apply(cursor.current()), "advance() produced the same element again");
+
+        int guard = 1 << 20;
+        while (cursor.advance()) {
+            assertTrue(--guard > 0, "cursor does not terminate");
+        }
+        assertFalse(cursor.valid());
+        // Running out is stable - advancing an exhausted cursor is a no-op, not a wrap-around or a throw.
+        assertFalse(cursor.advance());
+        assertFalse(cursor.valid());
+    }
+
+    @Test
+    void testBddCursorContract() {
+        Bdd bdd = BddFactory.buildBdd(config);
+        int v1 = bdd.reference(bdd.createVariable());
+        int v2 = bdd.reference(bdd.createVariable());
+        int v3 = bdd.reference(bdd.createVariable());
+        int function = bdd.reference(bdd.or(v1, bdd.or(v2, v3)));
+        checkCursorContract(bdd.solutionCursor(function), BitSets::copyOf);
+        checkCursorContract(bdd.pathCursor(function), BinaryPath::copy);
+        checkCursorContract(bdd.solutionCursorIn(function, bdd.or(v1, v2)), BitSets::copyOf);
+    }
+
+    @Test
+    void testMddCursorContract() {
+        MddImpl mdd = new MddImpl(config);
+        int v1 = mdd.reference(mdd.makeVariableFunction(mdd.declareVariable(3), new boolean[] {false, true, true}));
+        int v2 = mdd.reference(mdd.makeVariableFunction(mdd.declareVariable(3), new boolean[] {false, false, true}));
+        int function = mdd.reference(mdd.or(v1, v2));
+        checkCursorContract(mdd.solutionCursor(function), Arrays::toString);
+        checkCursorContract(mdd.pathCursor(function), Arrays::toString);
+    }
+
+    @Test
+    void testMtBddCursorContract() {
+        BddImpl bdd = new BddContextImpl(config).bdd();
+        bdd.createVariables(3);
+        MtBddImpl mtbdd = bdd.mtbdd();
+        int function = mtbdd.reference(
+                mtbdd.of(0, mtbdd.of(1), mtbdd.of(1, mtbdd.of(2), mtbdd.of(2, mtbdd.of(3), mtbdd.of(0)))));
+        checkCursorContract(mtbdd.pathCursor(function), BinaryPath::copy);
+        checkCursorContract(mtbdd.assignmentCursor(function, null), BitSets::copyOf);
     }
 }

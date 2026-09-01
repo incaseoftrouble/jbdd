@@ -20,7 +20,7 @@ public final class BddBuilder {
     private BddBuilder() {}
 
     /* N-Queens problem, loosely inspired by RuDD, which took it from BuDDy */
-    public static int makeQueens(Bdd bdd, int n) {
+    public static int makeQueens(BinaryDecisionDiagram bdd, int n) {
         int queen = bdd.trueFunction();
 
         int[][] x = new int[n][n];
@@ -136,7 +136,7 @@ public final class BddBuilder {
     }
 
     /* Binary adder, loosely inspired by RuDD, which took it from BuDDy */
-    public static int[][] makeAdder(Bdd bdd, int n) {
+    public static int[][] makeAdder(BinaryDecisionDiagram bdd, int n) {
         int[] ain = new int[n];
         int[] bin = new int[n];
 

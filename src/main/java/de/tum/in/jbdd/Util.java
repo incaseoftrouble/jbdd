@@ -74,6 +74,10 @@ final class Util {
         return count == toProtect.length ? toProtect : Arrays.copyOf(toProtect, count);
     }
 
+    static double ratio(long value, long total) {
+        return total == 0 ? 0.0 : value / (double) total;
+    }
+
     private static final class CleanupStatisticsRef extends WeakReference<DecisionDiagram> {
         private final String label;
 

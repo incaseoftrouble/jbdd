@@ -18,7 +18,10 @@ package de.tum.in.jbdd;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.common.collect.Sets;
@@ -30,7 +33,7 @@ import org.junit.jupiter.api.Test;
 class BddMapTest {
     @Test
     void testBddSetBasics() {
-        BddContext ctx = BddContext.create();
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
         BddSetFactory sets = ctx.bddSets();
         BddSet x0 = sets.var(0);
         BddSet x1 = sets.var(1);
@@ -60,8 +63,8 @@ class BddMapTest {
 
     @Test
     void testStringMapBasics() {
-        BddContext ctx = BddContext.create();
-        BddMapFactory<String> strings = ctx.bddMaps();
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        Values<String> strings = ctx.bddMaps().create();
         BddSet x0 = ctx.bddSets().var(0);
 
         BddMap<String> constant = strings.of("lo");
@@ -86,8 +89,8 @@ class BddMapTest {
 
     @Test
     void testStringMapApplyAndMap() {
-        BddContext ctx = BddContext.create();
-        BddMapFactory<String> strings = ctx.bddMaps();
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        Values<String> strings = ctx.bddMaps().create();
         BddSet x0 = ctx.bddSets().var(0);
 
         BddMap<String> updated = strings.of("lo").update(x0, "hi-there");
@@ -110,8 +113,8 @@ class BddMapTest {
 
     @Test
     void testStringMapAgreementAndDifference() {
-        BddContext ctx = BddContext.create();
-        BddMapFactory<String> strings = ctx.bddMaps();
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        Values<String> strings = ctx.bddMaps().create();
         BddSet x0 = ctx.bddSets().var(0);
         BddSet x1 = ctx.bddSets().var(1);
 
@@ -137,8 +140,8 @@ class BddMapTest {
 
     @Test
     void testStringMapRelabelVariables() {
-        BddContext ctx = BddContext.create();
-        BddMapFactory<String> strings = ctx.bddMaps();
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        Values<String> strings = ctx.bddMaps().create();
         BddSet x0 = ctx.bddSets().var(0);
 
         BddMap<String> updated = strings.of("lo").update(x0, "hi-there");
@@ -157,8 +160,8 @@ class BddMapTest {
 
     @Test
     void testSetOfStringMapBasics() {
-        BddContext ctx = BddContext.create();
-        BddMapFactory<Set<String>> setMaps = ctx.bddMaps();
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        Values<Set<String>> setMaps = ctx.bddMaps().create();
         BddSet x0 = ctx.bddSets().var(0);
 
         Set<String> a = Set.of("a");
@@ -181,8 +184,8 @@ class BddMapTest {
 
     @Test
     void testCreateRelabelingStringToSetOfString() {
-        BddContext ctx = BddContext.create();
-        BddMapFactory<String> strings = ctx.bddMaps();
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        Values<String> strings = ctx.bddMaps().create();
         BddSet x0 = ctx.bddSets().var(0);
         BddSet x1 = ctx.bddSets().var(1);
 
@@ -191,7 +194,7 @@ class BddMapTest {
         // x -> {x} is trivially injective: distinct strings give distinct singleton sets.
         BddMap.Relabeler<String, Set<String>> relabeler = strings.createRelabeling(Set::of);
         BddMap<Set<String>> relabeled = relabeler.relabel(original);
-        assertSame(relabeled.factory(), relabeler.into());
+        assertSame(relabeled.valueDomain(), relabeler.into());
 
         // the relabeled map matches Set.of(original value) at every corner of the (x0,x1) domain.
         for (BitSet assignment : List.of(new BitSet(), BitSets.of(0), BitSets.of(1), BitSets.of(0, 1))) {
@@ -214,23 +217,23 @@ class BddMapTest {
 
     @Test
     void testRelabelIntoAcrossDomains() {
-        BddContext ctx = BddContext.create();
-        BddMapFactory<Set<String>> setMaps = ctx.bddMaps();
-        BddMapFactory<String> strings = ctx.bddMaps();
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        Values<Set<String>> setMaps = ctx.bddMaps().create();
+        Values<String> strings = ctx.bddMaps().create();
         BddSet x0 = ctx.bddSets().var(0);
         BddSet x1 = ctx.bddSets().var(1);
 
-        // an existing factory that already has its own maps in it.
+        // an existing numbering that already has its own maps in it.
         BddMap<Set<String>> existing = setMaps.of(Set.of("seed")).update(x0, Set.of("seed", "extra"));
 
         BddMap<String> toInject = strings.of("lo").update(x1, "hi-there");
         BddMap<Set<String>> injected = setMaps.relabelInto(toInject, Set::of);
-        assertSame(injected.factory(), existing.factory());
+        assertSame(injected.valueDomain(), existing.valueDomain());
 
         assertEquals(Set.of("lo"), injected.evaluate(BitSets.of()));
         assertEquals(Set.of("hi-there"), injected.evaluate(BitSets.of(1)));
 
-        // since it landed in the SAME factory as `existing`, it can be combined with it directly.
+        // since it landed in the SAME numbering as `existing`, it can be combined with it directly.
         //noinspection RedundantTypeArguments
         BddMap<Set<String>> combined = existing.apply(injected, (a, b) -> Set.copyOf(Sets.<String>union(a, b)));
         assertEquals(Set.of("seed", "lo"), combined.evaluate(BitSets.of()));
@@ -245,17 +248,91 @@ class BddMapTest {
 
     @Test
     void testCartesianProductOfStringMaps() {
-        BddContext ctx = BddContext.create();
-        BddMapFactory<String> strings = ctx.bddMaps();
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        Values<String> strings = ctx.bddMaps().create();
         BddSet x0 = ctx.bddSets().var(0);
 
         BddMap<String> a = strings.of("a0").update(x0, "a1");
         BddMap<String> b = strings.of("b0").update(x0, "b1");
 
-        BddMapFactory<List<String>> lists = ctx.bddMaps();
+        Values<List<String>> lists = ctx.bddMaps().create();
         BddMap<List<String>> product = strings.cartesianProduct(List.of(a, b), lists);
 
         assertEquals(List.of("a0", "b0"), product.evaluate(BitSets.of()));
         assertEquals(List.of("a1", "b1"), product.evaluate(BitSets.of(0)));
+    }
+
+    @Test
+    void testMapsOverDifferentValuesStayDistinct() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BddMapFactory maps = ctx.bddMaps();
+        Values<String> first = maps.create();
+        Values<String> second = maps.create();
+
+        // Both numberings hand out raw index 0 first, so these two maps are the very same MTBDD terminal
+        // and are told apart only by the numbering they carry.
+        BddMap<String> a = first.of("a");
+        BddMap<String> b = second.of("b");
+        assertEquals(((GcReferenceManager.DdContainer) a).function(), ((GcReferenceManager.DdContainer) b).function());
+
+        assertNotSame(a, b);
+        assertNotEquals(a, b);
+        assertEquals("a", a.evaluate(BitSets.of()));
+        assertEquals("b", b.evaluate(BitSets.of()));
+        assertSame(first, a.valueDomain());
+        assertSame(second, b.valueDomain());
+
+        // within one numbering, a map is still canonical
+        assertSame(a, first.of("a"));
+        assertSame(b, second.of("b"));
+    }
+
+    @Test
+    void testAdoptBridgesTwoNumberings() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        Values<String> first = ctx.bddMaps().create();
+        Values<String> second = ctx.bddMaps().create();
+        BddSet x0 = ctx.bddSets().var(0);
+        BddSet x1 = ctx.bddSets().var(1);
+
+        BddMap<String> a = first.of("lo").update(x0, "hi-there");
+        BddMap<String> b = second.of("lo").update(x1, "hi-there");
+
+        BddMap<String> adopted = first.adopt(b);
+        assertSame(first, adopted.valueDomain());
+        for (BitSet assignment : List.of(new BitSet(), BitSets.of(0), BitSets.of(1), BitSets.of(0, 1))) {
+            assertEquals(b.evaluate(assignment), adopted.evaluate(assignment));
+        }
+
+        // and now the operations that rejected `b` work
+        assertEquals(x0.symmetricDifference(x1).complement(), a.agreement(adopted));
+        assertEquals("lo/lo", a.apply(adopted, (l, r) -> l + "/" + r).evaluate(BitSets.of()));
+
+        // adopting into the map's own numbering is the identity, down to the function id
+        assertSame(b, second.adopt(b));
+        // the two numberings assigned "lo" and "hi-there" the same indices, so the shape carries over
+        // untouched and the adopted map is the very same MTBDD function
+        assertEquals(
+                ((GcReferenceManager.DdContainer) b).function(), ((GcReferenceManager.DdContainer) adopted).function());
+
+        // b itself is untouched
+        assertSame(second, b.valueDomain());
+        assertEquals("hi-there", b.evaluate(BitSets.of(1)));
+    }
+
+    @Test
+    void testCombiningMapsAcrossValuesIsRejected() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        Values<String> first = ctx.bddMaps().create();
+        Values<String> second = ctx.bddMaps().create();
+        BddSet x0 = ctx.bddSets().var(0);
+
+        BddMap<String> a = first.of("lo").update(x0, "hi-there");
+        BddMap<String> b = second.of("lo").update(x0, "hi-there");
+
+        assertThrows(AssertionError.class, () -> a.agreement(b));
+        assertThrows(AssertionError.class, () -> a.apply(b, String::concat));
+        assertThrows(AssertionError.class, () -> a.apply(b, BddMapBinaryOperator.monoid(String::concat, "")));
+        assertThrows(AssertionError.class, () -> first.ifThenElse(x0, a, b));
     }
 }

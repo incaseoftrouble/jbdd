@@ -18,6 +18,9 @@ package de.tum.in.jbdd;
 
 import java.util.BitSet;
 
+/**
+ * A partial assignment: {@link #support()} names the variables it fixes, {@link #assignment()} their values.
+ */
 public final class BinaryPath {
     final BitSet assignment;
     final BitSet support;

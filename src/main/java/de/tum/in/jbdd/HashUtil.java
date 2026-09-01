@@ -17,8 +17,6 @@
 package de.tum.in.jbdd;
 
 final class HashUtil {
-    // TODO Check performance differences on different benchmarks with slight variations
-
     // Taken from https://planetmath.org/goodhashtableprimes
     static final int P1 = 6291469; // NOPMD
     static final int P2 = 12582917; // NOPMD

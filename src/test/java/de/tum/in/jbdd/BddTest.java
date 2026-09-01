@@ -36,7 +36,6 @@ import org.junit.jupiter.api.Test;
 /**
  * A collection of simple tests for the BDD class.
  */
-@SuppressWarnings("UseOfClone")
 class BddTest {
     private static final BddConfiguration config =
             ImmutableBddConfiguration.builder().build();
@@ -63,7 +62,7 @@ class BddTest {
 
     @Test
     void testDeadNodeCounter() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         NodeTable table = bdd.table();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
@@ -76,7 +75,7 @@ class BddTest {
 
     @Test
     void testGarbageCollection() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int v3 = bdd.createVariable();
@@ -93,7 +92,7 @@ class BddTest {
 
     @Test
     void testDeMorgan() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int notV1 = bdd.reference(bdd.not(v1));
@@ -107,7 +106,7 @@ class BddTest {
 
     @Test
     void testXorIdentity() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int notV1 = bdd.not(v1);
@@ -126,7 +125,7 @@ class BddTest {
 
     @Test
     void testEquivalenceIdentity() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         NodeTable table = bdd.table();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
@@ -140,7 +139,7 @@ class BddTest {
 
     @Test
     void testNodeCountBelow() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         NodeTable table = bdd.table();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
@@ -167,7 +166,7 @@ class BddTest {
 
     @Test
     void testCountSatisfyingAssignments() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         bdd.createVariable();
@@ -186,7 +185,7 @@ class BddTest {
     @SuppressWarnings("ReuseOfLocalVariable")
     @Test
     void testCompose() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int nv1 = bdd.not(v1);
         int v2 = bdd.createVariable();
@@ -212,7 +211,7 @@ class BddTest {
 
     @Test
     void testIfThenElse() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int v1andv2 = bdd.and(v1, v2);
@@ -228,7 +227,7 @@ class BddTest {
 
     @Test
     void testMember() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
 
@@ -251,7 +250,7 @@ class BddTest {
 
     @Test
     void testMinimalSolutionsForConstants() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
 
         List<BitSet> falseSolutions = Lists.newArrayList();
         bdd.forEachPath(bdd.falseFunction(), path -> falseSolutions.add(BitSets.copyOf(path.assignment)));
@@ -264,7 +263,7 @@ class BddTest {
 
     @Test
     void testSupport() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int v3 = bdd.createVariable();
@@ -311,7 +310,7 @@ class BddTest {
 
     @Test
     void testWorkStack() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         NodeTable table = bdd.table();
 
         int v1 = bdd.createVariable();
@@ -325,29 +324,33 @@ class BddTest {
     }
 
     @Test
-    void testUniverseIterator() {
-        BddImpl bdd = new BddImpl(config);
+    void testUniverseCursor() {
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(5);
         Set<BitSet> solutions = new HashSet<>();
-        bdd.solutionIterator(bdd.trueFunction()).forEachRemaining(val -> solutions.add((BitSet) val.clone()));
+        for (Cursor<BitSet> cursor = bdd.solutionCursor(bdd.trueFunction()); cursor.valid(); cursor.advance()) {
+            solutions.add(BitSets.copyOf(cursor.current()));
+        }
         assertThat(solutions.size(), is(1 << 5));
     }
 
     @Test
-    void testConjunctionIterator() {
-        BddImpl bdd = new BddImpl(config);
+    void testConjunctionCursor() {
+        BddImpl bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(5);
         BitSet conjunction = new BitSet(5);
         conjunction.set(0, 5);
-        bdd.solutionIterator(bdd.conjunction(conjunction));
+        bdd.solutionCursor(bdd.conjunction(conjunction));
         Set<BitSet> solutions = new HashSet<>();
-        bdd.solutionIterator(bdd.trueFunction()).forEachRemaining(val -> solutions.add((BitSet) val.clone()));
+        for (Cursor<BitSet> cursor = bdd.solutionCursor(bdd.trueFunction()); cursor.valid(); cursor.advance()) {
+            solutions.add(BitSets.copyOf(cursor.current()));
+        }
         assertThat(solutions.size(), is(1 << 5));
     }
 
     @Test
     void testConcurrentAccessChecked() throws InterruptedException {
-        Bdd bdd = new BddImpl(config);
+        Bdd bdd = new BddContextImpl(config).bdd();
         bdd.createVariables(2);
         int node = bdd.reference(bdd.disjunction(0, 1));
 
@@ -356,6 +359,7 @@ class BddTest {
         AtomicBoolean otherThreadRejected = new AtomicBoolean(false);
 
         Thread other = new Thread(() -> {
+            //noinspection ErrorNotRethrown
             try {
                 holdingGuard.await();
                 bdd.implies(bdd.trueFunction(), bdd.falseFunction());
@@ -384,7 +388,7 @@ class BddTest {
 
     @Test
     void testDeadNodeApproximation() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new BddContextImpl(config).bdd();
         NodeTable table = bdd.table();
 
         int v1 = bdd.createVariable();

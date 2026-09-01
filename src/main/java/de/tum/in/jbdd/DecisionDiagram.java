@@ -26,6 +26,12 @@ import java.util.stream.Collectors;
  * from boolean assignments to some domain through a tree-like structure. Each function is represented by an
  * (opaque) integer. A (reduced) decision diagram ensures that two functions are equal exactly if their
  * identifiers are equal.
+ *
+ * <p><b>Variables, not positions.</b> Every {@code int} naming a variable here - in a support set, an
+ * assignment, a compose mapping, a quantified set - is the variable itself, and stays that variable for
+ * the life of the diagram. Reordering never renumbers anything; it only moves variables around, and where
+ * a variable currently sits is visible solely through {@link ReorderableDecisionDiagram#level}. Nothing
+ * else in this API exposes an ordering position, which is exactly why that interface is separate.
  */
 public interface DecisionDiagram {
     /**

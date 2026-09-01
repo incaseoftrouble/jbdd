@@ -38,10 +38,10 @@ final class MtBddOperations {
     }
 
     static final class Compose extends ProtectedOperation
-            implements RegisteredOperation.Unary, RegisteredOperation.Binary, NodeLifecycleObserver {
+            implements RegisteredOperation.Unary, RegisteredOperation.Binary, NodeTableObserver {
         private final MtBddImpl mtbdd;
         private final int[] bddVariableMapping;
-        private final int highestReplacedVariable;
+        private int deepestReplacedLevel;
         private final MtBddCache.UnaryToIntCache composeCache;
 
         /**
@@ -53,14 +53,17 @@ final class MtBddOperations {
         Compose(
                 MtBddImpl mtbdd,
                 int[] resolvedMapping,
-                int highestReplacedVariable,
+                int deepestReplacedLevel,
                 int[] protectedNodes,
                 boolean withSimplify) {
-            super(mtbdd.protectionTracker(), () -> mtbdd.dereference(protectedNodes));
-            assert Arrays.stream(protectedNodes).allMatch(mtbdd::nodeIsReferenced);
+            /* The replacements are the *companion BDD's* functions, so that is where they were referenced
+             * (MtBddImpl#registerCompose) and where they have to be released. The tracker is shared - see
+             * MtBddImpl's constructor - so either diagram's GC drains it. */
+            super(mtbdd.protectionTracker(), () -> mtbdd.bddImpl().dereference(protectedNodes));
+            assert Arrays.stream(protectedNodes).allMatch(mtbdd.bddImpl()::nodeIsReferenced);
             this.mtbdd = mtbdd;
             this.bddVariableMapping = resolvedMapping;
-            this.highestReplacedVariable = highestReplacedVariable;
+            this.deepestReplacedLevel = deepestReplacedLevel;
             this.composeCache = new MtBddCache.UnaryToIntCache(mtbdd, mtbdd.bddImpl());
             this.composeSimplifyCache = withSimplify ? new MtBddCache.MtbddBddToIntCache(mtbdd, mtbdd.bddImpl()) : null;
             mtbdd.registerObserver(this);
@@ -78,6 +81,33 @@ final class MtBddOperations {
             if (composeSimplifyCache != null) {
                 composeSimplifyCache.grow(floor);
             }
+        }
+
+        @Override
+        public void levelsSwapped(DecisionDiagram origin, int level) {
+            /* A simplifying compose is registered on both diagrams, and they share one order, so it would
+             * hear this twice - once is enough, and the shift below is not idempotent. */
+            if (origin != mtbdd) {
+                return;
+            }
+            // As BddOperations.Compose: the cut-off it holds is a level, and its caches used the old one.
+            deepestReplacedLevel = mtbdd.bddImpl().deepestReplacedLevel(bddVariableMapping);
+            composeCache.invalidate();
+            if (composeSimplifyCache != null) {
+                composeSimplifyCache.invalidate();
+            }
+        }
+
+        @Override
+        public void variableInserted(DecisionDiagram origin, int level) {
+            if (origin != mtbdd) {
+                return;
+            }
+            // See BddOperations.Compose: only the bound moves, every comparison against it is preserved.
+            if (deepestReplacedLevel >= level) {
+                deepestReplacedLevel += 1;
+            }
+            assert deepestReplacedLevel == mtbdd.bddImpl().deepestReplacedLevel(bddVariableMapping);
         }
 
         @Override
@@ -102,7 +132,7 @@ final class MtBddOperations {
                     mtbddFunction,
                     bddDomain,
                     bddVariableMapping,
-                    highestReplacedVariable,
+                    deepestReplacedLevel,
                     composeCache,
                     composeSimplifyCache);
             composeCache.growOnUsage();
@@ -151,7 +181,7 @@ final class MtBddOperations {
         }
     }
 
-    static final class Apply implements RegisteredOperation.Binary, RegisteredOperation.Ternary, NodeLifecycleObserver {
+    static final class Apply implements RegisteredOperation.Binary, RegisteredOperation.Ternary, NodeTableObserver {
         private final MtBddImpl mtbdd;
         private final MtBddBinaryOperator operator;
         private final MtBddCache.BinaryToIntCache applyCache;

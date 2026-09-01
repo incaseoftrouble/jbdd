@@ -222,6 +222,19 @@ final class MtBddCache {
         restrictCache.grow(ephemeralSize);
     }
 
+    /**
+     * See {@link BooleanCache#levelsSwapped}, which this mirrors, including why it drops everything rather
+     * than only what it must. The ones that would survive are {@code apply}, {@code map},
+     * {@code map_boolean}, {@code agreement}, {@code update} and {@code ite}, all of which stop at
+     * constants and never compare a level. The ones that could not are {@code compose}, {@code restrict}
+     * and {@code split} (an early return on a level comparison), {@code split_combine} (a level in its
+     * very key), {@code count} (ranges over the variables below the node) and the simplify family (picks
+     * a representative by level).
+     */
+    void levelsSwapped() {
+        invalidate();
+    }
+
     private Collection<MtbddCacheStorage> caches() {
         return caches.values();
     }
@@ -237,6 +250,8 @@ final class MtBddCache {
         if (invalidatedNodes == 0) {
             return;
         }
+        // See BooleanCache#onBddNodesInvalidated: a freed id is exactly when the mapping can lie.
+        composeArray = EMPTY_INT_ARRAY;
         // If we reclaimed a lot of nodes, we won't be able to save much, so don't try
         boolean preserve = bdd.configuration().useCachePreserve() && invalidatedNodes < bdd.tableSize() / 2;
         for (MtbddCacheStorage cache : caches()) {
@@ -286,15 +301,34 @@ final class MtBddCache {
         mapBooleanCache.invalidate();
     }
 
-    void initCompose(int[] replacements, int highestReplacement) {
-        if (composeArray.length - 1 == highestReplacement) {
-            int mismatch = Arrays.mismatch(composeArray, replacements);
-            if (mismatch == -1 || mismatch > highestReplacement) {
-                composeReuseCount += 1;
-                return;
-            }
+    /**
+     * Points the compose caches at {@code replacements}, keeping their contents only if that mapping is
+     * the one they were filled under.
+     *
+     * <p>Sameness is judged on the whole resolved mapping, not on a prefix of it. Truncating to what the
+     * recursion can reach would have to be by <em>index</em>, and the cut-off available here is a
+     * <em>level</em> - the same thing only while nothing has reordered. Once they part company a replaced
+     * variable can have a small level and a large index, so its entry falls outside the prefix: a differing
+     * mapping compares equal and the cache is reused for it, and the dependency check below never looks at
+     * that replacement, so the cache is not invalidated when it dies. Both give wrong answers rather than
+     * stale ones. One copy of an array at most as long as the variable count is the price of not having to
+     * reason about that; the cut-off stays a level, but only where it belongs, as the recursion's own bound.
+     *
+     * <p>Matching contents is still not enough on its own. The entries are function ids the caller supplies,
+     * and an ephemeral compose protects them only for the duration of one call, so between two calls a
+     * replacement can be collected and its slot handed to an unrelated function - the new mapping then
+     * compares equal while denoting something else, and validity cannot see it, a recycled id being a
+     * perfectly valid function. So {@link #onBooleanNodesInvalidated} forgets the mapping whenever an id
+     * came free, which is precisely when that can happen; the empty array is a sound sentinel because a
+     * mapping that replaces nothing never gets here.
+     */
+    void initCompose(int[] replacements) {
+        assert replacements.length > 0 : "A mapping replacing nothing must not reach the compose caches";
+        if (Arrays.equals(composeArray, replacements)) {
+            composeReuseCount += 1;
+            return;
         }
-        this.composeArray = Arrays.copyOf(replacements, highestReplacement + 1);
+        this.composeArray = replacements.clone();
         composeCache.invalidate();
         composeSimplifyCache.invalidate();
     }

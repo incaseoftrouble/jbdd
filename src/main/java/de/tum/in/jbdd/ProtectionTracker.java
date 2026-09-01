@@ -21,7 +21,7 @@ import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
 import java.util.IdentityHashMap;
 
-final class ProtectionTracker implements NodeLifecycleObserver {
+final class ProtectionTracker implements NodeTableObserver {
     private final ReferenceQueue<ProtectedOperation> queue = new ReferenceQueue<>();
     // Strongly anchors every tracked Protection so it can't be collected before it is drained
     // IdentityHashMap is required here (Protection has no equals/hashCode).

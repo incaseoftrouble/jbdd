@@ -16,12 +16,9 @@
  */
 package de.tum.in.jbdd;
 
-public interface Mdd extends BooleanTerminalDecisionDiagram<int[], int[]>, NodeBasedDecisionDiagram {
-    int declareVariable(int domain);
-
-    int makeVariableFunction(int variable, boolean[] values);
-
-    int follow(int function, int value);
-
-    int restrict(int function, int[] values);
-}
+/**
+ * A multi-valued decision diagram which can also be reordered. No implementation offers this yet -
+ * {@link MddImpl} implements {@link MultiValuedDecisionDiagram} alone - so this is the type a reordering
+ * MDD would take, not one to program against today.
+ */
+public interface Mdd extends MultiValuedDecisionDiagram, ReorderableDecisionDiagram {}

@@ -32,6 +32,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import java.util.function.IntBinaryOperator;
 import java.util.function.IntUnaryOperator;
 import java.util.logging.Level;
@@ -79,13 +81,16 @@ class MtBddTheories {
     private static final int valueRange = 2048;
     private static final int valueMod = 997;
 
-    private static final BddImpl bdd;
-    private static final MtBddImpl mt;
-    private static final Info<TestBddImpl> boolInfo;
-    private static final int initialNodeCount;
-    private static final int initialReferencedNodeCount;
+    /* Three variants, because the three fail differently: never reordered (level == variable throughout,
+     * the control), reordered with the bookkeeping rebuilt per reorder, and reordered with the bookkeeping
+     * kept across operations. The MTBDD shares its companion BDD's order, so reordering either moves the
+     * nodes of both. */
+    private static final List<Context> contexts;
+
+    private static final List<Context> reorderStressed;
+
+    // Variable indices, so the same for every context.
     private static final BitSet splitVariables;
-    private static final int[] rotationMapping;
     private static final BitSet restrictedVariables;
     private static final BitSet restrictedVariableValues;
 
@@ -93,6 +98,16 @@ class MtBddTheories {
     private static final Collection<IntBinaryDataPoint> intBinary;
     private static final Collection<IntTernaryDataPoint> intTernary;
     private static final Collection<IntConditionalDataPoint> intConditional;
+
+    /* Every so many theories, not at random: skipCheckRandom is a per-instance field and JUnit builds a
+     * fresh instance per test, so drawing from it gives the same answer every time. Checking the tables
+     * costs several times a round of swaps, hence only every REORDER_CHECK_EVERY rounds - see
+     * BddTheories#occasionallyReorder, which this mirrors. */
+    private static final int REORDER_EVERY = 200;
+    private static final int REORDER_SWAPS = 4;
+    private static final int REORDER_CHECK_EVERY = 5;
+    private static final AtomicInteger THEORIES_RUN = new AtomicInteger();
+    private static final Random reorderRandom = new Random(1L);
 
     private static final List<NamedBinaryOp> BINARY_OPS = List.of(
             new NamedBinaryOp("sum", (a, b) -> (a + b) % valueMod),
@@ -111,29 +126,15 @@ class MtBddTheories {
     private final Random skipCheckRandom = new Random(0L);
 
     static {
-        BddConfiguration config = ImmutableBddConfiguration.builder().build();
-        bdd = new BddImpl(config);
-        TestBddImpl testBdd = new TestBddImpl(bdd);
-        boolInfo = Generator.fill(
-                testBdd, 0, variableCount, boolTreeDepth, boolTreeWidth, boolUnaryCount, boolBinaryCount, 0);
-
-        mt = bdd.mtbdd();
-
-        List<IntPoolEntry> pool = buildIntPool(new Random(1), boolInfo);
-        Random sampleRandom = new Random(2);
-        intUnary = sampleUnary(pool, intUnaryCount, sampleRandom);
-        intBinary = sampleBinary(pool, intBinaryCount, sampleRandom);
-        intTernary = sampleTernary(pool, intTernaryCount, sampleRandom);
-        intConditional = sampleConditional(pool, boolInfo, intConditionalCount, sampleRandom);
+        contexts = List.of(
+                new Context("mtbdd", false),
+                new Context("mtbdd-reordered", false),
+                new Context("mtbdd-reordered-keeping", true));
+        reorderStressed = List.of(contexts.get(1), contexts.get(2));
 
         splitVariables = new BitSet(variableCount);
         for (int v = 0; v < variableCount; v += 2) {
             splitVariables.set(v);
-        }
-
-        rotationMapping = new int[variableCount];
-        for (int v = 0; v < variableCount; v++) {
-            rotationMapping[v] = bdd.variableFunction((v + 1) % variableCount);
         }
 
         restrictedVariables = new BitSet(variableCount);
@@ -143,33 +144,22 @@ class MtBddTheories {
             restrictedVariableValues.set(v, v % 4 == 0);
         }
 
-        initialNodeCount = mt.nodeCount();
-        initialReferencedNodeCount = mt.referencedNodeCount();
-
-        long nonConstant = Streams.concat(
-                        intUnary.stream().map(point -> point.function),
-                        intBinary.stream().flatMap(point -> Stream.of(point.left, point.right)),
-                        intTernary.stream().flatMap(point -> Stream.of(point.first, point.second, point.third)),
-                        intConditional.stream().flatMap(point -> Stream.of(point.then.function, point.els.function)))
-                .distinct()
-                .filter(p -> !mt.isConstant(p))
-                .count();
-
-        logger.log(
-                Level.INFO,
-                "Filled MtBdd: {0} nodes ({1} referenced, {6} non-constant), {2} unary, {3} binary, {4} ternary, {5} conditional",
-                new Object[] {
-                    initialNodeCount,
-                    initialReferencedNodeCount,
-                    intUnary.size(),
-                    intBinary.size(),
-                    intTernary.size(),
-                    intConditional.size(),
-                    nonConstant,
-                });
+        intUnary = flatten(context -> context.intUnary);
+        intBinary = flatten(context -> context.intBinary);
+        intTernary = flatten(context -> context.intTernary);
+        intConditional = flatten(context -> context.intConditional);
     }
 
-    private static List<IntPoolEntry> buildIntPool(Random random, Info<TestBddImpl> boolInfo) {
+    private static <T> Collection<T> flatten(Function<Context, Collection<T>> select) {
+        List<T> all = new ArrayList<>();
+        for (Context context : contexts) {
+            all.addAll(select.apply(context));
+        }
+        return all;
+    }
+
+    private static List<IntPoolEntry> buildIntPool(Context context, Random random, Info<TestBddImpl> boolInfo) {
+        MtBddImpl mt = context.mt;
         List<IntPoolEntry> pool = new ArrayList<>();
 
         for (int i = 0; i < intSeedConstants; i++) {
@@ -230,14 +220,15 @@ class MtBddTheories {
         return pool;
     }
 
-    private static Collection<IntUnaryDataPoint> sampleUnary(List<IntPoolEntry> pool, int count, Random random) {
+    private static Collection<IntUnaryDataPoint> sampleUnary(
+            Context context, List<IntPoolEntry> pool, int count, Random random) {
         Set<Integer> used = new LinkedHashSet<>();
         List<IntUnaryDataPoint> result = new ArrayList<>();
         int failed = 0;
         while (result.size() < count && failed < MAX_FAILED_SAMPLES) {
             int index = random.nextInt(pool.size());
             if (used.add(index)) {
-                result.add(new IntUnaryDataPoint(pool.get(index)));
+                result.add(new IntUnaryDataPoint(context, pool.get(index)));
                 failed = 0;
             } else {
                 failed++;
@@ -246,7 +237,8 @@ class MtBddTheories {
         return result;
     }
 
-    private static Collection<IntBinaryDataPoint> sampleBinary(List<IntPoolEntry> pool, int count, Random random) {
+    private static Collection<IntBinaryDataPoint> sampleBinary(
+            Context context, List<IntPoolEntry> pool, int count, Random random) {
         Set<Long> used = new LinkedHashSet<>();
         List<IntBinaryDataPoint> result = new ArrayList<>();
         int failed = 0;
@@ -254,7 +246,7 @@ class MtBddTheories {
             int i = random.nextInt(pool.size());
             int j = random.nextInt(pool.size());
             if (used.add(((long) i << 32) | (j & 0xFFFFFFFFL))) {
-                result.add(new IntBinaryDataPoint(pool.get(i), pool.get(j)));
+                result.add(new IntBinaryDataPoint(context, pool.get(i), pool.get(j)));
                 failed = 0;
             } else {
                 failed++;
@@ -263,10 +255,12 @@ class MtBddTheories {
         return result;
     }
 
-    private static Collection<IntTernaryDataPoint> sampleTernary(List<IntPoolEntry> pool, int count, Random random) {
+    private static Collection<IntTernaryDataPoint> sampleTernary(
+            Context context, List<IntPoolEntry> pool, int count, Random random) {
         List<IntTernaryDataPoint> result = new ArrayList<>();
         for (int i = 0; i < count; i++) {
             result.add(new IntTernaryDataPoint(
+                    context,
                     pool.get(random.nextInt(pool.size())),
                     pool.get(random.nextInt(pool.size())),
                     pool.get(random.nextInt(pool.size()))));
@@ -275,11 +269,12 @@ class MtBddTheories {
     }
 
     private static Collection<IntConditionalDataPoint> sampleConditional(
-            List<IntPoolEntry> pool, Info<TestBddImpl> boolInfo, int count, Random random) {
+            Context context, List<IntPoolEntry> pool, Info<TestBddImpl> boolInfo, int count, Random random) {
         List<UnaryDataPoint<TestBddImpl>> conditions = new ArrayList<>(boolInfo.unaryDataPoints);
         List<IntConditionalDataPoint> result = new ArrayList<>();
         for (int i = 0; i < count; i++) {
             result.add(new IntConditionalDataPoint(
+                    context,
                     conditions.get(random.nextInt(conditions.size())),
                     pool.get(random.nextInt(pool.size())),
                     pool.get(random.nextInt(pool.size()))));
@@ -319,31 +314,75 @@ class MtBddTheories {
 
     @AfterAll
     static void check() {
-        assertThat(mt.check(), is(true));
+        checkAll();
+        // See BddTheories#check: a stress that silently became a no-op is worse than no stress.
+        for (Context context : reorderStressed) {
+            assertThat(context.name + " never left the identity order", isReordered(context.mt), is(true));
+        }
+    }
+
+    private static boolean isReordered(MtBddImpl mt) {
+        for (int variable = 0; variable < mt.numberOfVariables(); variable++) {
+            if (mt.level(variable) != variable) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void checkAll() {
+        for (Context context : contexts) {
+            assertThat(context.name, context.mt.check(), is(true));
+        }
     }
 
     @AfterAll
     static void statistics() {
-        logger.log(Level.INFO, DecisionDiagram.formatStatistics(mt.statistics()));
+        for (Context context : contexts) {
+            logger.log(Level.INFO, DecisionDiagram.formatStatistics(context.mt.statistics()));
+        }
     }
 
     @AfterEach
     void clearCaches() {
         if (skipCheckRandom.nextInt(100) == 0) {
-            mt.invalidateCache();
+            for (Context context : contexts) {
+                context.mt.invalidateCache();
+            }
+        }
+    }
+
+    /* Stresses the variable order against everything the theories hold: a swap rewrites nodes in place, so
+     * every data point's function id has to keep denoting the same function afterwards - which the next
+     * theory, and the table check, then verify. What matters is *having* a non-identity order, which is
+     * what catches level/variable confusions; a handful of swaps gives that far more cheaply than a full
+     * reorder(). reorder() itself is covered by ReorderTest. */
+    @AfterEach
+    void occasionallyReorder() {
+        if (THEORIES_RUN.incrementAndGet() % REORDER_EVERY != 0) {
+            return;
+        }
+        for (Context context : reorderStressed) {
+            for (int i = 0; i < REORDER_SWAPS; i++) {
+                context.ddContext.siftDown(reorderRandom.nextInt(variableCount - 1));
+            }
+        }
+        if (THEORIES_RUN.get() / REORDER_EVERY % REORDER_CHECK_EVERY == 0) {
+            checkAll();
         }
     }
 
     @AfterEach
     void checkInvariants() {
         if (skipCheckRandom.nextInt(SKIP_CHECK_RANDOM_BOUND) == 0) {
-            assertThat(mt.check(), is(true));
+            checkAll();
         }
     }
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testOfWithEqualChildrenCollapses(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         int function = mt.of(0, dataPoint.function, dataPoint.function);
         assertThat(function, is(dataPoint.function));
     }
@@ -351,6 +390,7 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intBinary")
     void testBinaryApplyEvaluateAgreement(IntBinaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         assumeTrue(mt.isValidFunction(dataPoint.left) && mt.isValidFunction(dataPoint.right));
         BitSet relevant =
                 BitSets.union(dataPoint.leftTree.containedVariables(), dataPoint.rightTree.containedVariables());
@@ -368,6 +408,7 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intTernary")
     void testNaryApplyEvaluateAgreement(IntTernaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         int[] functions = {dataPoint.first, dataPoint.second, dataPoint.third};
         int applied =
                 mt.reference(mt.apply(functions, values -> (values[0] + values[1] * 2 + values[2] * 3) % valueMod));
@@ -387,6 +428,7 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testMapEvaluateAgreement(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         BitSet relevant = dataPoint.tree.containedVariables();
         for (NamedUnaryOp namedOp : UNARY_OPS) {
             int mapped = mt.reference(mt.map(dataPoint.function, namedOp.op));
@@ -402,6 +444,7 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testApplyOneArgumentMatchesMap(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         // Unary apply is just map
 
         IntUnaryOperator op = a -> (a * 3 + 1) % valueMod;
@@ -414,6 +457,7 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intBinary")
     void testNaryApplyTwoArgumentsMatchesBinaryApply(IntBinaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         // 2-ary apply is just normal apply (this is probably trivial as the implementation delegates, but it tests the
         // delegation is correct)
 
@@ -430,6 +474,7 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intBinary")
     void testBinaryApplyAlgebraicVariantsAgree(IntBinaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         // applyCommutative/applyMonoid/applyAbsorbing are all just opt-in shortcuts on top of plain apply -
         // for a genuine commutative monoid (with or without an absorbing element), every variant must
         // produce the exact same canonical function as plain apply.
@@ -455,6 +500,7 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testBinaryApplyNeutralShortcutIsExact(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         // The neutral shortcut must return the OTHER operand unchanged (same raw function, not just an
         // equivalent one) even when that operand is a large, non-constant subtree - not just when both
         // sides happen to already be constants.
@@ -471,6 +517,7 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testBinaryApplyAbsorbingShortcutIsExact(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         // The absorbing shortcut must return the absorbing constant itself immediately, regardless of the
         // other (possibly large, non-constant) operand's structure or position.
         for (NamedMonoidOp namedOp : MONOID_OPS) {
@@ -491,6 +538,7 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intTernary")
     void testNaryApplyAlgebraicVariantsAgree(IntTernaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         int[] functions = {dataPoint.first, dataPoint.second, dataPoint.third};
         for (NamedMonoidOp namedOp : MONOID_OPS) {
             int plain = mt.reference(mt.apply(functions, namedOp::applyNary));
@@ -511,6 +559,7 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testNaryApplyNeutralShortcutIsExact(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         // All-but-one operands constant-equal to neutral must collapse to the one survivor, unchanged, even
         // when the survivor is a large non-constant subtree.
         for (NamedMonoidOp namedOp : MONOID_OPS) {
@@ -533,6 +582,7 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intBinary")
     void testNaryApplyAbsorbingShortcutIsExact(IntBinaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         // The absorbing shortcut must fire regardless of which position holds the absorbing constant, and
         // regardless of the other (possibly large, non-constant) operands.
         for (NamedMonoidOp namedOp : MONOID_OPS) {
@@ -554,6 +604,7 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testApplyDoesNotAssumeIdempotence(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         int applied = mt.reference(mt.apply(dataPoint.function, dataPoint.function, (a, b) -> (a + b) % valueMod));
         for (boolean[] assignment : assignmentsOver(dataPoint.tree.containedVariables())) {
             int value = dataPoint.tree.evaluate(assignment);
@@ -565,6 +616,7 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testNaryApplyIsPositionSensitive(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         int applied = mt.reference(
                 mt.apply(new int[] {dataPoint.function, dataPoint.function}, values -> values[0] * 31 + values[1] + 1));
         for (boolean[] assignment : assignmentsOver(dataPoint.tree.containedVariables())) {
@@ -577,6 +629,8 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intBinary")
     void testAgreementMatchesEvaluateEquality(IntBinaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
         int agreement = bdd.reference(mt.agreement(dataPoint.left, dataPoint.right));
         BitSet relevant =
                 BitSets.union(dataPoint.leftTree.containedVariables(), dataPoint.rightTree.containedVariables());
@@ -590,12 +644,16 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testAgreementReflexive(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
         assertThat(mt.agreement(dataPoint.function, dataPoint.function), is(bdd.trueFunction()));
     }
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("intBinary")
     void testAgreementSymmetric(IntBinaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
         int forward = bdd.reference(mt.agreement(dataPoint.left, dataPoint.right));
         int backward = mt.agreement(dataPoint.right, dataPoint.left);
         assertThat(forward, is(backward));
@@ -605,6 +663,8 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testMapBooleanMatchesPredicateThreshold(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
         var values = mt.valuesOf(dataPoint.function);
         int threshold = values.stream().skip(values.size() / 2).findFirst().orElse(25);
         int mapped = bdd.reference(mt.mapBoolean(dataPoint.function, v -> v < threshold));
@@ -617,6 +677,8 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testMapBooleanMatchesPredicateMod(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
         int mapped = bdd.reference(mt.mapBoolean(dataPoint.function, v -> v % 2 == 0));
         for (boolean[] assignment : assignmentsOver(dataPoint.tree.containedVariables())) {
             assertThat(bdd.evaluate(mapped, assignment), is(dataPoint.tree.evaluate(assignment) % 2 == 0));
@@ -627,6 +689,8 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testMapBooleanConstantPredicates(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
         assertThat(mt.mapBoolean(dataPoint.function, v -> true), is(bdd.trueFunction()));
         assertThat(mt.mapBoolean(dataPoint.function, v -> false), is(bdd.falseFunction()));
     }
@@ -634,6 +698,8 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intBinary")
     void testAgreementMapBooleanCrossCheck(IntBinaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
         int viaAgreement = bdd.reference(mt.agreement(dataPoint.left, dataPoint.right));
         int equalityValued = mt.reference(mt.apply(dataPoint.left, dataPoint.right, (a, b) -> a == b ? 1 : 0));
         int viaMapBoolean = bdd.reference(mt.mapBoolean(equalityValued, v -> v == 1));
@@ -646,14 +712,17 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testInvertSupportMatchesValuesOf(IntUnaryDataPoint dataPoint) {
-        MtBdd.Inverse inverse = mt.invert(dataPoint.function);
+        MtBddImpl mt = dataPoint.context.mt;
+        MultiTerminalDecisionDiagram.Inverse inverse = mt.invert(dataPoint.function);
         assertThat(inverse.codomain(), is(mt.valuesOf(dataPoint.function)));
     }
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testInvertFunctionForMatchesEvaluate(IntUnaryDataPoint dataPoint) {
-        MtBdd.Inverse inverse = mt.invert(dataPoint.function);
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
+        MultiTerminalDecisionDiagram.Inverse inverse = mt.invert(dataPoint.function);
         BitSet values = mt.valuesOf(dataPoint.function);
         for (int value = values.nextSetBit(0); value >= 0; value = values.nextSetBit(value + 1)) {
             int bddFunction = bdd.reference(inverse.functionFor(value));
@@ -667,7 +736,9 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testInvertMatchesMapBoolean(IntUnaryDataPoint dataPoint) {
-        MtBdd.Inverse inverse = mt.invert(dataPoint.function);
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
+        MultiTerminalDecisionDiagram.Inverse inverse = mt.invert(dataPoint.function);
         BitSet values = mt.valuesOf(dataPoint.function);
         for (int value = values.nextSetBit(0); value >= 0; value = values.nextSetBit(value + 1)) {
             int fixedValue = value;
@@ -681,7 +752,9 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testInvertOutsideSupportIsFalse(IntUnaryDataPoint dataPoint) {
-        MtBdd.Inverse inverse = mt.invert(dataPoint.function);
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
+        MultiTerminalDecisionDiagram.Inverse inverse = mt.invert(dataPoint.function);
         BitSet values = mt.valuesOf(dataPoint.function);
         int outside = values.isEmpty() ? 0 : values.length();
         assertThat(values.get(outside), is(false));
@@ -691,6 +764,7 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intConditional")
     void testIfThenElseMatchesEvaluate(IntConditionalDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         int result = mt.reference(
                 mt.ifThenElse(dataPoint.condition.function, dataPoint.then.function, dataPoint.els.function));
         BitSet relevant = BitSets.of(dataPoint.condition.tree.containedVariables());
@@ -708,6 +782,8 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intConditional")
     void testIfThenElseTrueFalseCorollaries(IntConditionalDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
         assertThat(
                 mt.ifThenElse(bdd.trueFunction(), dataPoint.then.function, dataPoint.els.function),
                 is(dataPoint.then.function));
@@ -719,6 +795,7 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intConditional")
     void testUpdateMatchesEvaluate(IntConditionalDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         int value = 17;
         int result = mt.reference(mt.update(dataPoint.then.function, dataPoint.condition.function, value));
         BitSet relevant = BitSets.of(dataPoint.condition.tree.containedVariables());
@@ -734,6 +811,8 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testUpdateCorollaries(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
         int value = 23;
         assertThat(mt.update(dataPoint.function, bdd.falseFunction(), value), is(dataPoint.function));
         int updatedEverywhere = mt.reference(mt.update(dataPoint.function, bdd.trueFunction(), value));
@@ -745,6 +824,8 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testComposeMatchesEvaluate(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        int[] rotationMapping = dataPoint.context.rotationMapping;
         int composed = mt.reference(mt.compose(dataPoint.function, rotationMapping));
         BitSet relevant = new BitSet(variableCount);
         dataPoint.tree.containedVariables().stream().forEach(v -> relevant.set((v + 1) % variableCount));
@@ -765,6 +846,7 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testComposeAllPlaceholderIsIdentity(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         int[] placeholders = new int[variableCount];
         Arrays.fill(placeholders, mt.placeholder());
         assertThat(mt.compose(dataPoint.function, placeholders), is(dataPoint.function));
@@ -773,6 +855,8 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testRestrictMatchesCompose(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
         int viaRestrict = mt.reference(mt.restrict(dataPoint.function, restrictedVariables, restrictedVariableValues));
         int[] mapping = new int[variableCount];
         for (int v = 0; v < variableCount; v++) {
@@ -790,6 +874,7 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intConditional")
     void testSimplifyAgreesWhereDomainHolds(IntConditionalDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         int simplified = mt.reference(mt.simplify(dataPoint.then.function, dataPoint.condition.function));
         BitSet relevant = BitSets.of(dataPoint.condition.tree.containedVariables());
         relevant.or(dataPoint.then.tree.containedVariables());
@@ -804,12 +889,16 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testSimplifyWithTrueDomainIsIdentity(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
         assertThat(mt.simplify(dataPoint.function, bdd.trueFunction()), is(dataPoint.function));
     }
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("intConditional")
     void testConstrainAgreesWhereDomainHolds(IntConditionalDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
         assumeTrue(dataPoint.condition.function != bdd.falseFunction());
 
         int constrained = mt.reference(mt.constrain(dataPoint.then.function, dataPoint.condition.function));
@@ -826,13 +915,16 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testConstrainWithTrueDomainIsIdentity(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
         assertThat(mt.constrain(dataPoint.function, bdd.trueFunction()), is(dataPoint.function));
     }
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testSplitRecombination(IntUnaryDataPoint dataPoint) {
-        MtBdd.FunctionToFunctionMap split = mt.split(dataPoint.function, splitVariables);
+        MtBddImpl mt = dataPoint.context.mt;
+        MultiTerminalDecisionDiagram.FunctionToFunctionMap split = mt.split(dataPoint.function, splitVariables);
         BitSet relevant = BitSets.union(dataPoint.tree.containedVariables(), splitVariables);
         for (boolean[] assignment : assignmentsOver(relevant)) {
             int index = mt.evaluate(split.function(), assignment);
@@ -844,7 +936,8 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testSplitMetaFunctionSupportSubset(IntUnaryDataPoint dataPoint) {
-        MtBdd.FunctionToFunctionMap split = mt.split(dataPoint.function, splitVariables);
+        MtBddImpl mt = dataPoint.context.mt;
+        MultiTerminalDecisionDiagram.FunctionToFunctionMap split = mt.split(dataPoint.function, splitVariables);
         BitSet metaSupport = mt.support(split.function());
         assertThat(BitSets.isSubset(metaSupport, splitVariables), is(true));
     }
@@ -852,7 +945,8 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testSplitResidualDisjointFromSplitVariables(IntUnaryDataPoint dataPoint) {
-        MtBdd.FunctionToFunctionMap split = mt.split(dataPoint.function, splitVariables);
+        MtBddImpl mt = dataPoint.context.mt;
+        MultiTerminalDecisionDiagram.FunctionToFunctionMap split = mt.split(dataPoint.function, splitVariables);
         int index = mt.evaluate(split.function(), new boolean[variableCount]);
         int residual = split.functionFor(index);
         BitSet residualSupport = mt.support(residual);
@@ -862,8 +956,9 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intTernary")
     void testCartesianProductRecombination(IntTernaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         int[] functions = {dataPoint.first, dataPoint.second, dataPoint.third};
-        MtBdd.FunctionToFunctionsMap product = mt.cartesianProduct(functions);
+        MultiTerminalDecisionDiagram.FunctionToFunctionsMap product = mt.cartesianProduct(functions);
         BitSet relevant = BitSets.union(
                 dataPoint.firstTree.containedVariables(),
                 dataPoint.secondTree.containedVariables(),
@@ -880,8 +975,9 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intTernary")
     void testCartesianProductQuotientUniqueness(IntTernaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         int[] functions = {dataPoint.first, dataPoint.second, dataPoint.third};
-        MtBdd.FunctionToFunctionsMap product = mt.cartesianProduct(functions);
+        MultiTerminalDecisionDiagram.FunctionToFunctionsMap product = mt.cartesianProduct(functions);
         BitSet relevant = BitSets.union(
                 dataPoint.firstTree.containedVariables(),
                 dataPoint.secondTree.containedVariables(),
@@ -911,6 +1007,7 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testReferenceDereferenceBalance(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         int before = mt.nodeReferenceCount(dataPoint.function);
         mt.reference(dataPoint.function);
         assertThat(
@@ -923,6 +1020,7 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intBinary")
     void testConsume(IntBinaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         int left = mt.reference(dataPoint.left);
         int right = mt.reference(dataPoint.right);
         int result = mt.apply(left, right, (a, b) -> (a + b) % valueMod);
@@ -935,6 +1033,7 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testUpdateWith(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         int fun = mt.reference(dataPoint.function);
         fun = mt.updateWith(mt.map(fun, a -> (a + 1) % valueMod), fun);
         for (boolean[] assignment : assignmentsOver(dataPoint.tree.containedVariables())) {
@@ -946,6 +1045,7 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intBinary")
     void testApplyToConstant(IntBinaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         int applied = mt.reference(mt.apply(dataPoint.left, dataPoint.right, (a, b) -> 0));
         assertThat(mt.isConstant(applied), is(true));
         assertThat(mt.support(applied).isEmpty(), is(true));
@@ -955,13 +1055,93 @@ class MtBddTheories {
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testSupportSubsetOfContainedVariables(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         assertThat(BitSets.isSubset(mt.support(dataPoint.function), dataPoint.tree.containedVariables()), is(true));
     }
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testPlaceholderDistinctFromAnyRealFunction(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
         assertThat(dataPoint.function, not(is(mt.placeholder())));
+    }
+
+    /** One fully built diagram plus the data points sampled from it. */
+    static final class Context {
+        final String name;
+        /* The order is the context's, so the stress drives it there - one context, one order, both
+         * diagrams moving together. */
+        final BddContextImpl ddContext;
+        final BddImpl bdd;
+        final MtBddImpl mt;
+        final int[] rotationMapping;
+
+        final Collection<IntUnaryDataPoint> intUnary;
+        final Collection<IntBinaryDataPoint> intBinary;
+        final Collection<IntTernaryDataPoint> intTernary;
+        final Collection<IntConditionalDataPoint> intConditional;
+
+        Context(String name, boolean keepReorderingStructures) {
+            this.name = name;
+            BddConfiguration config = ImmutableBddConfiguration.builder()
+                    .name(name)
+                    .keepReorderingStructures(keepReorderingStructures)
+                    .build();
+            ddContext = new BddContextImpl(config);
+            bdd = ddContext.bdd();
+            // Same seeds for every context, so the three hold structurally identical diagrams and a
+            // divergence between them is the order and nothing else.
+            Info<TestBddImpl> boolInfo = Generator.fill(
+                    new TestBddImpl(bdd),
+                    0,
+                    variableCount,
+                    boolTreeDepth,
+                    boolTreeWidth,
+                    boolUnaryCount,
+                    boolBinaryCount,
+                    0);
+            mt = ddContext.mtBdd();
+
+            List<IntPoolEntry> pool = buildIntPool(this, new Random(1), boolInfo);
+            Random sampleRandom = new Random(2);
+            intUnary = sampleUnary(this, pool, intUnaryCount, sampleRandom);
+            intBinary = sampleBinary(this, pool, intBinaryCount, sampleRandom);
+            intTernary = sampleTernary(this, pool, intTernaryCount, sampleRandom);
+            intConditional = sampleConditional(this, pool, boolInfo, intConditionalCount, sampleRandom);
+
+            rotationMapping = new int[variableCount];
+            for (int v = 0; v < variableCount; v++) {
+                rotationMapping[v] = bdd.variableFunction((v + 1) % variableCount);
+            }
+
+            long nonConstant = Streams.concat(
+                            intUnary.stream().map(point -> point.function),
+                            intBinary.stream().flatMap(point -> Stream.of(point.left, point.right)),
+                            intTernary.stream().flatMap(point -> Stream.of(point.first, point.second, point.third)),
+                            intConditional.stream()
+                                    .flatMap(point -> Stream.of(point.then.function, point.els.function)))
+                    .distinct()
+                    .filter(p -> !mt.isConstant(p))
+                    .count();
+            logger.log(
+                    Level.INFO,
+                    "Filled MtBdd {0}: {1} nodes ({2} referenced, {7} non-constant), {3} unary, {4} binary, {5} ternary, {6} conditional",
+                    new Object[] {
+                        name,
+                        mt.nodeCount(),
+                        mt.referencedNodeCount(),
+                        intUnary.size(),
+                        intBinary.size(),
+                        intTernary.size(),
+                        intConditional.size(),
+                        nonConstant,
+                    });
+        }
+
+        @Override
+        public String toString() {
+            return name;
+        }
     }
 
     static final class IntPoolEntry {
@@ -975,27 +1155,31 @@ class MtBddTheories {
     }
 
     static final class IntUnaryDataPoint {
+        final Context context;
         final int function;
         final IntSyntaxTree tree;
 
-        IntUnaryDataPoint(IntPoolEntry entry) {
+        IntUnaryDataPoint(Context context, IntPoolEntry entry) {
+            this.context = context;
             this.function = entry.function;
             this.tree = entry.tree;
         }
 
         @Override
         public String toString() {
-            return tree.toString();
+            return context + ": " + tree;
         }
     }
 
     static final class IntBinaryDataPoint {
+        final Context context;
         final int left;
         final IntSyntaxTree leftTree;
         final int right;
         final IntSyntaxTree rightTree;
 
-        IntBinaryDataPoint(IntPoolEntry left, IntPoolEntry right) {
+        IntBinaryDataPoint(Context context, IntPoolEntry left, IntPoolEntry right) {
+            this.context = context;
             this.left = left.function;
             this.leftTree = left.tree;
             this.right = right.function;
@@ -1004,11 +1188,12 @@ class MtBddTheories {
 
         @Override
         public String toString() {
-            return String.format("%s ### %s", leftTree, rightTree);
+            return String.format("%s: %s ### %s", context, leftTree, rightTree);
         }
     }
 
     static final class IntTernaryDataPoint {
+        final Context context;
         final int first;
         final IntSyntaxTree firstTree;
         final int second;
@@ -1016,7 +1201,8 @@ class MtBddTheories {
         final int third;
         final IntSyntaxTree thirdTree;
 
-        IntTernaryDataPoint(IntPoolEntry first, IntPoolEntry second, IntPoolEntry third) {
+        IntTernaryDataPoint(Context context, IntPoolEntry first, IntPoolEntry second, IntPoolEntry third) {
+            this.context = context;
             this.first = first.function;
             this.firstTree = first.tree;
             this.second = second.function;
@@ -1027,16 +1213,19 @@ class MtBddTheories {
 
         @Override
         public String toString() {
-            return String.format("%s ### %s ### %s", firstTree, secondTree, thirdTree);
+            return String.format("%s: %s ### %s ### %s", context, firstTree, secondTree, thirdTree);
         }
     }
 
     static final class IntConditionalDataPoint {
+        final Context context;
         final UnaryDataPoint<TestBddImpl> condition;
         final IntPoolEntry then;
         final IntPoolEntry els;
 
-        IntConditionalDataPoint(UnaryDataPoint<TestBddImpl> condition, IntPoolEntry then, IntPoolEntry els) {
+        IntConditionalDataPoint(
+                Context context, UnaryDataPoint<TestBddImpl> condition, IntPoolEntry then, IntPoolEntry els) {
+            this.context = context;
             this.condition = condition;
             this.then = then;
             this.els = els;
@@ -1044,7 +1233,7 @@ class MtBddTheories {
 
         @Override
         public String toString() {
-            return String.format("if %s then %s else %s", condition.tree, then.tree, els.tree);
+            return String.format("%s: if %s then %s else %s", context, condition.tree, then.tree, els.tree);
         }
     }
 

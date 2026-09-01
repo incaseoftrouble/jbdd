@@ -24,10 +24,10 @@ final class BddOperations {
     private BddOperations() {}
 
     static final class Compose extends ProtectedOperation
-            implements RegisteredOperation.Unary, RegisteredOperation.Binary, NodeLifecycleObserver {
+            implements RegisteredOperation.Unary, RegisteredOperation.Binary, NodeTableObserver {
         private final BddImpl bdd;
         private final int[] variableMapping;
-        private final int highestReplacedVariable;
+        private int deepestReplacedLevel;
         private final BooleanCache.UnaryToIntCache composeCache;
 
         /**
@@ -42,14 +42,14 @@ final class BddOperations {
         Compose(
                 BddImpl bdd,
                 int[] resolvedMapping,
-                int highestReplacedVariable,
+                int deepestReplacedLevel,
                 int[] protectedNodes,
                 boolean withSimplify) {
             super(bdd.protectionTracker(), () -> bdd.dereference(protectedNodes));
             assert Arrays.stream(protectedNodes).allMatch(bdd::nodeIsReferenced);
             this.bdd = bdd;
             this.variableMapping = resolvedMapping;
-            this.highestReplacedVariable = highestReplacedVariable;
+            this.deepestReplacedLevel = deepestReplacedLevel;
             this.composeCache = new BooleanCache.UnaryToIntCache(bdd);
             this.composeSimplifyCache = withSimplify ? new BooleanCache.BinaryToIntCache(bdd) : null;
             bdd.registerObserver(this);
@@ -64,6 +64,44 @@ final class BddOperations {
             if (composeSimplifyCache != null) {
                 composeSimplifyCache.grow(floor);
             }
+        }
+
+        private boolean isReplaced(int variable) {
+            return variable < variableMapping.length && variableMapping[variable] != bdd.variableFunction(variable);
+        }
+
+        @Override
+        public void levelsSwapped(DecisionDiagram origin, int level) {
+            /* The cut-off this holds is a level, so it may name something else now; and its caches were
+             * filled with results which used the old one. The mapping itself is by variable, so it stands.
+             *
+             * Only the two swapped variables changed level, and they exchanged exactly these two, so the
+             * deepest replaced level moves only when one of them is replaced and the other is not - and
+             * then only if the bound was sitting on the level that one just left. Everything else replaced
+             * is at some level outside {level, level + 1} and did not move. */
+            boolean upperReplaced = isReplaced(bdd.variableAtLevel(level));
+            boolean lowerReplaced = isReplaced(bdd.variableAtLevel(level + 1));
+            if (upperReplaced && !lowerReplaced && deepestReplacedLevel == level + 1) {
+                deepestReplacedLevel = level;
+            } else if (lowerReplaced && !upperReplaced && deepestReplacedLevel == level) {
+                deepestReplacedLevel = level + 1;
+            }
+            assert deepestReplacedLevel == bdd.deepestReplacedLevel(variableMapping);
+
+            composeCache.invalidate();
+            if (composeSimplifyCache != null) {
+                composeSimplifyCache.invalidate();
+            }
+        }
+
+        @Override
+        public void variableInserted(DecisionDiagram origin, int level) {
+            /* Everything at or below the insertion point moved down by one, this bound included; every
+             * comparison against it therefore answers exactly as it did, so the caches stand. */
+            if (deepestReplacedLevel >= level) {
+                deepestReplacedLevel += 1;
+            }
+            assert deepestReplacedLevel == bdd.deepestReplacedLevel(variableMapping);
         }
 
         @Override
@@ -85,7 +123,7 @@ final class BddOperations {
             assert domain == bdd.trueFunction() || composeSimplifyCache != null
                     : "A domain-carrying compose must be registered through registerComposeSimplify";
             int result = bdd.composeGeneral(
-                    function, domain, variableMapping, highestReplacedVariable, composeCache, composeSimplifyCache);
+                    function, domain, variableMapping, deepestReplacedLevel, composeCache, composeSimplifyCache);
             composeCache.growOnUsage();
             if (composeSimplifyCache != null) {
                 composeSimplifyCache.growOnUsage();

@@ -16,14 +16,13 @@
  */
 package de.tum.in.jbdd;
 
-import com.google.common.collect.Iterators;
 import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.BitSet;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.IntConsumer;
 import java.util.function.Predicate;
 
@@ -34,6 +33,12 @@ class MddAsTestBdd implements TestBdd {
 
     MddAsTestBdd(MddImpl mdd) {
         this.mdd = mdd;
+    }
+
+    @Override
+    public String toString() {
+        String name = mdd.configuration().name();
+        return name.isEmpty() ? "mdd" : name;
     }
 
     @Override
@@ -213,10 +218,30 @@ class MddAsTestBdd implements TestBdd {
         return mdd.countSatisfyingAssignmentsIn(function, domain);
     }
 
+    /** Presents a cursor's elements as something else, without copying or stepping anything itself. */
+    private static <F, T> Cursor<T> map(Cursor<F> cursor, Function<? super F, ? extends T> function) {
+        return new Cursor<T>() {
+            @Override
+            public boolean valid() {
+                return cursor.valid();
+            }
+
+            @Override
+            public T current() {
+                return function.apply(cursor.current());
+            }
+
+            @Override
+            public boolean advance() {
+                return cursor.advance();
+            }
+        };
+    }
+
     @Override
-    public Iterator<BitSet> solutionIterator(int function) {
+    public Cursor<BitSet> solutionCursor(int function) {
         BitSet set = new BitSet(mdd.numberOfVariables());
-        return Iterators.transform(mdd.solutionIterator(function), a -> {
+        return map(mdd.solutionCursor(function), a -> {
             //noinspection DataFlowIssue
             for (int i = 0; i < a.length; i++) {
                 assert a[i] == TRUE || a[i] == FALSE;
@@ -227,9 +252,9 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public Iterator<BitSet> solutionIterator(int function, BitSet support) {
+    public Cursor<BitSet> solutionCursor(int function, BitSet support) {
         BitSet set = new BitSet(mdd.numberOfVariables());
-        return Iterators.transform(mdd.solutionIterator(function, support), a -> {
+        return map(mdd.solutionCursor(function, support), a -> {
             //noinspection DataFlowIssue
             for (int i = 0; i < a.length; i++) {
                 assert a[i] == TRUE || a[i] == FALSE;
@@ -240,9 +265,9 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public Iterator<BitSet> solutionIteratorIn(int function, int domain) {
+    public Cursor<BitSet> solutionCursorIn(int function, int domain) {
         BitSet set = new BitSet(mdd.numberOfVariables());
-        return Iterators.transform(mdd.solutionIteratorIn(function, domain), a -> {
+        return map(mdd.solutionCursorIn(function, domain), a -> {
             for (int i = 0; i < a.length; i++) {
                 assert a[i] == TRUE || a[i] == FALSE;
                 set.set(i, a[i] == TRUE);
@@ -252,9 +277,9 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public Iterator<BitSet> solutionIteratorIn(int function, int domain, BitSet support) {
+    public Cursor<BitSet> solutionCursorIn(int function, int domain, BitSet support) {
         BitSet set = new BitSet(mdd.numberOfVariables());
-        return Iterators.transform(mdd.solutionIteratorIn(function, domain, support), a -> {
+        return map(mdd.solutionCursorIn(function, domain, support), a -> {
             for (int i = 0; i < a.length; i++) {
                 assert a[i] == TRUE || a[i] == FALSE;
                 set.set(i, a[i] == TRUE);
@@ -264,10 +289,30 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public Iterator<BinaryPath> pathIterator(int function) {
+    public void forEachSolutionIn(int function, int domain, Consumer<? super BitSet> action) {
+        BitSet set = new BitSet(mdd.numberOfVariables());
+        mdd.forEachSolutionIn(function, domain, a -> action.accept(toSolution(a, set)));
+    }
+
+    @Override
+    public void forEachSolutionIn(int function, int domain, BitSet support, Consumer<? super BitSet> action) {
+        BitSet set = new BitSet(mdd.numberOfVariables());
+        mdd.forEachSolutionIn(function, domain, support, a -> action.accept(toSolution(a, set)));
+    }
+
+    private static BitSet toSolution(int[] assignment, BitSet set) {
+        for (int i = 0; i < assignment.length; i++) {
+            assert assignment[i] == TRUE || assignment[i] == FALSE;
+            set.set(i, assignment[i] == TRUE);
+        }
+        return set;
+    }
+
+    @Override
+    public Cursor<BinaryPath> pathCursor(int function) {
         BitSet assignment = new BitSet(mdd.numberOfVariables());
         BitSet support = new BitSet(mdd.numberOfVariables());
-        return Iterators.transform(mdd.pathIterator(function), a -> {
+        return map(mdd.pathCursor(function), a -> {
             //noinspection DataFlowIssue
             for (int i = 0; i < a.length; i++) {
                 assert a[i] == TRUE || a[i] == FALSE || a[i] == -1;

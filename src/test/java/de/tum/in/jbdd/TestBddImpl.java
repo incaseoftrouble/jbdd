@@ -28,6 +28,12 @@ class TestBddImpl extends DelegatingBdd implements TestBdd {
     }
 
     @Override
+    public String toString() {
+        String name = delegate().configuration().name();
+        return name.isEmpty() ? "bdd" : name;
+    }
+
+    @Override
     public void invalidateCache() {
         delegate().invalidateCache();
     }
