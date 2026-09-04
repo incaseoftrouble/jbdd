@@ -253,7 +253,7 @@ final class BooleanCache {
      * compares equal while denoting something else, and validity cannot see it, a recycled id being a
      * perfectly valid function. So {@link #onBddNodesInvalidated} forgets the mapping whenever an id came
      * free, which is precisely when that can happen; the empty array is a sound sentinel because a mapping
-     * that replaces nothing never gets here (its caller returns at {@code deepestReplacedLevel == -1}).
+     * that replaces nothing never gets here (its caller returns at {@code maxReplacedLevel == -1}).
      */
     void initCompose(int[] replacements) {
         assert replacements.length > 0 : "A mapping replacing nothing must not reach the compose caches";

@@ -28,6 +28,7 @@ import com.google.common.collect.Sets;
 import java.util.BitSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.BiPredicate;
 import org.junit.jupiter.api.Test;
 
 class BddMapTest {
@@ -330,9 +331,97 @@ class BddMapTest {
         BddMap<String> a = first.of("lo").update(x0, "hi-there");
         BddMap<String> b = second.of("lo").update(x0, "hi-there");
 
-        assertThrows(AssertionError.class, () -> a.agreement(b));
+        // agreement is deliberately not in this list any more - see testWhereWorksAcrossNumberings.
         assertThrows(AssertionError.class, () -> a.apply(b, String::concat));
         assertThrows(AssertionError.class, () -> a.apply(b, BddMapBinaryOperator.monoid(String::concat, "")));
         assertThrows(AssertionError.class, () -> first.ifThenElse(x0, a, b));
+    }
+
+    /** Every valuation of variables 0..1, which is enough to pin a map built over them. */
+    private static List<BitSet> valuations() {
+        return List.of(new BitSet(), BitSets.of(0), BitSets.of(1), BitSets.of(0, 1));
+    }
+
+    @Test
+    void testWhereWorksAcrossNumberings() {
+        /* The whole point of routing agreement through where: two numberings assign their own indices
+         * from zero, so the raw terminals are incomparable and the comparison has to resolve each side
+         * through its own numbering. Nothing has to be adopted first. */
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        Values<String> first = ctx.bddMaps().create();
+        Values<String> second = ctx.bddMaps().create();
+        BddSet x0 = ctx.bddSets().var(0);
+        BddSet x1 = ctx.bddSets().var(1);
+
+        // "lo" is index 0 in first and index 1 in second, so raw equality would get this wrong.
+        BddMap<String> a = first.of("lo").update(x0, "hi");
+        BddMap<String> b = second.of("hi").update(x1, "lo");
+
+        BddSet agree = a.agreement(b);
+        for (BitSet assignment : valuations()) {
+            assertEquals(
+                    a.evaluate(assignment).equals(b.evaluate(assignment)),
+                    agree.contains(assignment),
+                    "disagreed at " + assignment);
+        }
+        assertEquals(agree.complement(), a.difference(b));
+    }
+
+    @Test
+    void testWhereComparesDifferentValueTypes() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        Values<String> words = ctx.bddMaps().create();
+        Values<Integer> lengths = ctx.bddMaps().create();
+        BddSet x0 = ctx.bddSets().var(0);
+        BddSet x1 = ctx.bddSets().var(1);
+
+        BddMap<String> word = words.of("lo").update(x0, "there");
+        BddMap<Integer> length = lengths.of(2).update(x1, 5);
+
+        BddSet matches = word.where(length, (w, l) -> w.length() == l);
+        for (BitSet assignment : valuations()) {
+            assertEquals(
+                    word.evaluate(assignment).length() == length.evaluate(assignment),
+                    matches.contains(assignment),
+                    "disagreed at " + assignment);
+        }
+    }
+
+    @Test
+    void testWhereExploitsDeclaredProperties() {
+        // A declared property may only change the work done, never the answer.
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        Values<Integer> numbers = ctx.bddMaps().create();
+        BddSet x0 = ctx.bddSets().var(0);
+        BddSet x1 = ctx.bddSets().var(1);
+
+        BddMap<Integer> a = numbers.of(1).update(x0, 4);
+        BddMap<Integer> b = numbers.of(4).update(x1, 6);
+
+        BiPredicate<Integer, Integer> sameParity = (l, r) -> (l % 2) == (r % 2);
+        BddSet plain = a.where(b, sameParity);
+        BddSet declared = a.where(b, BddMapBinaryPredicate.equivalence(sameParity));
+
+        assertEquals(plain, declared);
+        for (BitSet assignment : valuations()) {
+            assertEquals(
+                    (a.evaluate(assignment) % 2) == (b.evaluate(assignment) % 2),
+                    plain.contains(assignment),
+                    "disagreed at " + assignment);
+        }
+    }
+
+    @Test
+    void testWhereChecksTheClaimedProperties() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        Values<Integer> numbers = ctx.bddMaps().create();
+        BddSet x0 = ctx.bddSets().var(0);
+
+        BddMap<Integer> a = numbers.of(1).update(x0, 2);
+        BddMap<Integer> b = numbers.of(2).update(x0, 1);
+
+        // "less than" is neither, and claiming either has to be caught rather than silently believed.
+        assertThrows(AssertionError.class, () -> a.where(b, BddMapBinaryPredicate.reflexive((l, r) -> l < r)));
+        assertThrows(AssertionError.class, () -> a.where(b, BddMapBinaryPredicate.symmetric((l, r) -> l < r)));
     }
 }

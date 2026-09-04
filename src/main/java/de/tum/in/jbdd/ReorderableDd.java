@@ -31,7 +31,7 @@ import java.util.List;
  * automatically by table growth, and none of these methods may be called from inside a callback of
  * another operation.
  */
-public interface ReorderableDecisionDiagram extends DecisionDiagram {
+public interface ReorderableDd extends NodeBasedDd {
     /** The position of {@code variable} in the current order. */
     int level(int variable);
 
@@ -81,6 +81,20 @@ public interface ReorderableDecisionDiagram extends DecisionDiagram {
     void reorderTo(List<BitSet> blocks);
 
     /**
+     * Puts every variable back at the level of its own number, undoing whatever reordering happened.
+     *
+     * <p>The same thing as {@code reorderTo} with every variable in a singleton block, in order, but
+     * said in one word and done without building the list. Like {@link #reorderTo(List)} it does not aim
+     * at a smaller diagram and will usually produce a bigger one.
+     *
+     * <p>Worth knowing: an identity order is the cheap case. The mapping between variables and levels is
+     * then not stored at all and enumeration writes its results directly rather than translating them,
+     * so a workload that reorders, finishes with the natural order and then runs is faster for having
+     * said so than for having arrived there by accident.
+     */
+    void reorderToIdentity();
+
+    /**
      * Creates a variable and places it at {@code level}, pushing whatever sits there and below down one.
      *
      * <p>Generally cheap, but makes the {@code level <-> variable} mapping non-identity, which does
@@ -89,6 +103,18 @@ public interface ReorderableDecisionDiagram extends DecisionDiagram {
      * @return The function representing the new variable.
      */
     int createVariableAtLevel(int level);
+
+    /**
+     * Creates {@code count} variables occupying levels {@code level} to {@code level + count - 1},
+     * pushing whatever sat there and below down by {@code count}.
+     *
+     * <p>The same order {@code createVariableAtLevel} would produce called {@code count} times at
+     * {@code level}, {@code level + 1}, ..., but everything below the insertion point moves once instead
+     * of once per variable.
+     *
+     * @return The functions representing the new variables, top to bottom.
+     */
+    int[] createVariablesAtLevel(int level, int count);
 
     /**
      * Releases bookkeeping structures potentially allocated for reordering needs.

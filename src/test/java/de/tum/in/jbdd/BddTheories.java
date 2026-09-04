@@ -140,7 +140,7 @@ class BddTheories {
          *     makeNode, rewriteNode and the collections is exercised, not only the one-off rebuild.
          * The MTBDD adapter shares its companion BDD's order, so reordering it reorders both; it is the
          * only thing that puts MTBDD enumeration, apply and compose under a non-identity order. MddImpl
-         * does not implement ReorderableDecisionDiagram (MDDs do not reorder), so it has one variant. */
+         * does not implement ReorderableDd (MDDs do not reorder), so it has one variant. */
         BddContextImpl bddReorderedContext = new BddContextImpl(named("bdd-reordered", false));
         BddContextImpl bddReorderedKeepingContext = new BddContextImpl(named("bdd-reordered-keeping", true));
         BddContextImpl mtReorderedContext = new BddContextImpl(named("mtbdd-reordered", false));
@@ -254,10 +254,10 @@ class BddTheories {
 
     /** {@code assignment} re-indexed by the level each variable sits at; the identity unless reordered. */
     private static BitSet byLevel(BinaryDecisionDiagram bdd, BitSet assignment) {
-        if (!(bdd instanceof ReorderableDecisionDiagram)) {
+        if (!(bdd instanceof ReorderableDd)) {
             return assignment;
         }
-        ReorderableDecisionDiagram reorderable = (ReorderableDecisionDiagram) bdd;
+        ReorderableDd reorderable = (ReorderableDd) bdd;
         BitSet levels = new BitSet(bdd.numberOfVariables());
         for (int variable = assignment.nextSetBit(0); variable >= 0; variable = assignment.nextSetBit(variable + 1)) {
             levels.set(reorderable.level(variable));

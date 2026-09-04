@@ -24,7 +24,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @SuppressWarnings("AssertWithSideEffects")
-public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>, NodeBasedDecisionDiagram {
+public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>, NodeBasedDd {
     private static final BitSet NO_VALUES = new BitSet(0);
 
     static final BigInteger TWO = BigInteger.ONE.add(BigInteger.ONE);
@@ -132,7 +132,8 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
         observers.dispatch(observer -> observer.afterTableGrowth(this, reclaimedNodes, NO_VALUES));
     }
 
-    public int forceGc() {
+    @Override
+    public int gc() {
         assert accessGuard.acquire();
         notifyBeforeGc();
         table().markAllReferencedNodes();

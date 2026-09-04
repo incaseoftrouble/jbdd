@@ -736,7 +736,7 @@ public abstract class NodeTable {
 
     /**
      * Counts the number of active decision nodes in the structure (i.e. the ones which are not invalid),
-     * <b>excluding</b> leafs.
+     * <b>excluding</b> leaves.
      *
      * @return Number of active nodes.
      */
@@ -781,8 +781,8 @@ public abstract class NodeTable {
         assert isValidNode(node);
         assert isNoneMarked();
 
-        // Only decision nodes are tallied, so leafs never need to be marked here at all - unlike a full
-        // GC-style mark (markAllBelowNode(node), the default), which also marks managed leafs.
+        // Only decision nodes are tallied, so leaves never need to be marked here at all - unlike a full
+        // GC-style mark (markAllBelowNode(node), the default), which also marks managed leaves.
         int count = markAllBelowNode(node, false);
         if (count > 0) {
             int unmarked = unMarkAllBelowNode(node, false);
@@ -1308,13 +1308,13 @@ public abstract class NodeTable {
                 }
             }
         }
-        unmarkAllManagedLeafs();
+        unmarkAllManagedLeaves();
 
         assert isNoneMarked();
         return unmarkedCount;
     }
 
-    protected abstract void unmarkAllManagedLeafs();
+    protected abstract void unmarkAllManagedLeaves();
 
     // Tree marking
 
@@ -1341,20 +1341,20 @@ public abstract class NodeTable {
         return isAllMarkedBelowNode(node, true);
     }
 
-    public boolean isAllMarkedBelowNode(int node, boolean includeLeafs) {
+    public boolean isAllMarkedBelowNode(int node, boolean includeLeaves) {
         assert isValidNode(node);
-        return doIsAllMarkedBelow(node, includeLeafs);
+        return doIsAllMarkedBelow(node, includeLeaves);
     }
 
-    protected boolean doIsAllMarkedBelow(int node, boolean includeLeafs) {
+    protected boolean doIsAllMarkedBelow(int node, boolean includeLeaves) {
         assert isValidNode(node);
         if (isLeafNode(node)) {
-            return !includeLeafs || isLeafNodeMarkedOrUnmanaged(node);
+            return !includeLeaves || isLeafNodeMarkedOrUnmanaged(node);
         }
-        return isDecisionNodeMarked(node) && recurseIsAllMarkedBelow(node, includeLeafs);
+        return isDecisionNodeMarked(node) && recurseIsAllMarkedBelow(node, includeLeaves);
     }
 
-    protected abstract boolean recurseIsAllMarkedBelow(int node, boolean includeLeafs);
+    protected abstract boolean recurseIsAllMarkedBelow(int node, boolean includeLeaves);
 
     public int unMarkAllBelowNode(int node, boolean includeLeaves) {
         /* The algorithm does not descend into trees whose root is unmarked, hence at the start of the
@@ -1437,19 +1437,19 @@ public abstract class NodeTable {
         assert isNoneMarkedBelowNode(node);
     }
 
-    /** The deepest level any variable of {@code variables} sits at, or -1 if there is none. */
-    private int deepestLevelOf(BitSet variables) {
-        int deepest = -1;
+    /** The greatest level any variable of {@code variables} sits at, or -1 if there is none. */
+    private int maxLevelOf(BitSet variables) {
+        int max = -1;
         for (int variable = variables.nextSetBit(0); variable >= 0; variable = variables.nextSetBit(variable + 1)) {
-            deepest = Math.max(deepest, level(variable));
+            max = Math.max(max, level(variable));
         }
-        return deepest;
+        return max;
     }
 
     public void forEachVariable(int pointer, BitSet filter, IntConsumer action) {
         assert isValidPointer(pointer);
 
-        int depthLimit = deepestLevelOf(filter) + 1;
+        int depthLimit = maxLevelOf(filter) + 1;
         if (depthLimit == 0) {
             return;
         }

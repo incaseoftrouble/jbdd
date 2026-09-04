@@ -1,6 +1,6 @@
 /*
  * This file is part of JBDD (https://github.com/incaseoftrouble/jbdd).
- * Copyright (c) 2017-2023 Tobias Meggendorfer.
+ * Copyright (c) 2026 Tobias Meggendorfer.
  *
  * JBDD is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,8 +17,11 @@
 package de.tum.in.jbdd;
 
 /**
- * A multi-valued decision diagram which can also be reordered. No implementation offers this yet -
- * {@link MddImpl} implements {@link MultiValuedDecisionDiagram} alone - so this is the type a reordering
- * MDD would take, not one to program against today.
+ * What {@link MddImpl} offers: the functional interface plus the node view. Unlike {@link Bdd} and
+ * {@link MtBdd} it is not {@link ReorderableDd} - MDDs do not reorder, so a variable is its own level
+ * and there is nothing to say about the order.
+ *
+ * <p>Everything reachable through {@link NodeBasedDd} describes how this implementation happens to
+ * represent functions, and may change between versions.
  */
-public interface Mdd extends MultiValuedDecisionDiagram, ReorderableDecisionDiagram {}
+public interface Mdd extends MultiValuedDecisionDiagram, NodeBasedDd {}

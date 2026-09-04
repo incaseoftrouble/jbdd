@@ -131,9 +131,7 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
      * <p>The solutions are generated in lexicographic ascending order.</p>
      */
     default void forEachSolution(int function, @Nullable IntPredicate values, Consumer<? super BitSet> action) {
-        for (ValuedCursor<BitSet> cursor = assignmentCursor(function, values); cursor.valid(); cursor.advance()) {
-            action.accept(cursor.current());
-        }
+        assignmentCursor(function, values).forEachRemaining(action);
     }
 
     /**
@@ -427,8 +425,23 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
     /**
      * Constructs the boolean function in the associated BDD which evaluates to true exactly for those
      * valuations on which the given functions yield the same value.
+     *
+     * <p>{@link #applyBoolean} with raw terminal equality, on its own cache.
      */
     int agreement(int function1, int function2);
+
+    /**
+     * Constructs the boolean function in the associated BDD which evaluates to true exactly for those
+     * valuations on which the two functions' values satisfy {@code predicate} - the boolean-valued
+     * counterpart of {@link #apply(int, int, MtBddBinaryOperator)}, folding two terminal values into one
+     * bit instead of into another terminal.
+     *
+     * <p>The predicate is only ever handed raw terminal values, so a caller whose two operands number
+     * their terminals differently can resolve each side through its own numbering here - which is what
+     * makes this, and not {@link #agreement}, the general form. See {@link MtBddBinaryPredicate} for the
+     * properties worth claiming and what each one buys.
+     */
+    int applyBoolean(int function1, int function2, MtBddBinaryPredicate predicate);
 
     /**
      * Creates the boolean function representing all assignments under which the given {@code function}

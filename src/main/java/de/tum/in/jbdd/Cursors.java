@@ -111,7 +111,7 @@ public final class Cursors {
         @SuppressWarnings("AssignmentOrReturnOfFieldWithMutableType")
         @Override
         public int[] current() {
-            assert valid : "current() is only defined while the cursor is valid";
+            assert valid;
             return assignment;
         }
 

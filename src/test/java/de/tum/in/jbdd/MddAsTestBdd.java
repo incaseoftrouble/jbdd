@@ -92,6 +92,11 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
+    public int gc() {
+        return mdd.gc();
+    }
+
+    @Override
     public int reference(int function) {
         return mdd.reference(function);
     }

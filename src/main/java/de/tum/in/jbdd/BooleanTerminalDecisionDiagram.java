@@ -93,9 +93,7 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
     }
 
     default void forEachSolutionIn(int function, int domain, BitSet support, Consumer<? super S> action) {
-        for (Cursor<S> cursor = solutionCursorIn(function, domain, support); cursor.valid(); cursor.advance()) {
-            action.accept(cursor.current());
-        }
+        solutionCursorIn(function, domain, support).forEachRemaining(action);
     }
 
     /**

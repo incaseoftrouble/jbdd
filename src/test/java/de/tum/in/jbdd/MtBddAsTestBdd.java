@@ -47,7 +47,7 @@ import org.jspecify.annotations.Nullable;
  * result - see {@link #exists}, {@link #conjunction}, {@link #disjunction}, {@link #ifThenElse} and
  * {@link #compose} for that pattern.</p>
  */
-class MtBddAsTestBdd implements TestBdd, ReorderableDecisionDiagram {
+class MtBddAsTestBdd implements TestBdd, ReorderableDd {
     private static final int TRUE = 1;
     private static final int FALSE = 0;
 
@@ -105,6 +105,11 @@ class MtBddAsTestBdd implements TestBdd, ReorderableDecisionDiagram {
     @Override
     public int nodeCount() {
         return mt.nodeCount();
+    }
+
+    @Override
+    public int gc() {
+        return mt.gc();
     }
 
     @Override
@@ -195,6 +200,11 @@ class MtBddAsTestBdd implements TestBdd, ReorderableDecisionDiagram {
     }
 
     @Override
+    public void reorderToIdentity() {
+        mt.reorderToIdentity();
+    }
+
+    @Override
     public int createVariableAtLevel(int level) {
         // As createVariable(), but placed: MtBdd#createVariableAtLevel hands back the companion BDD's
         // function, and this adapter's currency is MTBDD functions.
@@ -203,6 +213,19 @@ class MtBddAsTestBdd implements TestBdd, ReorderableDecisionDiagram {
         int variableFunction = variableFunction(variable);
         mt.table().saturateNode(mt.nodeFor(variableFunction));
         return variableFunction;
+    }
+
+    @Override
+    public int[] createVariablesAtLevel(int level, int count) {
+        // As above, one MTBDD function per variable the companion BDD just created.
+        int[] variableNodes = mt.bdd().createVariablesAtLevel(level, count);
+        int[] variableFunctions = new int[variableNodes.length];
+        for (int index = 0; index < variableNodes.length; index++) {
+            int variable = mt.bdd().decisionVariable(variableNodes[index]);
+            variableFunctions[index] = variableFunction(variable);
+            mt.table().saturateNode(mt.nodeFor(variableFunctions[index]));
+        }
+        return variableFunctions;
     }
 
     @Override
@@ -329,13 +352,13 @@ class MtBddAsTestBdd implements TestBdd, ReorderableDecisionDiagram {
         }
         /* By level, not by variable: the cut-off is "the walk is past everything relevant", which is a
          * statement about the order. The two coincide only until something reorders. */
-        int deepestRelevantLevel = -1;
+        int maxRelevantLevel = -1;
         for (int v = relevantSet.nextSetBit(0); v >= 0; v = relevantSet.nextSetBit(v + 1)) {
-            deepestRelevantLevel = Math.max(deepestRelevantLevel, mt.level(v));
+            maxRelevantLevel = Math.max(maxRelevantLevel, mt.level(v));
         }
         int variables = mt.numberOfVariables();
         BinaryPath path = new BinaryPath(new BitSet(variables), new BitSet(variables));
-        forEachPathRecursive(function, relevantSet, deepestRelevantLevel, path, action);
+        forEachPathRecursive(function, relevantSet, maxRelevantLevel, path, action);
     }
 
     private void forEachPathRecursive(

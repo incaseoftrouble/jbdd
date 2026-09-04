@@ -89,6 +89,9 @@ jmh {
   if (isRequested("jmhDimacs")) {
     includes.add("DimacsBenchmark*")
   }
+  if (isRequested("jmhEnumeration")) {
+    includes.add("EnumerationBenchmark*")
+  }
 }
 
 tasks.register<Task>("jmhRandom") {
@@ -103,6 +106,11 @@ tasks.register<Task>("jmhSynthetic") {
 
 tasks.register<Task>("jmhDimacs") {
   description = "Run DIMACS benchmarks"
+  finalizedBy("jmh")
+}
+
+tasks.register<Task>("jmhEnumeration") {
+  description = "Run solution/path enumeration benchmarks"
   finalizedBy("jmh")
 }
 

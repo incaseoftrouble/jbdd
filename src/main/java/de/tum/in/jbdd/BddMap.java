@@ -19,6 +19,7 @@ package de.tum.in.jbdd;
 import java.util.BitSet;
 import java.util.Set;
 import java.util.function.BiFunction;
+import java.util.function.BiPredicate;
 import java.util.function.Function;
 import java.util.function.IntUnaryOperator;
 import java.util.function.Predicate;
@@ -60,6 +61,30 @@ public interface BddMap<V> {
     /** The set of valuations whose value matches {@code predicate}. */
     BddSet where(Predicate<? super V> predicate);
 
+    /**
+     * The set of valuations on which this map's value and {@code other}'s satisfy {@code predicate}.
+     *
+     * <p>Unlike most binary operations here, {@code other} need not share this map's
+     * {@link #valueDomain()} - and need not even have the same value type. Each side's terminals are
+     * resolved through its own numbering before {@code predicate} sees them, so a cross-numbering
+     * comparison is one traversal of the two diagrams rather than an {@link Values#adopt} first.
+     *
+     * <p>The predicate is called once per pair of terminals actually reached, and must be a pure
+     * function of its two arguments - the result is memoised on the node pair.
+     */
+    <W> BddSet where(BddMap<W> other, BiPredicate<? super V, ? super W> predicate);
+
+    /**
+     * Like {@link #where(BddMap, BiPredicate)}, but lets {@code predicate} declare properties
+     * (symmetric/reflexive) the traversal can exploit - see {@link BddMapBinaryPredicate}.
+     *
+     * <p>The properties are only claimed down to the raw terminals when the two maps share a
+     * {@link #valueDomain()}; across numberings a raw terminal means one value on this side and another
+     * on {@code other}'s, so neither property survives and the declaration is quietly ignored rather
+     * than believed.
+     */
+    BddSet where(BddMap<V> other, BddMapBinaryPredicate<V> predicate);
+
     /** Is {@code value} wherever {@code domain} holds, and agrees with this map elsewhere. */
     BddMap<V> update(BddSet domain, V value);
 
@@ -97,12 +122,19 @@ public interface BddMap<V> {
      */
     <O> BddMap<O> map(Function<? super V, ? extends O> function, Values<O> destination);
 
-    /** The set of valuations on which this map and {@code other} agree. {@code other} must share this
-     * map's {@link #valueDomain()}. */
-    BddSet agreement(BddMap<V> other);
+    /**
+     * The set of valuations on which this map and {@code other} agree.
+     *
+     * <p>{@link #where(BddMap, BddMapBinaryPredicate)} with {@link BddMapBinaryPredicate#equality()},
+     * so {@code other} need not share this map's {@link #valueDomain()}. When it does, the comparison
+     * is raw terminal equality on its own cache and never unwraps a value at all.
+     */
+    default BddSet agreement(BddMap<V> other) {
+        return where(other, BddMapBinaryPredicate.equality());
+    }
 
     /** The set of valuations on which this map and {@code other} disagree - the complement of {@link
-     * #agreement}. {@code other} must share this map's {@link #valueDomain()}. */
+     * #agreement}. */
     default BddSet difference(BddMap<V> other) {
         return agreement(other).complement();
     }

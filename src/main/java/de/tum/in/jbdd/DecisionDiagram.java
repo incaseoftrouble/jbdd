@@ -30,7 +30,7 @@ import java.util.stream.Collectors;
  * <p><b>Variables, not positions.</b> Every {@code int} naming a variable here - in a support set, an
  * assignment, a compose mapping, a quantified set - is the variable itself, and stays that variable for
  * the life of the diagram. Reordering never renumbers anything; it only moves variables around, and where
- * a variable currently sits is visible solely through {@link ReorderableDecisionDiagram#level}. Nothing
+ * a variable currently sits is visible solely through {@link ReorderableDd#level}. Nothing
  * else in this API exposes an ordering position, which is exactly why that interface is separate.
  */
 public interface DecisionDiagram {
@@ -192,11 +192,6 @@ public interface DecisionDiagram {
      * @see #forEachSupportVariable(int, IntConsumer)
      */
     void forEachSupportVariableFiltered(int function, BitSet filter, IntConsumer action);
-
-    /**
-     * Returns the number of decision nodes used to represent this function in the decision diagram
-     */
-    int size(int function);
 
     /**
      * Returns a map containing some statistics about the Bdd. The content of this map

@@ -1,6 +1,6 @@
 /*
  * This file is part of JBDD (https://github.com/incaseoftrouble/jbdd).
- * Copyright (c) 2024 Tobias Meggendorfer.
+ * Copyright (c) 2026 Tobias Meggendorfer.
  *
  * JBDD is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,15 +16,8 @@
  */
 package de.tum.in.jbdd;
 
-public interface TestBdd extends BinaryDecisionDiagram, NodeBasedDd {
-    void invalidateCache();
-
-    @Override
-    boolean isValidFunction(int function);
-
-    boolean isValidNonConstantFunction(int function);
-
-    boolean check();
-
-    String treeToString(int function);
+/** The predicate counterpart of {@link java.util.function.IntBinaryOperator}, which the JDK does not have. */
+@FunctionalInterface
+public interface IntBinaryPredicate {
+    boolean test(int left, int right);
 }

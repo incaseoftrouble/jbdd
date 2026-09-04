@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.BiFunction;
+import java.util.function.BiPredicate;
 import java.util.function.Function;
 import java.util.function.IntBinaryOperator;
 import java.util.function.IntUnaryOperator;
@@ -261,9 +262,12 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
         @Override
         public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
             int first = reclaimedValues.nextSetBit(0);
-            if (first < 0) {
+            /* Nothing reclaimed, or nothing below the high-water mark: the terminals above it were never
+             * handed out by this numbering, so there is nothing here to forget and nothing to rebuild. */
+            if (first < 0 || first > biggestAliveIndex) {
                 return;
             }
+
             for (int index = first;
                     index >= 0 && index <= biggestAliveIndex;
                     index = reclaimedValues.nextSetBit(index + 1)) {
@@ -271,22 +275,38 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
                 if (value != null) {
                     toValue.set(index, null);
                     toIndex.remove(value);
+                }
+            }
+
+            /* The new high-water mark. It has to be found by walking back over toValue rather than over
+             * reclaimedValues: a slot can be vacant because it was reclaimed now or because it was a gap
+             * already, and the walk has to step over both. */
+            int alive = biggestAliveIndex;
+            while (alive >= 0 && toValue.get(alive) == null) {
+                alive -= 1;
+            }
+            if (alive < biggestAliveIndex) {
+                // One shot rather than a remove per slot, and the gaps above the mark go with them.
+                toValue.subList(alive + 1, toValue.size()).clear();
+                biggestAliveIndex = alive;
+            }
+
+            /* Rebuilt rather than maintained: the loop above would have to record every reclaimed index
+             * and the trim to take an unknown number of them back out, and both of those passes are over
+             * the list this one walks once. Ascending, so reuse packs from the bottom. */
+            freeGaps.clear();
+            for (int index = 0; index <= biggestAliveIndex; index++) {
+                if (toValue.get(index) == null) {
                     freeGaps.add(index);
                 }
             }
-            while (biggestAliveIndex >= 0 && toValue.get(biggestAliveIndex) == null) {
-                toValue.remove(toValue.size() - 1);
-                biggestAliveIndex -= 1;
-            }
+
             assert toValue.size() == biggestAliveIndex + 1;
-            freeGaps.removeIf(i -> i > biggestAliveIndex);
-            assert new HashSet<>(freeGaps).size() == freeGaps.size();
-            // freeSlots is exactly the set of indices whose slot is currently vacant.
-            assert new HashSet<>(freeGaps)
-                    .equals(IntStream.range(0, biggestAliveIndex + 1)
-                            .filter(i -> toValue.get(i) == null)
-                            .boxed()
-                            .collect(Collectors.toSet()));
+            // The gaps are vacant by construction now, so check the other half: the two maps still agree.
+            assert IntStream.range(0, toValue.size())
+                    .allMatch(index ->
+                            toValue.get(index) == null || Objects.equals(toIndex.get(toValue.get(index)), index));
+            assert toIndex.size() == toValue.size() - freeGaps.size();
         }
 
         <O> ValuesImpl<O> relabel(Function<? super V, ? extends O> injection) {
@@ -508,8 +528,34 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
         }
 
         @Override
-        public BddSet agreement(BddMap<V> other) {
-            return factory.bddSets.make(factory.dd.agreement(function, factory.functionOf(other, values)));
+        public <W> BddSet where(BddMap<W> other, BiPredicate<? super V, ? super W> predicate) {
+            ValuesImpl<W> otherValues = factory.valuesOf(other);
+            IntBinaryPredicate raw = (rawV, rawW) -> predicate.test(values.valueOf(rawV), otherValues.valueOf(rawW));
+            return where(other, MtBddBinaryPredicate.of(raw));
+        }
+
+        @Override
+        public BddSet where(BddMap<V> other, BddMapBinaryPredicate<V> predicate) {
+            ValuesImpl<V> otherValues = factory.valuesOf(other);
+            if (otherValues != values) {
+                /* Across numberings a raw terminal denotes one value here and another there, so neither
+                 * property carries down to the pairs the recursion sees - test(i, i) is not a diagonal
+                 * at all. Drop the claims rather than hand over ones that do not hold. The cast is
+                 * what picks the BiPredicate overload; without it this would call itself. */
+                return where(other, (BiPredicate<? super V, ? super V>) predicate);
+            }
+            if (predicate == BddMapBinaryPredicate.<V>equality()) {
+                // One numbering is a bijection, so equal values are the same raw terminal - and that is
+                // agreement, which never unwraps a value and has a cache to itself.
+                return factory.bddSets.make(factory.dd.agreement(function, factory.functionOf(other, values)));
+            }
+            IntBinaryPredicate raw = (rawV, rawW) -> predicate.test(values.valueOf(rawV), values.valueOf(rawW));
+            return where(other, MtBddBinaryPredicate.of(raw, predicate.symmetric, predicate.reflexive));
+        }
+
+        private BddSet where(BddMap<?> other, MtBddBinaryPredicate predicate) {
+            int otherFunction = factory.functionOf(other);
+            return factory.bddSets.make(factory.dd.applyBoolean(function, otherFunction, predicate));
         }
 
         @Override

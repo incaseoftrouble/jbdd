@@ -16,6 +16,8 @@
  */
 package de.tum.in.jbdd;
 
+import java.util.function.Consumer;
+
 /**
  * A walk over an enumeration that hands out the state it is standing on, rather than a copy of it.
  *
@@ -50,4 +52,19 @@ public interface Cursor<E> {
      * @return What {@link #valid()} now reports - {@code false} once the walk is over.
      */
     boolean advance();
+
+    /**
+     * Hands every element from here on to {@code action}, leaving the cursor invalid.
+     *
+     * <p>The analogue of {@link java.util.Iterator#forEachRemaining}, and the whole of the walk when
+     * called on a fresh cursor. The caveat of {@link #current()} carries over: what {@code action}
+     * receives is the walk's own state and is reused by the next step, so anything outliving the call
+     * has to be copied out of it.
+     */
+    default void forEachRemaining(Consumer<? super E> action) {
+        while (valid()) {
+            action.accept(current());
+            advance();
+        }
+    }
 }

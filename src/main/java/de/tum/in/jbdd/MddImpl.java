@@ -35,7 +35,7 @@ import org.jspecify.annotations.Nullable;
     "DuplicatedCode",
     "AssertWithSideEffects"
 })
-public class MddImpl extends BooleanBase<int[], int[]> implements MultiValuedDecisionDiagram {
+public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
 
     private final BooleanCache cache;
     private int numberOfVariables;
@@ -365,9 +365,9 @@ public class MddImpl extends BooleanBase<int[], int[]> implements MultiValuedDec
             return;
         }
 
-        int highestVariable = relevantSet.length() - 1;
+        int maxVariable = relevantSet.length() - 1;
 
-        forEachPathRecursive(positive(function), relevantSet, highestVariable, path, action, isPositive(function));
+        forEachPathRecursive(positive(function), relevantSet, maxVariable, path, action, isPositive(function));
         assert accessGuard.release();
     }
 
@@ -862,26 +862,26 @@ public class MddImpl extends BooleanBase<int[], int[]> implements MultiValuedDec
 
         assert accessGuard.acquire();
         assert table.workStacksEmpty();
-        int highestReplacedVariable = values.length - 1;
-        while (highestReplacedVariable >= 0 && values[highestReplacedVariable] == -1) {
-            highestReplacedVariable -= 1;
+        int maxReplacedVariable = values.length - 1;
+        while (maxReplacedVariable >= 0 && values[maxReplacedVariable] == -1) {
+            maxReplacedVariable -= 1;
         }
-        if (highestReplacedVariable == -1) {
+        if (maxReplacedVariable == -1) {
             assert accessGuard.release();
             return function;
         }
-        assert values[highestReplacedVariable] != -1;
+        assert values[maxReplacedVariable] != -1;
 
         table.pushToWorkStack(function);
-        // cache.initRemapping(values, highestReplacedVariable);
-        int result = computeRestrict(function, values, highestReplacedVariable);
+        // cache.initRemapping(values, maxReplacedVariable);
+        int result = computeRestrict(function, values, maxReplacedVariable);
         table.popFromWorkStack();
         assert table.workStacksEmpty();
         assert accessGuard.release();
         return result;
     }
 
-    private int computeRestrict(int function, int[] values, int highestReplacedVariable) {
+    private int computeRestrict(int function, int[] values, int maxReplacedVariable) {
         assert isValidFunction(function);
 
         if (isConstant(function)) {
@@ -889,7 +889,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements MultiValuedDec
         }
 
         int variable = decisionVariable(function);
-        if (variable > highestReplacedVariable) {
+        if (variable > maxReplacedVariable) {
             return function;
         }
 
@@ -910,12 +910,12 @@ public class MddImpl extends BooleanBase<int[], int[]> implements MultiValuedDec
             int[] resultChildren = new int[domain];
             for (int val = 0; val < domain; val++) {
                 resultChildren[val] =
-                        table.pushToWorkStack(computeRestrict(children[val], values, highestReplacedVariable));
+                        table.pushToWorkStack(computeRestrict(children[val], values, maxReplacedVariable));
             }
             resultNode = makeFunction(variable, resultChildren);
             table.popFromWorkStack(domain);
         } else {
-            resultNode = computeRestrict(children[variableReplacementValue], values, highestReplacedVariable);
+            resultNode = computeRestrict(children[variableReplacementValue], values, maxReplacedVariable);
         }
         // cache.putRemapping(hash, node, resultNode);
         return complementIf(resultNode, isComplemented);
@@ -1450,12 +1450,12 @@ public class MddImpl extends BooleanBase<int[], int[]> implements MultiValuedDec
         }
 
         @Override
-        protected boolean recurseIsAllMarkedBelow(int node, boolean includeLeafs) {
+        protected boolean recurseIsAllMarkedBelow(int node, boolean includeLeaves) {
             int[] children = tree[node];
             boolean all = true;
             for (int child : children) {
                 int childNode = positive(child);
-                if (childNode != TRUE && !doIsAllMarkedBelow(childNode, includeLeafs)) {
+                if (childNode != TRUE && !doIsAllMarkedBelow(childNode, includeLeaves)) {
                     all = false;
                     break;
                 }
@@ -1543,7 +1543,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements MultiValuedDec
         }
 
         @Override
-        protected void unmarkAllManagedLeafs() {
+        protected void unmarkAllManagedLeaves() {
             // Nothing to do
         }
 

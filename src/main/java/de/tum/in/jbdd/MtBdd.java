@@ -19,5 +19,8 @@ package de.tum.in.jbdd;
 /**
  * A multi-terminal binary decision diagram which can also be reordered. Its variable order is the one of
  * the {@link MultiTerminalDecisionDiagram#bdd() companion BDD}, so reordering either moves both.
+ *
+ * <p>As with {@link Bdd}, everything reachable through {@link NodeBasedDd} describes how this
+ * implementation happens to represent functions, and may change between versions.
  */
-public interface MtBdd extends MultiTerminalDecisionDiagram, ReorderableDecisionDiagram {}
+public interface MtBdd extends MultiTerminalDecisionDiagram, ReorderableDd, NodeBasedDd {}

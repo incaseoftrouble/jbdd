@@ -18,5 +18,10 @@ package de.tum.in.jbdd;
 
 /**
  * A binary decision diagram which can also be reordered.
+ *
+ * <p>This, not {@link BinaryDecisionDiagram}, is what the library actually hands out: the functional
+ * interface plus the two implementation-side ones. Everything reachable through {@link NodeBasedDd} is
+ * offered because it is genuinely useful to a structure-aware caller, not because it is stable - it
+ * describes how this implementation happens to represent functions, and may change between versions.
  */
-public interface Bdd extends BinaryDecisionDiagram, ReorderableDecisionDiagram {}
+public interface Bdd extends BinaryDecisionDiagram, ReorderableDd, NodeBasedDd {}

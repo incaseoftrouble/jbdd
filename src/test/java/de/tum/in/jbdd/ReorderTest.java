@@ -34,7 +34,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Reordering must leave every function meaning exactly what it did, with the very same id - only the
- * shape of the diagram, and {@link ReorderableDecisionDiagram#level}, may change.
+ * shape of the diagram, and {@link ReorderableDd#level}, may change.
  */
 class ReorderTest {
     private static final BddConfiguration CONFIG =
@@ -136,7 +136,7 @@ class ReorderTest {
         for (int variable = 0; variable < variables; variable++) {
             assertEquals(variable, bdd.level(variable));
         }
-        bdd.forceGc();
+        bdd.gc();
         assertEquals(sizeBefore, bdd.nodeCount(), "swapping back should restore the original diagram");
         for (int i = 0; i < functions.size(); i++) {
             assertEquals(before.get(i), truthTable(bdd, functions.get(i), variables));
@@ -340,11 +340,11 @@ class ReorderTest {
             function = bdd.consume(bdd.or(function, conjunct), function, conjunct);
         }
         bdd.reference(function);
-        bdd.forceGc();
+        bdd.gc();
         int before = bdd.nodeCount();
 
         int saved = bdd.reorder();
-        bdd.forceGc();
+        bdd.gc();
         int after = bdd.nodeCount();
 
         assertTrue(saved > 0, "expected the reordering to save something");
@@ -394,7 +394,7 @@ class ReorderTest {
             bdd.reorder();
             assertTrue(bdd.check());
 
-            bdd.forceGc();
+            bdd.gc();
             sizes.add(bdd.nodeCount());
             for (int level = 0; level < variables; level++) {
                 orders.add(bdd.variableAtLevel(level));
@@ -492,7 +492,7 @@ class ReorderTest {
         for (int function : functions) {
             before.add(truthTable(bdd, function, variables));
         }
-        bdd.forceGc();
+        bdd.gc();
         int nodesBefore = bdd.nodeCount();
 
         int inserted = bdd.createVariableAtLevel(2);
@@ -581,11 +581,11 @@ class ReorderTest {
         bdd.reference(function);
 
         List<Boolean> before = truthTable(bdd, function, variables);
-        bdd.forceGc();
+        bdd.gc();
         int sizeBefore = bdd.nodeCount();
 
         bdd.reorder();
-        bdd.forceGc();
+        bdd.gc();
         int sizeAfter = bdd.nodeCount();
 
         assertEquals(before, truthTable(bdd, function, variables), "reordering changed the function");
@@ -684,7 +684,7 @@ class ReorderTest {
         return set;
     }
 
-    /** The levels {@code block} occupies right now, lowest first. */
+    /** The levels {@code block} occupies right now, smallest first. */
     private static List<Integer> levelsOf(Bdd bdd, BitSet block) {
         List<Integer> levels = new ArrayList<>();
         for (int variable = block.nextSetBit(0); variable >= 0; variable = block.nextSetBit(variable + 1)) {
@@ -696,15 +696,15 @@ class ReorderTest {
 
     /** Each block a contiguous run of levels, and the blocks in the order they were listed. */
     private static void assertBlocksInOrder(Bdd bdd, List<BitSet> blocks) {
-        int previousDeepest = -1;
+        int previousMaxLevel = -1;
         for (BitSet block : blocks) {
             List<Integer> levels = levelsOf(bdd, block);
             assertEquals(
                     levels.get(levels.size() - 1) - levels.get(0) + 1,
                     levels.size(),
                     "block " + block + " does not occupy a contiguous run of levels: " + levels);
-            assertTrue(levels.get(0) > previousDeepest, "block " + block + " is not below the one before it");
-            previousDeepest = levels.get(levels.size() - 1);
+            assertTrue(levels.get(0) > previousMaxLevel, "block " + block + " is not below the one before it");
+            previousMaxLevel = levels.get(levels.size() - 1);
         }
     }
 
@@ -854,5 +854,147 @@ class ReorderTest {
         assertTrue(mtbdd.check());
         assertBlocksInOrder(bdd, blocks);
         assertEquals(before, valueTable(mtbdd, f, variables), "the companion MTBDD did not follow");
+    }
+
+    @Test
+    void testReorderToIdentityUndoesReordering() {
+        int variables = 6;
+        BddContextImpl context = new BddContextImpl(CONFIG);
+        BddImpl bdd = context.bdd();
+        MtBddImpl mtbdd = context.mtBdd();
+        List<Integer> functions = randomFunctions(bdd, variables, 10, 314159L);
+
+        int mt = mtbdd.reference(mtbdd.ifThenElse(functions.get(0), mtbdd.of(5), mtbdd.of(2)));
+        List<List<Boolean>> before = new ArrayList<>();
+        for (int function : functions) {
+            before.add(truthTable(bdd, function, variables));
+        }
+        List<Integer> mtBefore = valueTable(mtbdd, mt, variables);
+
+        bdd.reorderTo(List.of(block(5, 4, 3), block(0)));
+        assertNotEquals(identityOrder(variables), currentOrder(bdd, variables));
+
+        bdd.reorderToIdentity();
+
+        assertTrue(bdd.check());
+        assertTrue(mtbdd.check());
+        assertEquals(identityOrder(variables), currentOrder(bdd, variables));
+        for (int i = 0; i < functions.size(); i++) {
+            assertEquals(before.get(i), truthTable(bdd, functions.get(i), variables));
+        }
+        assertEquals(mtBefore, valueTable(mtbdd, mt, variables), "the companion MTBDD did not follow");
+    }
+
+    @Test
+    void testReorderToIdentityGoesBackToTheImplicitOrder() {
+        /* Landing on the identity is not just a permutation that happens to be sorted - the order stops
+         * being stored at all, and the enumeration fast path comes back with it. The statistic is how a
+         * caller sees that happen. */
+        int variables = 5;
+        BddContextImpl context = new BddContextImpl(CONFIG);
+        BddImpl bdd = context.bdd();
+        randomFunctions(bdd, variables, 8, 271828L);
+
+        assertEquals("0", bdd.statistics().get("reorder_identity_reverts"), "nothing has reordered yet");
+
+        context.siftDown(1);
+        context.siftDown(3);
+        bdd.reorderToIdentity();
+
+        assertEquals(identityOrder(variables), currentOrder(bdd, variables));
+        assertEquals("1", bdd.statistics().get("reorder_identity_reverts"));
+
+        // Already implicit, so there is nothing to permute and nothing to revert.
+        bdd.reorderToIdentity();
+        assertEquals("1", bdd.statistics().get("reorder_identity_reverts"));
+    }
+
+    @Test
+    void testCreateVariablesAtLevelMatchesRepeatedSingleInsertion() {
+        /* The block form only earns its keep by moving the tail once; it has to leave exactly the order
+         * the one-at-a-time form does, so build both and compare. */
+        int variables = 5;
+        for (int level = 0; level <= variables; level++) {
+            BddImpl blockwise = new BddContextImpl(CONFIG).bdd();
+            blockwise.createVariables(variables);
+            int[] inserted = blockwise.createVariablesAtLevel(level, 3);
+
+            BddImpl oneByOne = new BddContextImpl(CONFIG).bdd();
+            oneByOne.createVariables(variables);
+            for (int index = 0; index < 3; index++) {
+                oneByOne.createVariableAtLevel(level + index);
+            }
+
+            assertEquals(
+                    currentOrder(oneByOne, variables + 3),
+                    currentOrder(blockwise, variables + 3),
+                    "inserting a block at level " + level + " differs from inserting one at a time");
+            assertEquals(3, inserted.length);
+            for (int index = 0; index < 3; index++) {
+                assertEquals(level + index, blockwise.level(blockwise.decisionVariable(inserted[index])));
+            }
+            assertTrue(blockwise.check());
+        }
+    }
+
+    @Test
+    void testCreateVariablesAtLevelKeepsFunctionsAndTheCompanion() {
+        int variables = 5;
+        BddContextImpl context = new BddContextImpl(CONFIG);
+        BddImpl bdd = context.bdd();
+        MtBddImpl mtbdd = context.mtBdd();
+        List<Integer> functions = randomFunctions(bdd, variables, 8, 161803L);
+
+        int mt = mtbdd.reference(mtbdd.ifThenElse(functions.get(1), mtbdd.of(9), mtbdd.of(4)));
+        List<List<Boolean>> before = new ArrayList<>();
+        for (int function : functions) {
+            before.add(truthTable(bdd, function, variables));
+        }
+        List<Integer> mtBefore = valueTable(mtbdd, mt, variables);
+
+        int[] inserted = bdd.createVariablesAtLevel(2, 4);
+
+        assertTrue(bdd.check());
+        assertTrue(mtbdd.check());
+        assertEquals(variables + 4, bdd.numberOfVariables());
+        for (int index = 0; index < inserted.length; index++) {
+            assertEquals(2 + index, bdd.level(bdd.decisionVariable(inserted[index])));
+        }
+        // The new variables are unconstrained, so the old functions are unchanged over the old ones.
+        for (int i = 0; i < functions.size(); i++) {
+            assertEquals(before.get(i), truthTable(bdd, functions.get(i), variables));
+        }
+        assertEquals(mtBefore, valueTable(mtbdd, mt, variables), "the companion MTBDD did not follow");
+    }
+
+    @Test
+    void testCreateVariablesAtTheBottomKeepsTheOrderImplicit() {
+        BddContextImpl context = new BddContextImpl(CONFIG);
+        BddImpl bdd = context.bdd();
+        bdd.createVariables(3);
+
+        bdd.createVariablesAtLevel(3, 2);
+        assertFalse(context.reordered(), "appending a block at the bottom made the order explicit");
+        assertEquals(identityOrder(5), currentOrder(bdd, 5));
+    }
+
+    @Test
+    void testCreateVariableAtTheBottomKeepsTheOrderImplicit() {
+        // Appending is what createVariable does, so it must not force the order to be materialised.
+        BddContextImpl context = new BddContextImpl(CONFIG);
+        BddImpl bdd = context.bdd();
+        bdd.createVariables(4);
+
+        bdd.createVariableAtLevel(4);
+        assertFalse(context.reordered(), "appending at the bottom made the order explicit");
+
+        bdd.createVariableAtLevel(2);
+        assertTrue(context.reordered());
+        assertEquals(2, bdd.level(5));
+        assertEquals(List.of(0, 1, 5, 2, 3, 4), currentOrder(bdd, 6));
+
+        bdd.reorderToIdentity();
+        assertFalse(context.reordered());
+        assertEquals(identityOrder(6), currentOrder(bdd, 6));
     }
 }

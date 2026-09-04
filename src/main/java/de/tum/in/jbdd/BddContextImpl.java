@@ -49,10 +49,13 @@ final class BddContextImpl implements BddContext {
     private final MtBddImpl mtbdd;
 
     private int numberOfVariables = 0;
-    /* The variable order, as a bijection between a variable and its position. */
-    private int[] variableToLevel = new int[32];
-    private int[] levelToVariable = new int[32];
-    /* Whether the order is not identity. */
+    /* The variable order, as a bijection between a variable and its position - materialised only while
+     * the order is not the identity. While it is, these stay empty and level(v) == v answers everything;
+     * makeOrderExplicit fills in that identity ahead of the first thing that bends it out of shape, and
+     * revertIfIdentity throws it away again if a reordering happens to land back on it. */
+    private int[] variableToLevel = EMPTY_INT_ARRAY;
+    private int[] levelToVariable = EMPTY_INT_ARRAY;
+    /* Whether the order is not identity - equivalently, whether the two arrays above are live. */
     private boolean reordered = false;
 
     // Statistics
@@ -74,6 +77,10 @@ final class BddContextImpl implements BddContext {
     private int reorderCollections = 0;
     private int reorderAbandonedDirections = 0;
     private long reorderTimeMilliseconds = 0;
+    /* How often a reordering landed back on the identity and the order went implicit again. Sifting has
+     * no reason to prefer the identity, so this is expected to stay at zero on anything but a caller's
+     * own reorderToIdentity - if it does not, the fast path is worth more than it looks. */
+    private int reorderIdentityReverts = 0;
 
     BddContextImpl(BddConfiguration configuration) {
         this.configuration = configuration;
@@ -123,10 +130,57 @@ final class BddContextImpl implements BddContext {
 
     private void ensureVariableCapacity(int variables) {
         if (variables > variableToLevel.length) {
-            int length = Math.max(variableToLevel.length * 2, variables);
+            int length = Math.max(Math.max(variableToLevel.length * 2, variables), 32);
             variableToLevel = Arrays.copyOf(variableToLevel, length);
             levelToVariable = Arrays.copyOf(levelToVariable, length);
         }
+    }
+
+    /**
+     * Writes out the order the identity was standing in for, so that something may then move a variable
+     * in it. Only the two callers that actually move one need this - every query is answered by
+     * {@code level(v) == v} while the order is implicit - so a workload that never reorders never
+     * allocates the arrays at all.
+     *
+     * <p>Leaves {@code reordered} set although the order is at this instant still the identity. Both
+     * callers make it not be, in the same critical section, before anything can observe the flag.
+     */
+    private void makeOrderExplicit() {
+        if (reordered) {
+            return;
+        }
+        ensureVariableCapacity(numberOfVariables);
+        for (int variable = 0; variable < numberOfVariables; variable++) {
+            variableToLevel[variable] = variable;
+            levelToVariable[variable] = variable;
+        }
+        reordered = true;
+    }
+
+    /**
+     * Drops back to the implicit order if the explicit one happens to be the identity again.
+     *
+     * <p>Worth asking because {@code reordered} buys more than an array load: solution and path
+     * enumeration walk by level and, when the order is not the identity, have to translate each result
+     * through a buffer instead of writing straight into a variable-indexed set. This is O(variables)
+     * against a reordering quadratic in them, so it is only asked after one of those - never per swap.
+     *
+     * @return Whether the order is now implicit, which it also is if it never stopped being.
+     */
+    private boolean revertIfIdentity() {
+        if (!reordered) {
+            return true;
+        }
+        for (int level = 0; level < numberOfVariables; level++) {
+            if (levelToVariable[level] != level) {
+                return false;
+            }
+        }
+        variableToLevel = EMPTY_INT_ARRAY;
+        levelToVariable = EMPTY_INT_ARRAY;
+        reordered = false;
+        reorderIdentityReverts += 1;
+        return true;
     }
 
     /** Both caches key on the number of variables, so both have to hear about a new one. */
@@ -151,12 +205,14 @@ final class BddContextImpl implements BddContext {
 
     int createVariable() {
         assert bdd.accessGuard.acquire();
-        // Manage the variable <-> level mapping eagerly, even if its identity, as its cheap
-        ensureVariableCapacity(numberOfVariables + 1);
-
-        // Need to set before makeVariableNode, which asks for the level
-        variableToLevel[numberOfVariables] = numberOfVariables;
-        levelToVariable[numberOfVariables] = numberOfVariables;
+        /* A new variable goes to the bottom, so it is its own level either way - nothing to record while
+         * the order is implicit, and one identity entry to add while it is not. */
+        if (reordered) {
+            ensureVariableCapacity(numberOfVariables + 1);
+            // Need to set before makeVariableNode, which asks for the level
+            variableToLevel[numberOfVariables] = numberOfVariables;
+            levelToVariable[numberOfVariables] = numberOfVariables;
+        }
         int variableNode = bdd.makeVariableNode(numberOfVariables, numberOfVariables);
         numberOfVariables++;
 
@@ -176,15 +232,19 @@ final class BddContextImpl implements BddContext {
 
         assert bdd.accessGuard.acquire();
         int newSize = numberOfVariables + count;
-        ensureVariableCapacity(newSize);
+        if (reordered) {
+            ensureVariableCapacity(newSize);
+        }
         bdd.ensureVariableNodeCapacity(newSize);
 
         int[] newVariableNodes = new int[count];
 
         for (int i = 0; i < count; i++) {
             int variable = numberOfVariables + i;
-            variableToLevel[variable] = variable;
-            levelToVariable[variable] = variable;
+            if (reordered) {
+                variableToLevel[variable] = variable;
+                levelToVariable[variable] = variable;
+            }
 
             newVariableNodes[i] = bdd.makeVariableNode(variable, variable);
         }
@@ -202,17 +262,22 @@ final class BddContextImpl implements BddContext {
         assert bdd.table().workStacksEmpty() && mtbdd.table().workStacksEmpty();
 
         int variable = numberOfVariables;
-        ensureVariableCapacity(variable + 1);
-
-        for (int current = variable; current > level; current--) {
-            int moved = levelToVariable[current - 1];
-            levelToVariable[current] = moved;
-            variableToLevel[moved] = current;
+        // Appending at the bottom is createVariable, which leaves an implicit order implicit.
+        if (level != variable) {
+            makeOrderExplicit();
         }
-        levelToVariable[level] = variable;
-        variableToLevel[variable] = level;
+        if (reordered) {
+            ensureVariableCapacity(variable + 1);
+
+            for (int current = variable; current > level; current--) {
+                int moved = levelToVariable[current - 1];
+                levelToVariable[current] = moved;
+                variableToLevel[moved] = current;
+            }
+            levelToVariable[level] = variable;
+            variableToLevel[variable] = level;
+        }
         numberOfVariables += 1;
-        reordered = reordered || level != variable;
 
         int variableNode = bdd.makeVariableNode(variable, level);
 
@@ -223,6 +288,64 @@ final class BddContextImpl implements BddContext {
         assert bdd.check();
         assert bdd.accessGuard.release();
         return variableNode;
+    }
+
+    public int[] createVariablesAtLevel(int level, int count) {
+        checkState(0 <= level && level <= numberOfVariables, "Level %s out of range", level);
+        checkState(0 <= count, "Negative count %s", count);
+        if (count == 0) {
+            return EMPTY_INT_ARRAY;
+        }
+        if (count == 1) {
+            return new int[] {createVariableAtLevel(level)};
+        }
+        assert bdd.accessGuard.acquire();
+        assert bdd.table().workStacksEmpty() && mtbdd.table().workStacksEmpty();
+
+        int firstVariable = numberOfVariables;
+        int newSize = firstVariable + count;
+        // Appending at the bottom is createVariables, which leaves an implicit order implicit.
+        if (level != firstVariable) {
+            makeOrderExplicit();
+        }
+        if (reordered) {
+            ensureVariableCapacity(newSize);
+
+            /* The whole point of the block form: everything below the insertion point moves once, by
+             * count, instead of once per variable inserted. Walked from the bottom up so a slot is read
+             * before anything is written over it. */
+            for (int current = firstVariable - 1; current >= level; current--) {
+                int moved = levelToVariable[current];
+                levelToVariable[current + count] = moved;
+                variableToLevel[moved] = current + count;
+            }
+            for (int index = 0; index < count; index++) {
+                levelToVariable[level + index] = firstVariable + index;
+                variableToLevel[firstVariable + index] = level + index;
+            }
+        }
+        bdd.ensureVariableNodeCapacity(newSize);
+        // Before makeVariableNode, which resolves a level against it.
+        numberOfVariables = newSize;
+
+        int[] newVariableNodes = new int[count];
+        for (int index = 0; index < count; index++) {
+            newVariableNodes[index] = bdd.makeVariableNode(firstVariable + index, level + index);
+        }
+
+        notifyVariablesChanged();
+        /* Once per variable, at the same level each time: a listener holding a level shifts it by one if
+         * it is at or below the insertion point, so count of those compose to the shift by count this
+         * made - and a level above the point is left alone by every one of them. Reusing the single
+         * insert's hook is what keeps that true without a second thing to get right. */
+        for (int index = 0; index < count; index++) {
+            notifyVariableInserted(level);
+        }
+
+        assert bdd.table().workStacksEmpty() && mtbdd.table().workStacksEmpty();
+        assert bdd.check();
+        assert bdd.accessGuard.release();
+        return newVariableNodes;
     }
 
     // Reordering
@@ -239,14 +362,16 @@ final class BddContextImpl implements BddContext {
         assert bdd.table().workStacksEmpty() && mtbdd.table().workStacksEmpty();
 
         reorderSwaps += 1;
+        // A swap of two adjacent variables is never the identity, so this leaves the flag honest.
+        makeOrderExplicit();
 
         // Sifting creates orphan nodes, clean them if they pile up.
         bdd.table().enableReorderingBookkeeping();
         mtbdd.table().enableReorderingBookkeeping();
         if (bdd.table().deadNodeFraction() > MAXIMUM_SIFT_GARBAGE
                 || mtbdd.table().deadNodeFraction() > MAXIMUM_SIFT_GARBAGE) {
-            bdd.forceGc();
-            mtbdd.forceGc();
+            bdd.gc();
+            mtbdd.gc();
             reorderCollections += 1;
         }
 
@@ -270,7 +395,6 @@ final class BddContextImpl implements BddContext {
         levelToVariable[level + 1] = lower;
         variableToLevel[upper] = level;
         variableToLevel[lower] = level + 1;
-        reordered = true;
 
         bdd.rewriteLevelAfterSwap(bddNodes, bddCount, level, upper);
         mtbdd.rewriteLevelAfterSwap(mtbddNodes, mtbddCount, level, upper);
@@ -383,9 +507,35 @@ final class BddContextImpl implements BddContext {
         permuteTo(target);
         reorderTimeMilliseconds += System.currentTimeMillis() - startTimestamp;
 
+        revertIfIdentity();
+
         /* The point of the whole call: the blocks are now exactly what reorder(blocks) will accept, so
          * "shape it, then optimise inside the shape" is two calls with the same argument. */
         assert groupsAreDisjointContiguousBlocks(blocks);
+        assert bdd.check();
+        assert bdd.accessGuard.release();
+    }
+
+    public void reorderToIdentity() {
+        if (!reordered) {
+            return;
+        }
+        assert bdd.accessGuard.acquire();
+        assert bdd.table().workStacksEmpty() && mtbdd.table().workStacksEmpty();
+
+        int[] target = new int[numberOfVariables];
+        for (int level = 0; level < numberOfVariables; level++) {
+            target[level] = level;
+        }
+        long startTimestamp = System.currentTimeMillis();
+        permuteTo(target);
+        reorderTimeMilliseconds += System.currentTimeMillis() - startTimestamp;
+
+        /* Outside the assert: this is the point of the call, not a check of it. Restoring the identity
+         * without dropping the arrays would keep paying for an order that is no longer there. */
+        boolean implicit = revertIfIdentity();
+        assert implicit : "Permuting to the identity did not produce the identity";
+
         assert bdd.check();
         assert bdd.accessGuard.release();
     }
@@ -408,8 +558,8 @@ final class BddContextImpl implements BddContext {
 
         /* Clear out whatever the workload left behind first - from here on the node counts are exact and
          * maintained, so nothing has to be collected to measure a candidate position. */
-        bdd.forceGc();
-        mtbdd.forceGc();
+        bdd.gc();
+        mtbdd.gc();
         bdd.table().enableReorderingBookkeeping();
         mtbdd.table().enableReorderingBookkeeping();
         int nodesBefore = exactLiveNodeCount();
@@ -428,11 +578,11 @@ final class BddContextImpl implements BddContext {
             if (group.cardinality() < 2) {
                 continue;
             }
-            int lowestLevel = Integer.MAX_VALUE;
-            int highestLevel = -1;
+            int minLevel = Integer.MAX_VALUE;
+            int maxLevel = -1;
             for (int variable = group.nextSetBit(0); variable >= 0; variable = group.nextSetBit(variable + 1)) {
-                lowestLevel = Math.min(lowestLevel, level(variable));
-                highestLevel = Math.max(highestLevel, level(variable));
+                minLevel = Math.min(minLevel, level(variable));
+                maxLevel = Math.max(maxLevel, level(variable));
             }
 
             long[] order = new long[group.cardinality()];
@@ -444,7 +594,7 @@ final class BddContextImpl implements BddContext {
             Arrays.sort(order);
 
             for (int position = order.length - 1; position >= 0; position--) {
-                sift((int) order[position], lowestLevel, highestLevel);
+                sift((int) order[position], minLevel, maxLevel);
             }
         }
 
@@ -454,6 +604,8 @@ final class BddContextImpl implements BddContext {
         assert saved >= 0 : "Sifting left the diagram bigger than it found it";
         reorderCount += 1;
         reorderSavedNodes += saved;
+        // Sifting does not aim at the identity, but it is free to land on it - see revertIfIdentity.
+        revertIfIdentity();
 
         if (!configuration.keepReorderingStructures()) {
             dropReorderStructures();
@@ -473,15 +625,15 @@ final class BddContextImpl implements BddContext {
             checkState(!group.intersects(seen), "Reordering groups overlap");
             seen.or(group);
 
-            int lowest = Integer.MAX_VALUE;
-            int deepest = -1;
+            int minLevel = Integer.MAX_VALUE;
+            int maxLevel = -1;
             for (int variable = group.nextSetBit(0); variable >= 0; variable = group.nextSetBit(variable + 1)) {
                 checkState(variable < numberOfVariables, "Unknown variable %s in a reordering group", variable);
-                lowest = Math.min(lowest, level(variable));
-                deepest = Math.max(deepest, level(variable));
+                minLevel = Math.min(minLevel, level(variable));
+                maxLevel = Math.max(maxLevel, level(variable));
             }
             checkState(
-                    group.isEmpty() || deepest - lowest + 1 == group.cardinality(),
+                    group.isEmpty() || maxLevel - minLevel + 1 == group.cardinality(),
                     "Reordering group %s does not occupy a contiguous run of levels",
                     group);
         }
@@ -495,9 +647,9 @@ final class BddContextImpl implements BddContext {
     }
 
     @SuppressWarnings("NumericCastThatLosesPrecision")
-    private void sift(int variable, int highestLevel, int deepestLevel) {
+    private void sift(int variable, int minLevel, int maxLevel) {
         int start = level(variable);
-        assert highestLevel <= start && start <= deepestLevel;
+        assert minLevel <= start && start <= maxLevel;
         int best = start;
         int bestSize = exactLiveNodeCount();
         // Stop exploring a direction once it has cost more than this - the usual bound, without which
@@ -505,7 +657,7 @@ final class BddContextImpl implements BddContext {
         int limit = (int) Math.min(Integer.MAX_VALUE, (long) (bestSize * MAXIMUM_SIFT_GROWTH));
 
         int current = start;
-        while (current < deepestLevel) {
+        while (current < maxLevel) {
             siftDown(current);
             current += 1;
             int size = exactLiveNodeCount();
@@ -521,7 +673,7 @@ final class BddContextImpl implements BddContext {
             siftDown(current - 1);
             current -= 1;
         }
-        while (current > highestLevel) {
+        while (current > minLevel) {
             siftDown(current - 1);
             current -= 1;
             int size = exactLiveNodeCount();
@@ -554,6 +706,7 @@ final class BddContextImpl implements BddContext {
                 "reorder_rewritten_nodes", String.valueOf(reorderRewrittenNodes),
                 "reorder_collections", String.valueOf(reorderCollections),
                 "reorder_abandoned_directions", String.valueOf(reorderAbandonedDirections),
+                "reorder_identity_reverts", String.valueOf(reorderIdentityReverts),
                 /* Nodes rewritten per node saved - the one ratio that says whether sifting is earning its
                  * keep, the way node_table_work_per_created_node does for memory management. */
                 "reorder_work_per_saved_node", String.valueOf(Util.ratio(reorderRewrittenNodes, reorderSavedNodes)));

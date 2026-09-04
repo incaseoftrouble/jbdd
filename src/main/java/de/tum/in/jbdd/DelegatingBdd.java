@@ -78,6 +78,42 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
+    public int gc() {
+        onEnter("gc");
+        return onExit(delegate.gc());
+    }
+
+    @Override
+    public int nodeFor(int function) {
+        onEnter("nodeFor");
+        return onExit(delegate.nodeFor(function));
+    }
+
+    @Override
+    public int nodeReferenceCount(int node) {
+        onEnter("nodeReferenceCount");
+        return onExit(delegate.nodeReferenceCount(node));
+    }
+
+    @Override
+    public boolean isSaturatedNode(int node) {
+        onEnter("isSaturatedNode");
+        return onExit(delegate.isSaturatedNode(node));
+    }
+
+    @Override
+    public int referencedNodeCount() {
+        onEnter("referencedNodeCount");
+        return onExit(delegate.referencedNodeCount());
+    }
+
+    @Override
+    public int nodeCount() {
+        onEnter("nodeCount");
+        return onExit(delegate.nodeCount());
+    }
+
+    @Override
     public int highOf(int function) {
         onEnter("highOf");
         return onExit(delegate.highOf(function));
@@ -572,9 +608,22 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
+    public void reorderToIdentity() {
+        onEnter("reorderToIdentity");
+        delegate.reorderToIdentity();
+        onExit();
+    }
+
+    @Override
     public int createVariableAtLevel(int level) {
         onEnter("createVariableAtLevel");
         return onExit(delegate.createVariableAtLevel(level));
+    }
+
+    @Override
+    public int[] createVariablesAtLevel(int level, int count) {
+        onEnter("createVariablesAtLevel");
+        return onExit(delegate.createVariablesAtLevel(level, count));
     }
 
     @Override

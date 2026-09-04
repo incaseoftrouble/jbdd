@@ -80,14 +80,14 @@ class BddTest {
         int v2 = bdd.createVariable();
         int v3 = bdd.createVariable();
 
-        bdd.forceGc(); // make sure there is room for it
+        bdd.gc(); // make sure there is room for it
         int and = bdd.and(v3, v2);
         int or = bdd.reference(bdd.or(and, v1));
-        assertThat(bdd.forceGc(), is(0));
+        assertThat(bdd.gc(), is(0));
         bdd.dereference(or);
 
-        assertThat(bdd.forceGc(), is(2));
-        bdd.forceGc(); // should free `and` and `or`
+        assertThat(bdd.gc(), is(2));
+        bdd.gc(); // should free `and` and `or`
     }
 
     @Test
@@ -316,10 +316,10 @@ class BddTest {
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int temporaryNode = table.pushToWorkStack(bdd.and(v1, v2));
-        bdd.forceGc();
+        bdd.gc();
         assertThat(bdd.isValidFunction(temporaryNode), is(true));
         table.popFromWorkStack();
-        bdd.forceGc();
+        bdd.gc();
         assertThat(bdd.isValidFunction(temporaryNode), is(false));
     }
 
@@ -397,16 +397,16 @@ class BddTest {
         int or = bdd.reference(bdd.implication(bdd.and(v1, v2), v3));
         int ite = bdd.reference(bdd.ifThenElse(v2, v3, bdd.trueFunction()));
 
-        bdd.forceGc();
+        bdd.gc();
         bdd.dereference(ite);
         assertThat(table.approximateDeadNodeCount(), is(1));
         assertThat(bdd.isValidFunction(ite), is(true));
-        int freed = bdd.forceGc();
+        int freed = bdd.gc();
         assertThat(freed, is(0));
         assertThat(table.approximateDeadNodeCount(), is(0));
         bdd.dereference(or);
         assertThat(table.approximateDeadNodeCount(), is(1));
-        bdd.forceGc();
+        bdd.gc();
         assertThat(bdd.isValidFunction(ite), is(false));
         assertThat(table.referencedNodeCount(), is(3));
     }

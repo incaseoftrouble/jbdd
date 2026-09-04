@@ -122,10 +122,10 @@ class RegressionTests {
         int[] v = bdd.createVariables(6);
         forceJvmGarbageCollection();
 
-        // Nothing references this, so the following forceGc reclaims its node - but the and-cache still
+        // Nothing references this, so the following gc reclaims its node - but the and-cache still
         // holds (v0, v1) -> node.
         bdd.and(v[0], v[1]);
-        assertEquals(1, bdd.forceGc());
+        assertEquals(1, bdd.gc());
 
         // Re-use the freed slot for an unrelated function.
         int reused = bdd.reference(bdd.and(v[2], v[3]));
@@ -150,9 +150,9 @@ class RegressionTests {
         int left = mt.reference(mt.of(0, mt.of(1), mt.of(2)));
         int right = mt.reference(mt.of(1, mt.of(10), mt.of(20)));
 
-        // Unreferenced, so the following forceGc reclaims it while the apply cache still maps to it.
+        // Unreferenced, so the following gc reclaims it while the apply cache still maps to it.
         mt.apply(left, right, sum);
-        mt.forceGc();
+        mt.gc();
 
         // Re-use the freed slots for unrelated structure.
         int filler = mt.reference(mt.of(2, mt.of(100), mt.of(200)));
@@ -182,7 +182,7 @@ class RegressionTests {
         int countBefore = mt.nodeCount();
         // Used to fail outright: reclaimUnmarkedNodes asserts that nothing is marked, but leaf marks are
         // only cleared by the leaf sweep, which ran afterwards.
-        assertDoesNotThrow(mt::forceGc);
+        assertDoesNotThrow(mt::gc);
         assertEquals(3, countBefore - mt.nodeCount());
 
         assertTrue(mt.isValidFunction(kept));
@@ -235,7 +235,7 @@ class RegressionTests {
         // Something with nodes spread over every level, plus a collection to exercise the rebuild path.
         int f = bdd.reference(bdd.and(bdd.or(v[0], v[1]), bdd.xor(v[2], bdd.and(v[3], bdd.or(v[4], v[5])))));
         bdd.or(v[1], v[4]); // unreferenced, so the following collection actually reclaims something
-        bdd.forceGc();
+        bdd.gc();
 
         int total = 0;
         for (int variable = 0; variable < 6; variable++) {
@@ -278,7 +278,7 @@ class RegressionTests {
         // Building more structure while the bookkeeping is gone must not leave it stale - the next
         // enumeration derives it from the table again.
         bdd.reference(bdd.or(v[1], bdd.and(v[2], v[4])));
-        bdd.forceGc();
+        bdd.gc();
 
         List<Integer> after = new ArrayList<>();
         table.forEachNodeWithVariable(2, after::add);
@@ -371,7 +371,7 @@ class RegressionTests {
         // Any further protect() drains the reference queue, dereferencing the collected wrappers.
         maps.of("kept");
         // Reclaims the now-unreferenced values
-        assertDoesNotThrow(mt::forceGc);
+        assertDoesNotThrow(mt::gc);
 
         assertEquals("kept", kept.evaluate(BitSets.of()));
         assertEquals(java.util.Set.of("kept"), kept.values());
@@ -793,7 +793,7 @@ class RegressionTests {
 
         // left and right keep every node alive, so nothing is reclaimed - but value 42 is held by neither a
         // reference nor a node, so the leaf sweep takes it.
-        assertEquals(0, mt.forceGc());
+        assertEquals(0, mt.gc());
         assertFalse(mt.isValidFunction(stale));
 
         int again = mt.apply(left, right, constant);

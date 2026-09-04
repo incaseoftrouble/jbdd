@@ -41,7 +41,7 @@ final class MtBddOperations {
             implements RegisteredOperation.Unary, RegisteredOperation.Binary, NodeTableObserver {
         private final MtBddImpl mtbdd;
         private final int[] bddVariableMapping;
-        private int deepestReplacedLevel;
+        private int maxReplacedLevel;
         private final MtBddCache.UnaryToIntCache composeCache;
 
         /**
@@ -53,7 +53,7 @@ final class MtBddOperations {
         Compose(
                 MtBddImpl mtbdd,
                 int[] resolvedMapping,
-                int deepestReplacedLevel,
+                int maxReplacedLevel,
                 int[] protectedNodes,
                 boolean withSimplify) {
             /* The replacements are the *companion BDD's* functions, so that is where they were referenced
@@ -63,7 +63,7 @@ final class MtBddOperations {
             assert Arrays.stream(protectedNodes).allMatch(mtbdd.bddImpl()::nodeIsReferenced);
             this.mtbdd = mtbdd;
             this.bddVariableMapping = resolvedMapping;
-            this.deepestReplacedLevel = deepestReplacedLevel;
+            this.maxReplacedLevel = maxReplacedLevel;
             this.composeCache = new MtBddCache.UnaryToIntCache(mtbdd, mtbdd.bddImpl());
             this.composeSimplifyCache = withSimplify ? new MtBddCache.MtbddBddToIntCache(mtbdd, mtbdd.bddImpl()) : null;
             mtbdd.registerObserver(this);
@@ -91,7 +91,7 @@ final class MtBddOperations {
                 return;
             }
             // As BddOperations.Compose: the cut-off it holds is a level, and its caches used the old one.
-            deepestReplacedLevel = mtbdd.bddImpl().deepestReplacedLevel(bddVariableMapping);
+            maxReplacedLevel = mtbdd.bddImpl().maxReplacedLevel(bddVariableMapping);
             composeCache.invalidate();
             if (composeSimplifyCache != null) {
                 composeSimplifyCache.invalidate();
@@ -104,10 +104,10 @@ final class MtBddOperations {
                 return;
             }
             // See BddOperations.Compose: only the bound moves, every comparison against it is preserved.
-            if (deepestReplacedLevel >= level) {
-                deepestReplacedLevel += 1;
+            if (maxReplacedLevel >= level) {
+                maxReplacedLevel += 1;
             }
-            assert deepestReplacedLevel == mtbdd.bddImpl().deepestReplacedLevel(bddVariableMapping);
+            assert maxReplacedLevel == mtbdd.bddImpl().maxReplacedLevel(bddVariableMapping);
         }
 
         @Override
@@ -129,12 +129,7 @@ final class MtBddOperations {
             assert bddDomain == mtbdd.bdd().trueFunction() || composeSimplifyCache != null
                     : "A domain-carrying compose must be registered through registerComposeSimplify";
             int result = mtbdd.composeGeneral(
-                    mtbddFunction,
-                    bddDomain,
-                    bddVariableMapping,
-                    deepestReplacedLevel,
-                    composeCache,
-                    composeSimplifyCache);
+                    mtbddFunction, bddDomain, bddVariableMapping, maxReplacedLevel, composeCache, composeSimplifyCache);
             composeCache.growOnUsage();
             if (composeSimplifyCache != null) {
                 composeSimplifyCache.growOnUsage();

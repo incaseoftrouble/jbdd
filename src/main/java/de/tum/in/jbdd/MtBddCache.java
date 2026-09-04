@@ -53,6 +53,7 @@ final class MtBddCache {
     private int applyReuseCount = 0;
     private int mapReuseCount = 0;
     private int mapBooleanReuseCount = 0;
+    private int applyBooleanReuseCount = 0;
     private int composeReuseCount = 0;
     private int restrictReuseCount = 0;
     private int reachesMatchReuseCount = 0;
@@ -67,6 +68,8 @@ final class MtBddCache {
     private final UnaryToBddCache mapBooleanCache;
     private @Nullable IntPredicate currentMapBooleanPredicate;
     private final BinaryToBddCache agreementCache;
+    private final BinaryToBddCache applyBooleanCache;
+    private @Nullable MtBddBinaryPredicate currentApplyBooleanPredicate;
     private final MtbddBddToIntCache simplifyCache;
     private final MtbddBddToIntCache constrainCache;
     private final UpdateCache updateCache;
@@ -100,6 +103,7 @@ final class MtBddCache {
         mapSimplifyCache = new MtbddBddToIntCache(mtbdd, bdd);
         mapBooleanCache = new UnaryToBddCache(mtbdd, bdd);
         agreementCache = new BinaryToBddCache(mtbdd, bdd);
+        applyBooleanCache = new BinaryToBddCache(mtbdd, bdd);
         simplifyCache = new MtbddBddToIntCache(mtbdd, bdd);
         constrainCache = new MtbddBddToIntCache(mtbdd, bdd);
         updateCache = new UpdateCache(mtbdd, bdd);
@@ -135,6 +139,7 @@ final class MtBddCache {
                 entry("compose_simplify", composeSimplifyCache),
                 entry("map_boolean", mapBooleanCache),
                 entry("agreement", agreementCache),
+                entry("apply_boolean", applyBooleanCache),
                 entry("simplify", simplifyCache),
                 entry("constrain", constrainCache),
                 entry("update", updateCache),
@@ -197,6 +202,7 @@ final class MtBddCache {
 
         int ephemeralSize = size / configuration.mtbddCacheEphemeralMultiplier();
         applyCache.grow(ephemeralSize);
+        applyBooleanCache.grow(ephemeralSize);
         applySimplifyCache.grow(ephemeralSize);
         mapCache.grow(ephemeralSize);
         mapSimplifyCache.grow(ephemeralSize);
@@ -290,6 +296,15 @@ final class MtBddCache {
         currentMapOp = op;
         mapCache.invalidate();
         mapSimplifyCache.invalidate();
+    }
+
+    void initApplyBoolean(MtBddBinaryPredicate predicate) {
+        if (predicate.equals(currentApplyBooleanPredicate)) {
+            applyBooleanReuseCount += 1;
+            return;
+        }
+        currentApplyBooleanPredicate = predicate;
+        applyBooleanCache.invalidate();
     }
 
     void initMapBoolean(IntPredicate predicate) {
@@ -420,11 +435,24 @@ final class MtBddCache {
         return result;
     }
 
-    int lookupAgreement(int function1, int function2) {
+    BinaryToBddCache agreementCache() {
+        return agreementCache;
+    }
+
+    BinaryToBddCache applyBooleanCache() {
+        return applyBooleanCache;
+    }
+
+    int lookupBinaryToBdd(BinaryToBddCache cache, int function1, int function2) {
         assert mtbdd.isValidFunction(function1) && mtbdd.isValidFunction(function2);
-        int result = agreementCache.lookup(function1, function2);
-        lookupHash = agreementCache.lookupHash();
+        int result = cache.lookup(function1, function2);
+        lookupHash = cache.lookupHash();
         return result;
+    }
+
+    void putBinaryToBdd(BinaryToBddCache cache, int hash, int function1, int function2, int result) {
+        assert mtbdd.isValidFunction(function1) && mtbdd.isValidFunction(function2) && bdd.isValidFunction(result);
+        cache.put(hash, function1, function2, result);
     }
 
     int lookupSimplify(int function, int domain) {
@@ -525,11 +553,6 @@ final class MtBddCache {
         mapBooleanCache.put(hash, function, result);
     }
 
-    void putAgreement(int hash, int function1, int function2, int result) {
-        assert mtbdd.isValidFunction(function1) && mtbdd.isValidFunction(function2) && bdd.isValidFunction(result);
-        agreementCache.put(hash, function1, function2, result);
-    }
-
     void putSimplify(int hash, int function, int domain, int result) {
         assert mtbdd.isValidFunction(function) && bdd.isValidFunction(domain) && mtbdd.isValidFunction(result);
         simplifyCache.put(hash, function, domain, result);
@@ -603,6 +626,7 @@ final class MtBddCache {
         statistics.put("mtbdd_cache_apply_reuse_count", String.valueOf(applyReuseCount));
         statistics.put("mtbdd_cache_map_reuse_count", String.valueOf(mapReuseCount));
         statistics.put("mtbdd_cache_map_boolean_reuse_count", String.valueOf(mapBooleanReuseCount));
+        statistics.put("mtbdd_cache_apply_boolean_reuse_count", String.valueOf(applyBooleanReuseCount));
         statistics.put("mtbdd_cache_compose_reuse_count", String.valueOf(composeReuseCount));
         statistics.put("mtbdd_cache_restrict_reuse_count", String.valueOf(restrictReuseCount));
         statistics.put("mtbdd_cache_reaches_match_reuse_count", String.valueOf(reachesMatchReuseCount));
