@@ -16,6 +16,9 @@
  */
 package de.tum.in.jbdd;
 
+import static de.tum.in.jbdd.RegisteredOperation.*;
+
+import de.tum.in.jbdd.RegisteredOperation.Forwarding;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -98,11 +101,6 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
             bdd.createVariables(variable - variables + 1);
         }
         return bdd.variableFunction(variable);
-    }
-
-    @Override
-    public Map<String, Object> statistics() {
-        return dd.statistics();
     }
 
     private static <A, B> boolean isInjective(
@@ -228,11 +226,12 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
 
         @Override
         public BddMap<V> ifThenElse(BddSet condition, BddMap<V> then, BddMap<V> otherwise) {
-            int result = factory.dd.ifThenElse(
-                    factory.bddSets.functionOf(condition),
-                    factory.functionOf(then, this),
-                    factory.functionOf(otherwise, this));
-            return factory.make(result, this);
+            return factory.make(
+                    factory.dd.ifThenElse(
+                            factory.bddSets.functionOf(condition),
+                            factory.functionOf(then, this),
+                            factory.functionOf(otherwise, this)),
+                    this);
         }
 
         @Override
@@ -248,7 +247,7 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
                     destination,
                     tuple -> {
                         W value = map.apply(tuple);
-                        assert value != tuple; // NOPMD
+                        assert value != tuple : "map must persist the provided tuple"; // NOPMD
                         return value;
                     },
                     UnaryOperator.identity());
@@ -262,19 +261,19 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
             ValuesImpl<W> resultValues = factory.valuesOf(destination);
 
             int[] functions = new int[maps.size()];
-            List<V> scratch = new ArrayList<>(functions.length);
             for (int i = 0; i < maps.size(); i++) {
                 functions[i] = factory.functionOf(maps.get(i), this);
-                //noinspection DataFlowIssue
-                scratch.add(null);
             }
+            //noinspection unchecked
+            V[] scratch = (V[]) new Object[functions.length];
 
-            List<V> unmodifiableView = Collections.unmodifiableList(scratch);
+            //noinspection Java9CollectionFactory
+            List<V> unmodifiableView = Collections.unmodifiableList(Arrays.asList(scratch));
 
             // TODO Use "native" cartesian product?
             int result = factory.dd.apply(functions, rawValues -> {
                 for (int i = 0; i < rawValues.length; i++) {
-                    scratch.set(i, valueOf(rawValues[i]));
+                    scratch[i] = valueOf(rawValues[i]);
                 }
                 return resultValues.getOrAssignIndex(map.apply(unmodifiableView), copyOnInsert);
             });
@@ -305,6 +304,7 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
                 Values<W> other, BiFunction<? super V, ? super W, ? extends O> combiner, Values<O> destination) {
             ValuesImpl<W> otherValues = factory.valuesOf(other);
             ValuesImpl<O> resultValues = factory.valuesOf(destination);
+            // TODO if (otherValues == thisValue == resultValues) { specialize }
             // Different numberings means we cannot use any property
             IntBinaryOperator rawOp = (rawV, rawW) ->
                     resultValues.getOrAssignIndex(combiner.apply(valueOf(rawV), otherValues.valueOf(rawW)));
@@ -320,7 +320,7 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
         @Override
         public BddMap.Relation<V> registerWhere(BddMapBinaryPredicate<V> predicate) {
             if (predicate == BddMapBinaryPredicate.<V>equality()) { // NOPMD
-                // Where with equality is just agreement, which uses a global hash
+                // Where with equality is just agreement, which uses a global cache
                 return BddMap::agreement;
             }
             IntBinaryPredicate raw = (rawV, rawW) -> predicate.test(valueOf(rawV), valueOf(rawW));
@@ -420,7 +420,7 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
     @SuppressWarnings({"FieldCanBeLocal", "unused"})
     private static final class RegisteredApply<V> implements BddMap.Operator<V> {
         private final ValuesImpl<V> values;
-        private final RegisteredOperation.Binary operation;
+        private final Binary operation;
         // Hold references to these two -- as long as this RegisteredApply is alive, they won't be collected
         private final @Nullable BddMap<V> pinnedNeutral;
         private final @Nullable BddMap<V> pinnedAbsorbing;
@@ -455,15 +455,14 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
         }
     }
 
-    private static final class RegisteredMapper<V, O> implements BddMap.Mapper<V, O> {
+    private static final class RegisteredMapper<V, O> extends Forwarding<Unary> implements BddMap.Mapper<V, O> {
         private final ValuesImpl<V> values;
         private final ValuesImpl<O> destination;
-        private final RegisteredOperation.Unary operation;
 
-        RegisteredMapper(ValuesImpl<V> values, ValuesImpl<O> destination, RegisteredOperation.Unary operation) {
+        RegisteredMapper(ValuesImpl<V> values, ValuesImpl<O> destination, Unary operation) {
+            super(operation);
             this.values = values;
             this.destination = destination;
-            this.operation = operation;
         }
 
         @Override
@@ -471,28 +470,20 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
             BddMapFactoryImpl factory = values.factory;
             return factory.make(operation.applyAsInt(factory.functionOf(map, values)), destination);
         }
-
-        @Override
-        public void release() {
-            operation.release();
-        }
     }
 
-    private static final class RegisteredCombiner<V, W, O> implements BddMap.Combiner<V, W, O> {
+    private static final class RegisteredCombiner<V, W, O> extends Forwarding<Binary>
+            implements BddMap.Combiner<V, W, O> {
         private final ValuesImpl<V> values;
         private final ValuesImpl<W> otherValues;
         private final ValuesImpl<O> destination;
-        private final RegisteredOperation.Binary operation;
 
         RegisteredCombiner(
-                ValuesImpl<V> values,
-                ValuesImpl<W> otherValues,
-                ValuesImpl<O> destination,
-                RegisteredOperation.Binary operation) {
+                ValuesImpl<V> values, ValuesImpl<W> otherValues, ValuesImpl<O> destination, Binary operation) {
+            super(operation);
             this.values = values;
             this.otherValues = otherValues;
             this.destination = destination;
-            this.operation = operation;
         }
 
         @Override
@@ -502,20 +493,14 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
                     operation.applyAsInt(factory.functionOf(left, values), factory.functionOf(right, otherValues)),
                     destination);
         }
-
-        @Override
-        public void release() {
-            operation.release();
-        }
     }
 
-    private static final class RegisteredSelector<V> implements BddMap.Selector<V> {
+    private static final class RegisteredSelector<V> extends Forwarding<Unary> implements BddMap.Selector<V> {
         private final ValuesImpl<V> values;
-        private final RegisteredOperation.Unary operation;
 
-        RegisteredSelector(ValuesImpl<V> values, RegisteredOperation.Unary operation) {
+        RegisteredSelector(ValuesImpl<V> values, Unary operation) {
+            super(operation);
             this.values = values;
-            this.operation = operation;
         }
 
         @Override
@@ -523,20 +508,14 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
             BddMapFactoryImpl factory = values.factory;
             return factory.bddSets.make(operation.applyAsInt(factory.functionOf(map, values)));
         }
-
-        @Override
-        public void release() {
-            operation.release();
-        }
     }
 
-    private static final class RegisteredRelation<V> implements BddMap.Relation<V> {
+    private static final class RegisteredRelation<V> extends Forwarding<Binary> implements BddMap.Relation<V> {
         private final ValuesImpl<V> values;
-        private final RegisteredOperation.Binary operation;
 
-        RegisteredRelation(ValuesImpl<V> values, RegisteredOperation.Binary operation) {
+        RegisteredRelation(ValuesImpl<V> values, Binary operation) {
+            super(operation);
             this.values = values;
-            this.operation = operation;
         }
 
         @Override
@@ -545,31 +524,20 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
             int result = operation.applyAsInt(factory.functionOf(left, values), factory.functionOf(right, values));
             return factory.bddSets.make(result);
         }
-
-        @Override
-        public void release() {
-            operation.release();
-        }
     }
 
-    private static final class RegisteredReplacer implements BddMap.VariableReplacer {
+    private static final class RegisteredReplacer extends Forwarding<Unary> implements BddMap.VariableReplacer {
         private final BddMapFactoryImpl factory;
-        private final RegisteredOperation.Unary operation;
 
-        RegisteredReplacer(BddMapFactoryImpl factory, RegisteredOperation.Unary operation) {
+        RegisteredReplacer(BddMapFactoryImpl factory, Unary operation) {
+            super(operation);
             this.factory = factory;
-            this.operation = operation;
         }
 
         @Override
         public <V> BddMap<V> replace(BddMap<V> map) {
             ValuesImpl<V> values = factory.valuesOf(map);
             return factory.make(operation.applyAsInt(factory.functionOf(map, values)), values);
-        }
-
-        @Override
-        public void release() {
-            operation.release();
         }
     }
 

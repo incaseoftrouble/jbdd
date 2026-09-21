@@ -43,7 +43,7 @@ import org.jspecify.annotations.Nullable;
  * {@code initMapBoolean}.
  */
 @SuppressWarnings({"PMD.TooManyFields", "PMD.CouplingBetweenObjects"})
-final class MtBddCache {
+final class MtBddCache implements VariableOrderObserver {
     private static final int[] EMPTY_INT_ARRAY = new int[0];
     private static final Object[] EMPTY_OBJECT_ARRAY = new Object[0];
 
@@ -152,10 +152,6 @@ final class MtBddCache {
                 entry("count", satisfactionCache));
 
         tableSizeChanged(0, BitSets.of());
-
-        if (bdd.configuration().logStatisticsOnShutdown()) {
-            Util.registerForCleanupStatistics(mtbdd, bdd.configuration().name());
-        }
     }
 
     BinaryToIntCache applyCache() {
@@ -241,16 +237,18 @@ final class MtBddCache {
     }
 
     /**
-     * See {@link BooleanCache#levelsSwapped}, which this mirrors, including why it drops everything rather
-     * than only what it must. The ones that would survive are {@code apply}, {@code map},
-     * {@code map_boolean}, {@code agreement}, {@code update} and {@code ite}, all of which stop at
-     * constants and never compare a level. The ones that could not are {@code compose}, {@code restrict}
-     * and {@code split} (an early return on a level comparison), {@code split_combine} (a level in its
-     * very key), {@code count} (ranges over the variables below the node) and the simplify family (picks
-     * a representative by level).
+     * @see BooleanCache#orderChanged
      */
-    void levelsSwapped() {
+    @Override
+    public void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, BitSet movedVariables) {
+        // see BooleanCache#orderChanged
         invalidate();
+    }
+
+    @Override
+    public void variablesInserted(int level, int count) {
+        // As BooleanCache's: nothing moved, but the count did.
+        variablesChanged();
     }
 
     private Collection<MtbddCacheStorage> caches() {

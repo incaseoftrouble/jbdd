@@ -77,7 +77,7 @@ class RegressionTests {
 
     @Test
     void testReferenceOverflow() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int and = bdd.and(v1, v2);
@@ -93,7 +93,7 @@ class RegressionTests {
 
     @Test
     void testIteratorUniquePath() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int and = bdd.and(v1, v2);
@@ -108,19 +108,14 @@ class RegressionTests {
     void testCheckSucceedsOnAFreshTable() {
         // biggestValidNode / biggestReferencedNode are PLACEHOLDER while nothing has been built yet, and
         // slot 0 is never a node - check() must not demand that it be a valid, referenced one.
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         assertTrue(bdd.check());
         assertTrue(bdd.mtbdd().check());
     }
 
     @Test
-    void testHashArrayWithASingleKey() {
-        assertEquals(HashUtil.hash(7, 11), HashUtil.hashArray(7, 11));
-    }
-
-    @Test
     void testBooleanCacheIsPrunedAfterAJvmGarbageCollection() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int[] v = bdd.createVariables(6);
         forceJvmGarbageCollection();
 
@@ -141,7 +136,7 @@ class RegressionTests {
 
     @Test
     void testMtBddCacheIsPrunedAfterAJvmGarbageCollection() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         bdd.createVariables(3);
         MtBddImpl mt = bdd.mtbdd();
         forceJvmGarbageCollection();
@@ -170,7 +165,7 @@ class RegressionTests {
 
     @Test
     void testMtBddForceGcReclaimsUnreferencedNodesAndValues() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -196,7 +191,7 @@ class RegressionTests {
 
     @Test
     void testSatisfactionCountIsRecomputedAfterCreatingVariables() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int[] v = bdd.createVariables(2);
         int and = bdd.reference(bdd.and(v[0], v[1]));
 
@@ -212,7 +207,7 @@ class RegressionTests {
 
     @Test
     void testMtBddAssignmentCountIsRecomputedAfterCreatingVariables() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
         // 1 exactly where both variables hold, 0 elsewhere.
@@ -227,7 +222,7 @@ class RegressionTests {
 
     @Test
     void testPerVariableNodeEnumerationMatchesTheTable() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int[] v = bdd.createVariables(6);
         NodeTable table = bdd.table();
         // Enabled before anything is built, so the incremental maintenance in allocateNode and in both
@@ -265,7 +260,7 @@ class RegressionTests {
 
     @Test
     void testReorderingSupportSurvivesDropAndRebuild() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int[] v = bdd.createVariables(5);
         int f = bdd.reference(bdd.and(bdd.or(v[0], v[1]), bdd.xor(v[2], bdd.or(v[3], v[4]))));
         NodeTable table = bdd.table();
@@ -291,7 +286,7 @@ class RegressionTests {
 
     @Test
     void testUnlinkAndRelinkPreservesTheHashChains() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int[] v = bdd.createVariables(5);
         int f = bdd.reference(bdd.and(bdd.or(v[0], v[1]), bdd.xor(v[2], bdd.or(v[3], v[4]))));
         NodeTable table = bdd.table();
@@ -320,7 +315,7 @@ class RegressionTests {
 
     @Test
     void testSaturatedTerminalWrappersStayCollectible() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         BddSetFactoryImpl sets = new BddSetFactoryImpl(bdd);
         BddMapFactoryImpl maps = new BddMapFactoryImpl(sets);
         MtBddImpl mt = bdd.mtbdd();
@@ -358,7 +353,7 @@ class RegressionTests {
 
     @Test
     void testBddMapValuesSurviveAValueSweep() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         BddSetFactoryImpl sets = new BddSetFactoryImpl(bdd);
         Values<String> maps = new BddMapFactoryImpl(sets).create();
         MtBddImpl mt = bdd.mtbdd();
@@ -384,7 +379,7 @@ class RegressionTests {
     void testAssignmentIteratorRejectsAnInterleavedQuery() {
         assumeTrue(assertionsEnabled(), "Guarded by an assertion");
 
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         bdd.createVariables(3);
         MtBddImpl mt = bdd.mtbdd();
         int a = mt.reference(mt.of(1, mt.of(5), mt.of(7)));
@@ -411,7 +406,7 @@ class RegressionTests {
 
     @Test
     void testSplitRelabeledCallsTheRelabelerOncePerDistinctResidual() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         bdd.createVariables(3);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -447,7 +442,7 @@ class RegressionTests {
 
     @Test
     void testUpdateMatchesIfThenElseOnTheOriginalFunction() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int[] v = bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -463,7 +458,7 @@ class RegressionTests {
 
     @Test
     void testRegisterComposeDoesNotShareTheCallersMapping() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int[] v = bdd.createVariables(3);
         int function = bdd.reference(bdd.and(v[0], v[2]));
 
@@ -481,7 +476,7 @@ class RegressionTests {
 
     @Test
     void testMtBddRegisterComposeShortcuts() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int[] v = bdd.createVariables(3);
         MtBddImpl mt = bdd.mtbdd();
         int function = mt.reference(mt.of(0, mt.of(2, mt.of(1), mt.of(2)), mt.of(3)));
@@ -513,7 +508,7 @@ class RegressionTests {
         BddConfiguration tiny = ImmutableBddConfiguration.builder()
                 .registeredOperationDivider(1 << 20)
                 .build();
-        BddImpl bdd = new BddContextImpl(tiny).bdd();
+        BddImpl bdd = new DdContextImpl(tiny).bdd();
         int[] v = bdd.createVariables(3);
         int function = bdd.reference(bdd.and(v[0], v[2]));
 
@@ -536,7 +531,7 @@ class RegressionTests {
         // domain TRUE all the way down: it carries no domain-keyed cache to look anything else up in. (The
         // recursion used to narrow the domain to the current branch condition regardless, which both
         // needed that cache and, since it wasn't allocated, tripped an assertion on the very first use.)
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int[] v = bdd.createVariables(4);
         int function = bdd.reference(bdd.or(bdd.and(v[0], v[2]), bdd.and(v[1], v[3])));
         int[] mapping = {bdd.and(v[1], v[3]), bdd.placeholder(), bdd.not(v[3]), bdd.placeholder()};
@@ -557,7 +552,7 @@ class RegressionTests {
         // When the two operands' top variables differ, the recursion used to fall back to the plain
         // (domain-less) xor, abandoning simplification for that whole subtree - unlike its `and`
         // counterpart, which carries the domain. Correct either way, just needlessly large.
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int[] v = bdd.createVariables(3);
 
         // xor(v0, v2) restricted to !v2 is just v0.
@@ -581,7 +576,7 @@ class RegressionTests {
         // constrain is precomposition with the projection onto the domain, which is codomain-agnostic -
         // so on an MTBDD it must still be the canonical representative of "agrees on the domain", and
         // must commute with pointwise operations. simplify satisfies neither; it is the control here.
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int[] v = bdd.createVariables(3);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -632,7 +627,7 @@ class RegressionTests {
         // there everything is don't-care, so any constant is a valid answer.
         assumeTrue(assertionsEnabled(), "Guarded by an assertion");
 
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
         int f = mt.reference(mt.of(0, mt.of(1), mt.of(2)));
@@ -647,7 +642,7 @@ class RegressionTests {
         // not aligned with the domain's cofactors on it: the low branch governs wherever the replacement is
         // false, which is unrelated to where the variable is. Cofactoring the domain here dropped exactly
         // the part of the domain the discarded branch was responsible for.
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int[] v = bdd.createVariables(3);
 
         // f branches on v0, and v0 is replaced by v1 - so the domain v0 (same top variable) must be
@@ -684,7 +679,7 @@ class RegressionTests {
         // A mapping shorter than numberOfVariables() leaves the remaining variables unchanged, so an
         // all-constant mapping does not make the result constant. It used to be answered by evaluating the
         // function against the mapping, reading every uncovered variable as false.
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int[] v = bdd.createVariables(3);
         int function = bdd.reference(bdd.and(v[0], bdd.or(v[1], v[2])));
 
@@ -704,7 +699,7 @@ class RegressionTests {
 
     @Test
     void testAgreementOfAFunctionWithItselfIsTrue() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         bdd.createVariables(3);
         MtBddImpl mt = bdd.mtbdd();
         int shared = mt.reference(mt.of(2, mt.of(7), mt.of(8)));
@@ -718,7 +713,7 @@ class RegressionTests {
 
     @Test
     void testNaryOperatorUnwrapsToTheCachedUnaryAndBinaryImplementations() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
         int left = mt.reference(mt.of(0, mt.of(1), mt.of(2)));
@@ -753,7 +748,7 @@ class RegressionTests {
         // simplify widens its domain with bdd.computeOr, which allocates Bdd nodes and can therefore
         // trigger a Bdd GC mid-recursion; the domain has to be protected on the Bdd work stack for that.
         // Stress rather than proof: it forces many collections while the domain is held only by a local.
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int[] v = bdd.createVariables(8);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -782,7 +777,7 @@ class RegressionTests {
 
     @Test
     void testMtBddCacheIsPrunedWhenOnlyValuesAreReclaimed() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         bdd.createVariables(2);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -810,7 +805,7 @@ class RegressionTests {
         // A live-node threshold of 0 sends every collection down the grow branch.
         BddConfiguration growAlways =
                 ImmutableBddConfiguration.builder().gcLiveNodeThreshold(0.0d).build();
-        BddImpl bdd = new BddContextImpl(growAlways).bdd();
+        BddImpl bdd = new DdContextImpl(growAlways).bdd();
         bdd.createVariables(4);
         MtBddImpl mt = bdd.mtbdd();
 
@@ -887,9 +882,30 @@ class RegressionTests {
         checkCursorContract(mdd.pathCursor(function), Arrays::toString);
     }
 
+    /**
+     * {@code initExists} compared the quantified set against the one the previous call was made with, but
+     * stored the caller's {@code BitSet} rather than a copy of it. A caller reusing one set then compared it
+     * against itself, so the cache was kept although the quantification had changed.
+     */
+    @Test
+    void testExistsWithMutatedQuantifiedSet() {
+        Bdd bdd = BddFactory.buildBdd(config);
+        int v0 = bdd.reference(bdd.createVariable());
+        int v1 = bdd.reference(bdd.createVariable());
+        int v2 = bdd.reference(bdd.createVariable());
+        int function = bdd.reference(bdd.and(bdd.and(v0, v1), v2));
+
+        BitSet quantified = new BitSet(3);
+        quantified.set(0);
+        assertEquals(bdd.and(v1, v2), bdd.exists(function, quantified));
+
+        quantified.set(1);
+        assertEquals(v2, bdd.exists(function, quantified));
+    }
+
     @Test
     void testMtBddCursorContract() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         bdd.createVariables(3);
         MtBddImpl mtbdd = bdd.mtbdd();
         int function = mtbdd.reference(

@@ -16,12 +16,14 @@
  */
 package de.tum.in.jbdd;
 
+import java.util.Map;
+
 final class BinaryFactoryContextImpl implements BinaryFactoryContext {
-    private final BddContextImpl context;
+    private final DdContextImpl context;
     private final BddSetFactoryImpl bddSets;
     private final BddMapFactoryImpl bddMaps;
 
-    BinaryFactoryContextImpl(BddContextImpl context) {
+    BinaryFactoryContextImpl(DdContextImpl context) {
         this.context = context;
         bddSets = new BddSetFactoryImpl(context.bdd());
         bddMaps = new BddMapFactoryImpl(bddSets);
@@ -38,8 +40,23 @@ final class BinaryFactoryContextImpl implements BinaryFactoryContext {
     }
 
     @Override
-    public void siftDown(int level) {
-        context.siftDown(level);
+    public DdVariableOrder variableOrder() {
+        return context.variableOrder();
+    }
+
+    @Override
+    public int createVariableAtLevel(int level) {
+        return context.createVariableAtLevel(level);
+    }
+
+    @Override
+    public int[] createVariablesAtLevel(int level, int count) {
+        return context.createVariablesAtLevel(level, count);
+    }
+
+    @Override
+    public Map<String, Object> statistics() {
+        return context.statistics();
     }
 
     @Override

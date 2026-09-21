@@ -53,8 +53,7 @@ public class BddConfiguration extends NodeTableConfiguration {
      * Whether the Bdd maintains structures required for reordering.
      *
      * <p>Building it is one linear pass, so a workload that reorders occasionally is better off not
-     * keeping it: the structures cost three ints per node slot, and maintaining them puts work on every
-     * node created. Set this when reordering is frequent enough that rebuilding dominates.
+     * keeping it. Set this when reordering is frequent enough that rebuilding dominates.
      */
     @Value.Default
     public boolean keepReorderingStructures() {
@@ -63,8 +62,7 @@ public class BddConfiguration extends NodeTableConfiguration {
 
     /**
      * Initial node-table size of the companion MTBDD (see {@code MtBddImpl}); defaults to
-     * {@link #initialSize()}. Separate from {@link #bddInitialSize()} because every {@code Bdd} carries an
-     * MTBDD whether or not it is ever used, so the two tables' useful starting sizes rarely match.
+     * {@link #initialSize()}.
      */
     @Value.Default
     public int mtbddInitialSize() {
@@ -112,9 +110,7 @@ public class BddConfiguration extends NodeTableConfiguration {
     }
 
     /** Further divides down a registered operation's (see {@link RegisteredOperation}) initial cache size
-     * relative to the base ephemeral cache it would otherwise match - registered operations have a
-     * different usage pattern (one fixed parameter, reused many times) and grow from there based on actual
-     * usage (see {@link CacheBase.IntKeys#growOnUsage()}) rather than tracking the table size directly. */
+     * relative to the base ephemeral cache it would otherwise match. */
     @Value.Default
     public int registeredOperationDivider() {
         return DEFAULT_REGISTERED_OPERATION_DIVIDER;

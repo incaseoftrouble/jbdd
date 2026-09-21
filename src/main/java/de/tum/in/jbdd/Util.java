@@ -43,7 +43,7 @@ final class Util {
         return node1 <= node2;
     }
 
-    static void registerForCleanupStatistics(DecisionDiagram owner, @Nullable String name) {
+    static void registerForCleanupStatistics(StatisticsSource owner, @Nullable String name) {
         if (!logger.isLoggable(Level.INFO)) {
             return;
         }
@@ -78,10 +78,10 @@ final class Util {
         return total == 0 ? 0.0 : value / (double) total;
     }
 
-    private static final class CleanupStatisticsRef extends WeakReference<DecisionDiagram> {
+    private static final class CleanupStatisticsRef extends WeakReference<StatisticsSource> {
         private final String label;
 
-        CleanupStatisticsRef(DecisionDiagram owner, @Nullable String name) {
+        CleanupStatisticsRef(StatisticsSource owner, @Nullable String name) {
             super(owner);
             this.label = String.format(
                     "%s@%s",
@@ -90,7 +90,7 @@ final class Util {
         }
 
         boolean log() {
-            DecisionDiagram owner = get();
+            StatisticsSource owner = get();
             if (owner == null) {
                 return false;
             }

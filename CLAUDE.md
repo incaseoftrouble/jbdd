@@ -17,7 +17,9 @@ asking for clarification over guessing.**
   blanket suppressions, and do not treat them as your blocker. If a rule genuinely does not apply,
   suppress at the narrowest scope with a reason.
 - **Document the status quo only.** No "previously we did X", no "considered but rejected" narration in
-  source or docs, no plan/proposal text. Genuine future work is a short `// TODO` on the line it concerns.
+  source or docs, no plan/proposal text. Genuine future work is a short `// TODO` on the line it concerns;
+  `TODO.md` carries the reasoning behind each one — what it would take, or why it was answered in the
+  negative — and is the place to look before acting on a `// TODO`.
 - **Keep this file in sync, in the same pass as the change.** A change that invalidates a paragraph here
   invalidates it for every future session. The same goes for anything that turns out to be a
   "I would have wanted to know this beforehand" — that belongs here, not in a commit message. But **edit,
@@ -136,10 +138,11 @@ Two layers, deliberately separated.
 
 ```
 DecisionDiagram                     ids, ref counting, support, statistics, ReferenceGuard
-├─ NodeBasedDd                      nodes: nodeFor / nodeReferenceCount / nodeCount / size / gc
+├─ NodeBasedDd                      nodes: nodeFor / nodeReferenceCount / nodeCount / size / gc,
+│                                   plus check / treeToString / invalidateCache
 ├─ BooleanTerminalDecisionDiagram   codomain fixed to bool, domain generic  → Bdd, Mdd
 ├─ BooleanDecisionDiagram           domain fixed to binary (highOf/lowOf)   → Bdd, MtBdd
-└─ ReorderableDd                    structural: level / variableAtLevel / reorder / reorderTo
+└─ ReorderableDd                    structural: variableOrder, and the two level queries through it
 ```
 
 - The `...Dd` suffix marks the two **implementation-side** interfaces; `...DecisionDiagram` marks the
@@ -148,11 +151,21 @@ DecisionDiagram                     ids, ref counting, support, statistics, Refe
 - `DecisionDiagram` carries the ownership contract only and names no node at all. Everything counting
   nodes — `size(function)`, `nodeCount`, `gc()` — sits on `NodeBasedDd`. `gc()` is a *hint*: the caller
   says "now is a good time", the implementation may decline, and it is a semantic no-op either way.
-- `ReorderableDd` is entirely denotational — it says what order is wanted, never how to get there. Only
-  implementations that actually reorder have it, so `Mdd` does not.
+  `NodeBasedDd` also carries the introspection every implementation can answer: `check()` (§4),
+  `treeToString`, `invalidateCache`. All three are semantic no-ops or read-only, and all three are the
+  kind of thing a caller debugging its own corruption has no other way to reach.
+- `ReorderableDd` says only that this diagram *has* an order that can move, and hands it out:
+  `variableOrder()`, plus `levelOfVariable`/`variableAtLevel` defaulted through it. Only implementations
+  that actually reorder have it, so `Mdd` does not. **Reading the order is the diagram's, changing it is
+  the order's** — an order change moves every diagram over those variables at once, so it is not any one
+  diagram's to offer.
 - Functional interfaces: `BinaryDecisionDiagram`, `MultiValuedDecisionDiagram`,
-  `MultiTerminalDecisionDiagram`. Public facades: `Bdd` (= binary + reorderable + node-based), `MtBdd`,
-  `Mdd` (no reordering).
+  `MultiTerminalDecisionDiagram`. Public facades: `Bdd` (= `BinaryDd` + reorderable), `MtBdd`, `Mdd` (no
+  reordering). `BinaryDd` is binary + node-based without the reordering promise — the shape `Mdd` has, and
+  what the test adapters implement so BDD, MDD and MTBDD can be driven through one type (§12). The split is
+  visible on `bdd()`: the denotational `MultiTerminalDecisionDiagram.bdd()` promises only a
+  `BinaryDecisionDiagram`, and `MtBdd` narrows it covariantly to `Bdd`, so only the facade hands out the
+  implementation-side surface.
 - `BooleanTerminalDecisionDiagram<S, P>` is the whole boolean-valued logical API over assignment type `S`
   and path type `P` (`BitSet`/`BinaryPath` for BDDs, `int[]`/`int[]` for MDDs): `and`, `andNot`, `exists`,
   `forall`, `ifThenElse`, `constrain`/`simplify`, solution and path cursors, the `xyIn` / `xySimplify`
@@ -167,11 +180,15 @@ Implementations (package-private; construct only via factories):
   `<VAR:17><REF:14><MARK:1>` (asserted to fill an `int`), free list, mark-and-sweep GC, growth, optional
   reordering bookkeeping. `NodeTable.Binary` (parallel `low[]`/`high[]`) and `NodeTable.Multi` (jagged
   `int[][]`); each diagram supplies a nested `Table` filling in the abstract hooks.
-- `BddContextImpl` — owns everything the BDD and its MTBDD *share*: the variable order, variable creation,
-  the entire sifting engine, the `reorder_*` statistics. It constructs both diagrams eagerly (BDD first —
-  the MTBDD hangs its caches and observers off it) and hands each a reference to itself; both delegate
-  their `ReorderableDd` surface to it, so `bdd.reorder()` and `mtBdd.reorder()` are literally the same
-  call. Each diagram keeps only its own table, cache and `rewriteLevelAfterSwap` half of a swap.
+- `DdContextImpl` — the BDD and its MTBDD, and the creation of the variables they share. Deliberately
+  shallow: it constructs the order first, then both diagrams eagerly (BDD first — the MTBDD hangs its
+  caches and observers off it). Each diagram keeps only its own table, cache and `rewriteLevelAfterSwap`
+  half of a swap.
+- `DdVariableOrderImpl` — the order those variables are laid out in and everything that moves it: the
+  bijection, the entire sifting engine, the `reorder_*` statistics. Both diagrams hold it **directly**
+  rather than reaching through the context, because `levelOfVariable`/`variableAtLevel` sit on the hot
+  path of every node operation. It reaches the diagrams the other way, through the context, which is what
+  keeps construction acyclic — nothing it does at construction touches them.
 - `ConcurrentAccessGuard` — thread-identity, reentrant, assertion-only. A field on `BooleanBase` and
   separately on `MtBddImpl`. Every public write entry point brackets its body with
   `assert guard.acquire(); … assert guard.release();`. Pure-delegation methods (`or` calling `and`) are
@@ -181,8 +198,15 @@ Implementations (package-private; construct only via factories):
 Entry points — never `new BddImpl(...)` outside tests:
 
 - `BddFactory.buildBdd() / buildMtBdd() / buildMdd()` (each optionally with a `BddConfiguration`).
-- `BddContext.create(...)` — the BDD/MTBDD pair over **one** variable order (`bdd()`, `mtBdd()`), plus the
-  operational `siftDown(level)`.
+- `DdContext.create(...)` — the BDD/MTBDD pair over **one** variable order (`bdd()`, `mtBdd()`,
+  `variableOrder()`), the two `createVariable*AtLevel` forms, and **the** `statistics()`: both diagrams,
+  their tables and caches, and the order, in one map. It is the only public accessor over a pair — neither
+  `Bdd` nor `MtBdd` reports its own, since a partial view of one key space is what made the numbers hard to
+  find. Internally each contributor implements the package-private `StatisticsSource` (the two tables
+  prefix their keys `bdd_`/`mtbdd_` through `statisticsPrefix()`, so the spaces stay disjoint and the merge
+  loses nothing), and that is also what the shutdown log holds weakly. `Mdd` keeps an accessor of its own:
+  it is its own variable universe, with no context above it. Creating a variable is the context's because
+  it is about the *universe*, and it hands back a **BDD** function whichever diagram the caller came from.
 - `BinaryFactoryContext.create(...)` — a context plus the object-layer factories `bddSets()`, `bddMaps()`
   (one each per context).
 - `BddConfiguration` — an `org.immutables` `@Value.Immutable` generating `ImmutableBddConfiguration`:
@@ -198,7 +222,7 @@ Entry points — never `new BddImpl(...)` outside tests:
   function id alone is ambiguous across numberings).
 - `BddSet` deliberately exposes nothing assuming a fixed variable universe — callers always name the
   support they mean.
-- `DimacsReader` parses DIMACS CNF (benchmarks/tests). `DelegatingBdd` is the instrumentation hook.
+- `DimacsReader` parses DIMACS CNF (benchmarks/tests).
 
 ### Navigation: types that are not in a file of their own
 
@@ -210,7 +234,7 @@ Many important types are nested. Searching for `ValuesImpl.java` will fail.
 | `BddSetImpl` | `BddSetFactoryImpl.java` |
 | `PathWalk`, `SolutionCursor`, `PathCursor`, `BddTable`, `ComposeAnalysis` | `BddImpl.java` |
 | `PathWalk`, `SolutionCursor`, `PathCursor`, `MddTable` | `MddImpl.java` |
-| `MtBddTable`, `SplitBijection`, `IntTupleBijection`, `DepthPool`, `IntArrayList` | `MtBddImpl.java` |
+| `MtBddTable`, `SplitBijection`, `IntTupleBijection` | `MtBddImpl.java` |
 | the registered operations (`Compose`, `Exists`, `Apply`, `Mapper`, …) | `BddOperations.java`, `MtBddOperations.java` |
 | `BddMap.Operator/VariableReplacer/Mapper/Combiner/Selector/Relation/Relabeler` | `BddMap.java` |
 | `BddSet.Quantifier`, `BddSet.VariableReplacer` | `BddSet.java` |
@@ -252,9 +276,22 @@ Hence `MtBddTable`'s reclaim spares any value with a nonzero refcount even if un
 
 ### GC and growth
 
+**`MtBddImpl.of(int)` is the second trigger, and the only one outside the table.** A value is an
+allocation the node table never hears about, so a workload producing many of them while building few nodes
+never reaches `ensureCapacity` and nothing ever reclaims a dead one. `of` therefore counts genuinely new
+values since the last collection and forces one when that count passes `valueCollectionThreshold` *and*
+exceeds the nodes created in the same span — where nodes are being made, the table's own trigger is
+already doing the job. The threshold doubles (to `MAXIMUM_VALUE_COLLECTION_THRESHOLD`) whenever a forced
+collection frees no value, so a workload legitimately holding many of them does not pay a mark every few
+thousand allocations, and resets the moment one does free something. `mtbdd_value_triggered_collections`
+counts how often it fired. The consequence for callers: **`of(int)` allocates, so it collects** — a bare
+terminal held across it needs the same protection as anything else, which for the in-recursion callers is
+the work stack (`doSetMarkBelow` marks a leaf pushed there, which is why `collectForValues` pushes the
+value it is about to hand out).
+
 `ensureCapacity()` runs from `makeNode` when free nodes fall to ≤ 25%. It lives **once**, in `NodeTable`,
 and is `final`; each table supplies hooks (`configuration`, `notifyBeforeGc`/`notifyAfterGc`/
-`notifyAfterTableGrowth`, `sweepManagedLeaves`, `checkOwner`, `bytesPerSlot`). Keep it that way — a
+`notifyAfterTableGrowth`, `clearUnreferencedLeaves`, `checkOwner`, `bytesPerSlot`). Keep it that way — a
 per-table copy is how one table silently loses a step (draining `ProtectionTracker` before marking, say).
 
 ```
@@ -375,8 +412,8 @@ consequences that are easy to get wrong:
 
 - The prune hook must run on **every** GC of **every** table an entry can reference, **before any new
   allocation** — node ids are recycled, so a stale entry can silently become "valid" again while naming a
-  different function. Hooks are `NodeTableObserver`s; `NodeTableObserverGroup` holds *caller-owned*
-  observers weakly (`register`) and *diagram-owned* ones strongly (`registerStrongly`). A diagram's own
+  different function. Hooks are `NodeTableObserver`s; `ObserverGroup` holds *caller-owned*
+  observers weakly (`register`) and *owned* ones strongly (`registerStrongly`). A diagram's own
   hook in the weak list is eventually collected, after which pruning silently stops and wrong answers
   appear at random — **always `registerStrongly` for those.**
 - Anything a key *implicitly* depends on but does not encode must invalidate the whole cache when it
@@ -396,8 +433,9 @@ consequences that are easy to get wrong:
     operand tuple and its recursion rewrites that array in place — it must be cloned before descending,
     which is also what the cache stores.
   - **Implicit global state** — satisfaction/assignment counts range over `[decisionVariable,
-    numberOfVariables)`, so `createVariable` invalidates them (`variablesChanged()`) though
-    `numberOfVariables()` appears in no key.
+    numberOfVariables)`, so creating a variable invalidates them (`variablesChanged()`) though
+    `numberOfVariables()` appears in no key. Both caches are `VariableOrderObserver`s and hear it as
+    `variablesInserted`; `MddImpl` has no order, so it calls `variablesChanged()` on its cache itself.
 
 **Simplify-fused operations.** `andSimplify`/`composeSimplify` (BDD) and `applySimplify`/`mapSimplify`/
 `composeSimplify` (MTBDD) are *one* recursion with the plain operation as the `domain == TRUE` special
@@ -435,20 +473,29 @@ Object layer: handle types bound once and applied repeatedly — `BddMap.Operato
 - **Each extends `RegisteredOperation`**, which is where `release()` and the one statement of what
   binding means both live. The root declares no abstract method, so a handle that also extends a
   `java.util.function` type (`BinaryOperator`, `UnaryOperator`, `Function`, `BiFunction`) stays a valid
-  `@FunctionalInterface` — keep it that way when adding one. `BddMap.Relabeler` deliberately does not:
+  `@FunctionalInterface` — keep it that way when adding one. The implementations get `release()` by
+  extending `RegisteredOperation.Forwarding<V>`, which holds the int-layer operation as `operation` and
+  forwards to it; `RegisteredApply` is the one that does not, because it also pins
+  constants. `BddMap.Relabeler` deliberately does not:
   it is created by `createRelabeling`, not registered, and holds a destination numbering that outlives
   it, so a `release()` on it would mean something else.
 - `BddMap.VariableReplacer` is the exception to the `java.util.function` part: replacing variables never
   looks at a terminal, so one instance serves maps over *any* numbering and each result stays over its
   operand's — a generic method, which no lambda can implement, hence its explicit
   `@SuppressWarnings("PMD.ImplicitFunctionalInterface")`.
+- **A registration that turns out to be a no-op is a shared singleton.** `registerCompose` over a mapping
+  that replaces nothing, and `registerExists` over no variable, return exactly
+  `RegisteredOperation.identity()`; `BddSetFactory`'s two variable replacements recognise that and return
+  `BddSet.VariableReplacer.identity()` rather than wrapping a call that would do nothing. The point is the
+  reference: a caller can test for it and skip the operation entirely, which no freshly built lambda
+  allows. Keep it a singleton (both are enums) when adding a case.
 - **All of them are backed** by an int-layer registered operation. `BddSetFactory`'s two variable
   replacements take the set of variables they replace, because a handle is built before it sees a set:
   the resolved substitution is absolute, so naming the variables is all it takes to resolve it once
   instead of per call.
 - **Constants are pinned at registration, domains are not.** `RegisteredApply` resolves `neutral` and
-  `absorbing` to raw terminals once and holds each as a `BddMap` constant, keeping that leaf referenced so
-  its index cannot be recycled into another value; `pinsHold()` asserts this on every call. A
+  `absorbing` to raw terminals once and holds each as a `BddMap` constant field for the handle's
+  lifetime, keeping that leaf referenced so its index cannot be recycled into another value. A
   simplification domain stays a per-call argument on `applyIn`/`replaceIn`: the recursion narrows it while
   descending, so it is part of every cache key below the root whatever the outermost domain was, and
   pinning it would restrict what the handle accepts without making a single key smaller.
@@ -518,25 +565,40 @@ edges in the stack and a positive-node + `lookingFor` representation were both m
 
 ## 9. Reordering
 
-Variables keep their numbers; only their **level** moves. `BddContextImpl` owns the bijection
+Variables keep their numbers; only their **level** moves. `DdVariableOrderImpl` owns the bijection
 (`variableToLevel`/`levelToVariable`) and both diagrams read it, so a shared variable universe cannot
 drift apart.
 
-`reordered` is a fast-path switch *and* the arrays' liveness flag: while false the order is the identity
-and is **not stored at all** — both arrays are `EMPTY_INT_ARRAY`, `level`/`variableAtLevel` answer `v`, and
+`explicitOrder` (asked through `isExplicitOrder()`) is a fast-path switch *and* the arrays' liveness
+flag: while false the order is the identity and is **not stored at all** — both arrays are
+`EMPTY_INT_ARRAY`, `levelOfVariable`/`variableAtLevel` answer `v`, and
 a workload that never reorders never allocates them. `makeOrderExplicit()` writes out the identity ahead
 of the only two things that bend it (`siftDown`, and `createVariableAtLevel` anywhere but the bottom); it
-leaves `reordered` set although the order is at that instant still the identity, which is sound only
-because both callers make it not be within the same critical section. `revertIfIdentity()` is the other
+leaves `explicitOrder` set although the order is at that instant still the identity, which is sound only
+because both callers make it not be within the same critical section. `makeImplicitIfIdentity()` is the other
 direction. That flag is worth more than an array load — it also decides whether enumeration writes
 straight into a variable-indexed set or translates through a buffer (§8). It is O(variables), so it is
 asked only after `reorder`, `reorderTo` and `reorderToIdentity`, never per swap;
 `reorder_identity_reverts` counts how often it fires.
 
-`siftDown(level)` is the primitive: exchange the variables at `level` and `level + 1`, rewriting exactly
-the nodes that must change, **in place**. Node ids survive, so every `int` a caller holds keeps denoting
-the same function. It sits on `BddContext`, not the diagrams — it moves both, and it is the only
+`swapWithNextLevel(level)` is the primitive: exchange the variables at `level` and `level + 1`, rewriting
+exactly the nodes that must change, **in place**. Node ids survive, so every `int` a caller holds keeps
+denoting the same function. `siftDown(level)` is that one swap as a complete reordering — the bracket plus
+the primitive — and it sits on `DdVariableOrder`, not the diagrams, because it moves both; it is the only
 *operational* method in the reordering surface.
+
+Everything that changes the order lives on `DdVariableOrder`: `siftDown`, the four reorder forms,
+`dropReorderStructures`, and `numberOfVariables` so that `variableAtLevel` has a bound without another
+type. `bdd.variableOrder() == mtBdd.variableOrder()` is also the way to ask whether two diagrams share a
+variable universe. `reorder()` returns nodes saved **across every diagram over the order**, which is why
+it belongs there and not on a `Bdd` that would appear to be answering for itself.
+
+`rewriteLevelAfterSwap` (one per diagram, same recursion, `MtBddImpl`'s without complement edges) decides
+which nodes change and `hideForRewrite`s all of them out of the unique table **before building anything**:
+until a node is rewritten it still carries the old variable, so a `makeNode` below could hand it out as a
+fresh child and it would then be rewritten out from under that parent. The nodes that do *not* change stay
+in the table on purpose — they are genuine nodes of the variable moving down, and a new child matching one
+of them must find it rather than duplicate it.
 
 - `reorder()` — sifting: heaviest variable first, each swept to its best position within its group,
   abandoning a direction once it has grown past `MAXIMUM_SIFT_GROWTH`. Candidate positions are measured by
@@ -576,45 +638,76 @@ rebuilding dominates; it costs one int per node slot plus one per valid node and
 created. Neither a collection nor a growth drops it, so within one reordering pass it is derived once.
 
 **An order change says what moved, and every listener decides for itself.** There is no blanket
-invalidation: `NodeTableObserver` carries `levelsSwapped(origin, level)` and `variableInserted(origin,
-level)`, and the two permit very different things.
+invalidation: `VariableOrderObserver` carries `orderChanged(previousVariableToLevel,
+currentVariableToLevel, movedVariables)` and `variablesInserted(level, count)`, and the two permit very
+different things.
 
-- A **swap** changes relative order, so anything folding a level comparison into a value is stale. Both
-  operation caches drop everything. They need not — reordering rewrites in place, so an entry that is only
-  a statement about node ids (`and`, `xor`, `ite`, `intersects`; MTBDD-side `apply`, `map`, `map_boolean`,
-  `agreement`, `update`, `ite`) is still true. Keeping them was built and measured and bought nothing: the
-  total `and` hit count over swaps-then-replay was identical to within one hit, because the swap reshapes
-  the diagram and the surviving entries simply stop being asked about. A keep-list is a classification
-  every new operation would have to be sorted into, and a wrong sort is silent corruption — so the
-  analysis lives in `BooleanCache.levelsSwapped`'s javadoc, not in its body.
+**These are the order's listeners, not a diagram's**, which is the whole reason the parameter lists carry
+no `origin`: `DdVariableOrderImpl` holds the `ObserverGroup` and dispatches once, so a listener over both
+diagrams — a registered simplifying compose is registered with both tables for GC pruning — hears a move
+exactly once instead of twice and needs no test for which diagram it is hearing about. Both caches
+implement it and are registered with the order directly. Table events (`NodeTableObserver`: `beforeGc`,
+`afterGc`, `afterTableGrowth`) still fire per table and still say which, because an entry can straddle
+two of them (§6) — and `MtBddCache` responds to each differently, which is why those stay small adapters
+in the diagram rather than a branch on `origin` inside the cache.
+
+- An **order change** changes relative order, so anything folding a level comparison into a value is stale.
+  Both operation caches drop everything. They need not — reordering rewrites in place, so an entry that is
+  only a statement about node ids (`and`, `xor`, `ite`, `intersects`; MTBDD-side `apply`, `map`,
+  `map_boolean`, `agreement`, `update`, `ite`) is still true. Keeping them was built and measured and bought
+  nothing: the total `and` hit count over swaps-then-replay was identical to within one hit, because the
+  swap reshapes the diagram and the surviving entries simply stop being asked about. A keep-list is a
+  classification every new operation would have to be sorted into, and a wrong sort is silent corruption.
+  `BooleanCache.orderChanged` therefore drops everything, and this paragraph is the reason it may.
+
+  **It fires once per reordering, not once per swap.** `siftDown` is the public one-swap form and brackets
+  itself like any other entry point; the primitive underneath (`swapWithNextLevel`) is silent, so a sifting
+  pass makes thousands of swaps and reports one change. Deferring is sound because nothing reads an
+  operation cache or a stored level while the order is moving — a swap only rewrites nodes, and reordering
+  may not run while an operation is in flight — so the only requirement is that every listener hears
+  before the next operation does. `beginReordering`/`endReordering` are the bracket, `reorderingFrom` the
+  snapshot they compare against, and a change that moved nothing is not reported at all.
+  `reorder_notifications` against `reorder_swaps` is what the batching is worth.
 - An **insertion** preserves relative order, which is stronger than it looks: every level *comparison*
-  answers as before, since both sides shift by the same rule (`l < L ? l : l + 1`). So no cached value
-  goes stale and `createVariableAtLevel` invalidates nothing. What moves is a *stored* level, and there are
+  answers as before, since both sides shift by the same rule (`l < L ? l : l + count`). So nothing goes
+  stale by the *order* having changed. What moves is a *stored* level, and there are
   exactly two: `BddOperations.Compose` and `MtBddOperations.Compose` hold a `maxReplacedLevel`, shifted by
-  one if at or below the insertion point. On a swap they recompute it instead (`BddOperations` in O(1)
-  from the two levels that moved, under an assertion against the full rescan) and drop their own caches.
-  A cut-off that is a level stops being a level once relative order changes.
+  `count` if at or below the insertion point. On an order change they rescan for it instead — skipped
+  when `movedVariables` holds none of the replaced ones, since the maximum is over exactly those, and
+  asserted against the full rescan either way — and drop their own caches. `BddOperations.Exists` rebuilds
+  its by-level quantified set under the same test.
+  A cut-off that is a level stops being a level once relative order changes. The block form of the
+  insertion reports `count` once rather than firing the hook `count` times — the repeated form composes to
+  the same shift, but only while every listener does nothing else with the level.
+
+  **Every variable creation fires it**, appends included: appending at the bottom is an insertion at the
+  level the first new variable lands on, with nothing below it to push. That is what lets one event carry
+  both halves of what a creation means — where the levels moved, and that the count changed — so the
+  caches hear it as a listener like everything else rather than being poked separately.
 
 **Three shapes that must translate**, and where:
 
 - **Node construction.** `makeFunction(level, low, high)` resolves the level through `levelToVariable`;
   `makeFunctionForVariable(variable, …)` (`MtBddImpl`) is the form when the variable is already in hand.
   Handing a variable to the level-taking one builds a node for a different variable entirely.
-  `BddContextImpl.createVariable`/`createVariables` write the new variable into `levelToVariable` before
+  `DdVariableOrderImpl.appendVariables`/`insertVariables` write the new variable into `levelToVariable` before
   calling `makeFunction`, which reads it straight back — but only while the order is explicit; a new
   variable goes to the bottom, so it is its own level and the implicit order already says so.
 - **Caller-supplied data inside a recursion.** `compose`'s replacement array and `restrict`'s/`split`'s
   `BitSet`s are indexed by *variable*, while the descent and its cut-off are by *level*. Each recursion
-  takes `decisionVariable(node)` for the lookup and `level(variable)` for the ordering, and its cut-off is
-  `maxLevel(...)` — never `BitSet.length() - 1`, which is a variable bound.
+  takes `decisionVariable(node)` for the lookup and `levelOfVariable(variable)` for the ordering, and
+  its cut-off is `maxLevel(...)` — never `BitSet.length() - 1`, which is a variable bound.
 - **A mapping shorter than the variable count.** It leaves the rest unchanged, and under a non-identity
   order one of those can sit *above* the greatest replaced level, so the recursion reaches it. Both
   compose implementations bounds-check before indexing rather than relying on the cut-off.
 
-Statistics: `bdd_reorder_saved_nodes` against `bdd_reorder_swaps` / `bdd_reorder_rewritten_nodes` is the
-benefit-vs-cost pair, summarised as `bdd_reorder_work_per_saved_node`. `bdd_reorder_collections` says
-whether `MAXIMUM_SIFT_GARBAGE` is set sensibly, `bdd_reorder_abandoned_directions` whether
-`MAXIMUM_SIFT_GROWTH` is. `bdd_reorder_identity_reverts` outside a deliberate `reorderToIdentity()`
+Statistics (`DdVariableOrderImpl.reorderStatistics`, folded into the BDD's contribution to the context's
+map and prefixed with `configuration().name()`, which is empty by default): `reorder_saved_nodes` against `reorder_swaps` /
+`reorder_rewritten_nodes` is the benefit-vs-cost pair, summarised as `reorder_work_per_saved_node`.
+`reorder_collections` says whether `MAXIMUM_SIFT_GARBAGE` is set sensibly,
+`reorder_abandoned_directions` whether `MAXIMUM_SIFT_GROWTH` is, and `reorder_notifications` against
+`reorder_swaps` what batching the order-change event is worth. `reorder_identity_reverts` outside a
+deliberate `reorderToIdentity()`
 signals the fast path is worth more than it looks.
 
 Reordering is explicit and must not run while an operation is in flight or from inside a callback.
@@ -704,10 +797,12 @@ entry point (`of`, `ifThenElse`, `cartesianProduct`, `createRelabeling`, `relabe
   Guava/Hamcrest/JUnit are test-only. Never add a runtime dependency.
 - `@NullMarked` on the package (`package-info.java`), NullAway in jspecify mode; mark nullables with
   `org.jspecify.annotations.@Nullable`. NullAway runs with `assertsEnabled`, so `assert x != null;`
-  narrows for it — the intended way to tell it about a nullable field a branch has established (the
-  per-operation caches in `MtBddImpl` are the standing example). It does not infer implications, so the
-  assertion must sit *inside* the branch using the value; branching on the field would trade a warning for
-  worse code.
+  narrows for it — the intended way to tell it about a nullable field a branch has established. It does
+  not infer implications, so the assertion must sit *inside* the branch using the value, and a
+  disjunctive precondition at the top of the method (`universeDomain || applySimplifyCache != null`) does
+  not narrow anything; branching on the field would trade a warning for worse code. The `*Simplify`
+  caches of `BddImpl`/`MtBddImpl` are where this bites, and the source of the NullAway warnings the
+  build currently reports.
 - Suppressions are narrow and carry a reason: `@SuppressWarnings("NullAway.Init")` per field on JMH
   `@State` fields, `// NOPMD - <reason>` on deliberate reference comparisons (factory and numbering
   identity is *the* check; `equals` would be wrong) and on `System.out` in benchmark mains.
@@ -777,7 +872,7 @@ intuitions transfer badly. Two habits follow:
   diagram once with random syntax trees, producing unary/binary/ternary data points fed to parameterized
   theories that compare the diagram against a reference `SyntaxTree`/`IntSyntaxTree` evaluation and
   re-check table invariants.
-- **`BddTheories` runs seven diagram variants**: three `BddImpl` and three `MtBddAsTestBdd` — never
+- **`BddTheories` runs seven diagram variants**: three `BddImpl` and three `MtBddAsBinaryDd` — never
   reordered, reordered with the bookkeeping rebuilt per reorder, reordered with
   `keepReorderingStructures(true)` — plus one `MddImpl`. An `@AfterEach` hook applies random `siftDown`s
   to the four reordered ones every `REORDER_EVERY` theories; the never-reordered ones are the control.
@@ -787,10 +882,10 @@ intuitions transfer badly. Two habits follow:
   plain `HashMap` iterates differently per JVM run and a failure would move or vanish between runs of the
   same code. Each diagram is built from a named `BddConfiguration` whose `toString()` reports that name —
   which is how a failing data point says which variant it came from.
-- **`TestBdd` + `TestBddImpl`, `MddAsTestBdd`, `MtBddAsTestBdd`** — adapters letting the theories run the
-  same assertions against BDD, MDD and MTBDD. `TestBdd` adds introspection (`invalidateCache`,
-  `isValidFunction`, `check`, `treeToString`) and extends the *functional* interface only; an adapter that
-  can reorder implements `ReorderableDd` on top (`MddAsTestBdd` does not — MDDs do not reorder).
+- **`MddAsBinaryDd`, `MtBddAsBinaryDd`** — adapters letting the theories run the same assertions against
+  BDD, MDD and MTBDD. All three are driven as `BinaryDd` (§3), which `BddImpl` is natively, so only the
+  other two need an adapter; one that can reorder implements `ReorderableDd` on top (`MddAsBinaryDd` does
+  not — MDDs do not reorder, and `byLevel` keys on exactly that).
 - **`FailFastExtension`** skips the rest of a class once one test fails (the shared structure is then
   suspect).
 - **`TestProfile`** scales how much data those two suites generate (`jbdd.test.scale`, §1). Only the
@@ -846,7 +941,8 @@ Ranked by how much time they cost when you get them wrong:
 
 ## 15. Open work
 
-Ordered by how much they block.
+Ordered by how much they block. These are the items with no natural line to sit on; the ones that do have
+one are `// TODO`s in the source, with their reasoning in `TODO.md`.
 
 - **`solutionCursorIn` is native only on `BddImpl`.** `MddImpl.solutionCursorIn` still materializes
   `and(function, domain)` (both overloads carry a `// TODO Native`). The BDD product walk (§8) is the
@@ -887,6 +983,6 @@ Ordered by how much they block.
 result depend on the lambda, forcing per-call cache invalidation — for `ifThenElse` that destroys a
 *persistent* cache. (`splitRelabeled` is not a precedent: it exists so no intermediate function is exposed
 unprotected, i.e. memory safety, not renumbering efficiency.) A native cross-numbering `agreement`:
-possible, but `agreementRecursive`'s `node1 == node2` shortcut and its operand-order canonicalization both
+possible, but `applyBooleanRecursive`'s `node1 == node2` shortcut and its operand-order canonicalization both
 become unsound, and its currently *stable* cache would become an ephemeral-parameter one. Revisit only if
 `adopt` traversals measurably dominate, and then with a separate cache.

@@ -50,6 +50,10 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         cache = new BooleanCache(this);
         variableDomain = new int[32];
         numberOfVariables = 0;
+
+        if (configuration.logStatisticsOnShutdown()) {
+            Util.registerForCleanupStatistics(this, configuration.name());
+        }
     }
 
     @Override
@@ -65,6 +69,11 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     @Override
     BooleanCache cache() {
         return cache;
+    }
+
+    @Override
+    String statisticsPrefix() {
+        return "mdd_";
     }
 
     // Nodes
@@ -1420,7 +1429,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         @Override
-        protected int level(int variable) {
+        protected int levelOfVariable(int variable) {
             // MDDs do not reorder, so a variable is its own level.
             return variable;
         }
@@ -1528,7 +1537,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         @Override
-        protected BitSet sweepManagedLeaves() {
+        protected BitSet clearUnreferencedLeaves() {
             return BitSets.of();
         }
 

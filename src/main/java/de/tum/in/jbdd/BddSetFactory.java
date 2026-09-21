@@ -17,12 +17,11 @@
 package de.tum.in.jbdd;
 
 import java.util.BitSet;
-import java.util.Map;
 import java.util.function.IntFunction;
 import java.util.function.IntUnaryOperator;
 
 /** Obtained from {@link BinaryFactoryContext#bddSets()} - there's no standalone way to build one,
- * since every {@code BddSetFactory} needs a {@link Bdd} to share (see {@link BddContext}). */
+ * since every {@code BddSetFactory} needs a {@link Bdd} to share (see {@link DdContext}). */
 public interface BddSetFactory {
     /** The empty set. */
     BddSet empty();
@@ -87,6 +86,4 @@ public interface BddSetFactory {
      * {@link #registerReplaceVariables}, whose contract this shares.
      */
     BddSet.VariableReplacer registerRelabelVariables(BitSet relabeledVariables, IntUnaryOperator mapping);
-
-    Map<String, Object> statistics();
 }

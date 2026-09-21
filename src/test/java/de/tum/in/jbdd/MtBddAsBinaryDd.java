@@ -32,7 +32,7 @@ import org.jspecify.annotations.Nullable;
  * Emulates a {@link Bdd} on top of an {@link MtBddImpl}, restricting the MTBDD's terminal values to
  * {@code 0} (false) and {@code 1} (true). This lets {@link BddTheories} exercise MtBddImpl's own
  * operations (apply/map/restrict/compose/mapBoolean/...) through the same boolean-algebra property
- * tests used for {@link BddImpl} and {@link MddImpl}, in the spirit of {@link MddAsTestBdd}.
+ * tests used for {@link BddImpl} and {@link MddImpl}, in the spirit of {@link MddAsBinaryDd}.
  *
  * <p>Unlike MDD (whose terminals are already boolean, {@code true}/{@code false}, independent of each
  * variable's domain size), MtBdd's terminals are arbitrary caller-chosen values with no built-in boolean
@@ -47,13 +47,13 @@ import org.jspecify.annotations.Nullable;
  * result - see {@link #exists}, {@link #conjunction}, {@link #disjunction}, {@link #ifThenElse} and
  * {@link #compose} for that pattern.</p>
  */
-class MtBddAsTestBdd implements TestBdd, ReorderableDd {
+class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
     private static final int TRUE = 1;
     private static final int FALSE = 0;
 
     private final MtBddImpl mt;
 
-    MtBddAsTestBdd(MtBddImpl mt) {
+    MtBddAsBinaryDd(MtBddImpl mt) {
         this.mt = mt;
     }
 
@@ -175,8 +175,8 @@ class MtBddAsTestBdd implements TestBdd, ReorderableDd {
      * apply and compose under a non-identity order, which nothing else does. */
 
     @Override
-    public int level(int variable) {
-        return mt.level(variable);
+    public int levelOfVariable(int variable) {
+        return mt.levelOfVariable(variable);
     }
 
     @Override
@@ -185,40 +185,25 @@ class MtBddAsTestBdd implements TestBdd, ReorderableDd {
     }
 
     @Override
-    public int reorder() {
-        return mt.reorder();
+    public DdVariableOrder variableOrder() {
+        return mt.variableOrder();
     }
 
-    @Override
-    public int reorder(List<BitSet> groups) {
-        return mt.reorder(groups);
-    }
-
-    @Override
-    public void reorderTo(List<BitSet> blocks) {
-        mt.reorderTo(blocks);
-    }
-
-    @Override
-    public void reorderToIdentity() {
-        mt.reorderToIdentity();
-    }
-
-    @Override
+    /* Not an override any more - the order-placing creation is the context's, and hands back a Bdd
+     * function; this adapter's currency is MTBDD functions, so the tests go through here. */
     public int createVariableAtLevel(int level) {
         // As createVariable(), but placed: MtBdd#createVariableAtLevel hands back the companion BDD's
         // function, and this adapter's currency is MTBDD functions.
-        int variableNode = mt.bdd().createVariableAtLevel(level);
+        int variableNode = mt.context().createVariableAtLevel(level);
         int variable = mt.bdd().decisionVariable(variableNode);
         int variableFunction = variableFunction(variable);
         mt.table().saturateNode(mt.nodeFor(variableFunction));
         return variableFunction;
     }
 
-    @Override
     public int[] createVariablesAtLevel(int level, int count) {
         // As above, one MTBDD function per variable the companion BDD just created.
-        int[] variableNodes = mt.bdd().createVariablesAtLevel(level, count);
+        int[] variableNodes = mt.context().createVariablesAtLevel(level, count);
         int[] variableFunctions = new int[variableNodes.length];
         for (int index = 0; index < variableNodes.length; index++) {
             int variable = mt.bdd().decisionVariable(variableNodes[index]);
@@ -229,11 +214,6 @@ class MtBddAsTestBdd implements TestBdd, ReorderableDd {
     }
 
     @Override
-    public void dropReorderStructures() {
-        mt.dropReorderStructures();
-    }
-
-    @Override
     public int decisionVariable(int function) {
         return mt.decisionVariable(function);
     }
@@ -241,11 +221,6 @@ class MtBddAsTestBdd implements TestBdd, ReorderableDd {
     @Override
     public boolean isValidFunction(int function) {
         return mt.isValidFunction(function);
-    }
-
-    @Override
-    public boolean isValidNonConstantFunction(int function) {
-        return mt.isValidNonConstantFunction(function);
     }
 
     @Override
@@ -354,7 +329,7 @@ class MtBddAsTestBdd implements TestBdd, ReorderableDd {
          * statement about the order. The two coincide only until something reorders. */
         int maxRelevantLevel = -1;
         for (int v = relevantSet.nextSetBit(0); v >= 0; v = relevantSet.nextSetBit(v + 1)) {
-            maxRelevantLevel = Math.max(maxRelevantLevel, mt.level(v));
+            maxRelevantLevel = Math.max(maxRelevantLevel, mt.levelOfVariable(v));
         }
         int variables = mt.numberOfVariables();
         BinaryPath path = new BinaryPath(new BitSet(variables), new BitSet(variables));
@@ -368,7 +343,7 @@ class MtBddAsTestBdd implements TestBdd, ReorderableDd {
             return;
         }
         int variable = mt.decisionVariable(node);
-        if (mt.level(variable) > depthLimit) {
+        if (mt.levelOfVariable(variable) > depthLimit) {
             // There must exist at least one satisfying completion beyond depthLimit.
             action.accept(path);
             return;
@@ -569,19 +544,19 @@ class MtBddAsTestBdd implements TestBdd, ReorderableDd {
     public RegisteredOperation.Unary registerCompose(int[] variableMapping) {
         // Registered compose is tied to a real BddImpl's own compose; this adapter routes compose through
         // the MTBDD engine instead (see #compose below), which has no equivalent registered form (yet).
-        throw new UnsupportedOperationException("registerCompose is not supported on an MTBDD-backed TestBdd");
+        throw new UnsupportedOperationException("registerCompose is not supported on an MTBDD-backed BinaryDd");
     }
 
     @Override
     public RegisteredOperation.Binary registerComposeSimplify(int[] variableMapping) {
-        throw new UnsupportedOperationException("registerComposeSimplify is not supported on an MTBDD-backed TestBdd");
+        throw new UnsupportedOperationException("registerComposeSimplify is not supported on an MTBDD-backed BinaryDd");
     }
 
     @Override
     public RegisteredOperation.Unary registerExists(BitSet quantifiedVariables) {
         // As registerCompose: this adapter quantifies through the MTBDD engine (see #exists), which has
         // no equivalent registered form.
-        throw new UnsupportedOperationException("registerExists is not supported on an MTBDD-backed TestBdd");
+        throw new UnsupportedOperationException("registerExists is not supported on an MTBDD-backed BinaryDd");
     }
 
     @Override

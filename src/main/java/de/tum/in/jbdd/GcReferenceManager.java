@@ -39,7 +39,6 @@ public class GcReferenceManager<V extends GcReferenceManager.DdContainer, DD ext
         return objects.size();
     }
 
-    // This is not thread safe!
     protected V protect(V container) {
         int function = container.function();
         Object key = container.canonicalKey();
@@ -63,34 +62,27 @@ public class GcReferenceManager<V extends GcReferenceManager.DdContainer, DD ext
         }
 
         // Remove queued functions from the mapping.
-        processReferenceQueue(key);
+        Reference<? extends V> reference = queue.poll();
+        if (reference != null) {
+            // Queue is not empty
+            int count = 0;
+            do {
+                DdReference<?> dead = (DdReference<?>) reference;
+                objects.remove(dead.key);
+
+                if (!dead.key.equals(key)) {
+                    dd.dereference(dead.node);
+                    count += 1;
+                }
+
+                reference = queue.poll();
+            } while (reference != null);
+            logger.log(Level.FINEST, "Cleared {0} references", count);
+        }
 
         // Insert function into mapping.
         objects.put(key, new DdReference<>(container, key, queue));
         return container;
-    }
-
-    private void processReferenceQueue(Object protectedKey) {
-        Reference<? extends V> reference = queue.poll();
-        if (reference == null) {
-            // Queue is empty
-            return;
-        }
-
-        int count = 0;
-        do {
-            DdReference<?> dead = (DdReference<?>) reference;
-            objects.remove(dead.key);
-
-            if (!dead.key.equals(protectedKey)) {
-                dd.dereference(dead.node);
-                count += 1;
-            }
-
-            reference = queue.poll();
-        } while (reference != null);
-
-        logger.log(Level.FINEST, "Cleared {0} references", count);
     }
 
     private static final class DdReference<V extends DdContainer> extends WeakReference<V> {

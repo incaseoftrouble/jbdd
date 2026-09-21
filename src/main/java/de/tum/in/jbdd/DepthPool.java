@@ -16,16 +16,28 @@
  */
 package de.tum.in.jbdd;
 
-import java.util.Map;
+import java.util.Arrays;
+import java.util.function.Supplier;
+import org.jspecify.annotations.Nullable;
 
-/**
- * The implementation of a {@link MultiValuedDecisionDiagram} actually provided by this library.
- */
-public interface Mdd extends MultiValuedDecisionDiagram, NodeBasedDd {
-    /**
-     * A snapshot of the statistics of this diagram and everything under it. The content may change
-     * between versions; the values are primitives. An MDD is its own variable universe, so this is the
-     * whole of them - {@link DdContext#statistics()} is the counterpart for a BDD and its MTBDD.
-     */
-    Map<String, Object> statistics();
+final class DepthPool<V> {
+    private final Supplier<V> factory;
+    private @Nullable Object[] layers = new Object[8];
+
+    DepthPool(Supplier<V> factory) {
+        this.factory = factory;
+    }
+
+    @SuppressWarnings("unchecked")
+    V get(int depth) {
+        if (depth >= layers.length) {
+            layers = Arrays.copyOf(layers, Math.max(depth + 1, layers.length * 2));
+        }
+        V value = (V) layers[depth];
+        if (value == null) {
+            value = factory.get();
+            layers[depth] = value;
+        }
+        return value;
+    }
 }

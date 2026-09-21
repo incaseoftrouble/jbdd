@@ -21,7 +21,6 @@ import static de.tum.in.jbdd.Preconditions.*;
 import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.BitSet;
-import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
@@ -46,19 +45,25 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     private static final BitSet EMPTY_BIT_SET = new BitSet(0);
 
     /* The variable order and everything else the BDD shares with its MTBDD, reordering included. */
-    private final BddContextImpl context;
+    private final DdContextImpl context;
     private final BooleanCache cache;
     private int[] variableNodes;
+    private final DdVariableOrderImpl order;
     private final BddConfiguration configuration;
     private final NodeTable.Binary table;
 
-    BddImpl(BddContextImpl context) {
+    BddImpl(DdContextImpl context) {
         this.context = context;
+        // Store the reference for speed
+        this.order = context.variableOrder();
         this.configuration = context.configuration();
         this.table = new BddTable(this, configuration.bddInitialSize());
 
         cache = new BooleanCache(this);
         variableNodes = new int[32];
+
+        // Strongly: the cache is this diagram's, and the order it listens to is held by the same context.
+        order.registerOwnedObserver(cache);
     }
 
     @Override
@@ -116,7 +121,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
 
     @Override
     public int numberOfVariables() {
-        return context.numberOfVariables();
+        return order.numberOfVariables();
     }
 
     @Override
@@ -135,10 +140,6 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
     }
 
-    /**
-     * Builds the saturated node representing {@code variable}, which the context has already placed at
-     * {@code level} - the one part of declaring a variable that is the BDD's rather than the order's.
-     */
     int makeVariableNode(int variable, int level) {
         ensureVariableNodeCapacity(variable + 1);
         int variableNode = table.saturateNode(makeFunction(level, FALSE, TRUE));
@@ -190,68 +191,43 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
 
     int decisionLevel(int function) {
         assert isValidNonConstantFunction(function);
-        return level(table.variable(positive(function)));
+        return levelOfVariable(table.variable(positive(function)));
     }
 
-    boolean reordered() {
-        return context.reordered();
+    boolean isReordered() {
+        return order.isExplicitOrder();
+    }
+
+    @Override
+    String statisticsPrefix() {
+        return "bdd_";
     }
 
     @Override
     Map<String, Object> ownStatistics() {
-        return context.reorderStatistics();
+        return order.reorderStatistics();
     }
 
     @Override
-    public int level(int variable) {
-        return context.level(variable);
+    public DdVariableOrderImpl variableOrder() {
+        return order;
+    }
+
+    @Override
+    public int levelOfVariable(int variable) {
+        return order.levelOfVariable(variable);
     }
 
     @Override
     public int variableAtLevel(int level) {
-        return context.variableAtLevel(level);
-    }
-
-    @Override
-    public void dropReorderStructures() {
-        context.dropReorderStructures();
-    }
-
-    @Override
-    public int reorder() {
-        return context.reorder();
-    }
-
-    @Override
-    public int reorder(List<BitSet> groups) {
-        return context.reorder(groups);
-    }
-
-    @Override
-    public void reorderTo(List<BitSet> blocks) {
-        context.reorderTo(blocks);
-    }
-
-    @Override
-    public void reorderToIdentity() {
-        context.reorderToIdentity();
-    }
-
-    @Override
-    public int createVariableAtLevel(int level) {
-        return context.createVariableAtLevel(level);
-    }
-
-    @Override
-    public int[] createVariablesAtLevel(int level, int count) {
-        return context.createVariablesAtLevel(level, count);
+        return order.variableAtLevel(level);
     }
 
     /** The greatest level any variable of {@code variables} sits at, or -1 if there is none. */
     int maxLevel(BitSet variables) {
         int max = -1;
         for (int variable = variables.nextSetBit(0); variable >= 0; variable = variables.nextSetBit(variable + 1)) {
-            max = Math.max(max, level(variable));
+            max = Math.max(max, levelOfVariable(variable));
         }
         return max;
     }
@@ -260,13 +236,12 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         return !isConstant(function) && decisionLevel(function) == level;
     }
 
+    @SuppressWarnings("GrazieInspection")
     void rewriteLevelAfterSwap(int[] nodes, int count, int level, int variable) {
-        /* Decide first, and take the nodes that will change out of the unique table before building
-         * anything: until a node is rewritten it still carries the old variable, so makeNode below could
-         * hand it out as a fresh child and it would then be rewritten out from under that parent. The
-         * ones that do not change stay in the table on purpose - they are genuine nodes of the variable
-         * moving down, and a new child that matches one of them must find it rather than duplicate it. */
         int rewriteCount = 0;
+
+        // Gather all the nodes where (at least) one child is in the lower level
+        // The nodes array holds all nodes of this level, so it sufficies to hold these
         for (int index = 0; index < count; index++) {
             int node = nodes[index];
             if (decidesOn(table.low(node), level) || decidesOn(table.high(node), level)) {
@@ -274,11 +249,28 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
                 rewriteCount += 1;
                 table.hideForRewrite(node);
             } else {
-                // Neither child mentions the variable moving up, so this node just descends a level.
+                // Neither child mentions the variable moving up, so this node just descends a level
                 table.addToVariableList(node, table.variable(node));
             }
         }
 
+        /* For all rewritten nodes, build the new structure
+         * Suppose we currently have:
+         *
+         *        l1
+         *       /  \
+         *     l2     l2
+         *    / \    / \
+         *   ll lh  hl  hh
+         *
+         * Where l1 and l2 swap; we need
+         *
+         *        l2
+         *       /  \
+         *     l1    l1
+         *    / \    / \
+         *   ll lh  hl  hh
+         */
         for (int index = 0; index < rewriteCount; index++) {
             int node = nodes[index];
             int lowFunction = table.low(node);
@@ -291,12 +283,11 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             int highLow = lowIf(highFunction, highDecides);
             int highHigh = highIf(highFunction, highDecides);
 
-            /* The rewritten node stays positive, which it has to - references to it carry their own
-             * polarity. That holds because a node's high edge is never complemented, so neither is the
-             * high cofactor of it, so neither is the node makeFunction builds from it. */
             int newLow = table.pushToWorkStack(makeFunction(level + 1, lowLow, highLow));
             int newHigh = makeFunction(level + 1, lowHigh, highHigh);
             table.popFromWorkStack();
+            // The new node must be positive -- however this always holds as already before the node
+            // itself was positive and its high child is always positive, hence it remains such.
             assert !isComplementFunction(newHigh);
             table.rewriteNode(node, variable, newLow, newHigh);
         }
@@ -370,14 +361,13 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         return satisfyingAssignmentInRecursive(function, domain, path) ? Optional.of(path) : Optional.empty();
     }
 
-    /** Clears every variable sitting at or below {@code level} - not a contiguous range once reordered. */
-    private void clearBelowLevel(BitSet path, int level) {
-        if (reordered()) {
+    private void clearBelowLevel(BitSet set, int level) {
+        if (isReordered()) {
             for (int current = level; current < numberOfVariables(); current++) {
-                path.clear(variableAtLevel(current));
+                set.clear(variableAtLevel(current));
             }
         } else {
-            path.clear(level, numberOfVariables());
+            set.clear(level, numberOfVariables());
         }
     }
 
@@ -470,14 +460,16 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         assert accessGuard.acquire();
         // The recursion descends by level, so the support has to be handed to it in level order.
         int[] variables;
-        if (reordered()) {
-            variables = support.stream()
-                    .boxed()
-                    .sorted(java.util.Comparator.comparingInt(this::level))
-                    .mapToInt(Integer::intValue)
-                    .toArray();
+        if (isReordered()) {
+            long[] order = new long[support.cardinality()];
+            BitSets.forEachWithIndex(
+                    support,
+                    (variable, index) -> order[index] = ((long) levelOfVariable(variable) << Integer.SIZE) | variable);
+            Arrays.sort(order);
+            variables = new int[support.cardinality()];
+            Arrays.setAll(variables, index -> (int) order[index]);
         } else {
-            variables = support.stream().toArray();
+            variables = BitSets.toArray(support);
         }
         forEachSolutionInRecursive(
                 function, domain, variables, 0, new BitSet(numberOfVariables()), new int[variables.length], 0, action);
@@ -505,7 +497,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         /* The recursion descends the diagram, so it steps through *levels*; the assignment it fills is
          * indexed by variable. `support`, when given, is the caller's variables ordered by level. */
         int variable = support == null ? variableAtLevel(index) : support[index];
-        int level = support == null ? index : level(variable);
+        int level = support == null ? index : levelOfVariable(variable);
 
         boolean decides1 = decidesOn(function1, level);
         boolean decides2 = decidesOn(function2, level);
@@ -560,9 +552,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
 
     @Override
     public Cursor<BitSet> solutionCursor(int function) {
-        BitSet support = new BitSet(numberOfVariables());
-        support.set(0, numberOfVariables());
-        return solutionCursorIn(function, TRUE, support);
+        return solutionCursorIn(function, TRUE, BitSets.range(0, numberOfVariables()));
     }
 
     @Override
@@ -572,9 +562,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
 
     @Override
     public Cursor<BitSet> solutionCursorIn(int function, int domain) {
-        BitSet support = new BitSet(numberOfVariables());
-        support.set(0, numberOfVariables());
-        return solutionCursorIn(function, domain, support);
+        return solutionCursorIn(function, domain, BitSets.range(0, numberOfVariables()));
     }
 
     @Override
@@ -659,7 +647,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         assert !isConstant(node);
 
         int variable = table.variable(node);
-        if (level(variable) > depthLimit) {
+        if (levelOfVariable(variable) > depthLimit) {
             // There must exist at least one satisfying path
             action.accept(path);
             return;
@@ -913,8 +901,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         int[] resolved = variableMapping.clone();
         ComposeAnalysis analysis = analyzeCompose(resolved);
         if (analysis.maxReplacedLevel == -1) {
-            // TODO Explicit reference (like Function.identity()) so a caller can reliably check?
-            return function -> function;
+            return RegisteredOperation.identity();
         }
         if (analysis.isRestrict) {
             BitSet restrictSupport = analysis.restrictSupport;
@@ -946,7 +933,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         int max = -1;
         for (int variable = 0; variable < resolvedMapping.length; variable++) {
             if (resolvedMapping[variable] != this.variableNodes[variable]) {
-                max = Math.max(max, level(variable));
+                max = Math.max(max, levelOfVariable(variable));
             }
         }
         return max;
@@ -958,7 +945,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             if (variableMapping[i] == placeholder()) {
                 variableMapping[i] = this.variableNodes[i];
             } else if (variableMapping[i] != this.variableNodes[i]) {
-                maxReplacedLevel = Math.max(maxReplacedLevel, level(i));
+                maxReplacedLevel = Math.max(maxReplacedLevel, levelOfVariable(i));
             }
         }
         if (maxReplacedLevel == -1) {
@@ -1038,7 +1025,8 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             BooleanCache.UnaryToIntCache composeCache,
             BooleanCache.@Nullable BinaryToIntCache composeSimplifyCache) {
         assert domain != FALSE;
-        assert domain == TRUE || composeSimplifyCache != null;
+        boolean fullDomain = domain == TRUE;
+        assert fullDomain || composeSimplifyCache != null;
 
         boolean func = isComplementFunction(function);
         int node = positive(function);
@@ -1047,28 +1035,19 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             return function;
         }
 
-        /* Two different things, and compose needs both: the level orders the descent against the domain,
-         * while replacements is indexed by the variable itself. */
         int nodeVariable = table.variable(node);
-        int nodeLevel = level(nodeVariable);
+        int nodeLevel = levelOfVariable(nodeVariable);
         if (nodeLevel > maxReplacedLevel) {
             return computeSimplify(function, domain);
         }
 
-        int lookup;
-        int hash;
-        if (domain == TRUE) {
-            lookup = composeCache.lookup(node);
-            hash = composeCache.lookupHash();
-        } else {
-            lookup = composeSimplifyCache.lookup(node, domain);
-            hash = composeSimplifyCache.lookupHash();
-        }
+        int lookup = fullDomain ? composeCache.lookup(node) : composeSimplifyCache.lookup(node, domain);
         if (lookup != placeholder()) {
             return complementIf(lookup, func);
         }
+        int hash = fullDomain ? composeCache.lookupHash : composeSimplifyCache.lookupHash;
 
-        int domainLevel = domain == TRUE ? Integer.MAX_VALUE : decisionLevel(domain);
+        int domainLevel = fullDomain ? Integer.MAX_VALUE : decisionLevel(domain);
         int domainLow = lowIf(domain, domainLevel <= nodeLevel);
         int domainHigh = highIf(domain, domainLevel <= nodeLevel);
 
@@ -1091,13 +1070,9 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
                 table.popFromWorkStack();
             }
         } else {
-            /* A mapping shorter than the variable count leaves the rest unchanged - and under a
-             * non-identity order such a variable can well sit above maxReplacedLevel's variable, so
-             * the recursion reaches it. */
             int replacement =
                     nodeVariable < replacements.length ? replacements[nodeVariable] : this.variableNodes[nodeVariable];
             // Short-circuit constant replacements.
-
             if (replacement == TRUE) {
                 result = computeComposeSimplify(
                         table.high(node), replacements, maxReplacedLevel, domain, composeCache, composeSimplifyCache);
@@ -1146,7 +1121,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
                 }
             }
         }
-        if (domain == TRUE) {
+        if (fullDomain) {
             composeCache.put(hash, node, result);
         } else {
             composeSimplifyCache.put(hash, node, domain, result);
@@ -1185,10 +1160,8 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         if (node == TRUE) {
             return function;
         }
-        /* The level orders the descent and is what makeFunction wants; the two BitSets are indexed by
-         * the variable itself. */
         int nodeVariable = table.variable(node);
-        int nodeLevel = level(nodeVariable);
+        int nodeLevel = levelOfVariable(nodeVariable);
         if (nodeLevel > maxRestrictedLevel) {
             return function;
         }
@@ -1241,7 +1214,6 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         assert table.workStacksEmpty();
         int node = TRUE;
         for (int variable = variables.nextSetBit(0); variable >= 0; variable = variables.nextSetBit(variable + 1)) {
-            // Variable nodes are saturated, no need to guard them
             node = computeAnd(table.pushToWorkStack(node), variableNodes[variable]);
             table.popFromWorkStack();
         }
@@ -1257,9 +1229,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         assert table.workStacksEmpty();
         int node = FALSE;
         for (int variable : variables) {
-            // Variable nodes are saturated, no need to guard them
-            int node1 = table.pushToWorkStack(node);
-            node = computeOr(node1, variableNodes[variable]);
+            node = computeOr(table.pushToWorkStack(node), variableNodes[variable]);
             table.popFromWorkStack();
         }
         assert table.workStacksEmpty();
@@ -1274,9 +1244,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         assert table.workStacksEmpty();
         int node = FALSE;
         for (int variable = variables.nextSetBit(0); variable >= 0; variable = variables.nextSetBit(variable + 1)) {
-            // Variable nodes are saturated, no need to guard them
-            int node1 = table.pushToWorkStack(node);
-            node = computeOr(node1, variableNodes[variable]);
+            node = computeOr(table.pushToWorkStack(node), variableNodes[variable]);
             table.popFromWorkStack();
         }
         assert table.workStacksEmpty();
@@ -1600,8 +1568,6 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
 
         int result;
         if (domainLevel < level) {
-            // The domain decides above both operands - widen it and retry. No expansion happens here, so
-            // the operands' cofactors are not needed on this path at all.
             int domainLow = low(domain);
             int domainHigh = high(domain);
             if (domainLow == FALSE) {
@@ -1661,7 +1627,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         assert accessGuard.acquire();
         cache.initExists(quantifiedVariables);
         // The recursion descends by level, so it needs the quantified set indexed the same way.
-        int result = existsGeneral(function, toLevels(quantifiedVariables), cache.existsCache());
+        int result = existsGeneral(function, variablesToLevels(quantifiedVariables), cache.existsCache());
         assert accessGuard.release();
         return result;
     }
@@ -1670,7 +1636,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     public RegisteredOperation.Unary registerExists(BitSet quantifiedVariables) {
         assert quantifiedVariables.length() - 1 <= numberOfVariables();
         if (quantifiedVariables.isEmpty()) {
-            return function -> function;
+            return RegisteredOperation.identity();
         }
         return new BddOperations.Exists(this, BitSets.copyOf(quantifiedVariables));
     }
@@ -1686,16 +1652,8 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         return result;
     }
 
-    /** {@code variables}, re-indexed by the level each sits at. */
-    BitSet toLevels(BitSet variables) {
-        if (!reordered()) {
-            return variables;
-        }
-        BitSet levels = new BitSet(numberOfVariables());
-        for (int variable = variables.nextSetBit(0); variable >= 0; variable = variables.nextSetBit(variable + 1)) {
-            levels.set(level(variable));
-        }
-        return levels;
+    BitSet variablesToLevels(BitSet variables) {
+        return isReordered() ? BitSets.map(variables, this::levelOfVariable) : variables;
     }
 
     private int existsRecursive(int function, BitSet quantifiedLevels, BooleanCache.UnaryToIntCache existsCache) {
@@ -2117,18 +2075,14 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
                     result = makeFunction(domainLevel, low, high);
                     table.popFromWorkStack(2);
                 } else {
-                    // or(domainLow, domainHigh) is exactly "exists domainLevel . domain" - the standard
-                    // Coudert-Madre restrict step, and what distinguishes it from constrain above:
-                    // rather than building a node on a variable the function does not test, drop that
-                    // variable from the care set. Not an approximation - since the function is blind to
-                    // domainLevel, every point of the quantified domain is one where some setting of
-                    // domainLevel lands inside the domain, so the result is pinned there either way.
-                    //
-                    // TODO A cheap over-approximation of the union would be sound (agreeing on a larger
-                    //   care set implies agreeing on this one) and would avoid the exact computeOr; an
-                    //   *under*-approximation - e.g. picking one branch and setting the other to FALSE -
-                    //   is not: it drops points of the domain and the result then disagrees with the
-                    //   function inside it
+                    // We don't care about the value of the domain here, so we factor it out
+                    // Note: We cannot use either low or high -- this would shrink the domain,
+                    // only widening is sound, as we need to preserve values over the domain
+                    // We could pass TRUE instead, this saves the "or" but widens a lot
+                    // It's an open question whether we can find something in between
+                    // Another option would be to track a list of domain sub-trees we care about,
+                    // however this would increase the computational effort in each recursion
+                    // and eliminate caching
                     result = computeConstrainSimplify(
                             node, table.pushToWorkStack(computeOr(domainLow, domainHigh)), false);
                     table.popFromWorkStack();
@@ -2168,12 +2122,12 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
      * both true, one at a time, in the order the diagram is laid out in. A path enumeration reports each
      * one; a solution enumeration fills in the variables each leaves free.
      *
-     * <p>One thing does not carry over from a single diagram. There, any node that is not {@code FALSE}
-     * has a path to {@code TRUE}, so a descent that never steps into {@code FALSE} always arrives
-     * somewhere - the traversal only ever backtracks to find the <em>next</em> path. A pair of nodes that
-     * are both non-{@code FALSE} can still have no assignment satisfying both, so here a descent can dead
-     * end, and {@link #advance()} has to be able to retract one and carry on. With the domain at
-     * {@code TRUE} that never happens, and this behaves exactly like the single-diagram walk.
+     * <p>One thing does not carry over from a single diagram (i.e. without domain): There, any node that
+     * is not {@code FALSE} has a path to {@code TRUE}, so a descent that never steps into {@code FALSE}
+     * always arrives somewhere - the traversal only ever backtracks to find the <em>next</em> path. A
+     * pair of nodes that are both non-{@code FALSE} can still have no assignment satisfying both, so here
+     * a descent can dead end, and {@link #advance()} has to be able to retract one and carry on. With the
+     * domain at {@code TRUE} that never happens, and this behaves exactly like the single-diagram walk.
      */
     static final class PathWalk {
         private final BddImpl bdd;
@@ -2187,17 +2141,15 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         private final int[] highDomainPath;
         private final BitSet levelAssignment;
         private final BitSet pathSupportLevels;
-        /* The levels of the current path, deepest last - the recursion's call stack, made explicit.
-         * pathSupportLevels holds the same set for the cursors to read; this is what the walk itself
-         * navigates by, because popping a frame has to be O(1) and scanning a bit set backwards is not. */
+        /* The levels of the current path, deepest last - the recursion's call stack, made explicit. */
         private final int[] levelStack;
         /* Variable-indexed mirrors of the two sets above, maintained as the walk writes them, or null
          * when the caller reads levels directly. A step changes a handful of levels while the sets hold
          * the whole path, so mirroring the writes beats rebuilding the image of the set afterwards.
-         * The one place the walk knows about variables at all - see the class comment. */
+         * The one place the walk knows about variables at all. */
         private final @Nullable BitSet variableAssignment;
         private final @Nullable BitSet variableSupport;
-        /* The order, snapshotted rather than asked for per write: a mirrored write is one array load
+        /* The order, snapshot rather than asked for per write: a mirrored write is one array load
          * instead of two hops into the context, and it cannot be invalidated under the walk by a
          * variable creation that resizes the context's own array. Only allocated when mirroring. */
         private final int[] levelToVariable;
@@ -2243,9 +2195,6 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             this.onPath = descend(function, domain) || backtrack();
         }
 
-        /* The four writers of the two sets. Every write goes through one of them, which is what the
-         * mirrors rest on: a write that bypassed them would leave the mirror silently stale. */
-
         private void assign(int level, boolean value) {
             levelAssignment.set(level, value);
             if (variableAssignment != null) {
@@ -2283,7 +2232,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             return rootDomain;
         }
 
-        /** Whether the cursor is on a path: false once the enumeration is over, or if it never began. */
+        /** Whether the cursor is on a path: false once the enumeration is over. */
         boolean onPath() {
             return onPath;
         }
@@ -2298,7 +2247,6 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             /* Take the deepest branch still open - a level the path took low whose high side is not
              * immediately false - and descend from it. A descent that dead ends pops itself back off, so
              * this simply carries on from whatever is left on the stack. */
-            //noinspection WhileLoopSpinsOnField -- Its not spinning, the depth is modified in descend
             while (stackDepth > 0) {
                 int level = levelStack[stackDepth - 1];
                 if (!levelAssignment.get(level)) {
@@ -2374,6 +2322,8 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             stackDepth -= 1;
             int level = levelStack[stackDepth];
             popSupport(level);
+            // We only call pop after finishing a high branch; the next branch might not care about this level
+            // so we need to clear it to maintain the invariant.
             assign(level, false);
         }
     }
@@ -2381,17 +2331,13 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     /**
      * Walks the solutions of a function: every path, and for each of them every way of filling in the
      * support variables that path leaves free.
-     *
-     * <p>Hands out the walk's own assignment, so nothing is copied per solution - see {@link Cursor}. The
-     * one exception is a diagram that has been reordered, where the walk is by level and the caller wants
-     * variables, and a translation buffer is unavoidable.
      */
     static final class SolutionCursor implements Cursor<BitSet> {
         private final BddImpl bdd;
         private final PathWalk path;
         private final BitSet supportLevels;
         /* The support levels the current path leaves free, recomputed whenever the path moves - once per
-         * path, not per solution. There are far more solutions than paths, and rescanning the whole
+         * path, not per solution. There (usually) are far more solutions than paths, and rescanning the whole
          * support each time to skip what the path fixes is what puts this off the recursion's pace. */
         private final BitSet freeLevels;
         private final @Nullable BitSet translated;
@@ -2399,7 +2345,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
 
         private static BitSet levelsOf(BddImpl bdd, BitSet variables) {
             BitSet levels = new BitSet(bdd.numberOfVariables());
-            BitSets.map(variables, levels, bdd::level);
+            BitSets.map(variables, levels, bdd::levelOfVariable);
             return levels;
         }
 
@@ -2410,7 +2356,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             assert BitSets.isSubset(bdd.support(domain), support);
 
             this.bdd = bdd;
-            boolean translating = bdd.reordered();
+            boolean translating = bdd.isReordered();
             this.supportLevels = translating ? levelsOf(bdd, support) : support;
             this.freeLevels = new BitSet(variableCount);
             this.translated = translating ? new BitSet(variableCount) : null;
@@ -2480,11 +2426,6 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             BitSets.difference(freeLevels, supportLevels, path.pathSupportLevels());
         }
 
-        /**
-         * Holds whenever {@link #current()} is defined. Rebuilding the buffer and comparing is what makes
-         * the incremental mirroring checkable rather than merely argued: a write to the walk's assignment
-         * that forgot to mirror itself shows up here, not as a wrong answer somewhere downstream.
-         */
         private boolean currentIsConsistent() {
             assert BitSets.isSubset(path.pathSupportLevels(), supportLevels);
             assert bdd.evaluate(path.function(), current()) && bdd.evaluate(path.domain(), current());
@@ -2497,11 +2438,6 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
     }
 
-    /**
-     * Walks the paths to {@code true} of a function - the same walk as
-     * {@link SolutionCursor}, stopping at each path instead of filling in the variables it
-     * leaves free.
-     */
     static final class PathCursor implements Cursor<BinaryPath> {
         private final BddImpl bdd;
         private final PathWalk path;
@@ -2516,7 +2452,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             int variableCount = bdd.numberOfVariables();
             this.bdd = bdd;
             this.translated =
-                    bdd.reordered() ? new BinaryPath(new BitSet(variableCount), new BitSet(variableCount)) : null;
+                    bdd.isReordered() ? new BinaryPath(new BitSet(variableCount), new BitSet(variableCount)) : null;
             // Both halves of a path are maintained by the walk itself, so a step rebuilds nothing.
             this.path = translated == null
                     ? new PathWalk(bdd, function, TRUE)
@@ -2551,7 +2487,6 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             return true;
         }
 
-        /** Rebuilds both halves and compares - see {@link SolutionCursor#currentIsConsistent()}. */
         private boolean currentIsConsistent() {
             assert bdd.evaluate(path.function(), current.assignment);
             if (translated != null) {
@@ -2576,8 +2511,8 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
 
         @Override
-        protected int level(int variable) {
-            return bdd.level(variable);
+        protected int levelOfVariable(int variable) {
+            return bdd.levelOfVariable(variable);
         }
 
         @Override
@@ -2677,7 +2612,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
 
         @Override
-        protected BitSet sweepManagedLeaves() {
+        protected BitSet clearUnreferencedLeaves() {
             return BitSets.of();
         }
 

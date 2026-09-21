@@ -21,7 +21,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
-final class NodeTableObserverGroup<O extends NodeTableObserver> {
+/** Holds listeners weakly when a caller owns them, strongly when the thing dispatching to them does. */
+final class ObserverGroup<O> {
     private final List<WeakReference<O>> observers = new ArrayList<>();
     private final List<O> ownedObservers = new ArrayList<>();
 

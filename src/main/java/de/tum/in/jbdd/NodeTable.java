@@ -236,7 +236,7 @@ public abstract class NodeTable {
      * The position of {@code variable} in the owning diagram's variable order. The identity unless that
      * diagram reorders; used only by the ordering assertions, which are about levels, not variable numbers.
      */
-    protected abstract int level(int variable);
+    protected abstract int levelOfVariable(int variable);
 
     protected abstract int positiveHash(int node, int metaData);
 
@@ -454,7 +454,7 @@ public abstract class NodeTable {
     }
 
     @SuppressWarnings("AssertWithSideEffects")
-    public final int liveNodeCount() {
+    public final int liveNodeCountFromBookkeeping() {
         assert reorderBookkeeping;
         assert deadNodeCount == computeLiveParentCounts(new int[parentCount.length]) : "Parent counts drifted";
         int validNodes = size() - freeNodeCount() - FIRST_NODE;
@@ -931,9 +931,9 @@ public abstract class NodeTable {
 
     /**
      * Sweeps managed leaves (i.e. MTBDD terminal values) which are neither marked nor referenced, returning
-     * the freed values.
+     * the freed values. Clear all marks on managed leaves.
      */
-    protected abstract BitSet sweepManagedLeaves();
+    protected abstract BitSet clearUnreferencedLeaves();
 
     /**
      * Runs integrity checks of the owning diagram (triggered e.g. after GC)
@@ -965,7 +965,7 @@ public abstract class NodeTable {
 
             // Leaves all live nodes marked
             int liveNodes = markAllReferencedNodes();
-            invalidatedLeaves = sweepManagedLeaves();
+            invalidatedLeaves = clearUnreferencedLeaves();
 
             @SuppressWarnings("NumericCastThatLosesPrecision")
             int maximumLiveNodes = (int) (currentSize * liveNodeThreshold(configuration));
@@ -1441,7 +1441,7 @@ public abstract class NodeTable {
     private int maxLevelOf(BitSet variables) {
         int max = -1;
         for (int variable = variables.nextSetBit(0); variable >= 0; variable = variables.nextSetBit(variable + 1)) {
-            max = Math.max(max, level(variable));
+            max = Math.max(max, levelOfVariable(variable));
         }
         return max;
     }
@@ -1470,7 +1470,7 @@ public abstract class NodeTable {
 
         int metadata = nodeData[node];
         int variable = dataGetVariable(metadata);
-        if (level(variable) >= depthLimit) {
+        if (levelOfVariable(variable) >= depthLimit) {
             return;
         }
         int markedData = dataSetMark(metadata);
@@ -1572,7 +1572,8 @@ public abstract class NodeTable {
                             pointerToStringSupplier(child));
                     if (!isValidConstant(child)) {
                         checkState(
-                                level(dataGetVariable(metadata)) < level(dataGetVariable(nodeData[treeNodeFor(child)])),
+                                levelOfVariable(dataGetVariable(metadata))
+                                        < levelOfVariable(dataGetVariable(nodeData[treeNodeFor(child)])),
                                 "(%s) -> (%s) does not descend tree",
                                 pointerToStringSupplier(node),
                                 pointerToStringSupplier(child));
@@ -2068,9 +2069,9 @@ public abstract class NodeTable {
 
             /* Only a node something can reach keeps its children alive, so only then does re-pointing it
              * move credit from the old children to the new. Skipping the pair when a child pointer did
-             * not actually change - 8% of rewrites on the adder, 76% of the high edges on queens - was
-             * measured *slower*: the cascade it would avoid needs the node to be its child's last live
-             * parent, which sharing makes rare, so the two tests cost more than they save. */
+             * not actually change was measured *slower*: the cascade it would avoid needs the node to
+             * be its child's last live parent, which sharing makes rare, so the two tests cost more
+             * than they save. */
             boolean live = !isUnreached(node);
             if (live) {
                 removeParent(low[node]);
@@ -2099,8 +2100,10 @@ public abstract class NodeTable {
 
         public int makeNode(int variable, int lowPointer, int highPointer) {
             assert 0 <= variable && variable < INVALID_NODE_VARIABLE;
-            assert isValidConstant(lowPointer) || level(variable) < level(variable(treeNodeFor(lowPointer)));
-            assert isValidConstant(highPointer) || level(variable) < level(variable(treeNodeFor(highPointer)));
+            assert isValidConstant(lowPointer)
+                    || levelOfVariable(variable) < levelOfVariable(variable(treeNodeFor(lowPointer)));
+            assert isValidConstant(highPointer)
+                    || levelOfVariable(variable) < levelOfVariable(variable(treeNodeFor(highPointer)));
             assert highPointer != lowPointer;
 
             int hash = hash(variable, lowPointer, highPointer);
@@ -2213,7 +2216,8 @@ public abstract class NodeTable {
         public int makeNode(int variable, int[] children) {
             assert 0 <= variable;
             assert Arrays.stream(children)
-                    .allMatch(child -> isValidConstant(child) || level(variable) < level(variable(treeNodeFor(child))));
+                    .allMatch(child -> isValidConstant(child)
+                            || levelOfVariable(variable) < levelOfVariable(variable(treeNodeFor(child))));
             assert Arrays.stream(children).distinct().count() > 1;
 
             int hash = hash(variable, children);

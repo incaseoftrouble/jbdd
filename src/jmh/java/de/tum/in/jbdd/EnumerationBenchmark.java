@@ -48,7 +48,7 @@ import org.openjdk.jmh.infra.Blackhole;
 public class EnumerationBenchmark {
     private static BitSet levelsOf(BddImpl bdd, BitSet variables) {
         BitSet levels = new BitSet(bdd.numberOfVariables());
-        BitSets.map(variables, levels, bdd::level);
+        BitSets.map(variables, levels, bdd::levelOfVariable);
         return levels;
     }
 
@@ -71,7 +71,7 @@ public class EnumerationBenchmark {
     @Benchmark
     public void solutionsRebuild(EnumerationState state, Blackhole bh) {
         BddImpl bdd = state.bdd();
-        boolean translating = bdd.reordered();
+        boolean translating = bdd.isReordered();
         BitSet supportLevels = translating ? levelsOf(bdd, state.support()) : state.support();
         BitSet translated = translating ? new BitSet(bdd.numberOfVariables()) : null;
         BitSet free = new BitSet(bdd.numberOfVariables());
@@ -101,7 +101,7 @@ public class EnumerationBenchmark {
     @Benchmark
     public void solutionsCounter(EnumerationState state, Blackhole bh) {
         BddImpl bdd = state.bdd();
-        boolean translating = bdd.reordered();
+        boolean translating = bdd.isReordered();
         BitSet supportLevels = translating ? levelsOf(bdd, state.support()) : state.support();
         BitSet translated = translating ? new BitSet(bdd.numberOfVariables()) : null;
         BitSet free = new BitSet(bdd.numberOfVariables());
@@ -134,7 +134,7 @@ public class EnumerationBenchmark {
     @Benchmark
     public void solutionsWalk(EnumerationState state, Blackhole bh) {
         BddImpl bdd = state.bdd();
-        boolean translating = bdd.reordered();
+        boolean translating = bdd.isReordered();
         BitSet supportLevels = translating ? levelsOf(bdd, state.support()) : state.support();
         BitSet translated = translating ? new BitSet(bdd.numberOfVariables()) : null;
         BitSet free = new BitSet(bdd.numberOfVariables());
@@ -161,7 +161,7 @@ public class EnumerationBenchmark {
     @Benchmark
     public void pathsRebuild(EnumerationState state, Blackhole bh) {
         BddImpl bdd = state.bdd();
-        boolean translating = bdd.reordered();
+        boolean translating = bdd.isReordered();
         BitSet assignment = translating ? new BitSet(bdd.numberOfVariables()) : null;
         BitSet support = translating ? new BitSet(bdd.numberOfVariables()) : null;
 
@@ -184,7 +184,7 @@ public class EnumerationBenchmark {
     @Benchmark
     public void pathsWalk(EnumerationState state, Blackhole bh) {
         BddImpl bdd = state.bdd();
-        boolean translating = bdd.reordered();
+        boolean translating = bdd.isReordered();
         BitSet assignment = translating ? new BitSet(bdd.numberOfVariables()) : null;
         BitSet support = translating ? new BitSet(bdd.numberOfVariables()) : null;
 

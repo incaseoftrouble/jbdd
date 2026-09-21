@@ -17,21 +17,21 @@
 package de.tum.in.jbdd;
 
 /**
- * A {@link BddContext} together with the object-oriented views over it - the {@link BddSetFactory} and
+ * A {@link DdContext} together with the object-oriented views over it - the {@link BddSetFactory} and
  * the {@link BddMapFactory}, which are one per context because they share its diagrams.
  */
-public interface BinaryFactoryContext extends BddContext {
+public interface BinaryFactoryContext extends DdContext {
     static BinaryFactoryContext create() {
         return create(ImmutableBddConfiguration.builder().build());
     }
 
     static BinaryFactoryContext create(BddConfiguration configuration) {
-        return new BinaryFactoryContextImpl(new BddContextImpl(configuration));
+        return new BinaryFactoryContextImpl(new DdContextImpl(configuration));
     }
 
     /** Like {@link #create()}, with {@code variables} many variables already declared. */
     static BinaryFactoryContext create(BddConfiguration configuration, int variables) {
-        return new BinaryFactoryContextImpl(new BddContextImpl(configuration, variables));
+        return new BinaryFactoryContextImpl(new DdContextImpl(configuration, variables));
     }
 
     /** The unique {@link BddSetFactory}. */

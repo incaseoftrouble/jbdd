@@ -26,12 +26,12 @@ import java.util.function.Function;
 import java.util.function.IntConsumer;
 import java.util.function.Predicate;
 
-class MddAsTestBdd implements TestBdd {
+class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     private final MddImpl mdd;
     private static final int TRUE = 1;
     private static final int FALSE = 0;
 
-    MddAsTestBdd(MddImpl mdd) {
+    MddAsBinaryDd(MddImpl mdd) {
         this.mdd = mdd;
     }
 
@@ -162,11 +162,6 @@ class MddAsTestBdd implements TestBdd {
     @Override
     public boolean isValidFunction(int function) {
         return mdd.isValidFunction(function);
-    }
-
-    @Override
-    public boolean isValidNonConstantFunction(int function) {
-        return mdd.isValidNonConstantFunction(function);
     }
 
     @Override
@@ -475,18 +470,18 @@ class MddAsTestBdd implements TestBdd {
     @Override
     public RegisteredOperation.Unary registerCompose(int[] variableMapping) {
         // Registered compose is tied to a real BddImpl; this adapter has none to bind to.
-        throw new UnsupportedOperationException("registerCompose is not supported on an MDD-backed TestBdd");
+        throw new UnsupportedOperationException("registerCompose is not supported on an MDD-backed BinaryDd");
     }
 
     @Override
     public RegisteredOperation.Binary registerComposeSimplify(int[] variableMapping) {
-        throw new UnsupportedOperationException("registerComposeSimplify is not supported on an MDD-backed TestBdd");
+        throw new UnsupportedOperationException("registerComposeSimplify is not supported on an MDD-backed BinaryDd");
     }
 
     @Override
     public RegisteredOperation.Unary registerExists(BitSet quantifiedVariables) {
         // As registerCompose: the registered form lives on BddImpl, which this adapter does not have.
-        throw new UnsupportedOperationException("registerExists is not supported on an MDD-backed TestBdd");
+        throw new UnsupportedOperationException("registerExists is not supported on an MDD-backed BinaryDd");
     }
 
     @Override

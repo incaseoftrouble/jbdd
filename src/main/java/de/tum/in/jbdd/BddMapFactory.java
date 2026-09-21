@@ -16,7 +16,6 @@
  */
 package de.tum.in.jbdd;
 
-import java.util.Map;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -33,6 +32,4 @@ public interface BddMapFactory {
      * may be changed afterwards.
      */
     BddMap.VariableReplacer registerReplaceVariables(@Nullable BddSet[] variableMapping);
-
-    Map<String, Object> statistics();
 }

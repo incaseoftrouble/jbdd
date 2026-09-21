@@ -19,7 +19,6 @@ package de.tum.in.jbdd;
 import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.BitSet;
-import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.IntFunction;
@@ -86,40 +85,32 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
 
     @Override
     public BddSet.VariableReplacer registerReplaceVariables(BitSet replacedVariables, IntFunction<BddSet> mapping) {
-        int[] substitutions = substitutions(replacedVariables);
+        int[] substitutions = new int[replacedVariables.length()];
+        Arrays.fill(substitutions, dd.placeholder());
         for (int i = replacedVariables.nextSetBit(0); i >= 0; i = replacedVariables.nextSetBit(i + 1)) {
             substitutions[i] = functionOf(mapping.apply(i));
         }
-        // TODO Special-case identity? Ideally based on the return of register compose
-        return new RegisteredReplacer(this, dd.registerCompose(substitutions));
+        return replacer(dd.registerCompose(substitutions));
     }
 
     @Override
     public BddSet.VariableReplacer registerRelabelVariables(BitSet relabeledVariables, IntUnaryOperator mapping) {
-        int[] substitutions = substitutions(relabeledVariables);
-        for (int i = relabeledVariables.nextSetBit(0); i >= 0; i = relabeledVariables.nextSetBit(i + 1)) {
-            substitutions[i] = variableFunction(checkRelabeling(i, mapping.applyAsInt(i)));
-        }
-        // TODO Special-case identity? Ideally based on the return of register compose
-        return new RegisteredReplacer(this, dd.registerCompose(substitutions));
-    }
-
-    private int[] substitutions(BitSet variables) {
-        int[] substitutions = new int[variables.length()];
+        int[] substitutions = new int[relabeledVariables.length()];
         Arrays.fill(substitutions, dd.placeholder());
-        return substitutions;
-    }
-
-    private static int checkRelabeling(int variable, int relabeled) {
-        if (relabeled < 0) {
-            throw new IllegalArgumentException(String.format("Invalid mapping %s -> %s", variable, relabeled));
+        for (int i = relabeledVariables.nextSetBit(0); i >= 0; i = relabeledVariables.nextSetBit(i + 1)) {
+            int relabeled = mapping.applyAsInt(i);
+            if (relabeled < 0) {
+                throw new IllegalArgumentException(String.format("Invalid mapping %s -> %s", i, relabeled));
+            }
+            substitutions[i] = variableFunction(relabeled);
         }
-        return relabeled;
+        return replacer(dd.registerCompose(substitutions));
     }
 
-    @Override
-    public Map<String, Object> statistics() {
-        return dd.statistics();
+    private BddSet.VariableReplacer replacer(RegisteredOperation.Unary operation) {
+        return operation == RegisteredOperation.identity() // NOPMD - identity is the point of the check
+                ? BddSet.VariableReplacer.identity()
+                : new RegisteredReplacer(this, operation);
     }
 
     @Override
@@ -138,43 +129,33 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         return String.format("F{%s}", dd);
     }
 
-    private static final class RegisteredQuantifier implements BddSet.Quantifier {
+    private static final class RegisteredQuantifier extends RegisteredOperation.Forwarding<RegisteredOperation.Unary>
+            implements BddSet.Quantifier {
         private final BddSetFactoryImpl factory;
-        private final RegisteredOperation.Unary operation;
 
         RegisteredQuantifier(BddSetFactoryImpl factory, RegisteredOperation.Unary operation) {
+            super(operation);
             this.factory = factory;
-            this.operation = operation;
         }
 
         @Override
         public BddSet apply(BddSet set) {
             return factory.make(operation.applyAsInt(factory.functionOf(set)));
-        }
-
-        @Override
-        public void release() {
-            operation.release();
         }
     }
 
-    private static final class RegisteredReplacer implements BddSet.VariableReplacer {
+    private static final class RegisteredReplacer extends RegisteredOperation.Forwarding<RegisteredOperation.Unary>
+            implements BddSet.VariableReplacer {
         private final BddSetFactoryImpl factory;
-        private final RegisteredOperation.Unary operation;
 
         RegisteredReplacer(BddSetFactoryImpl factory, RegisteredOperation.Unary operation) {
+            super(operation);
             this.factory = factory;
-            this.operation = operation;
         }
 
         @Override
         public BddSet apply(BddSet set) {
             return factory.make(operation.applyAsInt(factory.functionOf(set)));
-        }
-
-        @Override
-        public void release() {
-            operation.release();
         }
     }
 

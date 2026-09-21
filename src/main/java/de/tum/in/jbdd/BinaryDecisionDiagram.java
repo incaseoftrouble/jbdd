@@ -81,69 +81,6 @@ public interface BinaryDecisionDiagram
     boolean isVariableOrNegated(int function);
 
     /**
-     * Constructs the <i>composition</i> of the given boolean {@code function} with the boolean functions in {@code variableNodes}.
-     * Formally, if {@code function} is {@code f(x_1, x_2, ..., x_n)}, this method returns
-     * {@code f(f_1(x_1, ..., x_n), ..., f_n(x_1, ..., x_n))}, where {@code f_i = variableNodes[i]}.
-     *
-     * <p>The {@code variableNodes} array can contain less than {@code n} entries, then only the first variables are replaced.
-     * Furthermore, {@code placeholder} can be used as an entry to denote "don't replace this variable" (which semantically
-     * is the same as saying "replace this variable by itself"). After the call, the {@code placeholder} entries will be
-     * replaced by the actual corresponding variable nodes. </p>
-     *
-     * @param function
-     *     The function to be composed.
-     * @param variableMapping
-     *     The boolean functions with which each variable should be replaced.
-     *
-     * @return The composed function.
-     */
-    int compose(int function, int[] variableMapping);
-
-    default int composeSimplify(int function, int[] variableMapping, int domain) {
-        return simplify(compose(function, variableMapping), domain);
-    }
-
-    /**
-     * Registers a {@code compose} operation bound to a fixed {@code variableMapping} - see
-     * {@link RegisteredOperation}.
-     */
-    RegisteredOperation.Unary registerCompose(int[] variableMapping);
-
-    /**
-     * Like {@link #registerCompose}, but for the domain-restricted {@link #composeSimplify} form.
-     */
-    RegisteredOperation.Binary registerComposeSimplify(int[] variableMapping);
-
-    /**
-     * Registers an {@code exists} operation bound to a fixed set of {@code quantifiedVariables} - see
-     * {@link RegisteredOperation}. The set is read here and may be changed afterwards.
-     *
-     * @see #exists(int, BitSet)
-     */
-    RegisteredOperation.Unary registerExists(BitSet quantifiedVariables);
-
-    /**
-     * Computes the restriction of the given boolean {@code function}, where all variables specified by {@code
-     * restrictedVariables} are replaced by the value given in {@code restrictedVariableValues}.
-     * Formally, if {@code function} is {@code f(x_1, ..., x_n)}, this method computes the function
-     * {@code f(x_1, ..., x_{i_1-1}, c_1, x_{i_1+1}, ..., x_{i_2-1}, c_2, x_{i_2+1}, ...,
-     * x_n}, where {@code i_k} are the elements of the {@code restrictedVariables} set and
-     * {@code c_k := restrictedVariableValues.get(i_k)}.
-     *
-     * @param function
-     *     The function to be restricted.
-     * @param restrictedVariables
-     *     The variables used in the restriction.
-     * @param restrictedVariableValues
-     *     The values of the restricted variables.
-     *
-     * @return The restricted function.
-     *
-     * @see #compose(int, int[])
-     */
-    int restrict(int function, BitSet restrictedVariables, BitSet restrictedVariableValues);
-
-    /**
      * Returns the function which represents the variable with given {@code variableNumber}. The variable
      * must already have been created.
      *
@@ -221,4 +158,67 @@ public interface BinaryDecisionDiagram
      * @return The disjunction of specified variables.
      */
     int disjunction(BitSet variables);
+
+    /**
+     * Constructs the <i>composition</i> of the given boolean {@code function} with the boolean functions in {@code variableNodes}.
+     * Formally, if {@code function} is {@code f(x_1, x_2, ..., x_n)}, this method returns
+     * {@code f(f_1(x_1, ..., x_n), ..., f_n(x_1, ..., x_n))}, where {@code f_i = variableNodes[i]}.
+     *
+     * <p>The {@code variableNodes} array can contain less than {@code n} entries, then only the first variables are replaced.
+     * Furthermore, {@code placeholder} can be used as an entry to denote "don't replace this variable" (which semantically
+     * is the same as saying "replace this variable by itself"). After the call, the {@code placeholder} entries will be
+     * replaced by the actual corresponding variable nodes. </p>
+     *
+     * @param function
+     *     The function to be composed.
+     * @param variableMapping
+     *     The boolean functions with which each variable should be replaced.
+     *
+     * @return The composed function.
+     */
+    int compose(int function, int[] variableMapping);
+
+    default int composeSimplify(int function, int[] variableMapping, int domain) {
+        return simplify(compose(function, variableMapping), domain);
+    }
+
+    /**
+     * Computes the restriction of the given boolean {@code function}, where all variables specified by {@code
+     * restrictedVariables} are replaced by the value given in {@code restrictedVariableValues}.
+     * Formally, if {@code function} is {@code f(x_1, ..., x_n)}, this method computes the function
+     * {@code f(x_1, ..., x_{i_1-1}, c_1, x_{i_1+1}, ..., x_{i_2-1}, c_2, x_{i_2+1}, ...,
+     * x_n}, where {@code i_k} are the elements of the {@code restrictedVariables} set and
+     * {@code c_k := restrictedVariableValues.get(i_k)}.
+     *
+     * @param function
+     *     The function to be restricted.
+     * @param restrictedVariables
+     *     The variables used in the restriction.
+     * @param restrictedVariableValues
+     *     The values of the restricted variables.
+     *
+     * @return The restricted function.
+     *
+     * @see #compose(int, int[])
+     */
+    int restrict(int function, BitSet restrictedVariables, BitSet restrictedVariableValues);
+
+    /**
+     * Registers a {@code compose} operation bound to a fixed {@code variableMapping} - see
+     * {@link RegisteredOperation}.
+     */
+    RegisteredOperation.Unary registerCompose(int[] variableMapping);
+
+    /**
+     * Like {@link #registerCompose}, but for the domain-restricted {@link #composeSimplify} form.
+     */
+    RegisteredOperation.Binary registerComposeSimplify(int[] variableMapping);
+
+    /**
+     * Registers an {@code exists} operation bound to a fixed set of {@code quantifiedVariables} - see
+     * {@link RegisteredOperation}. The set is read here and may be changed afterwards.
+     *
+     * @see #exists(int, BitSet)
+     */
+    RegisteredOperation.Unary registerExists(BitSet quantifiedVariables);
 }

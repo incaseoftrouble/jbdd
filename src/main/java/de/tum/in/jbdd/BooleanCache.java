@@ -30,7 +30,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.jspecify.annotations.Nullable;
 
-final class BooleanCache {
+final class BooleanCache implements VariableOrderObserver {
 
     private static final Logger logger = Logger.getLogger(BooleanCache.class.getName());
 
@@ -113,10 +113,6 @@ final class BooleanCache {
                 entry("restrict", restrictCache));
 
         tableSizeChanged(0);
-
-        if (bdd.configuration().logStatisticsOnShutdown()) {
-            registerForCleanupStatistics(bdd, bdd.configuration().name());
-        }
     }
 
     int lookupHash() {
@@ -187,8 +183,19 @@ final class BooleanCache {
         restrictCache.grow(ephemeralSize);
     }
 
-    void levelsSwapped() {
+    @Override
+    public void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, BitSet movedVariables) {
+        // This fires after reordering. By construction, reordering sifts around until it hits a limit.
+        // With high probability, pruning runs happen in between, as every sift leaves garbage. These
+        // empty the caches through the prune hook anyway - even for a reordering that found nothing to move.
+        // Hence, we just invalidate.
         invalidate();
+    }
+
+    @Override
+    public void variablesInserted(int level, int count) {
+        // Nothing moved - an insertion preserves every level comparison - but the count did.
+        variablesChanged();
     }
 
     private Collection<IntCache> caches() {
@@ -196,7 +203,6 @@ final class BooleanCache {
     }
 
     void invalidate() {
-        // TODO The registered caches do something smarter. Maybe we should, too.
         caches().forEach(IntCache::invalidate);
     }
 
@@ -234,7 +240,7 @@ final class BooleanCache {
             existsReuseCount += 1;
             return;
         }
-        this.existsVariables = quantifiedVariables;
+        this.existsVariables = BitSets.copyOf(quantifiedVariables);
         existsCache.invalidate();
     }
 
@@ -350,22 +356,6 @@ final class BooleanCache {
         return result;
     }
 
-    int lookupCompose(int function) {
-        assert bdd.isValidNonConstantFunction(function) && bdd.isPositive(function);
-        int result = composeCache.lookup(function);
-        lookupHash = composeCache.lookupHash();
-        return result;
-    }
-
-    int lookupComposeSimplify(int function, int domain) {
-        assert bdd.isValidNonConstantFunction(function)
-                && bdd.isPositive(function)
-                && bdd.isValidNonConstantFunction(domain);
-        int result = composeSimplifyCache.lookup(function, domain);
-        lookupHash = composeSimplifyCache.lookupHash();
-        return result;
-    }
-
     int lookupRestrict(int function) {
         assert bdd.isValidNonConstantFunction(function);
         int result = restrictCache.lookup(function);
@@ -467,16 +457,6 @@ final class BooleanCache {
     void putSatisfactionIn(int hash, int function, int domain, BigInteger satisfactionCount) {
         assert bdd.isValidNonConstantFunction(function);
         satisfactionInCache.put(hash, function, domain, satisfactionCount);
-    }
-
-    void putCompose(int hash, int node, int result) {
-        assert bdd.isValidNonConstantFunction(node) && bdd.isValidFunction(result);
-        composeCache.put(hash, node, result);
-    }
-
-    void putComposeSimplify(int hash, int node, int domain, int result) {
-        assert bdd.isValidNonConstantFunction(node) && bdd.isPositive(node) && bdd.isValidFunction(result);
-        composeSimplifyCache.put(hash, node, domain, result);
     }
 
     void putRestrict(int hash, int function, int result) {

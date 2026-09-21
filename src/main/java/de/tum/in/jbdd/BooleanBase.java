@@ -24,7 +24,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @SuppressWarnings("AssertWithSideEffects")
-public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>, NodeBasedDd {
+public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>, NodeBasedDd, StatisticsSource {
     private static final BitSet NO_VALUES = new BitSet(0);
 
     static final BigInteger TWO = BigInteger.ONE.add(BigInteger.ONE);
@@ -32,7 +32,7 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
     static final int TRUE = Integer.MAX_VALUE;
     static final int FALSE = complement(TRUE);
 
-    private final NodeTableObserverGroup<NodeTableObserver> observers = new NodeTableObserverGroup<>();
+    private final ObserverGroup<NodeTableObserver> observers = new ObserverGroup<>();
     private final ProtectionTracker protectionTracker = new ProtectionTracker();
     final ConcurrentAccessGuard accessGuard = new ConcurrentAccessGuard();
 
@@ -50,14 +50,6 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
             public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
                 cache().tableSizeChanged(invalidatedNodes);
             }
-
-            @Override
-            public void levelsSwapped(DecisionDiagram origin, int level) {
-                cache().levelsSwapped();
-            }
-
-            /* Nothing: an insertion preserves every level comparison, so no cached value goes stale by it.
-             * The variable count does change, which is what variablesChanged already covers. */
         });
     }
 
@@ -71,16 +63,19 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
         return table().size();
     }
 
-    boolean check() {
+    @Override
+    public boolean check() {
         return table().check();
     }
 
-    @SuppressWarnings({"ClassReferencesSubclass", "InstanceofThis"})
+    /** The key-space prefix of this diagram's table, keeping the two disjoint within one context. */
+    abstract String statisticsPrefix();
+
     @Override
     public Map<String, Object> statistics() {
         assert accessGuard.acquire();
         Map<String, Object> statistics = Stream.of(
-                        table().statistics((this instanceof BddImpl) ? "bdd_" : "mdd_").entrySet().stream(),
+                        table().statistics(statisticsPrefix()).entrySet().stream(),
                         cache().statistics().entrySet().stream(),
                         ownStatistics().entrySet().stream())
                 .flatMap(stream -> stream)
@@ -94,6 +89,12 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
         return Map.of();
     }
 
+    @Override
+    public String treeToString(int function) {
+        return table().treeToString(function);
+    }
+
+    @Override
     public void invalidateCache() {
         // Mainly available for testing
         cache().invalidate();
@@ -107,21 +108,13 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
         observers.register(observer);
     }
 
-    /** Registers an observer owned by this diagram, see {@link NodeTableObserverGroup#registerStrongly}. */
+    /** Registers an observer owned by this diagram, see {@link ObserverGroup#registerStrongly}. */
     void registerOwnedObserver(NodeTableObserver observer) {
         observers.registerStrongly(observer);
     }
 
     void notifyBeforeGc() {
         observers.dispatch(observer -> observer.beforeGc(this));
-    }
-
-    void notifyLevelSiftedDown(int level) {
-        observers.dispatch(observer -> observer.levelsSwapped(this, level));
-    }
-
-    void notifyVariableInserted(int level) {
-        observers.dispatch(observer -> observer.variableInserted(this, level));
     }
 
     void notifyAfterGc(int reclaimedNodes) {

@@ -62,7 +62,7 @@ class BddTest {
 
     @Test
     void testDeadNodeCounter() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         NodeTable table = bdd.table();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
@@ -75,7 +75,7 @@ class BddTest {
 
     @Test
     void testGarbageCollection() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int v3 = bdd.createVariable();
@@ -92,7 +92,7 @@ class BddTest {
 
     @Test
     void testDeMorgan() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int notV1 = bdd.reference(bdd.not(v1));
@@ -106,7 +106,7 @@ class BddTest {
 
     @Test
     void testXorIdentity() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int notV1 = bdd.not(v1);
@@ -125,7 +125,7 @@ class BddTest {
 
     @Test
     void testEquivalenceIdentity() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         NodeTable table = bdd.table();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
@@ -139,7 +139,7 @@ class BddTest {
 
     @Test
     void testNodeCountBelow() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         NodeTable table = bdd.table();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
@@ -166,7 +166,7 @@ class BddTest {
 
     @Test
     void testCountSatisfyingAssignments() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         bdd.createVariable();
@@ -185,7 +185,7 @@ class BddTest {
     @SuppressWarnings("ReuseOfLocalVariable")
     @Test
     void testCompose() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int nv1 = bdd.not(v1);
         int v2 = bdd.createVariable();
@@ -211,7 +211,7 @@ class BddTest {
 
     @Test
     void testRegisteredExistsMatchesTheDirectCall() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int[] v = bdd.createVariables(3);
         int f = bdd.reference(bdd.and(bdd.or(v[0], v[1]), bdd.xor(v[1], v[2])));
 
@@ -231,7 +231,7 @@ class BddTest {
 
     @Test
     void testIfThenElse() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int v1andv2 = bdd.and(v1, v2);
@@ -247,7 +247,7 @@ class BddTest {
 
     @Test
     void testMember() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
 
@@ -270,7 +270,7 @@ class BddTest {
 
     @Test
     void testMinimalSolutionsForConstants() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
 
         List<BitSet> falseSolutions = Lists.newArrayList();
         bdd.forEachPath(bdd.falseFunction(), path -> falseSolutions.add(BitSets.copyOf(path.assignment)));
@@ -283,7 +283,7 @@ class BddTest {
 
     @Test
     void testSupport() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int v3 = bdd.createVariable();
@@ -330,7 +330,7 @@ class BddTest {
 
     @Test
     void testWorkStack() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         NodeTable table = bdd.table();
 
         int v1 = bdd.createVariable();
@@ -345,7 +345,7 @@ class BddTest {
 
     @Test
     void testUniverseCursor() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         bdd.createVariables(5);
         Set<BitSet> solutions = new HashSet<>();
         for (Cursor<BitSet> cursor = bdd.solutionCursor(bdd.trueFunction()); cursor.valid(); cursor.advance()) {
@@ -356,7 +356,7 @@ class BddTest {
 
     @Test
     void testConjunctionCursor() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         bdd.createVariables(5);
         BitSet conjunction = new BitSet(5);
         conjunction.set(0, 5);
@@ -370,7 +370,7 @@ class BddTest {
 
     @Test
     void testConcurrentAccessChecked() throws InterruptedException {
-        Bdd bdd = new BddContextImpl(config).bdd();
+        Bdd bdd = new DdContextImpl(config).bdd();
         bdd.createVariables(2);
         int node = bdd.reference(bdd.disjunction(0, 1));
 
@@ -408,7 +408,7 @@ class BddTest {
 
     @Test
     void testDeadNodeApproximation() {
-        BddImpl bdd = new BddContextImpl(config).bdd();
+        BddImpl bdd = new DdContextImpl(config).bdd();
         NodeTable table = bdd.table();
 
         int v1 = bdd.createVariable();

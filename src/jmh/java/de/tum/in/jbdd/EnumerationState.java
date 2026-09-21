@@ -93,7 +93,7 @@ public class EnumerationState {
             List<BitSet> blocks = new ArrayList<>(2);
             blocks.add(odds);
             blocks.add(evens);
-            diagram.reorderTo(blocks);
+            diagram.variableOrder().reorderTo(blocks);
         }
 
         this.bdd = (BddImpl) diagram;
@@ -101,7 +101,7 @@ public class EnumerationState {
         this.support = new BitSet(variables);
         this.support.set(0, variables);
 
-        if (order == Order.ODDS_FIRST && !bdd.reordered()) {
+        if (order == Order.ODDS_FIRST && !bdd.isReordered()) {
             throw new IllegalStateException("The order came back to the identity - nothing would translate");
         }
     }

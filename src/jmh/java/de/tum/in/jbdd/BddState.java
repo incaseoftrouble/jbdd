@@ -46,7 +46,7 @@ public class BddState {
                 .cacheEphemeralMultiplier((int) (BddConfiguration.DEFAULT_CACHE_EPHEMERAL_MULTIPLIER * cacheSizeFactor))
                 .useCachePreserve(preserveCache)
                 .build();
-        bdd = emulateMdd ? new MddAsTestBdd(new MddImpl(configuration)) : BddFactory.buildBdd(configuration);
+        bdd = emulateMdd ? new MddAsBinaryDd(new MddImpl(configuration)) : BddFactory.buildBdd(configuration);
     }
 
     public BinaryDecisionDiagram bdd() {

@@ -17,6 +17,7 @@
 package de.tum.in.jbdd;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -158,5 +159,39 @@ class RegisteredOperationsTest {
         assertEquals("lo", replacer.replace(text).evaluate(BitSets.of(0)));
         assertEquals(1, replacer.replace(count).evaluate(BitSets.of(1)));
         replacer.release();
+    }
+
+    @Test
+    void testRegistrationsThatReplaceNothingAreTheSharedIdentity() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        Bdd bdd = ctx.bdd();
+        BddSetFactory sets = ctx.bddSets();
+        bdd.createVariables(3);
+
+        // Nothing to replace: an empty mapping, and one that sends every variable to itself.
+        assertSame(RegisteredOperation.identity(), bdd.registerCompose(new int[0]));
+        assertSame(
+                RegisteredOperation.identity(),
+                bdd.registerCompose(new int[] {bdd.variableFunction(0), bdd.variableFunction(1)}));
+        assertSame(RegisteredOperation.identity(), bdd.registerExists(new BitSet()));
+        assertSame(RegisteredOperation.identity(), ctx.mtBdd().registerCompose(new int[0]));
+
+        // A real replacement must not collapse to it.
+        assertNotSame(RegisteredOperation.identity(), bdd.registerCompose(new int[] {bdd.trueFunction()}));
+
+        // The identity still has to behave like one.
+        int function = bdd.and(bdd.variableFunction(0), bdd.variableFunction(1));
+        assertEquals(function, RegisteredOperation.identity().applyAsInt(function));
+
+        // And the object layer passes the recognition through, rather than wrapping a no-op call.
+        BitSet none = new BitSet();
+        assertSame(BddSet.VariableReplacer.identity(), sets.registerRelabelVariables(none, variable -> variable));
+        assertSame(
+                BddSet.VariableReplacer.identity(),
+                sets.registerRelabelVariables(BitSets.of(0, 1), variable -> variable));
+        assertNotSame(BddSet.VariableReplacer.identity(), sets.registerRelabelVariables(BitSets.of(0), variable -> 2));
+
+        BddSet set = sets.var(0).intersection(sets.var(1));
+        assertSame(set, BddSet.VariableReplacer.identity().apply(set));
     }
 }

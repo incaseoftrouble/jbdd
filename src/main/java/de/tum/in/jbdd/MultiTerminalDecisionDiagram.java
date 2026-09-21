@@ -31,7 +31,7 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
     /**
      * The underlying BDD with which this structure shares its variables.
      */
-    Bdd bdd();
+    BinaryDecisionDiagram bdd();
 
     /**
      * Computes the value the given {@code function} takes under the given {@code assignment}.
@@ -613,14 +613,5 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
     @FunctionalInterface
     interface PathConsumer {
         void accept(BinaryPath path, int value);
-    }
-
-    /** A {@link Cursor} that also reports the terminal the element it stands on leads to. */
-    interface ValuedCursor<E> extends Cursor<E> {
-        /**
-         * The value the underlying function takes on the element the cursor stands on. Defined exactly
-         * while {@link #valid()} holds.
-         */
-        int value();
     }
 }

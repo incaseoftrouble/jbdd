@@ -40,7 +40,7 @@ final class MtBddOperations {
     }
 
     static final class Compose extends ProtectedOperation
-            implements RegisteredOperation.Unary, RegisteredOperation.Binary, NodeTableObserver {
+            implements RegisteredOperation.Unary, RegisteredOperation.Binary, NodeTableObserver, VariableOrderObserver {
         private final MtBddImpl mtbdd;
         private final int[] bddVariableMapping;
         private int maxReplacedLevel;
@@ -67,6 +67,8 @@ final class MtBddOperations {
             if (withSimplify) {
                 mtbdd.bddImpl().registerObserver(this);
             }
+            /* Once, not once per table it registers with: the order tells each listener a single time. */
+            mtbdd.variableOrder().registerObserver(this);
             growToTableFloor();
         }
 
@@ -81,14 +83,10 @@ final class MtBddOperations {
         }
 
         @Override
-        public void levelsSwapped(DecisionDiagram origin, int level) {
-            /* A simplifying compose is registered on both diagrams, and they share one order, so it would
-             * hear this twice - once is enough, and the shift below is not idempotent. */
-            if (origin != mtbdd) { // NOPMD
-                return;
-            }
+        public void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, BitSet movedVariables) {
             // As BddOperations.Compose: the cut-off it holds is a level, and its caches used the old one.
             maxReplacedLevel = mtbdd.bddImpl().maxReplacedLevel(bddVariableMapping);
+            // see BooleanCache#orderChanged
             composeCache.invalidate();
             if (composeSimplifyCache != null) {
                 composeSimplifyCache.invalidate();
@@ -96,13 +94,10 @@ final class MtBddOperations {
         }
 
         @Override
-        public void variableInserted(DecisionDiagram origin, int level) {
-            if (origin != mtbdd) { // NOPMD
-                return;
-            }
+        public void variablesInserted(int level, int count) {
             // See BddOperations.Compose: only the bound moves, every comparison against it is preserved.
             if (maxReplacedLevel >= level) {
-                maxReplacedLevel += 1;
+                maxReplacedLevel += count;
             }
             assert maxReplacedLevel == mtbdd.bddImpl().maxReplacedLevel(bddVariableMapping);
         }

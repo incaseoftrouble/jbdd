@@ -33,7 +33,6 @@ import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.IntPredicate;
 import java.util.function.IntUnaryOperator;
-import java.util.function.Supplier;
 import java.util.stream.IntStream;
 import org.jspecify.annotations.Nullable;
 
@@ -42,16 +41,22 @@ import org.jspecify.annotations.Nullable;
  *  - In a generic MTBDD we have no commutativity and neutral elements, hence much more "base case" branching is required
  */
 @SuppressWarnings({"PMD", "AssignmentToMethodParameter", "AssertWithSideEffects"})
-public class MtBddImpl implements MtBdd {
+public class MtBddImpl implements MtBdd, StatisticsSource {
     /** {@link #agreement}'s predicate: raw terminal equality, which within one numbering is value
      * equality. Fixed, so its cache never needs an init. */
     private static final MtBddBinaryPredicate EQUALITY = MtBddBinaryPredicate.equality();
 
     private static final int INVERT_ARRAY_DOMAIN_THRESHOLD = 64;
     private static final int INITIAL_VALUE_CAPACITY = 1024;
+    /* How many values may be allocated between collections before one is forced, and how far that grows
+     * when forcing it turns out to free nothing - see shouldCollectForValues. */
+    private static final int INITIAL_VALUE_COLLECTION_THRESHOLD = 1 << 12;
+    private static final int MAXIMUM_VALUE_COLLECTION_THRESHOLD = 1 << 24;
 
     /* The variable order and everything else shared with the companion BDD, reordering included. */
-    private final BddContextImpl context;
+    private final DdContextImpl context;
+    /* Direct, not through the context: decisionLevel and makeFunction go through it on every node. */
+    private final DdVariableOrderImpl order;
     private final BddImpl bdd;
     private final MtBddTable table;
     private final MtBddCache cache;
@@ -59,12 +64,20 @@ public class MtBddImpl implements MtBdd {
     private static final byte MAXIMUM_REFERENCE_COUNT = Byte.MAX_VALUE;
     // Convert to sparse bit set?
     private final BitSet allocatedValues = new BitSet();
-    private final NodeTableObserverGroup<NodeTableObserver> observers = new NodeTableObserverGroup<>();
+    private int valuesAllocatedSinceCollection = 0;
+    private int valueCollectionThreshold = INITIAL_VALUE_COLLECTION_THRESHOLD;
+    private long createdNodesAtCollection = 0L;
+    private boolean collectingForValues = false;
+    /** How often values alone, with no node allocation to trigger one, forced a collection. */
+    private int valueTriggeredCollectionCount = 0;
+
+    private final ObserverGroup<NodeTableObserver> observers = new ObserverGroup<>();
     private final ProtectionTracker protectionTracker;
     private final ConcurrentAccessGuard accessGuard = new ConcurrentAccessGuard();
 
-    MtBddImpl(BddContextImpl context) {
+    MtBddImpl(DdContextImpl context) {
         this.context = context;
+        this.order = context.variableOrder();
         this.bdd = context.bdd();
         this.table = new MtBddTable(this, context.configuration().mtbddInitialSize());
         this.cache = new MtBddCache(this, bdd);
@@ -84,15 +97,9 @@ public class MtBddImpl implements MtBdd {
             public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
                 cache.tableSizeChanged(invalidatedNodes, reclaimedValues);
             }
-
-            @Override
-            public void levelsSwapped(DecisionDiagram origin, int level) {
-                cache.levelsSwapped();
-            }
-
-            /* Nothing on an insertion: it preserves every level comparison, so no cached value goes stale
-             * by it, and the variable count is variablesChanged's business. */
         });
+        // As the BDD's.
+        order.registerOwnedObserver(cache);
         bdd.registerOwnedObserver(new NodeTableObserver() {
             @Override
             public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
@@ -110,7 +117,13 @@ public class MtBddImpl implements MtBdd {
         return cache;
     }
 
-    void invalidateCache() {
+    @Override
+    public String treeToString(int function) {
+        return table.treeToString(function);
+    }
+
+    @Override
+    public void invalidateCache() {
         cache.invalidate();
     }
 
@@ -126,20 +139,27 @@ public class MtBddImpl implements MtBdd {
         observers.dispatch(observer -> observer.beforeGc(this));
     }
 
-    void notifyLevelSiftedDown(int level) {
-        observers.dispatch(observer -> observer.levelsSwapped(this, level));
-    }
-
-    void notifyVariableInserted(int level) {
-        observers.dispatch(observer -> observer.variableInserted(this, level));
-    }
-
     void notifyAfterGc(int reclaimedNodes, BitSet reclaimedValues) {
+        valuesCollected(reclaimedValues);
         observers.dispatch(observer -> observer.afterGc(this, reclaimedNodes, reclaimedValues));
     }
 
     void notifyAfterTableGrow(int reclaimedNodes, BitSet reclaimedValues) {
+        valuesCollected(reclaimedValues);
         observers.dispatch(observer -> observer.afterTableGrowth(this, reclaimedNodes, reclaimedValues));
+    }
+
+    private void valuesCollected(BitSet reclaimedValues) {
+        if (collectingForValues) {
+            /* Forcing one and freeing nothing means the values are genuinely live. Trying again at the
+             * same count would make a workload holding many of them pay a full mark every threshold
+             * allocations, so back off; a collection that did free some puts it back. */
+            valueCollectionThreshold = reclaimedValues.isEmpty()
+                    ? Math.min(valueCollectionThreshold * 2, MAXIMUM_VALUE_COLLECTION_THRESHOLD)
+                    : INITIAL_VALUE_COLLECTION_THRESHOLD;
+        }
+        valuesAllocatedSinceCollection = 0;
+        createdNodesAtCollection = table.createdNodeCount();
     }
 
     @Override
@@ -147,7 +167,8 @@ public class MtBddImpl implements MtBdd {
         assert accessGuard.acquire();
         notifyBeforeGc();
         table.markAllReferencedNodes();
-        BitSet reclaimedValues = table.invalidateUnmarkedAndUnreferencedLeaves();
+        // Before reclaimUnmarkedNodes, whose closing assertion checks the leaf marks too.
+        BitSet reclaimedValues = table.clearUnreferencedLeaves();
         int reclaimedNodes = table.reclaimUnmarkedNodes();
         assert table().isNoneMarked();
         notifyAfterGc(reclaimedNodes, reclaimedValues);
@@ -166,7 +187,7 @@ public class MtBddImpl implements MtBdd {
 
     @Override
     public int numberOfVariables() {
-        return context.numberOfVariables();
+        return order.numberOfVariables();
     }
 
     private static int valueToConstantFunction(int value) {
@@ -308,7 +329,7 @@ public class MtBddImpl implements MtBdd {
 
     int decisionLevel(int function) {
         assert isValidNonConstantFunction(function);
-        return context.level(table.variable(function));
+        return order.levelOfVariable(table.variable(function));
     }
 
     @Override
@@ -333,56 +354,27 @@ public class MtBddImpl implements MtBdd {
         return table;
     }
 
-    /* The variable order is the companion BDD's - it is the same order, so reordering is the same act.
-     * Reordering through either moves the nodes of both; see BddContextImpl#siftDown. */
+    boolean isReordered() {
+        return order.isExplicitOrder();
+    }
 
-    boolean reordered() {
-        return context.reordered();
+    DdContextImpl context() {
+        return context;
     }
 
     @Override
-    public int level(int variable) {
-        return context.level(variable);
+    public DdVariableOrderImpl variableOrder() {
+        return order;
+    }
+
+    @Override
+    public int levelOfVariable(int variable) {
+        return order.levelOfVariable(variable);
     }
 
     @Override
     public int variableAtLevel(int level) {
-        return context.variableAtLevel(level);
-    }
-
-    @Override
-    public int reorder() {
-        return context.reorder();
-    }
-
-    @Override
-    public int reorder(List<BitSet> groups) {
-        return context.reorder(groups);
-    }
-
-    @Override
-    public void reorderTo(List<BitSet> blocks) {
-        context.reorderTo(blocks);
-    }
-
-    @Override
-    public void reorderToIdentity() {
-        context.reorderToIdentity();
-    }
-
-    @Override
-    public int createVariableAtLevel(int level) {
-        return context.createVariableAtLevel(level);
-    }
-
-    @Override
-    public int[] createVariablesAtLevel(int level, int count) {
-        return context.createVariablesAtLevel(level, count);
-    }
-
-    @Override
-    public void dropReorderStructures() {
-        context.dropReorderStructures();
+        return order.variableAtLevel(level);
     }
 
     private boolean isValidConstant(int function) {
@@ -454,10 +446,40 @@ public class MtBddImpl implements MtBdd {
     public int of(int value) {
         assert value >= 0;
         assert accessGuard.acquire();
-        // TODO Heuristically trigger GC if too many values are allocated.
-        allocatedValues.set(value);
+        int function = valueToConstantFunction(value);
+        if (!allocatedValues.get(value)) {
+            allocatedValues.set(value);
+            valuesAllocatedSinceCollection += 1;
+            if (shouldCollectForValues()) {
+                collectForValues(function);
+            }
+        }
         assert accessGuard.release();
-        return valueToConstantFunction(value);
+        return function;
+    }
+
+    /**
+     * Values are the one thing that can pile up without the node table noticing: allocating a node is what
+     * eventually reaches {@code ensureCapacity}, and a workload producing many values while building few
+     * nodes never gets there. Hence the comparison against node creation rather than an absolute count -
+     * where nodes are being made, the table's own trigger is already doing this job, and this one stays
+     * out of the way. Two loads and a compare, on a path that runs once per genuinely new value.
+     */
+    private boolean shouldCollectForValues() {
+        return valuesAllocatedSinceCollection >= valueCollectionThreshold
+                && table.createdNodeCount() - createdNodesAtCollection < valuesAllocatedSinceCollection
+                && context.configuration().useGarbageCollection();
+    }
+
+    private void collectForValues(int function) {
+        // The value being handed out is not referenced yet and sits under no node, so the mark would not
+        // reach it - the work stack is what carries a bare terminal through a collection.
+        table.pushToWorkStack(function);
+        collectingForValues = true;
+        valueTriggeredCollectionCount += 1;
+        gc();
+        collectingForValues = false;
+        table.popFromWorkStack();
     }
 
     @Override
@@ -478,17 +500,8 @@ public class MtBddImpl implements MtBdd {
         return !isConstant(function) && decisionLevel(function) == level;
     }
 
-    /**
-     * Rewrites the given nodes - which all carried the variable that was at {@code level} - for a swap of
-     * {@code level} and {@code level + 1}, which the order already reflects. See
-     * {@code BddContextImpl#siftDown}; the same recursion, without complement edges to keep canonical.
-     */
     void rewriteLevelAfterSwap(int[] nodes, int count, int level, int variable) {
-        /* Decide first, and take the nodes that will change out of the unique table before building
-         * anything: until a node is rewritten it still carries the old variable, so makeNode below could
-         * hand it out as a fresh child and it would then be rewritten out from under that parent. The
-         * ones that do not change stay in the table on purpose - they are genuine nodes of the variable
-         * moving down, and a new child that matches one of them must find it rather than duplicate it. */
+        // See BddImpl's implementation for details, its the same recursion
         int rewriteCount = 0;
         for (int index = 0; index < count; index++) {
             int node = nodes[index];
@@ -525,7 +538,7 @@ public class MtBddImpl implements MtBdd {
         if (lowFunction == highFunction) {
             return lowFunction;
         }
-        return table.makeNode(context.variableAtLevel(level), lowFunction, highFunction);
+        return table.makeNode(order.variableAtLevel(level), lowFunction, highFunction);
     }
 
     @Override
@@ -628,7 +641,8 @@ public class MtBddImpl implements MtBdd {
         if (isConstant(function)) {
             // The single, entirely unconstrained path.
             BitSet empty = BitSets.of();
-            return new SingletonValuedCursor<>(new BinaryPath(empty, empty), constantFunctionToValue(function));
+            return new ValuedCursor.SingletonValuedCursor<>(
+                    new BinaryPath(empty, empty), constantFunctionToValue(function));
         }
         return new PathCursor(this, function);
     }
@@ -754,13 +768,13 @@ public class MtBddImpl implements MtBdd {
             int value = constantFunctionToValue(function);
             // Every assignment yields the same value, so the whole power set is (or is not) a solution.
             return (values == null || values.test(value))
-                    ? new ConstantValuedCursor<>(Cursors.powerSet(support), value)
-                    : new ConstantValuedCursor<>(Cursors.empty(), value);
+                    ? new ValuedCursor.ConstantValuedCursor<>(Cursors.powerSet(support), value)
+                    : new ValuedCursor.ConstantValuedCursor<>(Cursors.empty(), value);
         }
         cache.initAnyValueMatches(values);
         if (!canReachMatch(function, values)) {
             // Nothing matches anywhere, so there is nothing to walk - and no value to ever report.
-            return emptyValued();
+            return ValuedCursor.emptyValued();
         }
         return new AssignmentCursor(this, function, values, support);
     }
@@ -871,19 +885,13 @@ public class MtBddImpl implements MtBdd {
             constant2 = isConstant(function2);
         }
 
-        int lookup;
-        int hash;
-        if (universeDomain) {
-            lookup = applyCache.lookup(function1, function2);
-            hash = applyCache.lookupHash();
-        } else {
-            assert applySimplifyCache != null;
-            lookup = applySimplifyCache.lookup(function1, function2, bddDomain);
-            hash = applySimplifyCache.lookupHash();
-        }
+        int lookup = universeDomain
+                ? applyCache.lookup(function1, function2)
+                : applySimplifyCache.lookup(function1, function2, bddDomain);
         if (lookup != placeholder()) {
             return lookup;
         }
+        int hash = universeDomain ? applyCache.lookupHash() : applySimplifyCache.lookupHash();
 
         // To simplify branching, use MAX_VALUE as a sentinel for "this side has no level left"
         int level1 = constant1 ? Integer.MAX_VALUE : decisionLevel(function1);
@@ -933,7 +941,6 @@ public class MtBddImpl implements MtBdd {
         if (universeDomain) {
             applyCache.put(hash, function1, function2, result);
         } else {
-            assert applySimplifyCache != null;
             applySimplifyCache.put(hash, function1, function2, bddDomain, result);
         }
         return result;
@@ -1011,19 +1018,11 @@ public class MtBddImpl implements MtBdd {
             return of(map.applyAsInt(constantFunctionToValue(function)));
         }
 
-        int lookup;
-        int hash;
-        if (universeDomain) {
-            lookup = mapCache.lookup(function);
-            hash = mapCache.lookupHash();
-        } else {
-            assert mapSimplifyCache != null;
-            lookup = mapSimplifyCache.lookup(function, bddDomain);
-            hash = mapSimplifyCache.lookupHash();
-        }
+        int lookup = universeDomain ? mapCache.lookup(function) : mapSimplifyCache.lookup(function, bddDomain);
         if (lookup != placeholder()) {
             return lookup;
         }
+        int hash = universeDomain ? mapCache.lookupHash() : mapSimplifyCache.lookupHash();
 
         int level = decisionLevel(function);
         int domainLevel = universeDomain ? Integer.MAX_VALUE : bdd.decisionLevel(bddDomain);
@@ -1061,7 +1060,6 @@ public class MtBddImpl implements MtBdd {
         if (universeDomain) {
             mapCache.put(hash, function, result);
         } else {
-            assert mapSimplifyCache != null;
             mapSimplifyCache.put(hash, function, bddDomain, result);
         }
         return result;
@@ -1182,8 +1180,6 @@ public class MtBddImpl implements MtBdd {
 
     @Override
     public int agreement(int mtbddFunction1, int mtbddFunction2) {
-        /* Its own dedicated cache rather than the ephemeral one applyBoolean uses: the predicate is
-         * always the same, so nothing can ever displace its entries and there is no init to pay. */
         return applyBoolean(mtbddFunction1, mtbddFunction2, EQUALITY, cache.agreementCache());
     }
 
@@ -1215,9 +1211,6 @@ public class MtBddImpl implements MtBdd {
 
     private int applyBooleanRecursive(
             int mtbddNode1, int mtbddNode2, MtBddBinaryPredicate predicate, MtBddCache.BinaryToBddCache booleanCache) {
-        /* Two identical sub-diagrams pair every terminal with itself, so a reflexive predicate holds
-         * everywhere below without looking. Without the claim there is nothing to say - the pair may be
-         * identical nodes standing for values from two different numberings. */
         if (predicate.reflexive && mtbddNode1 == mtbddNode2) {
             return bdd.trueFunction();
         }
@@ -1398,9 +1391,6 @@ public class MtBddImpl implements MtBdd {
 
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
 
-        // Plain compose builds no Bdd nodes at all (ifThenElseRecursive only reads the replacements), but
-        // narrowing a domain does - so from here on the replacement array needs the same Bdd-side
-        // protection BddImpl#composeSimplify gives it. A registered composer references them instead.
         NodeTable bddTable = bdd.table();
         int bddWorkStackCount = 0;
         if (bddDomain != bdd.trueFunction()) {
@@ -1432,7 +1422,7 @@ public class MtBddImpl implements MtBdd {
         int[] resolved = bddVariableMapping.clone();
         BddImpl.ComposeAnalysis analysis = bdd.analyzeCompose(resolved);
         if (analysis.maxReplacedLevel == -1) {
-            return function -> function;
+            return RegisteredOperation.identity();
         }
         if (analysis.isRestrict) {
             BitSet restrictSupport = analysis.restrictSupport;
@@ -1496,7 +1486,7 @@ public class MtBddImpl implements MtBdd {
         /* Two different things, and compose needs both: the level orders the descent against the domain,
          * while bddVariableMapping is indexed by the variable itself. */
         int nodeVariable = decisionVariable(mtbddNode);
-        int level = level(nodeVariable);
+        int level = levelOfVariable(nodeVariable);
         if (level > maxReplacedLevel) {
             // Nothing left to replace below here, but the domain may still simplify what remains.
             return computeSimplify(mtbddNode, bddDomain);
@@ -1505,19 +1495,11 @@ public class MtBddImpl implements MtBdd {
         boolean domainIsTrue = bddDomain == bdd.trueFunction();
         assert composeSimplifyCache != null || domainIsTrue;
 
-        int lookup;
-        int hash;
-        if (domainIsTrue) {
-            lookup = composeCache.lookup(mtbddNode);
-            hash = composeCache.lookupHash;
-        } else {
-            assert composeSimplifyCache != null;
-            lookup = composeSimplifyCache.lookup(mtbddNode, bddDomain);
-            hash = composeSimplifyCache.lookupHash;
-        }
+        int lookup = domainIsTrue ? composeCache.lookup(mtbddNode) : composeSimplifyCache.lookup(mtbddNode, bddDomain);
         if (lookup != placeholder()) {
             return lookup;
         }
+        int hash = domainIsTrue ? composeCache.lookupHash() : composeSimplifyCache.lookupHash();
 
         int domainLevel = domainIsTrue ? Integer.MAX_VALUE : bdd.decisionLevel(bddDomain);
         int domainLow = bdd.lowIf(bddDomain, domainLevel <= level);
@@ -1548,9 +1530,6 @@ public class MtBddImpl implements MtBdd {
                 bdd.table().popFromWorkStack();
             }
         } else {
-            /* A mapping shorter than the variable count leaves the rest unchanged - and under a
-             * non-identity order such a variable can well sit above maxReplacedLevel's variable, so
-             * the recursion reaches it. */
             int bddReplacement = nodeVariable < bddVariableMapping.length
                     ? bddVariableMapping[nodeVariable]
                     : bdd.variableFunction(nodeVariable);
@@ -1571,8 +1550,6 @@ public class MtBddImpl implements MtBdd {
                         composeCache,
                         composeSimplifyCache);
             } else {
-                // The domain constrains the *composed* function, so its cofactor w.r.t. this level only
-                // describes the branch we are descending into if the level maps to itself.
                 boolean aligned = domainLevel == level && bddReplacement == bdd.variableFunction(nodeVariable);
                 int lowDomain = aligned ? domainLow : bddDomain;
                 int highDomain = aligned ? domainHigh : bddDomain;
@@ -1617,7 +1594,6 @@ public class MtBddImpl implements MtBdd {
         if (domainIsTrue) {
             composeCache.put(hash, mtbddNode, result);
         } else {
-            assert composeSimplifyCache != null;
             composeSimplifyCache.put(hash, mtbddNode, bddDomain, result);
         }
         return result;
@@ -1652,7 +1628,7 @@ public class MtBddImpl implements MtBdd {
         /* The level orders the descent and is what makeFunction wants; the two BitSets are indexed by
          * the variable itself. */
         int nodeVariable = decisionVariable(mtbddNode);
-        int level = level(nodeVariable);
+        int level = levelOfVariable(nodeVariable);
         if (level > maxRestrictedLevel) {
             return mtbddNode;
         }
@@ -1946,10 +1922,8 @@ public class MtBddImpl implements MtBdd {
             return of(bijection.intern(mtbddNode));
         }
 
-        /* The level orders the descent and is what makeFunction wants; splitVariables is indexed by the
-         * variable itself. */
         int nodeVariable = decisionVariable(mtbddNode);
-        int level = level(nodeVariable);
+        int level = levelOfVariable(nodeVariable);
         if (level > maxSplitLevel) {
             return of(bijection.intern(mtbddNode));
         }
@@ -2033,30 +2007,6 @@ public class MtBddImpl implements MtBdd {
 
         int size() {
             return valueToFunction.size();
-        }
-    }
-
-    private static final class IntArrayList {
-        private int[] values = new int[8];
-        private int size = 0;
-
-        int add(int value) {
-            if (size == values.length) {
-                values = Arrays.copyOf(values, values.length * 2);
-            }
-            int index = size;
-            values[index] = value;
-            size += 1;
-            return index;
-        }
-
-        int get(int index) {
-            assert index >= 0 && index < size;
-            return values[index];
-        }
-
-        int size() {
-            return size;
         }
     }
 
@@ -2177,28 +2127,6 @@ public class MtBddImpl implements MtBdd {
 
         int size() {
             return indexToTuple.size();
-        }
-    }
-
-    private static final class DepthPool<V> {
-        private final Supplier<V> factory;
-        private @Nullable Object[] layers = new Object[8];
-
-        DepthPool(Supplier<V> factory) {
-            this.factory = factory;
-        }
-
-        @SuppressWarnings("unchecked")
-        V get(int depth) {
-            if (depth >= layers.length) {
-                layers = Arrays.copyOf(layers, Math.max(depth + 1, layers.length * 2));
-            }
-            V value = (V) layers[depth];
-            if (value == null) {
-                value = factory.get();
-                layers[depth] = value;
-            }
-            return value;
         }
     }
 
@@ -2325,6 +2253,7 @@ public class MtBddImpl implements MtBdd {
         Map<String, Object> statistics = new HashMap<>(table.statistics("mtbdd_"));
         statistics.putAll(cache.statistics());
         statistics.put("mtbdd_allocated_values", allocatedValues.cardinality());
+        statistics.put("mtbdd_value_triggered_collections", valueTriggeredCollectionCount);
         assert accessGuard.release();
         return DecisionDiagram.prefixStatistics(bdd.configuration().name(), statistics);
     }
@@ -2464,102 +2393,11 @@ public class MtBddImpl implements MtBdd {
         }
     }
 
-    /** A walk with nothing in it, for a function no assignment satisfies. */
-    private static <E> ValuedCursor<E> emptyValued() {
-        return new ValuedCursor<E>() {
-            @Override
-            public boolean valid() {
-                return false;
-            }
-
-            @Override
-            public E current() {
-                throw new IllegalStateException("Cursor is not valid");
-            }
-
-            @Override
-            public int value() {
-                throw new IllegalStateException("Cursor is not valid");
-            }
-
-            @Override
-            public boolean advance() {
-                return false;
-            }
-        };
-    }
-
     /** A caller's support, as the levels the walk works in. */
     private static BitSet levelsOf(MtBddImpl mtbdd, BitSet variables) {
         BitSet levels = new BitSet(mtbdd.numberOfVariables());
-        BitSets.map(variables, levels, mtbdd::level);
+        BitSets.map(variables, levels, mtbdd::levelOfVariable);
         return levels;
-    }
-
-    private static final class SingletonValuedCursor<E> implements ValuedCursor<E> {
-        private final E element;
-        private final int value;
-        private boolean valid = true;
-
-        SingletonValuedCursor(E element, int value) {
-            this.element = element;
-            this.value = value;
-        }
-
-        @Override
-        public boolean valid() {
-            return valid;
-        }
-
-        @Override
-        public E current() {
-            assert valid : "current() is only defined while the cursor is valid";
-            return element;
-        }
-
-        @Override
-        public int value() {
-            assert valid : "value() is only defined while the cursor is valid";
-            return value;
-        }
-
-        @Override
-        public boolean advance() {
-            valid = false;
-            return false;
-        }
-    }
-
-    /** A walk whose every element leads to the same terminal - what a constant function enumerates. */
-    private static final class ConstantValuedCursor<E> implements ValuedCursor<E> {
-        private final Cursor<E> cursor;
-        private final int value;
-
-        ConstantValuedCursor(Cursor<E> cursor, int value) {
-            this.cursor = cursor;
-            this.value = value;
-        }
-
-        @Override
-        public boolean valid() {
-            return cursor.valid();
-        }
-
-        @Override
-        public E current() {
-            return cursor.current();
-        }
-
-        @Override
-        public int value() {
-            assert cursor.valid() : "value() is only defined while the cursor is valid";
-            return value;
-        }
-
-        @Override
-        public boolean advance() {
-            return cursor.advance();
-        }
     }
 
     /**
@@ -2585,7 +2423,7 @@ public class MtBddImpl implements MtBdd {
             this.path = new PathWalk(mtbdd, function, null);
             this.valid = path.onPath();
             this.translated =
-                    mtbdd.reordered() ? new BinaryPath(new BitSet(variableCount), new BitSet(variableCount)) : null;
+                    mtbdd.isReordered() ? new BinaryPath(new BitSet(variableCount), new BitSet(variableCount)) : null;
             this.current =
                     translated == null ? new BinaryPath(path.levelAssignment(), path.pathSupportLevels()) : translated;
             if (valid) {
@@ -2622,8 +2460,6 @@ public class MtBddImpl implements MtBdd {
             return valid;
         }
 
-        /* The traversal is by level; what the caller gets is indexed by variable. Identical until the
-         * shared variable order is changed - see BddImpl's cursors, which do the same. */
         private void translate() {
             if (translated != null) {
                 BitSets.map(path.levelAssignment(), translated.assignment, mtbdd::variableAtLevel);
@@ -2654,7 +2490,7 @@ public class MtBddImpl implements MtBdd {
 
             int variableCount = mtbdd.numberOfVariables();
             this.mtbdd = mtbdd;
-            boolean translating = mtbdd.reordered();
+            boolean translating = mtbdd.isReordered();
             this.supportLevels = translating ? levelsOf(mtbdd, supportLevels) : supportLevels;
             this.freeLevels = new BitSet(variableCount);
             this.translated = translating ? new BitSet(variableCount) : null;
@@ -2728,10 +2564,10 @@ public class MtBddImpl implements MtBdd {
         }
 
         @Override
-        protected int level(int variable) {
+        protected int levelOfVariable(int variable) {
             // The MTBDD shares its companion BDD's variable order; that is what lets a cross-table
             // recursion expand on a single topmost variable.
-            return mtbdd.bdd().level(variable);
+            return mtbdd.bdd().levelOfVariable(variable);
         }
 
         @Override
@@ -2848,16 +2684,7 @@ public class MtBddImpl implements MtBdd {
         }
 
         @Override
-        protected BitSet sweepManagedLeaves() {
-            return invalidateUnmarkedAndUnreferencedLeaves();
-        }
-
-        @Override
-        protected boolean checkOwner() {
-            return mtbdd.check();
-        }
-
-        BitSet invalidateUnmarkedAndUnreferencedLeaves() {
+        protected BitSet clearUnreferencedLeaves() {
             assert BitSets.isSubset(markedValues, mtbdd.allocatedValues);
             BitSet freed = BitSets.copyOf(mtbdd.allocatedValues);
             mtbdd.allocatedValues.andNot(markedValues);
@@ -2873,6 +2700,11 @@ public class MtBddImpl implements MtBdd {
             markedValues.clear();
             freed.andNot(mtbdd.allocatedValues);
             return freed;
+        }
+
+        @Override
+        protected boolean checkOwner() {
+            return mtbdd.check();
         }
 
         @Override
@@ -2901,7 +2733,8 @@ public class MtBddImpl implements MtBdd {
         }
     }
 
-    boolean check() {
+    @Override
+    public boolean check() {
         table.check();
 
         for (int value = 0; value < valueReferenceCounts.length; value++) {

@@ -128,7 +128,22 @@ public interface BddSet {
      */
     @FunctionalInterface
     interface VariableReplacer extends UnaryOperator<BddSet>, RegisteredOperation {
+        /** The replacement that changes nothing. */
+        static VariableReplacer identity() {
+            return IdentityReplacer.INSTANCE;
+        }
+
         @Override
         BddSet apply(BddSet set);
+
+        /** The single instance behind {@link #identity()}; an enum so that it stays one. */
+        enum IdentityReplacer implements VariableReplacer {
+            INSTANCE;
+
+            @Override
+            public BddSet apply(BddSet set) {
+                return set;
+            }
+        }
     }
 }

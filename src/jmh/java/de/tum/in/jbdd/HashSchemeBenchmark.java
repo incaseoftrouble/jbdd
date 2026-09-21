@@ -192,7 +192,7 @@ public class HashSchemeBenchmark {
          * construction traffic, not synthetic guesses.
          */
         static Triples fromAdder(int bits) {
-            BddImpl bdd = new BddContextImpl(ImmutableBddConfiguration.builder().build()).bdd();
+            BddImpl bdd = new DdContextImpl(ImmutableBddConfiguration.builder().build()).bdd();
             BddBuilder.makeAdder(bdd, bits);
 
             NodeTable.Binary table = (NodeTable.Binary) bdd.table();

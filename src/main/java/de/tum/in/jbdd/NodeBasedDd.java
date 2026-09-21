@@ -69,4 +69,25 @@ public interface NodeBasedDd extends DecisionDiagram {
      * @return How many nodes were reclaimed - zero if the implementation declined.
      */
     int gc();
+
+    /**
+     * Verifies the diagram's internal invariants, e.g. canonicity, hash chains, reference counts, the order
+     * children are laid out in, and throws if any of them is broken.
+     *
+     * <p>A corrupted structure usually only misbehaves far away from whatever corrupted it, so this is
+     * the first thing to reach for when results stop making sense. It walks the whole table, so it is
+     * expensive; it is meant for a failing test or a debugging session, not for a hot path.
+     *
+     * @return {@code true}, so that it can be used as {@code assert dd.check()}.
+     */
+    boolean check();
+
+    /** The subgraph below {@code function}, as text. For reading, not for parsing. */
+    String treeToString(int function);
+
+    /**
+     * Drops every memoized operation result. A semantic no-op - the caches are memos, and every
+     * operation is correct without them - so this only costs the work of recomputing.
+     */
+    void invalidateCache();
 }

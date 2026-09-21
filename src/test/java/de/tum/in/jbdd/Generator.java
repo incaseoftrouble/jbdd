@@ -48,7 +48,7 @@ public final class Generator {
     }
 
     @SuppressWarnings("NullAway")
-    public static <T extends TestBdd> Info<T> fill(
+    public static <T extends BinaryDd> Info<T> fill(
             T bdd,
             int seed,
             int variableCount,
@@ -221,7 +221,7 @@ public final class Generator {
         return new Info<>(bdd, unaryDataPointSet, binaryDataPointSet, ternaryDataPointSet, syntaxTreeMap, variableList);
     }
 
-    public static final class Info<T extends TestBdd> {
+    public static final class Info<T extends BinaryDd> {
         public final T bdd;
         public final Set<UnaryDataPoint<T>> unaryDataPoints;
         public final Set<BinaryDataPoint<T>> binaryDataPoints;
@@ -245,7 +245,7 @@ public final class Generator {
         }
     }
 
-    public static final class UnaryDataPoint<T extends TestBdd> {
+    public static final class UnaryDataPoint<T extends BinaryDd> {
         public final T bdd;
         public final int function;
         public final SyntaxTree tree;

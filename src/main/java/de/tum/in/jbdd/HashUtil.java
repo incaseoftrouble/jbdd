@@ -17,12 +17,6 @@
 package de.tum.in.jbdd;
 
 final class HashUtil {
-    // Taken from https://planetmath.org/goodhashtableprimes
-    static final int P1 = 6291469; // NOPMD
-    static final int P2 = 12582917; // NOPMD
-    static final int P3 = 25165843; // NOPMD
-    static final int P4 = 50331653; // NOPMD
-
     private HashUtil() {}
 
     static int hash(int key) {
@@ -55,20 +49,6 @@ final class HashUtil {
         h = h * 0x9E3779B1 + secondKey;
         h = h * 0x9E3779B1 + thirdKey;
         h = h * 0x9E3779B1 + fourthKey;
-        return h & Integer.MAX_VALUE;
-    }
-
-    static int hashArray(int first, int... keys) {
-        if (keys.length == 0) {
-            return hash(first);
-        }
-        if (keys.length == 1) {
-            return hash(first, keys[0]);
-        }
-        int h = first;
-        for (int key : keys) {
-            h = h * 0x9E3779B1 + key;
-        }
         return h & Integer.MAX_VALUE;
     }
 }

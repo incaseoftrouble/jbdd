@@ -27,8 +27,8 @@ import java.util.function.Predicate;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Symbolic representation of a {@code Map<BitSet, V>} (total - every valuation has some value), backed by
- * an {@link MtBdd}.
+ * Symbolic representation of a {@code Function<BitSet, V>} (total over the domain - every valuation has some value),
+ * backed by an {@link MtBdd}.
  */
 public interface BddMap<V> {
     /** The factory backing this map - one per {@link BinaryFactoryContext}. */
@@ -48,13 +48,11 @@ public interface BddMap<V> {
      * specific valuation, possibly much smaller than {@link #support()}. */
     BitSet supportAt(BitSet assignment);
 
-    /** Every value this map actually takes. */
+    /** Every value this map actually takes (i.e. its image). */
     Set<V> values();
 
     /** Whether this map takes only a single value. */
-    default boolean isConstant() {
-        return values().size() == 1;
-    }
+    boolean isConstant();
 
     /** The set of valuations mapping to {@code value}. */
     BddSet domainOf(V value);
@@ -64,6 +62,8 @@ public interface BddMap<V> {
 
     /**
      * The set of valuations on which this map's value and {@code other}'s satisfy {@code predicate}.
+     *
+     * <p>Note: For equality, see {@link #agreement(BddMap)}</p>
      */
     <W> BddSet where(BddMap<W> other, BiPredicate<? super V, ? super W> predicate);
 
@@ -96,9 +96,10 @@ public interface BddMap<V> {
             BddMap<W> other, BiFunction<? super V, ? super W, ? extends O> combiner, Values<O> destination);
 
     /** Transforms every value via {@code function}, staying within this map's own {@link #valueDomain()}.
-     * To do so, the entire tree needs to be traversed, to detect if two values are merged into one.
+     *
+     * <p>In general, the entire tree needs to be traversed, to detect if two values are merged into one.
      * If {@code function} is known to be injective, use {@link Values#createRelabeling} instead, which is
-     * much faster. */
+     * much faster.</p> */
     default BddMap<V> map(Function<? super V, ? extends V> function) {
         return map(function, valueDomain());
     }
@@ -112,7 +113,7 @@ public interface BddMap<V> {
 
     /**
      * The set of valuations on which this map and {@code other} agree. Note that {@code other}
-     * does not need to be over the same {@link #valueDomain()}.
+     * does <em>not</em> need to be over the same {@link #valueDomain()}.
      */
     default BddSet agreement(BddMap<? extends V> other) {
         return where(other, BddMapBinaryPredicate.equality());

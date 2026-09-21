@@ -79,6 +79,12 @@ public final class BitSets {
         return set;
     }
 
+    public static BitSet range(int from, int to) {
+        BitSet set = new BitSet(to);
+        set.set(from, to);
+        return set;
+    }
+
     public static <V> BitSet of(Iterator<V> iterator, ToIntFunction<? super V> mapper) {
         BitSet set = new BitSet();
         while (iterator.hasNext()) {
@@ -148,6 +154,12 @@ public final class BitSets {
         return new PowerIterator(size);
     }
 
+    public static BitSet map(BitSet source, IntUnaryOperator mapping) {
+        BitSet target = new BitSet(source.length());
+        map(source, target, mapping);
+        return target;
+    }
+
     /**
      * Replaces {@code target} with the image of every set bit of {@code source} under {@code mapping} -
      * how a walk that works by level hands out something indexed by variable, and the other way round.
@@ -188,6 +200,18 @@ public final class BitSets {
         for (int i = bitSet.nextSetBit(0); i >= 0; i = bitSet.nextSetBit(i + 1)) {
             action.accept(i);
         }
+    }
+
+    public static void forEachWithIndex(BitSet bitSet, BitSetIndexConsumer action) {
+        int index = 0;
+        for (int i = bitSet.nextSetBit(0); i >= 0; i = bitSet.nextSetBit(i + 1)) {
+            action.accept(i, index);
+            index += 1;
+        }
+    }
+
+    public interface BitSetIndexConsumer {
+        void accept(int value, int index);
     }
 
     public static boolean anyMatch(BitSet bitSet, IntPredicate predicate) {

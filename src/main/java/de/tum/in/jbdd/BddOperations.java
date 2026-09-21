@@ -23,7 +23,7 @@ import org.jspecify.annotations.Nullable;
 final class BddOperations {
     private BddOperations() {}
 
-    static final class Exists implements RegisteredOperation.Unary, NodeTableObserver {
+    static final class Exists implements RegisteredOperation.Unary, NodeTableObserver, VariableOrderObserver {
         private final BddImpl bdd;
         private final BitSet quantifiedVariables;
         private BitSet quantifiedLevels;
@@ -32,9 +32,10 @@ final class BddOperations {
         Exists(BddImpl bdd, BitSet quantifiedVariables) {
             this.bdd = bdd;
             this.quantifiedVariables = quantifiedVariables;
-            this.quantifiedLevels = bdd.toLevels(quantifiedVariables);
+            this.quantifiedLevels = bdd.variablesToLevels(quantifiedVariables);
             this.existsCache = new BooleanCache.UnaryToIntCache(bdd);
             bdd.registerObserver(this);
+            bdd.variableOrder().registerObserver(this);
             growToTableFloor();
         }
 
@@ -45,17 +46,21 @@ final class BddOperations {
         }
 
         @Override
-        public void levelsSwapped(DecisionDiagram origin, int level) {
-            // quantifiedVariables is by variable, so after a swap we must rebuild the by-level set
-            quantifiedLevels = bdd.toLevels(quantifiedVariables);
+        public void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, BitSet movedVariables) {
+            // quantifiedVariables is by variable, so the by-level set has to be rebuilt - unless none of
+            // them is among the ones that moved, in which case every one of their levels is what it was.
+            if (movedVariables.intersects(quantifiedVariables)) {
+                quantifiedLevels = bdd.variablesToLevels(quantifiedVariables);
+            }
+            assert quantifiedLevels.equals(bdd.variablesToLevels(quantifiedVariables));
 
-            // TODO If none of the quantified variables was involved, we could keep the cache?
+            // see BooleanCache#orderChanged
             existsCache.invalidate();
         }
 
         @Override
-        public void variableInserted(DecisionDiagram origin, int level) {
-            quantifiedLevels = bdd.toLevels(quantifiedVariables);
+        public void variablesInserted(int level, int count) {
+            quantifiedLevels = bdd.variablesToLevels(quantifiedVariables);
             // Every entry in the cache does not involve the new variable, so we can keep it
         }
 
@@ -95,7 +100,7 @@ final class BddOperations {
     }
 
     static final class Compose extends ProtectedOperation
-            implements RegisteredOperation.Unary, RegisteredOperation.Binary, NodeTableObserver {
+            implements RegisteredOperation.Unary, RegisteredOperation.Binary, NodeTableObserver, VariableOrderObserver {
         private final BddImpl bdd;
         private final int[] variableMapping;
         private int maxReplacedLevel;
@@ -113,6 +118,7 @@ final class BddOperations {
             this.composeCache = new BooleanCache.UnaryToIntCache(bdd);
             this.composeSimplifyCache = withSimplify ? new BooleanCache.BinaryToIntCache(bdd) : null;
             bdd.registerObserver(this);
+            bdd.variableOrder().registerObserver(this);
             growToTableFloor();
         }
 
@@ -131,16 +137,15 @@ final class BddOperations {
         }
 
         @Override
-        public void levelsSwapped(DecisionDiagram origin, int level) {
-            boolean upperReplaced = isReplaced(bdd.variableAtLevel(level));
-            boolean lowerReplaced = isReplaced(bdd.variableAtLevel(level + 1));
-            if (upperReplaced && !lowerReplaced && maxReplacedLevel == level + 1) {
-                maxReplacedLevel = level;
-            } else if (lowerReplaced && !upperReplaced && maxReplacedLevel == level) {
-                maxReplacedLevel = level + 1;
+        public void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, BitSet movedVariables) {
+            /* The cut-off it holds is a level, so it has to be taken again - unless no replaced variable
+             * moved, since the maximum is over exactly those and each of them is where it was. */
+            if (BitSets.anyMatch(movedVariables, this::isReplaced)) {
+                maxReplacedLevel = bdd.maxReplacedLevel(variableMapping);
             }
             assert maxReplacedLevel == bdd.maxReplacedLevel(variableMapping);
 
+            // see BooleanCache#orderChanged
             composeCache.invalidate();
             if (composeSimplifyCache != null) {
                 composeSimplifyCache.invalidate();
@@ -148,9 +153,9 @@ final class BddOperations {
         }
 
         @Override
-        public void variableInserted(DecisionDiagram origin, int level) {
+        public void variablesInserted(int level, int count) {
             if (maxReplacedLevel >= level) {
-                maxReplacedLevel += 1;
+                maxReplacedLevel += count;
             }
             assert maxReplacedLevel == bdd.maxReplacedLevel(variableMapping);
         }

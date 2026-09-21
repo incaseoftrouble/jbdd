@@ -160,7 +160,7 @@ class MtBddTheories {
         return all;
     }
 
-    private static List<IntPoolEntry> buildIntPool(Context context, Random random, Info<TestBddImpl> boolInfo) {
+    private static List<IntPoolEntry> buildIntPool(Context context, Random random, Info<BddImpl> boolInfo) {
         MtBddImpl mt = context.mt;
         List<IntPoolEntry> pool = new ArrayList<>();
 
@@ -183,7 +183,7 @@ class MtBddTheories {
                             v, IntSyntaxTree.constant(trueValue), IntSyntaxTree.constant(falseValue))));
         }
 
-        List<UnaryDataPoint<TestBddImpl>> conditions = new ArrayList<>(boolInfo.unaryDataPoints);
+        List<UnaryDataPoint<BddImpl>> conditions = new ArrayList<>(boolInfo.unaryDataPoints);
         for (int iteration = 0; iteration < intPoolGrowthIterations && pool.size() < intPoolTargetSize; iteration++) {
             IntPoolEntry left = pool.get(random.nextInt(pool.size()));
             IntPoolEntry created;
@@ -204,14 +204,14 @@ class MtBddTheories {
                 }
                 case 2: {
                     IntPoolEntry elseEntry = pool.get(random.nextInt(pool.size()));
-                    UnaryDataPoint<TestBddImpl> condition = conditions.get(random.nextInt(conditions.size()));
+                    UnaryDataPoint<BddImpl> condition = conditions.get(random.nextInt(conditions.size()));
                     int function = mt.reference(mt.ifThenElse(condition.function, left.function, elseEntry.function));
                     created = new IntPoolEntry(
                             function, IntSyntaxTree.ifThenElse(condition.tree, left.tree, elseEntry.tree));
                     break;
                 }
                 default:
-                    UnaryDataPoint<TestBddImpl> condition = conditions.get(random.nextInt(conditions.size()));
+                    UnaryDataPoint<BddImpl> condition = conditions.get(random.nextInt(conditions.size()));
                     int value = random.nextInt(valueRange);
                     int function = mt.reference(mt.update(left.function, condition.function, value));
                     created = new IntPoolEntry(function, IntSyntaxTree.update(condition.tree, value, left.tree));
@@ -271,8 +271,8 @@ class MtBddTheories {
     }
 
     private static Collection<IntConditionalDataPoint> sampleConditional(
-            Context context, List<IntPoolEntry> pool, Info<TestBddImpl> boolInfo, int count, Random random) {
-        List<UnaryDataPoint<TestBddImpl>> conditions = new ArrayList<>(boolInfo.unaryDataPoints);
+            Context context, List<IntPoolEntry> pool, Info<BddImpl> boolInfo, int count, Random random) {
+        List<UnaryDataPoint<BddImpl>> conditions = new ArrayList<>(boolInfo.unaryDataPoints);
         List<IntConditionalDataPoint> result = new ArrayList<>();
         for (int i = 0; i < count; i++) {
             result.add(new IntConditionalDataPoint(
@@ -325,7 +325,7 @@ class MtBddTheories {
 
     private static boolean isReordered(MtBddImpl mt) {
         for (int variable = 0; variable < mt.numberOfVariables(); variable++) {
-            if (mt.level(variable) != variable) {
+            if (mt.levelOfVariable(variable) != variable) {
                 return true;
             }
         }
@@ -341,7 +341,7 @@ class MtBddTheories {
     @AfterAll
     static void statistics() {
         for (Context context : contexts) {
-            logger.log(Level.INFO, DecisionDiagram.formatStatistics(context.mt.statistics()));
+            logger.log(Level.INFO, DecisionDiagram.formatStatistics(context.ddContext.statistics()));
         }
     }
 
@@ -366,7 +366,7 @@ class MtBddTheories {
         }
         for (Context context : reorderStressed) {
             for (int i = 0; i < REORDER_SWAPS; i++) {
-                context.ddContext.siftDown(reorderRandom.nextInt(variableCount - 1));
+                context.ddContext.variableOrder().siftDown(reorderRandom.nextInt(variableCount - 1));
             }
         }
         if (THEORIES_RUN.get() / REORDER_EVERY % REORDER_CHECK_EVERY == 0) {
@@ -1073,7 +1073,7 @@ class MtBddTheories {
         final String name;
         /* The order is the context's, so the stress drives it there - one context, one order, both
          * diagrams moving together. */
-        final BddContextImpl ddContext;
+        final DdContextImpl ddContext;
         final BddImpl bdd;
         final MtBddImpl mt;
         final int[] rotationMapping;
@@ -1089,19 +1089,12 @@ class MtBddTheories {
                     .name(name)
                     .keepReorderingStructures(keepReorderingStructures)
                     .build();
-            ddContext = new BddContextImpl(config);
+            ddContext = new DdContextImpl(config);
             bdd = ddContext.bdd();
             // Same seeds for every context, so the three hold structurally identical diagrams and a
             // divergence between them is the order and nothing else.
-            Info<TestBddImpl> boolInfo = Generator.fill(
-                    new TestBddImpl(bdd),
-                    0,
-                    variableCount,
-                    boolTreeDepth,
-                    boolTreeWidth,
-                    boolUnaryCount,
-                    boolBinaryCount,
-                    0);
+            Info<BddImpl> boolInfo = Generator.fill(
+                    bdd, 0, variableCount, boolTreeDepth, boolTreeWidth, boolUnaryCount, boolBinaryCount, 0);
             mt = ddContext.mtBdd();
 
             List<IntPoolEntry> pool = buildIntPool(this, new Random(1), boolInfo);
@@ -1221,12 +1214,12 @@ class MtBddTheories {
 
     static final class IntConditionalDataPoint {
         final Context context;
-        final UnaryDataPoint<TestBddImpl> condition;
+        final UnaryDataPoint<BddImpl> condition;
         final IntPoolEntry then;
         final IntPoolEntry els;
 
         IntConditionalDataPoint(
-                Context context, UnaryDataPoint<TestBddImpl> condition, IntPoolEntry then, IntPoolEntry els) {
+                Context context, UnaryDataPoint<BddImpl> condition, IntPoolEntry then, IntPoolEntry els) {
             this.context = context;
             this.condition = condition;
             this.then = then;
