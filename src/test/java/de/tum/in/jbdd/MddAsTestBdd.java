@@ -484,6 +484,12 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
+    public RegisteredOperation.Unary registerExists(BitSet quantifiedVariables) {
+        // As registerCompose: the registered form lives on BddImpl, which this adapter does not have.
+        throw new UnsupportedOperationException("registerExists is not supported on an MDD-backed TestBdd");
+    }
+
+    @Override
     public int compose(int function, int[] variableMapping) {
         int[] constantReplacements = new int[mdd.numberOfVariables()];
         Arrays.fill(constantReplacements, -1);

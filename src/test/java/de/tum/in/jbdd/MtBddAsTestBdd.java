@@ -578,6 +578,13 @@ class MtBddAsTestBdd implements TestBdd, ReorderableDd {
     }
 
     @Override
+    public RegisteredOperation.Unary registerExists(BitSet quantifiedVariables) {
+        // As registerCompose: this adapter quantifies through the MTBDD engine (see #exists), which has
+        // no equivalent registered form.
+        throw new UnsupportedOperationException("registerExists is not supported on an MTBDD-backed TestBdd");
+    }
+
+    @Override
     public int compose(int function, int[] variableMapping) {
         Bdd bdd = mt.bdd();
         int[] bddMapping = new int[variableMapping.length];

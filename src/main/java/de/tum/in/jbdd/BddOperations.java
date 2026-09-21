@@ -23,19 +23,84 @@ import org.jspecify.annotations.Nullable;
 final class BddOperations {
     private BddOperations() {}
 
+    static final class Exists implements RegisteredOperation.Unary, NodeTableObserver {
+        private final BddImpl bdd;
+        private final BitSet quantifiedVariables;
+        private BitSet quantifiedLevels;
+        private final BooleanCache.UnaryToIntCache existsCache;
+
+        Exists(BddImpl bdd, BitSet quantifiedVariables) {
+            this.bdd = bdd;
+            this.quantifiedVariables = quantifiedVariables;
+            this.quantifiedLevels = bdd.toLevels(quantifiedVariables);
+            this.existsCache = new BooleanCache.UnaryToIntCache(bdd);
+            bdd.registerObserver(this);
+            growToTableFloor();
+        }
+
+        private void growToTableFloor() {
+            BddConfiguration configuration = bdd.configuration();
+            existsCache.grow(bdd.tableSize()
+                    / (configuration.cacheEphemeralMultiplier() * configuration.registeredOperationDivider()));
+        }
+
+        @Override
+        public void levelsSwapped(DecisionDiagram origin, int level) {
+            // quantifiedVariables is by variable, so after a swap we must rebuild the by-level set
+            quantifiedLevels = bdd.toLevels(quantifiedVariables);
+
+            // TODO If none of the quantified variables was involved, we could keep the cache?
+            existsCache.invalidate();
+        }
+
+        @Override
+        public void variableInserted(DecisionDiagram origin, int level) {
+            quantifiedLevels = bdd.toLevels(quantifiedVariables);
+            // Every entry in the cache does not involve the new variable, so we can keep it
+        }
+
+        @Override
+        public int applyAsInt(int function) {
+            assert bdd.isValidFunction(function);
+
+            if (bdd.isConstant(function)) {
+                return function;
+            }
+            if (quantifiedVariables.cardinality() == bdd.numberOfVariables()) {
+                return bdd.trueFunction();
+            }
+            int result = bdd.existsGeneral(function, quantifiedLevels, existsCache);
+            existsCache.growOnUsage();
+            return result;
+        }
+
+        @Override
+        public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
+            pruneInvalidNodes(reclaimedNodes);
+        }
+
+        @Override
+        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            pruneInvalidNodes(invalidatedNodes);
+            growToTableFloor();
+        }
+
+        private void pruneInvalidNodes(int invalidatedNodes) {
+            if (invalidatedNodes == 0) {
+                return;
+            }
+            boolean preserve = bdd.configuration().useCachePreserve() && invalidatedNodes < bdd.tableSize() / 2;
+            existsCache.clearInvalidNodes(preserve);
+        }
+    }
+
     static final class Compose extends ProtectedOperation
             implements RegisteredOperation.Unary, RegisteredOperation.Binary, NodeTableObserver {
         private final BddImpl bdd;
         private final int[] variableMapping;
         private int maxReplacedLevel;
         private final BooleanCache.UnaryToIntCache composeCache;
-
-        /**
-         * Only allocated for {@code registerComposeSimplify}. A plain registered compose is always invoked
-         * with a {@code TRUE} domain, and {@code computeComposeSimplify} keeps it {@code TRUE} all the way
-         * down when there is no cache to key domain-carrying entries on - it gives up narrowing the domain
-         * to the current branch condition, which is the only thing that would introduce one.
-         */
+        // Only allocated for registerComposeSimplify
         private final BooleanCache.@Nullable BinaryToIntCache composeSimplifyCache;
 
         @SuppressWarnings("AssignmentOrReturnOfFieldWithMutableType")
@@ -48,7 +113,7 @@ final class BddOperations {
             this.composeCache = new BooleanCache.UnaryToIntCache(bdd);
             this.composeSimplifyCache = withSimplify ? new BooleanCache.BinaryToIntCache(bdd) : null;
             bdd.registerObserver(this);
-            growToTableFloor(); // size caches for the table as it stands now, not just future grows
+            growToTableFloor();
         }
 
         private void growToTableFloor() {
@@ -67,13 +132,6 @@ final class BddOperations {
 
         @Override
         public void levelsSwapped(DecisionDiagram origin, int level) {
-            /* The cut-off this holds is a level, so it may name something else now; and its caches were
-             * filled with results which used the old one. The mapping itself is by variable, so it stands.
-             *
-             * Only the two swapped variables changed level, and they exchanged exactly these two, so the
-             * greatest replaced level moves only when one of them is replaced and the other is not - and
-             * then only if the bound was sitting on the level that one just left. Everything else replaced
-             * is at some level outside {level, level + 1} and did not move. */
             boolean upperReplaced = isReplaced(bdd.variableAtLevel(level));
             boolean lowerReplaced = isReplaced(bdd.variableAtLevel(level + 1));
             if (upperReplaced && !lowerReplaced && maxReplacedLevel == level + 1) {
@@ -91,8 +149,6 @@ final class BddOperations {
 
         @Override
         public void variableInserted(DecisionDiagram origin, int level) {
-            /* Everything at or below the insertion point moved down by one, this bound included; every
-             * comparison against it therefore answers exactly as it did, so the caches stand. */
             if (maxReplacedLevel >= level) {
                 maxReplacedLevel += 1;
             }
@@ -115,8 +171,7 @@ final class BddOperations {
             if (domain == bdd.falseFunction()) {
                 return bdd.falseFunction();
             }
-            assert domain == bdd.trueFunction() || composeSimplifyCache != null
-                    : "A domain-carrying compose must be registered through registerComposeSimplify";
+            assert domain == bdd.trueFunction() || composeSimplifyCache != null;
             int result = bdd.composeGeneral(
                     function, domain, variableMapping, maxReplacedLevel, composeCache, composeSimplifyCache);
             composeCache.growOnUsage();

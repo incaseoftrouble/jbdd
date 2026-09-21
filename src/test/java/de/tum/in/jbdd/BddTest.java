@@ -210,6 +210,26 @@ class BddTest {
     }
 
     @Test
+    void testRegisteredExistsMatchesTheDirectCall() {
+        BddImpl bdd = new BddContextImpl(config).bdd();
+        int[] v = bdd.createVariables(3);
+        int f = bdd.reference(bdd.and(bdd.or(v[0], v[1]), bdd.xor(v[1], v[2])));
+
+        BitSet quantified = buildBitSet("010");
+        RegisteredOperation.Unary exists = bdd.registerExists(quantified);
+        assertThat(exists.applyAsInt(f), is(bdd.exists(f, quantified)));
+        // Invoked twice, the private cache is now warm - the answer must not change.
+        assertThat(exists.applyAsInt(f), is(bdd.exists(f, quantified)));
+        // The set is read at registration, so changing it afterwards must not be noticed.
+        quantified.set(0);
+        assertThat(exists.applyAsInt(f), is(bdd.exists(f, buildBitSet("010"))));
+
+        assertThat(bdd.registerExists(new BitSet()).applyAsInt(f), is(f));
+        assertThat(bdd.registerExists(buildBitSet("111")).applyAsInt(f), is(bdd.trueFunction()));
+        assertThat(bdd.check(), is(true));
+    }
+
+    @Test
     void testIfThenElse() {
         BddImpl bdd = new BddContextImpl(config).bdd();
         int v1 = bdd.createVariable();

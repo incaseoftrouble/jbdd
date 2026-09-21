@@ -327,6 +327,32 @@ class ReorderTest {
     }
 
     @Test
+    void testRegisteredExistsFollowsAReordering() {
+        // A registered exists keeps its quantified set indexed by level, so a reordering moves it.
+        int variables = 6;
+        BddContextImpl context = new BddContextImpl(CONFIG);
+        BddImpl bdd = context.bdd();
+        int[] v = bdd.createVariables(variables);
+        int f = bdd.reference(bdd.and(bdd.or(v[0], v[3]), bdd.xor(v[1], v[4])));
+
+        BitSet quantified = BitSets.of(1, 3);
+        RegisteredOperation.Unary exists = bdd.registerExists(quantified);
+
+        int expected = bdd.reference(exists.applyAsInt(f));
+        List<Boolean> before = truthTable(bdd, expected, variables);
+
+        context.siftDown(0);
+        context.siftDown(3);
+        context.siftDown(1);
+
+        int after = exists.applyAsInt(f);
+        assertEquals(before, truthTable(bdd, after, variables), "registered exists went stale on reordering");
+        assertEquals(expected, after, "and it should find the very same node");
+        assertEquals(bdd.exists(f, quantified), after);
+        assertTrue(bdd.check());
+    }
+
+    @Test
     void testReorderReportsWhatItSaved() {
         int pairs = 6;
         int variables = 2 * pairs;

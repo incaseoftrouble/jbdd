@@ -189,13 +189,9 @@ public final class BddContextImpl implements BddContext {
         mtbdd.cache().variablesChanged();
     }
 
-    /* No blanket invalidation: the caches and the registered operations are told exactly what moved and
-     * decide for themselves what that costs them. A swap keeps every entry that is only a statement about
-     * node ids, which reordering preserves; an insertion keeps every entry at all, since it preserves
-     * every level comparison, and moves only the levels registered operations store. */
-    private void notifyLevelsSwapped(int level) {
-        bdd.notifyLevelsSwapped(level);
-        mtbdd.notifyLevelsSwapped(level);
+    private void notifyLevelSiftedDown(int level) {
+        bdd.notifyLevelSiftedDown(level);
+        mtbdd.notifyLevelSiftedDown(level);
     }
 
     private void notifyVariableInserted(int level) {
@@ -403,10 +399,11 @@ public final class BddContextImpl implements BddContext {
         bdd.table().endRewrite();
         mtbdd.table().endRewrite();
 
-        /* Rewriting in place leaves every node meaning what it did, so a cache entry naming nodes is still
-         * true - but not every entry is only about nodes. Which is which is the caches' business; see
-         * BooleanCache#levelsSwapped. */
-        notifyLevelsSwapped(level);
+        // TODO This notification happens after every sift, even if we are in the middle of reordering.
+        //   We should be able to separate externally called sift vs internals, and notify caches etc.
+        //   after reordering, informating about order before and order after (and maybe a set of
+        //   changed variables etc.)
+        notifyLevelSiftedDown(level);
 
         assert bdd.table().workStacksEmpty() && mtbdd.table().workStacksEmpty();
         assert bdd.accessGuard.release();

@@ -441,6 +441,12 @@ public class DelegatingBdd implements Bdd {
     }
 
     @Override
+    public RegisteredOperation.Unary registerExists(BitSet quantifiedVariables) {
+        onEnter("registerExists");
+        return onExit(delegate.registerExists(quantifiedVariables));
+    }
+
+    @Override
     public int equivalence(int function1, int function2) {
         onEnter("equivalence");
         return onExit(delegate.equivalence(function1, function2));

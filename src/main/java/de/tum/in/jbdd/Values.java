@@ -86,35 +86,24 @@ public interface Values<V> {
     /**
      * Binds {@code function} and {@code destination} once - see {@link BddMap.Mapper}.
      */
-    default <O> BddMap.Mapper<V, O> registerMap(Function<? super V, ? extends O> function, Values<O> destination) {
-        return map -> map.map(function, destination);
-    }
+    <O> BddMap.Mapper<V, O> registerMap(Function<? super V, ? extends O> function, Values<O> destination);
 
     /**
      * Binds a cross-numbering combination once - see {@link BddMap.Combiner}. {@code other} is the
      * numbering of the right operand, {@code destination} that of the result.
      */
-    @SuppressWarnings("ObjectEquality")
-    default <W, O> BddMap.Combiner<V, W, O> registerCombine(
-            Values<W> other, BiFunction<? super V, ? super W, ? extends O> combiner, Values<O> destination) {
-        assert other.factory() == factory() && destination.factory() == factory() // NOPMD - identity is the check
-                : "All three numberings have to belong to one factory";
-        return (left, right) -> left.apply(right, combiner, destination);
-    }
+    <W, O> BddMap.Combiner<V, W, O> registerCombine(
+            Values<W> other, BiFunction<? super V, ? super W, ? extends O> combiner, Values<O> destination);
 
     /**
      * Binds {@code predicate} to this numbering once - see {@link BddMap.Selector}.
      */
-    default BddMap.Selector<V> registerWhere(Predicate<? super V> predicate) {
-        return map -> map.where(predicate);
-    }
+    BddMap.Selector<V> registerWhere(Predicate<? super V> predicate);
 
     /**
      * Binds {@code predicate} to this numbering once - see {@link BddMap.Relation}.
      */
-    default BddMap.Relation<V> registerWhere(BddMapBinaryPredicate<V> predicate) {
-        return (left, right) -> left.where(right, predicate);
-    }
+    BddMap.Relation<V> registerWhere(BddMapBinaryPredicate<V> predicate);
 
     /**
      * Inject {@code map} into <em>this</em> numbering via {@code injection}. {@code injection} must be

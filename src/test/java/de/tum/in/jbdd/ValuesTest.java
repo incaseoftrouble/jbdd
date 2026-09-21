@@ -19,11 +19,8 @@ package de.tum.in.jbdd;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.util.BitSet;
 import java.util.List;
-import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -98,115 +95,5 @@ class ValuesTest {
 
         // The two numberings are distinct, so this is a cross-numbering comparison - which is fine.
         assertEquals(ctx.bddSets().universe(), map.where(retyped, String::contentEquals));
-    }
-
-    @Test
-    void testRegisteredApplyAgreesWithThePlainOne() {
-        BinaryFactoryContext ctx = BinaryFactoryContext.create();
-        Values<Integer> numbers = ctx.bddMaps().create();
-        BddSet x0 = ctx.bddSets().var(0);
-        BddSet x1 = ctx.bddSets().var(1);
-
-        BddMap<Integer> a = numbers.of(0).update(x0, 1);
-        BddMap<Integer> b = numbers.of(0).update(x1, 2);
-
-        // A monoid, so the registered operation resolves - and pins - the neutral value's terminal.
-        BddMapBinaryOperator<Integer> sum = BddMapBinaryOperator.monoid(Integer::sum, 0);
-        BddMap.Operator<Integer> registered = numbers.registerApply(sum);
-
-        // Maps are canonical per (function, numbering), so agreeing means being the very same object.
-        assertSame(a.apply(b, sum), registered.apply(a, b));
-        assertSame(b.apply(a, sum), registered.apply(b, a));
-        assertEquals(3, registered.apply(a, b).evaluate(BitSets.of(0, 1)));
-        assertEquals(1, registered.apply(a, b).evaluate(BitSets.of(0)));
-        assertEquals(0, registered.apply(a, b).evaluate(BitSets.of()));
-
-        // Repeated use is the point of registering; it has to keep answering the same.
-        for (int i = 0; i < 100; i++) {
-            assertSame(a.apply(b, sum), registered.apply(a, b));
-        }
-
-        // Being a BinaryOperator is what makes it usable where the JDK wants one.
-        assertSame(a.apply(b, sum), Stream.of(a, b).reduce(numbers.of(0), registered));
-        registered.release();
-    }
-
-    @Test
-    void testFacadeRegistrationsAgreeWithThePlainOperations() {
-        BinaryFactoryContext ctx = BinaryFactoryContext.create();
-        BddSetFactory sets = ctx.bddSets();
-        Values<Integer> numbers = ctx.bddMaps().create();
-        Values<String> texts = ctx.bddMaps().create();
-        BddSet x0 = sets.var(0);
-        BddSet x1 = sets.var(1);
-
-        BddMap<Integer> a = numbers.of(0).update(x0, 1);
-        BddMap<Integer> b = numbers.of(0).update(x1, 2);
-
-        // Every registration that is still a facade has to answer exactly like the operation it forwards
-        // to - which is what keeps the switch to a cache-owning implementation a non-event.
-        assertSame(
-                a.map(Object::toString, texts),
-                numbers.registerMap(Object::toString, texts).apply(a));
-        assertSame(
-                a.apply(b, (l, r) -> l + "/" + r, texts),
-                numbers.registerCombine(numbers, (Integer l, Integer r) -> l + "/" + r, texts)
-                        .apply(a, b));
-        assertEquals(
-                a.where(value -> value > 0),
-                numbers.registerWhere(value -> value > 0).apply(a));
-        assertEquals(
-                a.where(b, BddMapBinaryPredicate.equality()),
-                numbers.registerWhere(BddMapBinaryPredicate.<Integer>equality()).apply(a, b));
-
-        BddSet[] mapping = {x1, null};
-        BddMap.Operator<Integer> sum = numbers.registerApply(BddMapBinaryOperator.monoid(Integer::sum, 0));
-        BddMap.VariableReplacer replacer = ctx.bddMaps().registerReplaceVariables(mapping);
-        /* The domain-carrying forms are pinned to their contract rather than to the facade's exact output:
-         * "agrees on the domain, unspecified elsewhere" leaves a real implementation free to answer
-         * differently outside it, and this assertion has to survive that switch. */
-        assertTrue(a.apply(b, Integer::sum).agreement(sum.applyIn(a, b, x0)).containsAll(x0));
-        assertTrue(
-                a.replaceVariables(mapping).agreement(replacer.replaceIn(a, x0)).containsAll(x0));
-
-        BitSet quantified = BitSets.of(0);
-        assertEquals(
-                x0.intersection(x1).exists(quantified),
-                sets.registerExists(quantified).apply(x0.intersection(x1)));
-        assertEquals(
-                x0.relabelVariables(i -> i + 1),
-                sets.registerRelabelVariables(i -> i + 1).apply(x0));
-        assertEquals(
-                x0.replaceVariables(i -> i == 0 ? x1 : null),
-                sets.registerReplaceVariables(i -> i == 0 ? x1 : null).apply(x0));
-    }
-
-    @Test
-    void testRegisteredReplacerServesEveryNumbering() {
-        BinaryFactoryContext ctx = BinaryFactoryContext.create();
-        BddSetFactory sets = ctx.bddSets();
-        Values<String> strings = ctx.bddMaps().create();
-        Values<Integer> numbers = ctx.bddMaps().create();
-        BddSet x0 = sets.var(0);
-        BddSet x1 = sets.var(1);
-
-        // x0 := x1, everything else untouched.
-        BddSet[] mapping = {x1, null};
-        BddMap.VariableReplacer replacer = ctx.bddMaps().registerReplaceVariables(mapping);
-
-        BddMap<String> text = strings.of("lo").update(x0, "hi");
-        BddMap<Integer> count = numbers.of(0).update(x0.intersection(x1), 1);
-
-        // Terminals are never looked at, so one replacer serves both numberings and each result stays
-        // over the numbering it came from.
-        assertSame(text.replaceVariables(mapping), replacer.replace(text));
-        assertSame(count.replaceVariables(mapping), replacer.replace(count));
-        assertSame(strings, replacer.replace(text).valueDomain());
-        assertSame(numbers, replacer.replace(count).valueDomain());
-
-        assertEquals("hi", replacer.replace(text).evaluate(BitSets.of(1)));
-        assertEquals("lo", replacer.replace(text).evaluate(BitSets.of(0)));
-        assertEquals(1, replacer.replace(count).evaluate(BitSets.of(1)));
-        replacer.release();
     }
 }

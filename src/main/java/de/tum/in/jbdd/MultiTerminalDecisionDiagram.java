@@ -420,6 +420,19 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
     int mapSimplify(int function, IntUnaryOperator map, int domain);
 
     /**
+     * Registers a {@code map} operation bound to a fixed {@code map} - see {@link RegisteredOperation}.
+     *
+     * @see #map(int, IntUnaryOperator)
+     */
+    RegisteredOperation.Unary registerMap(IntUnaryOperator map);
+
+    /**
+     * The {@link #mapSimplify} counterpart of {@link #registerMap}: the returned operation takes the
+     * function and the domain, in that order.
+     */
+    RegisteredOperation.Binary registerMapSimplify(IntUnaryOperator map);
+
+    /**
      * Constructs the boolean function in the associated BDD which evaluates to true exactly for those
      * valuations on which the given functions yield the same value.
      *
@@ -441,6 +454,14 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
     int applyBoolean(int function1, int function2, MtBddBinaryPredicate predicate);
 
     /**
+     * Registers an {@code applyBoolean} operation bound to a fixed {@code predicate} - see
+     * {@link RegisteredOperation}.
+     *
+     * @see #applyBoolean(int, int, MtBddBinaryPredicate)
+     */
+    RegisteredOperation.Binary registerApplyBoolean(MtBddBinaryPredicate predicate);
+
+    /**
      * Creates the boolean function representing all assignments under which the given {@code function}
      * evaluates to the given {@code value} in the underlying {@link #bdd() Bdd}.
      *
@@ -457,6 +478,14 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
      * @see #agreement(int, int)
      */
     int mapBoolean(int function, IntPredicate values);
+
+    /**
+     * Registers a {@code mapBoolean} operation bound to a fixed {@code values} predicate - see
+     * {@link RegisteredOperation}.
+     *
+     * @see #mapBoolean(int, IntPredicate)
+     */
+    RegisteredOperation.Unary registerMapBoolean(IntPredicate values);
 
     /**
      * Creates the inverse of the given {@code function}, i.e. a mapping from each value to the boolean

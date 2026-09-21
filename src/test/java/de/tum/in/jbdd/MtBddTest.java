@@ -29,6 +29,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.function.IntPredicate;
+import java.util.function.IntUnaryOperator;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 
@@ -1131,6 +1132,48 @@ class MtBddTest {
         assertEquals(mt.applySimplify(f, g, sum, domain), registered.applyAsInt(f, g, domain));
         assertEquals(mt.apply(f, g, sum), registered.applyAsInt(f, g, bdd.trueFunction()));
         assertTrue(mt.isConstant(registered.applyAsInt(f, g, bdd.falseFunction())));
+    }
+
+    @Test
+    void testRegisteredMapAndMapSimplifyMatchTheDirectCalls() {
+        BddImpl bdd = new BddContextImpl(config).bdd();
+        bdd.createVariables(3);
+        MtBddImpl mt = bdd.mtbdd();
+
+        int f = buildFourLeafFunction(mt, 1);
+        IntUnaryOperator doubled = value -> value * 2;
+        int domain = bdd.or(bdd.variableFunction(0), bdd.variableFunction(1));
+
+        RegisteredOperation.Unary registeredMap = mt.registerMap(doubled);
+        assertEquals(mt.map(f, doubled), registeredMap.applyAsInt(f));
+
+        RegisteredOperation.Binary registered = mt.registerMapSimplify(doubled);
+        assertEquals(mt.mapSimplify(f, doubled, domain), registered.applyAsInt(f, domain));
+        // Invoked twice, the private cache is now warm - the answer must not change.
+        assertEquals(mt.mapSimplify(f, doubled, domain), registered.applyAsInt(f, domain));
+        assertEquals(mt.map(f, doubled), registered.applyAsInt(f, bdd.trueFunction()));
+        assertTrue(mt.isConstant(registered.applyAsInt(f, bdd.falseFunction())));
+    }
+
+    @Test
+    void testRegisteredBooleanValuedOperationsMatchTheDirectCalls() {
+        BddImpl bdd = new BddContextImpl(config).bdd();
+        bdd.createVariables(3);
+        MtBddImpl mt = bdd.mtbdd();
+
+        int f = buildFourLeafFunction(mt, 1);
+        int g = mt.of(2, mt.of(10), mt.of(20));
+        IntPredicate even = value -> value % 2 == 0;
+        MtBddBinaryPredicate less = MtBddBinaryPredicate.of((left, right) -> left < right);
+
+        RegisteredOperation.Unary registeredMapBoolean = mt.registerMapBoolean(even);
+        assertEquals(mt.mapBoolean(f, even), registeredMapBoolean.applyAsInt(f));
+        assertEquals(mt.mapBoolean(f, even), registeredMapBoolean.applyAsInt(f));
+
+        RegisteredOperation.Binary registeredApplyBoolean = mt.registerApplyBoolean(less);
+        assertEquals(mt.applyBoolean(f, g, less), registeredApplyBoolean.applyAsInt(f, g));
+        assertEquals(mt.applyBoolean(f, g, less), registeredApplyBoolean.applyAsInt(f, g));
+        assertTrue(bdd.check());
     }
 
     @Test

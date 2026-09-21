@@ -127,6 +127,10 @@ final class BooleanCache {
         return composeCache;
     }
 
+    UnaryToIntCache existsCache() {
+        return existsCache;
+    }
+
     BinaryToIntCache composeSimplifyCache() {
         return composeSimplifyCache;
     }
@@ -183,27 +187,6 @@ final class BooleanCache {
         restrictCache.grow(ephemeralSize);
     }
 
-    /**
-     * Two adjacent levels exchanged their variables, so everything goes.
-     *
-     * <p>Not everything has to. Reordering rewrites in place, so a node id still denotes the function it
-     * did, and an entry which is only a statement about ids is still true - {@code and}, {@code xor},
-     * {@code ite} and {@code intersects} are exactly that. Of the rest, some entries are genuinely
-     * <em>wrong</em> afterwards: the satisfaction counts range over the variables below the node's level
-     * and that level moved, while {@code exists}, {@code compose} and {@code restrict} each return early
-     * on "nothing below me is quantified/replaced/restricted" - a level comparison whose answer has
-     * changed, with every entry above such a one built on it. The simplify family and {@code constrain}
-     * sit in between: they pick a don't-care completion and validity is compositional, so their entries
-     * stay valid, just no longer the ones this order would produce.
-     *
-     * <p>Keeping the first group was measured and bought nothing: over a workload of swaps followed by the
-     * same operations again, the total {@code and} hit count was the same to within one hit. The entries
-     * survive but stop being asked about - the swap reshapes the diagram, so the recursion below an
-     * unchanged top-level pair reaches different nodes. Against zero gain, a keep-list is a
-     * correctness-sensitive classification every new operation would have to be sorted into, and a wrong
-     * sort is silent corruption. Dropping everything also keeps a result depending only on the current
-     * order, never on the cache's history.
-     */
     void levelsSwapped() {
         invalidate();
     }
@@ -213,6 +196,7 @@ final class BooleanCache {
     }
 
     void invalidate() {
+        // TODO The registered caches do something smarter. Maybe we should, too.
         caches().forEach(IntCache::invalidate);
     }
 
@@ -234,29 +218,8 @@ final class BooleanCache {
 
     // Lookup
 
-    /**
-     * Points the compose caches at {@code replacements}, keeping their contents only if that mapping is
-     * the one they were filled under.
-     *
-     * <p>Sameness is judged on the whole resolved mapping, not on a prefix of it. Truncating to what the
-     * recursion can reach would have to be by <em>index</em>, and the cut-off available here is a
-     * <em>level</em> - the same thing only while nothing has reordered. Once they part company a replaced
-     * variable can have a small level and a large index, so its entry falls outside the prefix: a differing
-     * mapping compares equal and the cache is reused for it, and the dependency check below never looks at
-     * that replacement, so the cache is not invalidated when it dies. Both give wrong answers rather than
-     * stale ones. One copy of an array at most as long as the variable count is the price of not having to
-     * reason about that; the cut-off stays a level, but only where it belongs, as the recursion's own bound.
-     *
-     * <p>Matching contents is still not enough on its own. The entries are function ids the caller supplies,
-     * and an ephemeral compose protects them only for the duration of one call, so between two calls a
-     * replacement can be collected and its slot handed to an unrelated function - the new mapping then
-     * compares equal while denoting something else, and validity cannot see it, a recycled id being a
-     * perfectly valid function. So {@link #onBddNodesInvalidated} forgets the mapping whenever an id came
-     * free, which is precisely when that can happen; the empty array is a sound sentinel because a mapping
-     * that replaces nothing never gets here (its caller returns at {@code maxReplacedLevel == -1}).
-     */
     void initCompose(int[] replacements) {
-        assert replacements.length > 0 : "A mapping replacing nothing must not reach the compose caches";
+        assert replacements.length > 0;
         if (Arrays.equals(composeArray, replacements)) {
             composeReuseCount += 1;
             return;

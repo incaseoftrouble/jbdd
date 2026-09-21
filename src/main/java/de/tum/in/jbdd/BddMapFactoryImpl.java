@@ -292,6 +292,45 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
         }
 
         @Override
+        public <O> BddMap.Mapper<V, O> registerMap(Function<? super V, ? extends O> function, Values<O> destination) {
+            ValuesImpl<O> resultValues = factory.valuesOf(destination);
+            return new RegisteredMapper<>(
+                    this,
+                    resultValues,
+                    factory.dd.registerMap(raw -> resultValues.getOrAssignIndex(function.apply(valueOf(raw)))));
+        }
+
+        @Override
+        public <W, O> BddMap.Combiner<V, W, O> registerCombine(
+                Values<W> other, BiFunction<? super V, ? super W, ? extends O> combiner, Values<O> destination) {
+            ValuesImpl<W> otherValues = factory.valuesOf(other);
+            ValuesImpl<O> resultValues = factory.valuesOf(destination);
+            // Different numberings means we cannot use any property
+            IntBinaryOperator rawOp = (rawV, rawW) ->
+                    resultValues.getOrAssignIndex(combiner.apply(valueOf(rawV), otherValues.valueOf(rawW)));
+            return new RegisteredCombiner<>(
+                    this, otherValues, resultValues, factory.dd.registerApply(MtBddBinaryOperator.of(rawOp)));
+        }
+
+        @Override
+        public BddMap.Selector<V> registerWhere(Predicate<? super V> predicate) {
+            return new RegisteredSelector<>(this, factory.dd.registerMapBoolean(raw -> predicate.test(valueOf(raw))));
+        }
+
+        @Override
+        public BddMap.Relation<V> registerWhere(BddMapBinaryPredicate<V> predicate) {
+            if (predicate == BddMapBinaryPredicate.<V>equality()) { // NOPMD
+                // Where with equality is just agreement, which uses a global hash
+                return BddMap::agreement;
+            }
+            IntBinaryPredicate raw = (rawV, rawW) -> predicate.test(valueOf(rawV), valueOf(rawW));
+            return new RegisteredRelation<>(
+                    this,
+                    factory.dd.registerApplyBoolean(
+                            MtBddBinaryPredicate.of(raw, predicate.symmetric, predicate.reflexive)));
+        }
+
+        @Override
         public <O> BddMap<V> relabelInto(BddMap<O> map, Function<? super O, ? extends V> injection) {
             assert isInjective(map.values(), injection);
             return map.map(injection, this);
@@ -310,8 +349,7 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
         @Override
         public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
             int first = reclaimedValues.nextSetBit(0);
-            /* Nothing reclaimed, or nothing below the high-water mark: the terminals above it were never
-             * handed out by this numbering, so there is nothing here to forget and nothing to rebuild. */
+            // Nothing reclaimed or first reclaim beyond what we use -> Nothing to do
             if (first < 0 || first > biggestAliveIndex) {
                 return;
             }
@@ -326,22 +364,15 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
                 }
             }
 
-            /* The new high-water mark. It has to be found by walking back over toValue rather than over
-             * reclaimedValues: a slot can be vacant because it was reclaimed now or because it was a gap
-             * already, and the walk has to step over both. */
             int alive = biggestAliveIndex;
             while (alive >= 0 && toValue.get(alive) == null) {
                 alive -= 1;
             }
             if (alive < biggestAliveIndex) {
-                // One shot rather than a remove per slot, and the gaps above the mark go with them.
                 toValue.subList(alive + 1, toValue.size()).clear();
                 biggestAliveIndex = alive;
             }
 
-            /* Rebuilt rather than maintained: the loop above would have to record every reclaimed index
-             * and the trim to take an unknown number of them back out, and both of those passes are over
-             * the list this one walks once. Ascending, so reuse packs from the bottom. */
             freeGaps.clear();
             for (int index = 0; index <= biggestAliveIndex; index++) {
                 if (toValue.get(index) == null) {
@@ -350,7 +381,6 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
             }
 
             assert toValue.size() == biggestAliveIndex + 1;
-            // The gaps are vacant by construction now, so check the other half: the two maps still agree.
             assert IntStream.range(0, toValue.size())
                     .allMatch(index ->
                             toValue.get(index) == null || Objects.equals(toIndex.get(toValue.get(index)), index));
@@ -377,8 +407,6 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
                                 toValue.get(collision), value, relabeled);
             }
             ValuesImpl<O> relabeled = new ValuesImpl<>(factory, newToIndex, newToValue, new ArrayDeque<>(freeGaps));
-            // The numbering is copied verbatim, so the watermark has to come along - sweepValues asserts
-            // toValue.size() == biggestAliveIndex + 1, and would trip on the first reclaimed value without it.
             relabeled.biggestAliveIndex = biggestAliveIndex;
             return relabeled;
         }
@@ -419,6 +447,103 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
             BddMapFactoryImpl factory = values.factory;
             return factory.make(
                     operation.applyAsInt(factory.functionOf(left, values), factory.functionOf(right, values)), values);
+        }
+
+        @Override
+        public void release() {
+            operation.release();
+        }
+    }
+
+    private static final class RegisteredMapper<V, O> implements BddMap.Mapper<V, O> {
+        private final ValuesImpl<V> values;
+        private final ValuesImpl<O> destination;
+        private final RegisteredOperation.Unary operation;
+
+        RegisteredMapper(ValuesImpl<V> values, ValuesImpl<O> destination, RegisteredOperation.Unary operation) {
+            this.values = values;
+            this.destination = destination;
+            this.operation = operation;
+        }
+
+        @Override
+        public BddMap<O> apply(BddMap<V> map) {
+            BddMapFactoryImpl factory = values.factory;
+            return factory.make(operation.applyAsInt(factory.functionOf(map, values)), destination);
+        }
+
+        @Override
+        public void release() {
+            operation.release();
+        }
+    }
+
+    private static final class RegisteredCombiner<V, W, O> implements BddMap.Combiner<V, W, O> {
+        private final ValuesImpl<V> values;
+        private final ValuesImpl<W> otherValues;
+        private final ValuesImpl<O> destination;
+        private final RegisteredOperation.Binary operation;
+
+        RegisteredCombiner(
+                ValuesImpl<V> values,
+                ValuesImpl<W> otherValues,
+                ValuesImpl<O> destination,
+                RegisteredOperation.Binary operation) {
+            this.values = values;
+            this.otherValues = otherValues;
+            this.destination = destination;
+            this.operation = operation;
+        }
+
+        @Override
+        public BddMap<O> apply(BddMap<V> left, BddMap<W> right) {
+            BddMapFactoryImpl factory = values.factory;
+            return factory.make(
+                    operation.applyAsInt(factory.functionOf(left, values), factory.functionOf(right, otherValues)),
+                    destination);
+        }
+
+        @Override
+        public void release() {
+            operation.release();
+        }
+    }
+
+    private static final class RegisteredSelector<V> implements BddMap.Selector<V> {
+        private final ValuesImpl<V> values;
+        private final RegisteredOperation.Unary operation;
+
+        RegisteredSelector(ValuesImpl<V> values, RegisteredOperation.Unary operation) {
+            this.values = values;
+            this.operation = operation;
+        }
+
+        @Override
+        public BddSet apply(BddMap<V> map) {
+            BddMapFactoryImpl factory = values.factory;
+            return factory.bddSets.make(operation.applyAsInt(factory.functionOf(map, values)));
+        }
+
+        @Override
+        public void release() {
+            operation.release();
+        }
+    }
+
+    private static final class RegisteredRelation<V> implements BddMap.Relation<V> {
+        private final ValuesImpl<V> values;
+        private final RegisteredOperation.Binary operation;
+
+        RegisteredRelation(ValuesImpl<V> values, RegisteredOperation.Binary operation) {
+            this.values = values;
+            this.operation = operation;
+        }
+
+        @Override
+        public BddSet apply(BddMap<V> left, BddMap<V> right) {
+            BddMapFactoryImpl factory = values.factory;
+            int result = operation.applyAsInt(factory.functionOf(left, values), factory.functionOf(right, values));
+            return factory.bddSets.make(result);
         }
 
         @Override
@@ -594,11 +719,8 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
             int rawNeutral = neutralRaw == null ? -1 : neutralRaw;
             int rawAbsorbing = absorbingRaw == null ? -1 : absorbingRaw;
 
-            IntBinaryOperator rawOp = (rawV, rawW) -> {
-                V v1 = values.valueOf(rawV);
-                V v2 = values.valueOf(rawW);
-                return values.getOrAssignIndex(operator.apply(v1, v2));
-            };
+            IntBinaryOperator rawOp =
+                    (rawV, rawW) -> values.getOrAssignIndex(operator.apply(values.valueOf(rawV), values.valueOf(rawW)));
             MtBddBinaryOperator rawOperator = operator.commutative
                     ? MtBddBinaryOperator.monoid(rawOp, rawNeutral, rawAbsorbing)
                     : MtBddBinaryOperator.of(rawOp, rawNeutral, rawAbsorbing);

@@ -116,7 +116,7 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
         observers.dispatch(observer -> observer.beforeGc(this));
     }
 
-    void notifyLevelsSwapped(int level) {
+    void notifyLevelSiftedDown(int level) {
         observers.dispatch(observer -> observer.levelsSwapped(this, level));
     }
 

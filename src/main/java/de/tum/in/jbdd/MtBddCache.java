@@ -166,6 +166,18 @@ final class MtBddCache {
         return applySimplifyCache;
     }
 
+    UnaryToIntCache mapCache() {
+        return mapCache;
+    }
+
+    MtbddBddToIntCache mapSimplifyCache() {
+        return mapSimplifyCache;
+    }
+
+    UnaryToBddCache mapBooleanCache() {
+        return mapBooleanCache;
+    }
+
     UnaryToIntCache composeCache() {
         return composeCache;
     }
@@ -407,34 +419,6 @@ final class MtBddCache {
 
     // Lookup
 
-    int lookupApply(int function1, int function2) {
-        assert mtbdd.isValidFunction(function1) && mtbdd.isValidFunction(function2);
-        int result = applyCache.lookup(function1, function2);
-        lookupHash = applyCache.lookupHash();
-        return result;
-    }
-
-    int lookupMap(int function) {
-        assert mtbdd.isValidFunction(function);
-        int result = mapCache.lookup(function);
-        lookupHash = mapCache.lookupHash();
-        return result;
-    }
-
-    int lookupMapSimplify(int function, int domain) {
-        assert mtbdd.isValidFunction(function) && bdd.isValidFunction(domain);
-        int result = mapSimplifyCache.lookup(function, domain);
-        lookupHash = mapSimplifyCache.lookupHash();
-        return result;
-    }
-
-    int lookupMapBoolean(int function) {
-        assert mtbdd.isValidFunction(function);
-        int result = mapBooleanCache.lookup(function);
-        lookupHash = mapBooleanCache.lookupHash();
-        return result;
-    }
-
     BinaryToBddCache agreementCache() {
         return agreementCache;
     }
@@ -483,13 +467,6 @@ final class MtBddCache {
         return result;
     }
 
-    int lookupCompose(int function) {
-        assert mtbdd.isValidFunction(function);
-        int result = composeCache.lookup(function);
-        lookupHash = composeCache.lookupHash();
-        return result;
-    }
-
     int lookupRestrict(int function) {
         assert mtbdd.isValidFunction(function);
         int result = restrictCache.lookup(function);
@@ -533,26 +510,6 @@ final class MtBddCache {
 
     // Put
 
-    void putApply(int hash, int function1, int function2, int result) {
-        assert mtbdd.isValidFunction(function1) && mtbdd.isValidFunction(function2) && mtbdd.isValidFunction(result);
-        applyCache.put(hash, function1, function2, result);
-    }
-
-    void putMap(int hash, int function, int result) {
-        assert mtbdd.isValidFunction(function) && mtbdd.isValidFunction(result);
-        mapCache.put(hash, function, result);
-    }
-
-    void putMapSimplify(int hash, int function, int domain, int result) {
-        assert mtbdd.isValidFunction(function) && bdd.isValidFunction(domain) && mtbdd.isValidFunction(result);
-        mapSimplifyCache.put(hash, function, domain, result);
-    }
-
-    void putMapBoolean(int hash, int function, int result) {
-        assert mtbdd.isValidFunction(function) && bdd.isValidFunction(result);
-        mapBooleanCache.put(hash, function, result);
-    }
-
     void putSimplify(int hash, int function, int domain, int result) {
         assert mtbdd.isValidFunction(function) && bdd.isValidFunction(domain) && mtbdd.isValidFunction(result);
         simplifyCache.put(hash, function, domain, result);
@@ -574,11 +531,6 @@ final class MtBddCache {
                 && mtbdd.isValidFunction(mtbddElse)
                 && mtbdd.isValidFunction(result);
         ifThenElseCache.put(hash, bddIf, mtbddThen, mtbddElse, result);
-    }
-
-    void putCompose(int hash, int function, int result) {
-        assert mtbdd.isValidFunction(function) && mtbdd.isValidFunction(result);
-        composeCache.put(hash, function, result);
     }
 
     void putRestrict(int hash, int function, int result) {

@@ -126,7 +126,7 @@ public class MtBddImpl implements MtBdd {
         observers.dispatch(observer -> observer.beforeGc(this));
     }
 
-    void notifyLevelsSwapped(int level) {
+    void notifyLevelSiftedDown(int level) {
         observers.dispatch(observer -> observer.levelsSwapped(this, level));
     }
 
@@ -941,11 +941,30 @@ public class MtBddImpl implements MtBdd {
 
     @Override
     public int map(int function, IntUnaryOperator map) {
-        return mapSimplify(function, map, bdd.trueFunction());
+        return map(function, bdd.trueFunction(), map, null, null);
     }
 
     @Override
     public int mapSimplify(int function, IntUnaryOperator map, int bddDomain) {
+        return map(function, bddDomain, map, null, null);
+    }
+
+    @Override
+    public RegisteredOperation.Unary registerMap(IntUnaryOperator map) {
+        return new MtBddOperations.Mapper(this, map, false);
+    }
+
+    @Override
+    public RegisteredOperation.Binary registerMapSimplify(IntUnaryOperator map) {
+        return new MtBddOperations.Mapper(this, map, true);
+    }
+
+    int map(
+            int function,
+            int bddDomain,
+            IntUnaryOperator map,
+            MtBddCache.@Nullable UnaryToIntCache registeredMapCache,
+            MtBddCache.@Nullable MtbddBddToIntCache registeredMapSimplifyCache) {
         assert isValidFunction(function);
         assert bdd.isValidFunction(bddDomain);
 
@@ -956,11 +975,20 @@ public class MtBddImpl implements MtBdd {
         assert accessGuard.acquire();
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
 
-        cache.initMap(map);
+        MtBddCache.UnaryToIntCache mapCache = registeredMapCache;
+        MtBddCache.MtbddBddToIntCache mapSimplifyCache = registeredMapSimplifyCache;
+        if (mapCache == null) {
+            cache.initMap(map);
+            mapCache = cache.mapCache();
+            mapSimplifyCache = cache.mapSimplifyCache();
+        }
+        assert bddDomain == bdd.trueFunction() || mapSimplifyCache != null
+                : "A domain-carrying map must be registered through registerMapSimplify";
+
         table.pushToWorkStack(function);
         NodeTable bddTable = bdd.table();
         bddTable.pushToWorkStack(bddDomain);
-        int result = computeMap(function, bddDomain, map);
+        int result = computeMap(function, bddDomain, map, mapCache, mapSimplifyCache);
         bddTable.popFromWorkStack();
         table.popFromWorkStack();
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
@@ -969,35 +997,48 @@ public class MtBddImpl implements MtBdd {
     }
 
     /** The unary counterpart of {@link #computeApply}; see there for the domain handling. */
-    private int computeMap(int function, int bddDomain, IntUnaryOperator map) {
+    private int computeMap(
+            int function,
+            int bddDomain,
+            IntUnaryOperator map,
+            MtBddCache.UnaryToIntCache mapCache,
+            MtBddCache.@Nullable MtbddBddToIntCache mapSimplifyCache) {
         assert bddDomain != bdd.falseFunction();
+        boolean universeDomain = bddDomain == bdd.trueFunction();
+        assert universeDomain || mapSimplifyCache != null;
 
         if (isConstant(function)) {
             return of(map.applyAsInt(constantFunctionToValue(function)));
         }
 
-        int lookup = bddDomain == bdd.trueFunction()
-                ? cache.lookupMap(function)
-                : cache.lookupMapSimplify(function, bddDomain);
+        int lookup;
+        int hash;
+        if (universeDomain) {
+            lookup = mapCache.lookup(function);
+            hash = mapCache.lookupHash();
+        } else {
+            assert mapSimplifyCache != null;
+            lookup = mapSimplifyCache.lookup(function, bddDomain);
+            hash = mapSimplifyCache.lookupHash();
+        }
         if (lookup != placeholder()) {
             return lookup;
         }
-        int hash = cache.lookupHash();
 
         int level = decisionLevel(function);
-        int domainLevel = bddDomain == bdd.trueFunction() ? Integer.MAX_VALUE : bdd.decisionLevel(bddDomain);
+        int domainLevel = universeDomain ? Integer.MAX_VALUE : bdd.decisionLevel(bddDomain);
 
         int result;
         if (domainLevel < level) {
             int domainLow = bdd.low(bddDomain);
             int domainHigh = bdd.high(bddDomain);
             if (domainLow == bdd.falseFunction()) {
-                result = computeMap(function, domainHigh, map);
+                result = computeMap(function, domainHigh, map, mapCache, mapSimplifyCache);
             } else if (domainHigh == bdd.falseFunction()) {
-                result = computeMap(function, domainLow, map);
+                result = computeMap(function, domainLow, map, mapCache, mapSimplifyCache);
             } else {
                 int widenedDomain = bdd.table().pushToWorkStack(bdd.computeOr(domainLow, domainHigh));
-                result = computeMap(function, widenedDomain, map);
+                result = computeMap(function, widenedDomain, map, mapCache, mapSimplifyCache);
                 bdd.table().popFromWorkStack();
             }
         } else {
@@ -1005,21 +1046,23 @@ public class MtBddImpl implements MtBdd {
             int highDomain = bdd.highIf(bddDomain, domainLevel == level);
 
             if (lowDomain == bdd.falseFunction()) {
-                result = computeMap(high(function), highDomain, map);
+                result = computeMap(high(function), highDomain, map, mapCache, mapSimplifyCache);
             } else if (highDomain == bdd.falseFunction()) {
-                result = computeMap(low(function), lowDomain, map);
+                result = computeMap(low(function), lowDomain, map, mapCache, mapSimplifyCache);
             } else {
-                int low = table.pushToWorkStack(computeMap(low(function), lowDomain, map));
-                int high = table.pushToWorkStack(computeMap(high(function), highDomain, map));
+                int low = table.pushToWorkStack(computeMap(low(function), lowDomain, map, mapCache, mapSimplifyCache));
+                int high =
+                        table.pushToWorkStack(computeMap(high(function), highDomain, map, mapCache, mapSimplifyCache));
                 result = makeFunction(level, low, high);
                 table.popFromWorkStack(2);
             }
         }
 
-        if (bddDomain == bdd.trueFunction()) {
-            cache.putMap(hash, function, result);
+        if (universeDomain) {
+            mapCache.put(hash, function, result);
         } else {
-            cache.putMapSimplify(hash, function, bddDomain, result);
+            assert mapSimplifyCache != null;
+            mapSimplifyCache.put(hash, function, bddDomain, result);
         }
         return result;
     }
@@ -1151,7 +1194,12 @@ public class MtBddImpl implements MtBdd {
         return applyBoolean(mtbddFunction1, mtbddFunction2, predicate, cache.applyBooleanCache());
     }
 
-    private int applyBoolean(
+    @Override
+    public RegisteredOperation.Binary registerApplyBoolean(MtBddBinaryPredicate predicate) {
+        return new MtBddOperations.ApplyBoolean(this, predicate);
+    }
+
+    int applyBoolean(
             int mtbddFunction1,
             int mtbddFunction2,
             MtBddBinaryPredicate predicate,
@@ -1236,33 +1284,43 @@ public class MtBddImpl implements MtBdd {
     @Override
     public int mapBoolean(int mtbddFunction, IntPredicate values) {
         assert isValidFunction(mtbddFunction);
+        cache.initMapBoolean(values);
+        return mapBoolean(mtbddFunction, values, cache.mapBooleanCache());
+    }
+
+    @Override
+    public RegisteredOperation.Unary registerMapBoolean(IntPredicate values) {
+        return new MtBddOperations.MapBoolean(this, values);
+    }
+
+    int mapBoolean(int mtbddFunction, IntPredicate values, MtBddCache.UnaryToBddCache mapBooleanCache) {
+        assert isValidFunction(mtbddFunction);
         assert accessGuard.acquire();
         assert bdd.table().workStacksEmpty();
-        cache.initMapBoolean(values);
-        int result = mapBooleanRecursive(mtbddFunction, values);
+        int result = mapBooleanRecursive(mtbddFunction, values, mapBooleanCache);
         assert bdd.table().workStacksEmpty();
         assert accessGuard.release();
         return result;
     }
 
-    private int mapBooleanRecursive(int mtbddNode, IntPredicate values) {
+    private int mapBooleanRecursive(int mtbddNode, IntPredicate values, MtBddCache.UnaryToBddCache mapBooleanCache) {
         if (isConstant(mtbddNode)) {
             return values.test(constantFunctionToValue(mtbddNode)) ? bdd.trueFunction() : bdd.falseFunction();
         }
 
-        int lookup = cache.lookupMapBoolean(mtbddNode);
+        int lookup = mapBooleanCache.lookup(mtbddNode);
         if (lookup != bdd.placeholder()) {
             return lookup;
         }
-        int hash = cache.lookupHash();
+        int hash = mapBooleanCache.lookupHash();
 
         int level = decisionLevel(mtbddNode);
         NodeTable bddTable = bdd.table();
-        int bddLow = bddTable.pushToWorkStack(mapBooleanRecursive(low(mtbddNode), values));
-        int bddHigh = bddTable.pushToWorkStack(mapBooleanRecursive(high(mtbddNode), values));
+        int bddLow = bddTable.pushToWorkStack(mapBooleanRecursive(low(mtbddNode), values, mapBooleanCache));
+        int bddHigh = bddTable.pushToWorkStack(mapBooleanRecursive(high(mtbddNode), values, mapBooleanCache));
         int bddResult = bdd.makeFunction(level, bddLow, bddHigh);
         bddTable.popFromWorkStack(2);
-        cache.putMapBoolean(hash, mtbddNode, bddResult);
+        mapBooleanCache.put(hash, mtbddNode, bddResult);
         return bddResult;
     }
 
@@ -1874,7 +1932,7 @@ public class MtBddImpl implements MtBdd {
 
         IntUnaryOperator combined = value -> relabeledResiduals[value];
         cache.initMap(combined);
-        int result = computeMap(mtbddG, bdd.trueFunction(), combined);
+        int result = computeMap(mtbddG, bdd.trueFunction(), combined, cache.mapCache(), cache.mapSimplifyCache());
         table.popFromWorkStack();
 
         table.popFromSecondaryWorkStack(bijection.size());

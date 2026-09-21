@@ -19,6 +19,7 @@
   * `simplify`: (also called `constrain`) reduce a function `f` to a given domain `d`, i.e. preserve the values of `f` where `d` is true but otherwise do whatever
   * `xyIn`: Perform operation `xy` relative to a given domain `d` (e.g.\ count satisfying assignments of `x` in `d`)
   * `xySimplify`: Perform `simplify(xy(...), g)`, but potentially much faster
+  * `registerXy`: Bind an operation's parameter once and get a private cache for it, surviving alternation with other operations - `compose` / `composeSimplify` (BDD and MTBDD), `exists` (BDD), `apply` / `applySimplify` / `map` / `mapSimplify` / `mapBoolean` / `applyBoolean` (MTBDD), plus the object-layer handles over them
 * Significant improvement of `compose` / `ifThenElse` in certain cases (e.g.\ identifying constant replacements)
 * Preserve cached values when possible (should provide notable improvements on some workloads)
 

@@ -80,6 +80,44 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
     }
 
     @Override
+    public BddSet.Quantifier registerExists(BitSet quantifiedVariables) {
+        return new RegisteredQuantifier(this, dd.registerExists(quantifiedVariables));
+    }
+
+    @Override
+    public BddSet.VariableReplacer registerReplaceVariables(BitSet replacedVariables, IntFunction<BddSet> mapping) {
+        int[] substitutions = substitutions(replacedVariables);
+        for (int i = replacedVariables.nextSetBit(0); i >= 0; i = replacedVariables.nextSetBit(i + 1)) {
+            substitutions[i] = functionOf(mapping.apply(i));
+        }
+        // TODO Special-case identity? Ideally based on the return of register compose
+        return new RegisteredReplacer(this, dd.registerCompose(substitutions));
+    }
+
+    @Override
+    public BddSet.VariableReplacer registerRelabelVariables(BitSet relabeledVariables, IntUnaryOperator mapping) {
+        int[] substitutions = substitutions(relabeledVariables);
+        for (int i = relabeledVariables.nextSetBit(0); i >= 0; i = relabeledVariables.nextSetBit(i + 1)) {
+            substitutions[i] = variableFunction(checkRelabeling(i, mapping.applyAsInt(i)));
+        }
+        // TODO Special-case identity? Ideally based on the return of register compose
+        return new RegisteredReplacer(this, dd.registerCompose(substitutions));
+    }
+
+    private int[] substitutions(BitSet variables) {
+        int[] substitutions = new int[variables.length()];
+        Arrays.fill(substitutions, dd.placeholder());
+        return substitutions;
+    }
+
+    private static int checkRelabeling(int variable, int relabeled) {
+        if (relabeled < 0) {
+            throw new IllegalArgumentException(String.format("Invalid mapping %s -> %s", variable, relabeled));
+        }
+        return relabeled;
+    }
+
+    @Override
     public Map<String, Object> statistics() {
         return dd.statistics();
     }
@@ -98,6 +136,46 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
     @Override
     public String toString() {
         return String.format("F{%s}", dd);
+    }
+
+    private static final class RegisteredQuantifier implements BddSet.Quantifier {
+        private final BddSetFactoryImpl factory;
+        private final RegisteredOperation.Unary operation;
+
+        RegisteredQuantifier(BddSetFactoryImpl factory, RegisteredOperation.Unary operation) {
+            this.factory = factory;
+            this.operation = operation;
+        }
+
+        @Override
+        public BddSet apply(BddSet set) {
+            return factory.make(operation.applyAsInt(factory.functionOf(set)));
+        }
+
+        @Override
+        public void release() {
+            operation.release();
+        }
+    }
+
+    private static final class RegisteredReplacer implements BddSet.VariableReplacer {
+        private final BddSetFactoryImpl factory;
+        private final RegisteredOperation.Unary operation;
+
+        RegisteredReplacer(BddSetFactoryImpl factory, RegisteredOperation.Unary operation) {
+            this.factory = factory;
+            this.operation = operation;
+        }
+
+        @Override
+        public BddSet apply(BddSet set) {
+            return factory.make(operation.applyAsInt(factory.functionOf(set)));
+        }
+
+        @Override
+        public void release() {
+            operation.release();
+        }
     }
 
     static final class BddSetImpl implements BddSet, DdContainer {
@@ -187,29 +265,23 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
 
         @Override
         public BddSet relabelVariables(IntUnaryOperator mapping) {
-            BitSet support = support();
-            int[] substitutions = new int[support.length()];
-            Arrays.fill(substitutions, factory.dd.placeholder());
-
-            for (int i = support.nextSetBit(0); i >= 0; i = support.nextSetBit(i + 1)) {
+            int[] substitutions = new int[factory.dd.numberOfVariables()];
+            for (int i = 0; i < substitutions.length; i++) {
                 int j = mapping.applyAsInt(i);
                 if (j < 0) {
                     throw new IllegalArgumentException(String.format("Invalid mapping %s -> %s", i, j));
                 }
                 substitutions[i] = factory.variableFunction(j);
             }
-
             return make(factory.dd.compose(function, substitutions));
         }
 
         @Override
         public BddSet replaceVariables(IntFunction<BddSet> mapping) {
-            BitSet support = support();
-            int[] substitutions = new int[support.length()];
-            // As relabelVariables: a gap in the support means "leave this variable alone", which compose
-            // spells placeholder() - not -1, which it would read as a replacement and protect as a node.
-            Arrays.fill(substitutions, factory.dd.placeholder());
-            for (int i = support.nextSetBit(0); i >= 0; i = support.nextSetBit(i + 1)) {
+            // Intuition: Only look at the support. However, this variant is more cache-friendly:
+            // Sets with different support but same underlying mapping share the substitution
+            int[] substitutions = new int[factory.dd.numberOfVariables()];
+            for (int i = 0; i < substitutions.length; i++) {
                 substitutions[i] = factory.functionOf(mapping.apply(i));
             }
             return make(factory.dd.compose(function, substitutions));

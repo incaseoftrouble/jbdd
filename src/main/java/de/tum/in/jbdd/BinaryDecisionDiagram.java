@@ -115,6 +115,14 @@ public interface BinaryDecisionDiagram
     RegisteredOperation.Binary registerComposeSimplify(int[] variableMapping);
 
     /**
+     * Registers an {@code exists} operation bound to a fixed set of {@code quantifiedVariables} - see
+     * {@link RegisteredOperation}. The set is read here and may be changed afterwards.
+     *
+     * @see #exists(int, BitSet)
+     */
+    RegisteredOperation.Unary registerExists(BitSet quantifiedVariables);
+
+    /**
      * Computes the restriction of the given boolean {@code function}, where all variables specified by {@code
      * restrictedVariables} are replaced by the value given in {@code restrictedVariableValues}.
      * Formally, if {@code function} is {@code f(x_1, ..., x_n)}, this method computes the function

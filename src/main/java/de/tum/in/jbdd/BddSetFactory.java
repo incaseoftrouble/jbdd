@@ -71,26 +71,22 @@ public interface BddSetFactory {
     }
 
     /**
-     * Binds {@code quantifiedVariables} once - see {@link BddSet.Quantifier}.
+     * Binds {@code quantifiedVariables} once - see {@link BddSet.Quantifier}. The set is read here and may
+     * be changed afterwards.
      */
-    default BddSet.Quantifier registerExists(BitSet quantifiedVariables) {
-        BitSet quantified = BitSets.copyOf(quantifiedVariables);
-        return set -> set.exists(quantified);
-    }
+    BddSet.Quantifier registerExists(BitSet quantifiedVariables);
 
     /**
-     * Binds {@code mapping} once - see {@link BddSet.VariableReplacer}.
+     * Binds {@code mapping} over {@code replacedVariables} once - see {@link BddSet.VariableReplacer}. The
+     * handle replaces exactly those variables and leaves every other one alone.
      */
-    default BddSet.VariableReplacer registerReplaceVariables(IntFunction<BddSet> mapping) {
-        return set -> set.replaceVariables(mapping);
-    }
+    BddSet.VariableReplacer registerReplaceVariables(BitSet replacedVariables, IntFunction<BddSet> mapping);
 
     /**
-     * Binds {@code mapping} once - see {@link BddSet.VariableReplacer}.
+     * Binds {@code mapping} over {@code relabeledVariables} once - see {@link BddSet.VariableReplacer} and
+     * {@link #registerReplaceVariables}, whose contract this shares.
      */
-    default BddSet.VariableReplacer registerRelabelVariables(IntUnaryOperator mapping) {
-        return set -> set.relabelVariables(mapping);
-    }
+    BddSet.VariableReplacer registerRelabelVariables(BitSet relabeledVariables, IntUnaryOperator mapping);
 
     Map<String, Object> statistics();
 }

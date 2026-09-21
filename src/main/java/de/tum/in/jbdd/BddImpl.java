@@ -913,6 +913,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         int[] resolved = variableMapping.clone();
         ComposeAnalysis analysis = analyzeCompose(resolved);
         if (analysis.maxReplacedLevel == -1) {
+            // TODO Explicit reference (like Function.identity()) so a caller can reliably check?
             return function -> function;
         }
         if (analysis.isRestrict) {
@@ -1658,11 +1659,27 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
 
         assert accessGuard.acquire();
-        assert table.workStacksEmpty();
         cache.initExists(quantifiedVariables);
-        table.pushToWorkStack(function);
         // The recursion descends by level, so it needs the quantified set indexed the same way.
-        int result = existsRecursive(function, toLevels(quantifiedVariables));
+        int result = existsGeneral(function, toLevels(quantifiedVariables), cache.existsCache());
+        assert accessGuard.release();
+        return result;
+    }
+
+    @Override
+    public RegisteredOperation.Unary registerExists(BitSet quantifiedVariables) {
+        assert quantifiedVariables.length() - 1 <= numberOfVariables();
+        if (quantifiedVariables.isEmpty()) {
+            return function -> function;
+        }
+        return new BddOperations.Exists(this, BitSets.copyOf(quantifiedVariables));
+    }
+
+    int existsGeneral(int function, BitSet quantifiedLevels, BooleanCache.UnaryToIntCache existsCache) {
+        assert accessGuard.acquire();
+        assert table.workStacksEmpty();
+        table.pushToWorkStack(function);
+        int result = existsRecursive(function, quantifiedLevels, existsCache);
         table.popFromWorkStack();
         assert table.workStacksEmpty();
         assert accessGuard.release();
@@ -1670,7 +1687,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     }
 
     /** {@code variables}, re-indexed by the level each sits at. */
-    private BitSet toLevels(BitSet variables) {
+    BitSet toLevels(BitSet variables) {
         if (!reordered()) {
             return variables;
         }
@@ -1681,7 +1698,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         return levels;
     }
 
-    private int existsRecursive(int function, BitSet quantifiedLevels) {
+    private int existsRecursive(int function, BitSet quantifiedLevels, BooleanCache.UnaryToIntCache existsCache) {
         assert isValidFunction(function);
 
         if (isConstant(function)) {
@@ -1700,14 +1717,14 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             return function;
         }
 
-        int lookup = cache.lookupExists(function);
+        int lookup = existsCache.lookup(function);
         if (lookup != placeholder()) {
             return lookup;
         }
-        int hash = cache.lookupHash();
+        int hash = existsCache.lookupHash();
 
-        int lowExists = table.pushToWorkStack(existsRecursive(low(function), quantifiedLevels));
-        int highExists = table.pushToWorkStack(existsRecursive(high(function), quantifiedLevels));
+        int lowExists = table.pushToWorkStack(existsRecursive(low(function), quantifiedLevels, existsCache));
+        int highExists = table.pushToWorkStack(existsRecursive(high(function), quantifiedLevels, existsCache));
         int result;
         if (nextQuantifiedLevel > level) {
             // The level of this node is smaller than the level looked for - only propagate the
@@ -1719,7 +1736,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
 
         table.popFromWorkStack(2);
-        cache.putExists(hash, function, result);
+        existsCache.put(hash, function, result);
         return result;
     }
 

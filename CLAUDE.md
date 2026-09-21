@@ -211,7 +211,7 @@ Many important types are nested. Searching for `ValuesImpl.java` will fail.
 | `PathWalk`, `SolutionCursor`, `PathCursor`, `BddTable`, `ComposeAnalysis` | `BddImpl.java` |
 | `PathWalk`, `SolutionCursor`, `PathCursor`, `MddTable` | `MddImpl.java` |
 | `MtBddTable`, `SplitBijection`, `IntTupleBijection`, `DepthPool`, `IntArrayList` | `MtBddImpl.java` |
-| `Compose` (registered) | `BddOperations.java`, `MtBddOperations.java` |
+| the registered operations (`Compose`, `Exists`, `Apply`, `Mapper`, …) | `BddOperations.java`, `MtBddOperations.java` |
 | `BddMap.Operator/VariableReplacer/Mapper/Combiner/Selector/Relation/Relabeler` | `BddMap.java` |
 | `BddSet.Quantifier`, `BddSet.VariableReplacer` | `BddSet.java` |
 | the concrete cache shapes (`BinaryToIntCache`, `ApplySimplifyCache`, …) | `BooleanCache.java`, `MtBddCache.java` |
@@ -382,9 +382,10 @@ consequences that are easy to get wrong:
 - Anything a key *implicitly* depends on but does not encode must invalidate the whole cache when it
   changes. Four flavours:
   - **Stable** — keys are plain ids (`agreement`, `ite`, `update`, `simplify`, `constrain`). Nothing extra.
-  - **Ephemeral "current parameter"** — `compose` (`int[]` mapping), `restrict` (two `BitSet`s),
-    `apply`/`map`/`mapBoolean` (an opaque operator compared by identity; the paired `*Simplify` cache is
-    invalidated by the same `initX`), `count` (a predicate), `canReachMatch` (a predicate). `initX(...)`
+  - **Ephemeral "current parameter"** — `compose` (`int[]` mapping), `exists` (a `BitSet`), `restrict`
+    (two `BitSet`s), `apply`/`map`/`mapBoolean`/`applyBoolean` (an opaque operator compared by identity;
+    the paired `*Simplify` cache is invalidated by the same `initX`), `count` (a predicate),
+    `canReachMatch` (a predicate). `initX(...)`
     compares against the previous call's parameter and invalidates wholesale on change. **This works only
     for eagerly-completing calls** — the lazy cursor from `assignmentCursor` outlives its own `initX` and
     must be drained before any other query runs; an assertion enforces it.
@@ -418,11 +419,14 @@ survives alternation between operations. A plain call hands the diagram a freshl
 every invocation; the diagram reads that as a different operator and drops the shared ephemeral cache, so
 repeating one operation never reuses an entry.
 
-Int layer: `MtBdd#registerApply`/`registerApplySimplify`, and `registerCompose`/`registerComposeSimplify`
-on both `Bdd` and `MtBdd`, returning `RegisteredOperation.Unary`/`Binary`/`Ternary`. They own their nodes:
-`ProtectedOperation` + `ProtectionTracker` reference the operands on construction and drop them via a
-`PhantomReference` when released or unreachable. Their private caches grow on usage (`growOnUsage`) rather
-than tracking table size.
+Int layer: `registerCompose`/`registerComposeSimplify` on both `Bdd` and `MtBdd`, `Bdd#registerExists`,
+and `MtBdd#registerApply`/`registerApplySimplify`/`registerMap`/`registerMapSimplify`/`registerMapBoolean`/
+`registerApplyBoolean`, returning `RegisteredOperation.Unary`/`Binary`/`Ternary`. Only the compose forms
+bind *nodes*, and those own them: `ProtectedOperation` + `ProtectionTracker` reference the operands on
+construction and drop them via a `PhantomReference` when released or unreachable. The rest bind a lambda or
+a `BitSet` and hold nothing. Their private caches grow on usage (`growOnUsage`) rather than tracking table
+size, and each registers its prune hook with *every* table its entries can name — the two boolean-valued
+MTBDD operations always straddle both, since their results are BDD functions.
 
 Object layer: handle types bound once and applied repeatedly — `BddMap.Operator<V>` (plus `applyIn`),
 `BddMap.VariableReplacer` (plus `replaceIn`), `BddMap.Mapper<V, O>`, `BddMap.Combiner<V, W, O>`,
@@ -438,11 +442,10 @@ Object layer: handle types bound once and applied repeatedly — `BddMap.Operato
   looks at a terminal, so one instance serves maps over *any* numbering and each result stays over its
   operand's — a generic method, which no lambda can implement, hence its explicit
   `@SuppressWarnings("PMD.ImplicitFunctionalInterface")`.
-- **Actually backed today:** `Values#registerApply` (`RegisteredApply`, over `MtBdd#registerApply`) and
-  `BddMapFactory#registerReplaceVariables` (`RegisteredReplacer`, over `MtBdd#registerCompose`). The rest
-  are `default` facades forwarding to the plain operation — correct, but with no cache of their own, so
-  they cost nothing to use and currently buy nothing either. Backing one later replaces the body, not the
-  signature.
+- **All of them are backed** by an int-layer registered operation. `BddSetFactory`'s two variable
+  replacements take the set of variables they replace, because a handle is built before it sees a set:
+  the resolved substitution is absolute, so naming the variables is all it takes to resolve it once
+  instead of per call.
 - **Constants are pinned at registration, domains are not.** `RegisteredApply` resolves `neutral` and
   `absorbing` to raw terminals once and holds each as a `BddMap` constant, keeping that leaf referenced so
   its index cannot be recycled into another value; `pinsHold()` asserts this on every call. A
@@ -804,11 +807,11 @@ intuitions transfer badly. Two habits follow:
 - Targeted tests: `BddTest`, `MtBddTest`, `BddMapTest`, `ValuesTest`, `ReorderTest`, `HashTest`,
   `UtilityTest`, `DimacsReaderTest`. `SyntheticTest` — n-queens counts as an end-to-end sanity check.
   **`RegressionTests` — one test per past bug; add here when fixing one.**
-- `ValuesTest` holds the numbering-level tests: split residuals, a merging cartesian product, a supertype
-  view via `createRelabeling`, and that each registered handle agrees with the plain operation it stands
-  for (the `applyIn`/`replaceIn` ones pinned to their contract via `agreement(…).containsAll`). PMD's
-  coupling limit applies to test classes too, which is what keeps these here instead of growing
-  `BddMapTest` further.
+- `ValuesTest` holds the numbering-level tests: split residuals, a merging cartesian product and a
+  supertype view via `createRelabeling`. `RegisteredOperationsTest` holds the object layer's handles —
+  that each agrees with the plain operation it stands for, warm cache included (the `applyIn`/`replaceIn`
+  ones pinned to their contract via `agreement(…).containsAll`). PMD's coupling limit applies to test
+  classes too, which is what keeps these two apart and out of `BddMapTest`.
 - **New operations need:** theory coverage against the reference evaluation, an invariant check, and — if
   it touches ordering — a reordered variant.
 
@@ -850,11 +853,6 @@ Ordered by how much they block.
   template; the MDD version needs the same dead-end backtracking over n-ary children. `MtBddImpl` has no
   domain-restricted enumeration at all — `assignmentCursor`'s predicate is over terminals, a different
   question.
-- **`BddSetFactory#registerExists`** is the registered handle worth backing next, and it needs a new
-  int-layer registered form: quantification shares a single cache slot dropped whenever the quantified set
-  changes, so alternating between two sets starts cold every time. `registerRelabelVariables` is a third
-  case — the substitution array a relabeling turns into depends on the support of the set it is applied
-  to, so a registered form must key on that too.
 - **A dedicated single-diagram path walk.** `PathCursor` pays ~5 ns/path to carry a domain it never uses.
   Worth re-duplicating the walk only if path enumeration turns out to be hot.
 - **Incremental buffer mirroring is not in `MtBddImpl.PathWalk`,** which shares the order and therefore
