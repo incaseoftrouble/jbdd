@@ -62,7 +62,7 @@ public final class Cursors {
 
         @Override
         public E current() {
-            assert valid : "current() is only defined while the cursor is valid";
+            assert valid; // current() is only defined while the cursor is valid
             return element;
         }
 
@@ -151,7 +151,7 @@ public final class Cursors {
 
         @Override
         public BitSet current() {
-            assert valid : "current() is only defined while the cursor is valid";
+            assert valid; // current() is only defined while the cursor is valid
             return assignment;
         }
 

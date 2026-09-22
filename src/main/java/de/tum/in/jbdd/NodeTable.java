@@ -147,6 +147,14 @@ public abstract class NodeTable {
     private int futileGarbageCollectionCount = 0;
     /* Growths which were limited (possibly to nothing) by the available memory. */
     private int memoryLimitedGrowthCount = 0;
+    /* The share of the counters above spent while the variable order was being changed, so reordering's
+     * cost can be told apart from the operations'. Taken as differences between a snapshot at the start of
+     * each reordering and its end, so nothing on the hot path pays for the distinction. */
+    private long reorderCreatedNodes = 0;
+    private int reorderGarbageCollectionCount = 0;
+    private long reorderGarbageCollectedNodeCount = 0;
+    private long reorderGarbageCollectionTime = 0;
+    private long @Nullable [] reorderingSnapshot = null;
 
     /* The work stack is used to store intermediate nodes created by operations. While constructing
      * a new node, e.g. "v1 AND v2", we may need to create multiple intermediate nodes. As
@@ -166,9 +174,10 @@ public abstract class NodeTable {
      * Depth of the in-place rewrites currently running - a level swap, in practice. Two things follow.
      * A collection cannot run: the caller holds the nodes it is rewriting in a plain int[], which is no
      * root, so they would be reclaimed underneath it; ensureCapacity therefore grows instead, and the
-     * caller needs no reservation up front. And findNode has to skip the nodes flagged for rewriting,
-     * which is the only use of the mark bit outside a collection - safe exactly because no collection
-     * can run while this is set, and free while it is not.
+     * caller needs no reservation up front. And a node flagged for rewriting is out of its hash chain,
+     * so findNode cannot hand it out, with the mark bit recording that it is - the only use of the mark
+     * bit outside a collection, safe exactly because no collection can run while this is set. A growth
+     * in between must leave such a node out of the chains it rebuilds.
      */
     private int rewriteDepth = 0;
     /* How many nodes are flagged right now - O(1), where isNoneMarked() would sweep the whole table on
@@ -307,16 +316,17 @@ public abstract class NodeTable {
     /**
      * Hides {@code node} from {@link #findNode} until the swap rewriting it puts it back, so nothing can
      * be handed a node that still carries its old variable and is about to be rewritten out from under
-     * its new parent. It stays in its hash chain, so a growth in between rehashes it like any other.
+     * its new parent.
      */
-    public final void hideForRewrite(int node) {
+    public final void rewriteHideAndUnlink(int node) {
         assert isValidDecisionNode(node) && rewriteDepth > 0;
+        unlinkHashList(node, bucketOf(node));
         boolean hidden = markNodeIfUnmarked(node);
         assert hidden : "Node " + node + " is already flagged";
         hiddenForRewriteCount += 1;
     }
 
-    /** Makes {@code node} visible to {@link #findNode} again, once its rewrite is done. */
+    /** Clears the flag of {@code node}, once its rewrite is done; linking it back is the caller's responsibility. */
     protected final void unhideAfterRewrite(int node) {
         assert rewriteDepth > 0 && dataIsMarked(nodeData[node]);
         nodeData[node] = dataClearMark(nodeData[node]);
@@ -427,7 +437,7 @@ public abstract class NodeTable {
                 addToVariableList(node, dataGetVariable(data));
             }
         }
-        assert check();
+        assert !Assertions.COSTLY_ASSERTIONS || check();
     }
 
     /**
@@ -456,9 +466,10 @@ public abstract class NodeTable {
     @SuppressWarnings("AssertWithSideEffects")
     public final int liveNodeCountFromBookkeeping() {
         assert reorderBookkeeping;
-        assert deadNodeCount == computeLiveParentCounts(new int[parentCount.length]) : "Parent counts drifted";
+        assert !Assertions.COSTLY_ASSERTIONS || deadNodeCount == computeLiveParentCounts(new int[parentCount.length])
+                : "Parent counts drifted";
         int validNodes = size() - freeNodeCount() - FIRST_NODE;
-        assert validNodes - deadNodeCount == markedNodeCount()
+        assert !Assertions.COSTLY_ASSERTIONS || validNodes - deadNodeCount == markedNodeCount()
                 : String.format(
                         "Live count %d disagrees with a mark: %d", validNodes - deadNodeCount, markedNodeCount());
         return validNodes - deadNodeCount;
@@ -588,10 +599,9 @@ public abstract class NodeTable {
         int chainLookups = 1;
         this.hashChainLookups += 1;
         // Search for the node in the hash chain
-        boolean rewriting = rewriteDepth > 0;
+        // While rewriting, nodes are unlinked from the hashlist and cannot appear here
         while (currentLookupNode != PLACEHOLDER) {
             if ((nodeData[currentLookupNode] >>> VARIABLE_OFFSET) == variable
-                    && !(rewriting && dataIsMarked(nodeData[currentLookupNode]))
                     && lookupComparison.test(currentLookupNode)) {
                 this.hashChainLookupLength += chainLookups;
                 return currentLookupNode;
@@ -602,6 +612,22 @@ public abstract class NodeTable {
         }
         this.hashChainLookupLength += chainLookups;
         return PLACEHOLDER;
+    }
+
+    void beginReorderingStatistics() {
+        assert reorderingSnapshot == null;
+        reorderingSnapshot =
+                new long[] {createdNodes, garbageCollectionCount, garbageCollectedNodeCount, garbageCollectionTime};
+    }
+
+    void endReorderingStatistics() {
+        long[] snapshot = reorderingSnapshot;
+        assert snapshot != null;
+        reorderingSnapshot = null;
+        reorderCreatedNodes += createdNodes - snapshot[0];
+        reorderGarbageCollectionCount += garbageCollectionCount - (int) snapshot[1];
+        reorderGarbageCollectedNodeCount += garbageCollectedNodeCount - snapshot[2];
+        reorderGarbageCollectionTime += garbageCollectionTime - snapshot[3];
     }
 
     protected int allocateNode(int variable, int modHash) {
@@ -753,7 +779,7 @@ public abstract class NodeTable {
     private int markedNodeCount() {
         // Strategy: We gather all root nodes (i.e. nodes which are referenced) on the mark stack, mark
         // all of their children, count all marked nodes and un-mark them.
-        assert isNoneMarked();
+        assert !Assertions.COSTLY_ASSERTIONS || isNoneMarked();
 
         int count = 0;
         for (int node = FIRST_NODE; node < size(); node++) {
@@ -767,7 +793,7 @@ public abstract class NodeTable {
 
         assert count == unmarkedCount;
 
-        assert isNoneMarked();
+        assert !Assertions.COSTLY_ASSERTIONS || isNoneMarked();
         return count;
     }
 
@@ -779,7 +805,7 @@ public abstract class NodeTable {
      */
     public int nodeCountBelow(int node) {
         assert isValidNode(node);
-        assert isNoneMarked();
+        assert !Assertions.COSTLY_ASSERTIONS || isNoneMarked();
 
         // Only decision nodes are tallied, so leaves never need to be marked here at all - unlike a full
         // GC-style mark (markAllBelowNode(node), the default), which also marks managed leaves.
@@ -789,7 +815,7 @@ public abstract class NodeTable {
             assert count == unmarked : "Expected " + count + " but only unmarked " + unmarked;
         }
 
-        assert isNoneMarked();
+        assert !Assertions.COSTLY_ASSERTIONS || isNoneMarked();
         return count;
     }
 
@@ -956,7 +982,7 @@ public abstract class NodeTable {
         BitSet invalidatedLeaves = BitSets.of();
 
         /* Growing rather than collecting while a rewrite is running - see rewriteDepth. Growing moves no
-         * node and rehashes the flagged ones like any other, so it needs nothing special. */
+         * node; it only has to leave the flagged ones out of the chains, which grow does. */
         if (configuration.useGarbageCollection() && rewriteDepth == 0) {
             // Perform any pre-gc cleanup, e.g. releasing phantom references
             notifyBeforeGc();
@@ -1154,12 +1180,17 @@ public abstract class NodeTable {
         }
 
         // Need a second pass to build the existing nodes chain
+        // Mid-rewrite, a marked node is one flagged for rewriting and stays out of the chains - see
+        // rewriteDepth. Outside, the marks are a collection's, and every valid node is linked.
+        boolean rewriting = rewriteDepth > 0;
         int rehashedNodes = 0;
         for (int node = currentSize - 1; node >= FIRST_NODE; node--) {
             int data = nodeData[node];
             if (dataIsValid(data)) {
-                rehashedNodes++;
-                linkHashList(node, modHash(positiveHash(node, data)));
+                if (!rewriting || !dataIsMarked(data)) {
+                    rehashedNodes++;
+                    linkHashList(node, modHash(positiveHash(node, data)));
+                }
             } else {
                 freeNodeCount++;
             }
@@ -1178,7 +1209,7 @@ public abstract class NodeTable {
          * nodes first, invalidateUnmarkedNodes, drops the bookkeeping itself. */
         // Mid-rewrite the diagram is deliberately inconsistent - the order is already flipped while the
         // nodes still carry the old variable - so there is nothing for check() to agree with yet.
-        assert rewriteDepth > 0 || check();
+        assert !Assertions.COSTLY_ASSERTIONS || rewriteDepth > 0 || check();
 
         logger.log(Level.FINE, "Finished growing the table");
     }
@@ -1256,8 +1287,8 @@ public abstract class NodeTable {
             deadNodeCount -= collectedNodes;
         }
 
-        assert check();
-        assert isNoneMarked();
+        assert !Assertions.COSTLY_ASSERTIONS || check();
+        assert !Assertions.COSTLY_ASSERTIONS || isNoneMarked();
         return collectedNodes;
     }
 
@@ -1310,7 +1341,7 @@ public abstract class NodeTable {
         }
         unmarkAllManagedLeaves();
 
-        assert isNoneMarked();
+        assert !Assertions.COSTLY_ASSERTIONS || isNoneMarked();
         return unmarkedCount;
     }
 
@@ -1751,7 +1782,7 @@ public abstract class NodeTable {
      */
     public String treeToString(int pointer) {
         assert isValidPointer(pointer);
-        assert isNoneMarked();
+        assert !Assertions.COSTLY_ASSERTIONS || isNoneMarked();
         if (isValidConstant(pointer)) {
             return String.format("Fun %s%n", format(pointer));
         }
@@ -1873,6 +1904,12 @@ public abstract class NodeTable {
                         prefix + "hash_table_lookup_average_length",
                         String.valueOf(hashChainLookupLength * 1.0 / hashChainLookups)),
                 entry(prefix + "node_table_gc_count", String.valueOf(garbageCollectionCount)),
+                entry(prefix + "node_table_reorder_created_nodes", String.valueOf(reorderCreatedNodes)),
+                entry(prefix + "node_table_reorder_gc_count", String.valueOf(reorderGarbageCollectionCount)),
+                entry(
+                        prefix + "node_table_reorder_gc_collected_nodes",
+                        String.valueOf(reorderGarbageCollectedNodeCount)),
+                entry(prefix + "node_table_reorder_gc_time_milliseconds", String.valueOf(reorderGarbageCollectionTime)),
                 entry(prefix + "node_table_gc_time_milliseconds", String.valueOf(garbageCollectionTime)),
                 entry(prefix + "node_table_gc_collected_nodes", String.valueOf(garbageCollectedNodeCount)),
                 entry(prefix + "node_table_grow_count", String.valueOf(growCount)),
@@ -2063,9 +2100,6 @@ public abstract class NodeTable {
         void rewriteNode(int node, int variable, int lowPointer, int highPointer) {
             assert isValidDecisionNode(node);
             assert lowPointer != highPointer;
-
-            // Still in the chain its old variable and children hash to - take it out before changing them.
-            unlinkHashList(node, bucketOf(node));
 
             /* Only a node something can reach keeps its children alive, so only then does re-pointing it
              * move credit from the old children to the new. Skipping the pair when a child pointer did

@@ -17,6 +17,8 @@
 package de.tum.in.jbdd;
 
 import java.util.BitSet;
+import java.util.Map;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.BiPredicate;
@@ -54,8 +56,24 @@ public interface BddMap<V> {
     /** Whether this map takes only a single value. */
     boolean isConstant();
 
+    /**
+     * The variable this map's outermost decision is taken on, or empty if it is constant. Together with
+     * {@link #high()} and {@link #low()} this is the Shannon decomposition, which is what a structural
+     * recursion over a map needs and the only thing of the representation it is told.
+     */
+    OptionalInt decisionVariable();
+
+    /** This map with {@link #decisionVariable()} true. The map must not be constant. */
+    BddMap<V> high();
+
+    /** This map with {@link #decisionVariable()} false. The map must not be constant. */
+    BddMap<V> low();
+
     /** The set of valuations mapping to {@code value}. */
     BddSet domainOf(V value);
+
+    /** Every value this map takes with the valuations mapping to it. */
+    Map<V, BddSet> inverse();
 
     /** The set of valuations whose value matches {@code predicate}. */
     BddSet where(Predicate<? super V> predicate);
@@ -72,6 +90,27 @@ public interface BddMap<V> {
      * (symmetric/reflexive) the traversal can exploit - see {@link BddMapBinaryPredicate}.
      */
     <W extends V> BddSet where(BddMap<W> other, BddMapBinaryPredicate<? super V> predicate);
+
+    /**
+     * Whether this map's value and {@code other}'s satisfy {@code predicate} at every valuation - that is,
+     * whether {@link #where(BddMap, BiPredicate)} is the universe, decided without building that set.
+     */
+    <W> boolean allMatch(BddMap<W> other, BiPredicate<? super V, ? super W> predicate);
+
+    /**
+     * Like {@link #allMatch(BddMap, BiPredicate)}, but lets {@code predicate} declare properties
+     * (symmetric/reflexive) the traversal can exploit - see {@link BddMapBinaryPredicate}.
+     */
+    <W extends V> boolean allMatch(BddMap<W> other, BddMapBinaryPredicate<? super V> predicate);
+
+    /**
+     * Whether this map and {@code other} take the same value at every valuation. Unlike
+     * {@link Object#equals(Object) equals}, which only compares maps over one {@link #valueDomain()}, this
+     * holds across numberings; over one it is the same O(1) comparison.
+     */
+    default boolean agreesWith(BddMap<? extends V> other) {
+        return allMatch(other, BddMapBinaryPredicate.equality());
+    }
 
     /** Is {@code value} wherever {@code domain} holds, and agrees with this map elsewhere. */
     BddMap<V> update(BddSet domain, V value);
@@ -125,7 +164,8 @@ public interface BddMap<V> {
         return agreement(other).complement();
     }
 
-    BddMap<V> restrict(BitSet restrictedVariables, BitSet restrictedVariableValues);
+    /** This map with every variable of the {@code restriction} fixed to its value there. */
+    BddMap<V> restrict(Cube restriction);
 
     /** Substitutes each variable by the given predicate; {@code null} leaves a variable untouched.
      *
@@ -154,6 +194,13 @@ public interface BddMap<V> {
      * @see MtBdd#split(int, BitSet)
      */
     BddMap<BddMap<V>> split(BitSet splitVariables, Values<BddMap<V>> destination);
+
+    /**
+     * {@link #split(BitSet, Values)} with every residual map passed through {@code residual} on its way into
+     * {@code destination}.
+     */
+    <W> BddMap<W> splitMap(
+            BitSet splitVariables, Values<W> destination, Function<? super BddMap<V>, ? extends W> residual);
 
     /**
      * A value transform applying to every map over one numbering at once, created by

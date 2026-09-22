@@ -16,7 +16,11 @@
  */
 package de.tum.in.jbdd;
 
+import java.util.ArrayList;
 import java.util.BitSet;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * What a binary decision diagram can compute, representing boolean functions. Note that, together with a set of variables,
@@ -28,8 +32,7 @@ import java.util.BitSet;
  * time after an invalid call.</p>
  */
 // TODO AndExistsSimplify and similar (quantify + apply + simplify at the same time)
-public interface BinaryDecisionDiagram
-        extends BooleanDecisionDiagram, BooleanTerminalDecisionDiagram<BitSet, BinaryPath> {
+public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTerminalDecisionDiagram<BitSet, Cube> {
     /**
      * Creates a new variable and returns the BDD function representing it. The implementation guarantees that
      * variables are always allocated sequentially starting from 0, i.e. {@code
@@ -183,25 +186,12 @@ public interface BinaryDecisionDiagram
     }
 
     /**
-     * Computes the restriction of the given boolean {@code function}, where all variables specified by {@code
-     * restrictedVariables} are replaced by the value given in {@code restrictedVariableValues}.
-     * Formally, if {@code function} is {@code f(x_1, ..., x_n)}, this method computes the function
-     * {@code f(x_1, ..., x_{i_1-1}, c_1, x_{i_1+1}, ..., x_{i_2-1}, c_2, x_{i_2+1}, ...,
-     * x_n}, where {@code i_k} are the elements of the {@code restrictedVariables} set and
-     * {@code c_k := restrictedVariableValues.get(i_k)}.
-     *
-     * @param function
-     *     The function to be restricted.
-     * @param restrictedVariables
-     *     The variables used in the restriction.
-     * @param restrictedVariableValues
-     *     The values of the restricted variables.
-     *
-     * @return The restricted function.
+     * {@code function} with every variable of the {@code restriction} fixed to its value there, so the result no
+     * longer depends on them.
      *
      * @see #compose(int, int[])
      */
-    int restrict(int function, BitSet restrictedVariables, BitSet restrictedVariableValues);
+    int restrict(int function, Cube restriction);
 
     /**
      * Registers a {@code compose} operation bound to a fixed {@code variableMapping} - see
@@ -221,4 +211,102 @@ public interface BinaryDecisionDiagram
      * @see #exists(int, BitSet)
      */
     RegisteredOperation.Unary registerExists(BitSet quantifiedVariables);
+
+    /**
+     * The function of the cube {@code path}: {@link Cube#support()} fixed to
+     * {@link Cube#assignment()}, every other variable free. In a sense, the inverse of path enumeration.
+     */
+    default int of(Cube path) {
+        // Held referenced throughout, the constant included: a diagram may count references on its leaves.
+        int cube = reference(trueFunction());
+        for (int variable = path.support.nextSetBit(0);
+                variable >= 0;
+                variable = path.support.nextSetBit(variable + 1)) {
+            int literal = path.assignment.get(variable)
+                    ? variableFunction(variable)
+                    : reference(not(variableFunction(variable)));
+            cube = updateWith(and(cube, literal), cube);
+            if (!path.assignment.get(variable)) {
+                dereference(literal);
+            }
+        }
+        return dereference(cube);
+    }
+
+    /**
+     * A cover of {@code function} by implicants: cubes whose disjunction is exactly {@code function}, where
+     * a {@link Cube} is read as the cube fixing {@link Cube#support()} to
+     * {@link Cube#assignment()} and leaving every other variable free.
+     *
+     * <p>Guaranteed: every cube implies {@code function}, their disjunction is {@code function} exactly, and
+     * no cube's literals are a superset of another's - a longer cube saying the same thing is dropped. The
+     * cubes are <em>not</em> guaranteed to be prime, nor to be the smallest such cover; which cover comes out
+     * depends on the diagram, so it is deterministic for a given variable order but not preserved by
+     * reordering. {@code true} yields one cube, the empty one; {@code false} yields nothing.
+     *
+     * <p>A literal is recorded only where {@code function} is genuinely not monotone in that variable, which
+     * is what makes the cubes shorter than the paths through the diagram: {@code x0 | x1} comes out as
+     * {@code {x0}, {x1}} rather than as the three paths that reach a true leaf, while {@code x0 ^ x1} keeps
+     * both literals and comes out as {@code {x0, !x1}, {!x0, x1}}.
+     *
+     * <p>Complementing first turns this into a CNF cover: each cube of the complement is a conjunction that
+     * falsifies {@code function}, so negating it gives a clause, and the clauses conjoined are
+     * {@code function}.
+     */
+    default List<Cube> implicants(int function) {
+        // The memo is per call and a plain map on purpose: the whole cost of this is sharing sub-results
+        // across the DAG, and an evictable cache would make that exponential rather than merely slow.
+        return implicantsRecursive(function, new HashMap<>());
+    }
+
+    private List<Cube> implicantsRecursive(int function, Map<Integer, List<Cube>> memo) {
+        if (function == trueFunction()) {
+            return List.of(Cube.empty());
+        }
+        if (function == falseFunction()) {
+            return List.of();
+        }
+
+        List<Cube> cached = memo.get(function);
+        if (cached != null) {
+            return cached;
+        }
+
+        int variable = decisionVariable(function);
+        int high = highOf(function);
+        int low = lowOf(function);
+
+        List<Cube> highCubes = implicantsRecursive(high, memo);
+        List<Cube> lowCubes = implicantsRecursive(low, memo);
+
+        /* An implicant of the high cofactor implies the whole function without naming the variable
+         * exactly when high implies low - on the true branch it holds by assumption, on the false branch
+         * it follows. Dually for the low cofactor. So a literal is recorded only where the function is
+         * genuinely not monotone in that variable here, which is what keeps the cubes short.
+         *
+         * Each side's cubes are an antichain already, and a cube carrying a literal on the variable never
+         * subsumes one lacking it. So only a cube of a side that gets the literal can be subsumed, and only
+         * by a cube of the other side - which must then lack the literal itself. */
+        boolean highNeedsLiteral = !implies(high, low);
+        boolean lowNeedsLiteral = !implies(low, high);
+        assert highNeedsLiteral || lowNeedsLiteral : "Both cofactors equal";
+        List<Cube> implicants = new ArrayList<>(highCubes.size() + lowCubes.size());
+        for (Cube cube : highCubes) {
+            if (!highNeedsLiteral) {
+                implicants.add(cube);
+            } else if (lowNeedsLiteral || lowCubes.stream().noneMatch(cube::implies)) {
+                implicants.add(cube.with(variable, true));
+            }
+        }
+        for (Cube cube : lowCubes) {
+            if (!lowNeedsLiteral) {
+                implicants.add(cube);
+            } else if (highNeedsLiteral || highCubes.stream().noneMatch(cube::implies)) {
+                implicants.add(cube.with(variable, false));
+            }
+        }
+        implicants = List.copyOf(implicants);
+        memo.put(function, implicants);
+        return implicants;
+    }
 }

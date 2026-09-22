@@ -53,6 +53,50 @@ class MtBddTest {
     }
 
     @Test
+    void testRestrictByAFixedPrefixAgreesWithCompose() {
+        // Restricting walks the part of the restriction fixing the top decisions and keys the cache on the rest
+        // only - so every prefix valuation, with and without a deeper literal, and in a reordered context.
+        DdContextImpl context = new DdContextImpl(config);
+        BddImpl bdd = context.bdd();
+        MtBddImpl mt = context.mtBdd();
+        int[] v = bdd.createVariables(6);
+        int function = bdd.reference(bdd.or(bdd.xor(v[0], bdd.and(v[1], v[4])), bdd.and(v[2], v[5])));
+        int other = bdd.reference(bdd.and(v[3], bdd.or(v[1], v[4])));
+        int map = mt.reference(mt.ifThenElse(function, mt.of(1), mt.ifThenElse(other, mt.of(2), mt.of(3))));
+
+        for (int round = 0; round < 2; round++) {
+            for (int valuation = 0; valuation < 1 << 3; valuation++) {
+                for (boolean deeper : new boolean[] {false, true}) {
+                    BitSet support = BitSets.range(0, 3);
+                    BitSet assignment = BitSet.valueOf(new long[] {valuation});
+                    if (deeper) {
+                        support.set(4);
+                        assignment.set(4);
+                    }
+                    int[] mapping = new int[6];
+                    Arrays.fill(mapping, bdd.placeholder());
+                    for (int variable = support.nextSetBit(0);
+                            variable >= 0;
+                            variable = support.nextSetBit(variable + 1)) {
+                        mapping[variable] = assignment.get(variable) ? bdd.trueFunction() : bdd.falseFunction();
+                    }
+                    Cube cube = Cube.of(assignment, support);
+
+                    int restricted = bdd.reference(bdd.restrict(function, cube));
+                    assertEquals(bdd.compose(function, mapping.clone()), restricted);
+                    bdd.dereference(restricted);
+                    int restrictedMap = mt.reference(mt.restrict(map, cube));
+                    assertEquals(mt.compose(map, mapping.clone()), restrictedMap);
+                    mt.dereference(restrictedMap);
+                }
+            }
+            // Move the prefix apart, so which literals lie below a node is a matter of levels, not numbers.
+            context.variableOrder().siftDown(0);
+            context.variableOrder().siftDown(3);
+        }
+    }
+
+    @Test
     void testOfConstantEvaluatesToValueEverywhere() {
         BddImpl bdd = new DdContextImpl(config).bdd();
         int numVars = 3;
@@ -427,7 +471,7 @@ class MtBddTest {
 
         int f = buildSharedLeafFunction(mt, 1, 2);
 
-        List<BinaryPath> paths = new ArrayList<>();
+        List<Cube> paths = new ArrayList<>();
         List<Integer> values = new ArrayList<>();
         mt.forEachPath(f, (path, value) -> {
             paths.add(path.copy());
@@ -439,7 +483,7 @@ class MtBddTest {
         assertEquals(4, paths.size());
         Set<BitSet> distinctAssignments = new HashSet<>();
         for (int i = 0; i < paths.size(); i++) {
-            BinaryPath path = paths.get(i);
+            Cube path = paths.get(i);
             assertEquals(2, path.support().cardinality());
             boolean[] assignment = {path.assignment().get(0), path.assignment().get(1)};
             assertEquals((int) values.get(i), mt.evaluate(f, assignment));
@@ -453,7 +497,7 @@ class MtBddTest {
         BddImpl bdd = new DdContextImpl(config).bdd();
         MtBddImpl mt = bdd.mtbdd();
 
-        List<BinaryPath> paths = new ArrayList<>();
+        List<Cube> paths = new ArrayList<>();
         List<Integer> values = new ArrayList<>();
         mt.forEachPath(mt.of(42), (path, value) -> {
             paths.add(path.copy());
@@ -676,7 +720,7 @@ class MtBddTest {
         restrictedVariables.set(0);
         BitSet restrictedValues = new BitSet(numVars);
         restrictedValues.set(0); // x0 := true
-        int restricted = mt.restrict(f, restrictedVariables, restrictedValues);
+        int restricted = mt.restrict(f, Cube.of(restrictedValues, restrictedVariables));
 
         // restricted(x1, x2) must agree with f at x0 forced to true, regardless of what x0 is in the
         // (otherwise-irrelevant, since restricted no longer depends on it) assignment passed in.
@@ -688,7 +732,7 @@ class MtBddTest {
         }
 
         // Restricting nothing changes nothing, returning f itself unchanged.
-        assertEquals(f, mt.restrict(f, new BitSet(numVars), new BitSet(numVars)));
+        assertEquals(f, mt.restrict(f, Cube.of(new BitSet(numVars), new BitSet(numVars))));
     }
 
     @Test
@@ -1288,8 +1332,8 @@ class MtBddTest {
         int f = buildSharedLeafFunction(mt, 1, 2);
 
         int count = 0;
-        for (ValuedCursor<BinaryPath> cursor = mt.pathCursor(f); cursor.valid(); cursor.advance()) {
-            BinaryPath path = cursor.current();
+        for (ValuedCursor<Cube> cursor = mt.pathCursor(f); cursor.valid(); cursor.advance()) {
+            Cube path = cursor.current();
             boolean[] assignment = {path.assignment().get(0), path.assignment().get(1)};
             assertEquals(mt.evaluate(f, assignment), cursor.value());
             count++;
@@ -1297,7 +1341,7 @@ class MtBddTest {
         assertEquals(4, count);
 
         // A constant has exactly one, entirely unconstrained path carrying its value.
-        ValuedCursor<BinaryPath> constantCursor = mt.pathCursor(mt.of(42));
+        ValuedCursor<Cube> constantCursor = mt.pathCursor(mt.of(42));
         assertTrue(constantCursor.valid());
         assertTrue(constantCursor.current().support().isEmpty());
         assertEquals(42, constantCursor.value());

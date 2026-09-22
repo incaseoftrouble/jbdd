@@ -34,6 +34,7 @@ import java.util.Arrays;
 import java.util.BitSet;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
 import java.util.function.IntBinaryOperator;
 import java.util.function.IntPredicate;
@@ -456,6 +457,146 @@ class RegressionTests {
         assertEquals(mt.of(value), mt.update(function, bdd.trueFunction(), value));
     }
 
+    /** Replaces the last of eight variables by {@code replacement}, so the recursion visits every level above. */
+    private static int[] replacingLast(BinaryDecisionDiagram bdd, int replacement) {
+        int[] mapping = new int[8];
+        Arrays.fill(mapping, bdd.placeholder());
+        mapping[7] = replacement;
+        return mapping;
+    }
+
+    private static int manyNodesAboveTheLast(BinaryDecisionDiagram bdd, int[] v) {
+        return bdd.and(new int[] {bdd.xor(v[0], v[3]), bdd.xor(v[4], v[5]), bdd.xor(v[2], v[6]), v[7]});
+    }
+
+    /**
+     * Collects with the replacement dead and hands its id out again. Asserts the compose cache holds enough
+     * entries to be pruned selectively: with only a few the collection drops it wholesale, and the mapping's
+     * validity check this is about would never be asked.
+     */
+    private static void collectAndRecycle(DdContextImpl context, String cache, int freed) {
+        Map<String, Object> statistics = context.statistics();
+        int puts = Integer.parseInt(String.valueOf(statistics.get(cache + "_put_since_clear")));
+        int size = Integer.parseInt(String.valueOf(statistics.get(cache + "_size")));
+        assertTrue(puts >= size / 4, () -> String.format("%d entries in %d bins are dropped wholesale", puts, size));
+
+        BddImpl bdd = context.bdd();
+        bdd.gc();
+        assertFalse(bdd.isValidFunction(freed), "The replacement was not collected");
+        for (long mask = 1; mask < 1L << 8 && !bdd.isValidFunction(freed); mask++) {
+            // Negative cubes only, so none of them rebuilds the conjunction of positive literals that died.
+            bdd.reference(bdd.of(Cube.negative(BitSet.valueOf(new long[] {mask}))));
+        }
+        assumeTrue(bdd.isValidFunction(freed), "The freed id was never handed out again");
+    }
+
+    @Test
+    void testComposeCacheDropsAMappingWhoseReplacementWasRecycled() {
+        // The mapping's ids are protected only during a call: one recycled in between makes an equal-looking
+        // mapping mean something else, and the entries computed under the old one must not be reused.
+        DdContextImpl context = new DdContextImpl(config);
+        BddImpl bdd = context.bdd();
+        int[] v = bdd.createVariables(8);
+        int function = bdd.reference(manyNodesAboveTheLast(bdd, v));
+        int replacement = bdd.reference(bdd.and(v[1], v[2]));
+        int stale = bdd.reference(bdd.compose(function, replacingLast(bdd, replacement)));
+
+        bdd.dereference(replacement);
+        collectAndRecycle(context, "cache_compose", replacement);
+
+        int high = bdd.reference(bdd.restrict(function, Cube.literal(7, true)));
+        int low = bdd.reference(bdd.restrict(function, Cube.literal(7, false)));
+        int expected = bdd.reference(bdd.ifThenElse(replacement, high, low));
+        assumeTrue(expected != stale);
+        assertEquals(expected, bdd.compose(function, replacingLast(bdd, replacement)));
+    }
+
+    @Test
+    void testMtBddComposeCacheDropsAMappingWhoseReplacementWasRecycled() {
+        DdContextImpl context = new DdContextImpl(config);
+        BddImpl bdd = context.bdd();
+        MtBddImpl mt = context.mtBdd();
+        int[] v = bdd.createVariables(8);
+        int function = mt.reference(mt.ifThenElse(manyNodesAboveTheLast(bdd, v), mt.of(1), mt.of(2)));
+        int replacement = bdd.reference(bdd.and(v[1], v[2]));
+        int stale = mt.reference(mt.compose(function, replacingLast(bdd, replacement)));
+
+        bdd.dereference(replacement);
+        collectAndRecycle(context, "mtbdd_cache_compose", replacement);
+
+        int high = mt.reference(mt.restrict(function, Cube.literal(7, true)));
+        int low = mt.reference(mt.restrict(function, Cube.literal(7, false)));
+        int expected = mt.reference(mt.ifThenElse(replacement, high, low));
+        assumeTrue(expected != stale);
+        assertEquals(expected, mt.compose(function, replacingLast(bdd, replacement)));
+    }
+
+    @Test
+    void testFreshIndexSurvivesTheReclaimOfADeadAllocationOfItsTerminal() {
+        // Raw terminals are shared by every numbering (and a split's intermediate indices), so a numbering can
+        // hand out an index whose terminal a dead structure still has allocated. Reclaiming that must not make
+        // the numbering forget the value it just assigned, before any map using it exists.
+        BinaryFactoryContext context = BinaryFactoryContext.create(config);
+        MtBddImpl mt = (MtBddImpl) context.mtBdd();
+        int dead = mt.of(0);
+        assertTrue(mt.isConstant(dead));
+        BddMapFactoryImpl.ValuesImpl<String> values =
+                (BddMapFactoryImpl.ValuesImpl<String>) context.bddMaps().<String>create();
+
+        int index = values.getOrAssignIndex("fresh");
+        assertEquals(0, index);
+        mt.gc();
+        assertEquals("fresh", values.valueOf(index));
+        assertEquals(index, values.peek("fresh"));
+        assertEquals("fresh", values.of("fresh").evaluate(new BitSet()));
+    }
+
+    @Test
+    void testCountsAreRecomputedAfterTheOrderMoved() {
+        // A cached count ranges over the levels below its node, so it goes stale when that node's level moves.
+        DdContextImpl context = new DdContextImpl(config);
+        BddImpl bdd = context.bdd();
+        int[] v = bdd.createVariables(4);
+        int function = bdd.reference(bdd.and(v[1], v[2]));
+        int domain = bdd.reference(bdd.or(v[2], v[3]));
+        BigInteger count = bdd.countSatisfyingAssignments(function);
+        BigInteger countIn = bdd.countSatisfyingAssignmentsIn(function, domain);
+
+        context.variableOrder().siftDown(0);
+        assertEquals(count, bdd.countSatisfyingAssignments(function));
+        assertEquals(countIn, bdd.countSatisfyingAssignmentsIn(function, domain));
+
+        MtBddImpl mt = context.mtBdd();
+        int map = mt.reference(mt.ifThenElse(function, mt.of(1), mt.of(0)));
+        BigInteger mapCount = mt.countAssignments(map, value -> value == 1);
+        context.variableOrder().siftDown(0);
+        assertEquals(mapCount, mt.countAssignments(map, value -> value == 1));
+    }
+
+    @Test
+    void testConstrainIsRecomputedAfterTheOrderMoved() {
+        // constrain decides its variables top-down, so the same arguments mean another result in another order.
+        DdContextImpl context = new DdContextImpl(config);
+        BddImpl bdd = context.bdd();
+        MtBddImpl mt = context.mtBdd();
+        int[] v = bdd.createVariables(2);
+        int domain = bdd.reference(bdd.xor(v[0], v[1]));
+        int map = mt.reference(mt.ifThenElse(v[0], mt.of(1), mt.of(0)));
+        int before = bdd.reference(bdd.constrain(v[0], domain));
+        int mapBefore = mt.reference(mt.constrain(map, domain));
+
+        context.variableOrder().siftDown(0);
+        int after = bdd.reference(bdd.constrain(v[0], domain));
+        int mapAfter = mt.reference(mt.constrain(map, domain));
+        assertNotEquals(before, after);
+        assertNotEquals(mapBefore, mapAfter);
+
+        bdd.invalidateCache();
+        mt.invalidateCache();
+        assertEquals(after, bdd.constrain(v[0], domain));
+        assertEquals(mapAfter, mt.constrain(map, domain));
+    }
+
     @Test
     void testRegisterComposeDoesNotShareTheCallersMapping() {
         BddImpl bdd = new DdContextImpl(config).bdd();
@@ -490,7 +631,7 @@ class RegressionTests {
         BitSet restricted = BitSets.of(0, 1);
         BitSet restrictedValues = BitSets.of(0);
         assertEquals(
-                mt.restrict(function, restricted, restrictedValues),
+                mt.restrict(function, Cube.of(restrictedValues, restricted)),
                 mt.registerCompose(constants).applyAsInt(function));
 
         int[] general = {v[1], v[0], bdd.placeholder()};
@@ -868,7 +1009,7 @@ class RegressionTests {
         int v3 = bdd.reference(bdd.createVariable());
         int function = bdd.reference(bdd.or(v1, bdd.or(v2, v3)));
         checkCursorContract(bdd.solutionCursor(function), BitSets::copyOf);
-        checkCursorContract(bdd.pathCursor(function), BinaryPath::copy);
+        checkCursorContract(bdd.pathCursor(function), Cube::copy);
         checkCursorContract(bdd.solutionCursorIn(function, bdd.or(v1, v2)), BitSets::copyOf);
     }
 
@@ -910,7 +1051,55 @@ class RegressionTests {
         MtBddImpl mtbdd = bdd.mtbdd();
         int function = mtbdd.reference(
                 mtbdd.of(0, mtbdd.of(1), mtbdd.of(1, mtbdd.of(2), mtbdd.of(2, mtbdd.of(3), mtbdd.of(0)))));
-        checkCursorContract(mtbdd.pathCursor(function), BinaryPath::copy);
+        checkCursorContract(mtbdd.pathCursor(function), Cube::copy);
         checkCursorContract(mtbdd.assignmentCursor(function, null), BitSets::copyOf);
+    }
+
+    /**
+     * Cubes were conjoined literal by literal in variable order, each step walking the whole partial cube:
+     * as deep as the cube is long, which overflowed the stack for the thousands of state bits of an
+     * encoded controller. Built bottom-up, a cube needs no recursion, so a small stack must suffice - as
+     * long as no collection runs, whose mark is recursive by design; the table is sized so none does.
+     */
+    @Test
+    void testLongCubeNeedsNoDeepRecursion() throws InterruptedException {
+        BinaryFactoryContext context = BinaryFactoryContext.create(
+                ImmutableBddConfiguration.builder().initialSize(400_000).build());
+        BddSetFactory sets = context.bddSets();
+        int variables = 50_000;
+        BitSet support = new BitSet();
+        support.set(0, variables);
+        BitSet valuation = new BitSet();
+        for (int variable = 0; variable < variables; variable += 3) {
+            valuation.set(variable);
+        }
+
+        BddSet[] cube = new BddSet[1];
+        int[] conjunction = new int[1];
+        Throwable[] failure = new Throwable[1];
+        Thread builder = new Thread(
+                null,
+                () -> {
+                    try {
+                        cube[0] = sets.of(Cube.of(valuation, support));
+                        conjunction[0] = context.bdd().reference(context.bdd().conjunction(support));
+                    } catch (Throwable e) { // NOPMD - reported on the test thread
+                        failure[0] = e;
+                    }
+                },
+                "small-stack",
+                256 * 1024);
+        builder.start();
+        builder.join();
+        if (failure[0] != null) {
+            throw new AssertionError("building the cube recursed", failure[0]);
+        }
+
+        assertTrue(cube[0].contains(valuation));
+        BitSet other = BitSets.copyOf(valuation);
+        other.flip(variables - 1);
+        assertFalse(cube[0].contains(other));
+        assertTrue(context.bdd().evaluate(conjunction[0], support));
+        assertFalse(context.bdd().evaluate(conjunction[0], valuation));
     }
 }

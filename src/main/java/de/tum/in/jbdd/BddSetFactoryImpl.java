@@ -16,13 +16,17 @@
  */
 package de.tum.in.jbdd;
 
+import java.lang.ref.Reference;
 import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.BitSet;
+import java.util.List;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.function.Consumer;
 import java.util.function.IntFunction;
 import java.util.function.IntUnaryOperator;
+import java.util.function.Predicate;
 import org.jspecify.annotations.Nullable;
 
 @SuppressWarnings("ObjectEquality")
@@ -49,11 +53,6 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         return dd.variableFunction(variable);
     }
 
-    private int createBddUpdateHelper(BitSet set, int variable, int node) {
-        int variableNode = variableFunction(variable);
-        return dd.and(node, set.get(variable) ? variableNode : dd.not(variableNode));
-    }
-
     @Override
     public BddSet empty() {
         return empty;
@@ -70,12 +69,52 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
     }
 
     @Override
-    public BddSet of(BitSet valuation, BitSet support) {
-        int node = dd.trueFunction();
-        for (int i = support.nextSetBit(0); i >= 0; i = support.nextSetBit(i + 1)) {
-            node = createBddUpdateHelper(valuation, i, node);
+    public BddSet of(Cube cube) {
+        if (!cube.isEmpty()) {
+            variableFunction(cube.support.length() - 1);
         }
-        return make(node);
+        return make(dd.of(cube));
+    }
+
+    @Override
+    public BddSet union(Iterable<Cube> cubes) {
+        int result = dd.falseFunction();
+        for (Cube cube : cubes) {
+            if (!cube.isEmpty()) {
+                variableFunction(cube.support.length() - 1);
+            }
+            // The cube is unreferenced, but or protects its operands and nothing allocates in between.
+            result = dd.updateWith(dd.or(result, dd.of(cube)), result);
+            if (result == dd.trueFunction()) {
+                break;
+            }
+        }
+        BddSet union = make(result);
+        dd.dereference(result);
+        return union;
+    }
+
+    @Override
+    public BddSet union(BddSet... sets) {
+        return make(dd.or(functionsOf(sets)));
+    }
+
+    @Override
+    public BddSet intersection(BddSet... sets) {
+        return make(dd.and(functionsOf(sets)));
+    }
+
+    private int[] functionsOf(BddSet[] sets) {
+        int[] functions = new int[sets.length];
+        for (int i = 0; i < sets.length; i++) {
+            functions[i] = functionOf(sets[i]);
+        }
+        return functions;
+    }
+
+    @Override
+    public BddSet ifThenElse(BddSet condition, BddSet then, BddSet otherwise) {
+        return make(dd.ifThenElse(functionOf(condition), functionOf(then), functionOf(otherwise)));
     }
 
     @Override
@@ -86,11 +125,18 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
     @Override
     public BddSet.VariableReplacer registerReplaceVariables(BitSet replacedVariables, IntFunction<BddSet> mapping) {
         int[] substitutions = new int[replacedVariables.length()];
+        BddSet[] replacements = new BddSet[substitutions.length];
         Arrays.fill(substitutions, dd.placeholder());
-        for (int i = replacedVariables.nextSetBit(0); i >= 0; i = replacedVariables.nextSetBit(i + 1)) {
-            substitutions[i] = functionOf(mapping.apply(i));
+        try {
+            BitSets.forEach(replacedVariables, i -> {
+                replacements[i] = mapping.apply(i);
+                substitutions[i] = functionOf(replacements[i]);
+            });
+            return replacer(dd.registerCompose(substitutions));
+        } finally {
+            // A later mapping.apply can collect what an earlier one returned unless its wrapper stays alive.
+            Reference.reachabilityFence(replacements);
         }
-        return replacer(dd.registerCompose(substitutions));
     }
 
     @Override
@@ -235,6 +281,11 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         }
 
         @Override
+        public BddSet forall(BitSet quantifiedVariables) {
+            return make(factory.dd.forall(function, quantifiedVariables));
+        }
+
+        @Override
         public BddSet symmetricDifference(BddSet other) {
             return make(factory.dd.xor(function, factory.functionOf(other)));
         }
@@ -246,8 +297,10 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
 
         @Override
         public BddSet relabelVariables(IntUnaryOperator mapping) {
-            int[] substitutions = new int[factory.dd.numberOfVariables()];
-            for (int i = 0; i < substitutions.length; i++) {
+            BitSet support = support();
+            int[] substitutions = new int[support.length()];
+            Arrays.fill(substitutions, factory.dd.placeholder());
+            for (int i = support.nextSetBit(0); i >= 0; i = support.nextSetBit(i + 1)) {
                 int j = mapping.applyAsInt(i);
                 if (j < 0) {
                     throw new IllegalArgumentException(String.format("Invalid mapping %s -> %s", i, j));
@@ -258,14 +311,65 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         }
 
         @Override
+        public BddSet restrict(Cube restriction) {
+            return make(factory.dd.restrict(function, restriction));
+        }
+
+        @Override
+        public BddSet constrain(BddSet domain) {
+            return make(factory.dd.constrain(function, factory.functionOf(domain)));
+        }
+
+        @Override
+        public BddSet simplify(BddSet domain) {
+            return make(factory.dd.simplify(function, factory.functionOf(domain)));
+        }
+
+        @Override
         public BddSet replaceVariables(IntFunction<BddSet> mapping) {
-            // Intuition: Only look at the support. However, this variant is more cache-friendly:
-            // Sets with different support but same underlying mapping share the substitution
-            int[] substitutions = new int[factory.dd.numberOfVariables()];
-            for (int i = 0; i < substitutions.length; i++) {
-                substitutions[i] = factory.functionOf(mapping.apply(i));
+            BitSet support = support();
+            int[] substitutions = new int[support.length()];
+            Arrays.fill(substitutions, factory.dd.placeholder());
+            BddSet[] replacements = new BddSet[substitutions.length];
+            try {
+                for (int i = support.nextSetBit(0); i >= 0; i = support.nextSetBit(i + 1)) {
+                    replacements[i] = mapping.apply(i);
+                    substitutions[i] = factory.functionOf(replacements[i]);
+                }
+                return make(factory.dd.compose(function, substitutions));
+            } finally {
+                // A later mapping.apply can collect what an earlier one returned unless its wrapper stays alive.
+                Reference.reachabilityFence(replacements);
             }
-            return make(factory.dd.compose(function, substitutions));
+        }
+
+        @Override
+        public List<Cube> implicants() {
+            return factory.dd.implicants(function);
+        }
+
+        @Override
+        public BddMap<BddSet> split(BitSet splitVariables, Values<BddSet> destination) {
+            return ((BddMapFactoryImpl) destination.factory()).split(this, splitVariables, destination);
+        }
+
+        @Override
+        public OptionalInt decisionVariable() {
+            return factory.dd.isConstant(function)
+                    ? OptionalInt.empty()
+                    : OptionalInt.of(factory.dd.decisionVariable(function));
+        }
+
+        @Override
+        public BddSet high() {
+            Preconditions.checkState(!factory.dd.isConstant(function), "Constant set has no decision");
+            return make(factory.dd.highOf(function));
+        }
+
+        @Override
+        public BddSet low() {
+            Preconditions.checkState(!factory.dd.isConstant(function), "Constant set has no decision");
+            return make(factory.dd.lowOf(function));
         }
 
         @Override
@@ -295,6 +399,16 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         @Override
         public void forEach(BitSet support, Consumer<? super BitSet> consumer) {
             factory.dd.forEachSolution(function, support, consumer);
+        }
+
+        @Override
+        public void forEachPath(Consumer<? super Cube> action) {
+            factory.dd.forEachPath(function, action);
+        }
+
+        @Override
+        public boolean anyPathMatches(Predicate<? super Cube> predicate) {
+            return factory.dd.anyPathMatches(function, predicate);
         }
 
         @Override

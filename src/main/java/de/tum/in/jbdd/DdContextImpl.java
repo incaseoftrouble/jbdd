@@ -120,7 +120,7 @@ public final class DdContextImpl implements DdContext, StatisticsSource {
         order.notifyVariablesInserted(level, 1);
 
         assert bdd.table().workStacksEmpty() && mtbdd.table().workStacksEmpty();
-        assert bdd.check();
+        assert !Assertions.COSTLY_ASSERTIONS || bdd.check();
         assert bdd.accessGuard.release();
         return variableNode;
     }
@@ -149,7 +149,7 @@ public final class DdContextImpl implements DdContext, StatisticsSource {
         order.notifyVariablesInserted(level, count);
 
         assert bdd.table().workStacksEmpty() && mtbdd.table().workStacksEmpty();
-        assert bdd.check();
+        assert !Assertions.COSTLY_ASSERTIONS || bdd.check();
         assert bdd.accessGuard.release();
         return newVariableNodes;
     }

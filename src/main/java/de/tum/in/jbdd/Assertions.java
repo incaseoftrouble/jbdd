@@ -1,6 +1,6 @@
 /*
  * This file is part of JBDD (https://github.com/incaseoftrouble/jbdd).
- * Copyright (c) 2026 Tobias Meggendorfer.
+ * Copyright (c) 2023 Tobias Meggendorfer.
  *
  * JBDD is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,23 +16,8 @@
  */
 package de.tum.in.jbdd;
 
-abstract class ProtectedOperation implements RegisteredOperation {
-    private final ProtectionTracker.Protection protection;
+final class Assertions {
+    static final boolean COSTLY_ASSERTIONS = Boolean.getBoolean("JBDD_COSTLY_ASSERTIONS");
 
-    ProtectedOperation(ProtectionTracker tracker, Runnable onRelease) {
-        this.protection = tracker.track(this, onRelease);
-    }
-
-    final boolean isReleased() {
-        return protection.isReleased();
-    }
-
-    @Override
-    public final void release() {
-        protection.releaseNow();
-    }
-
-    final void checkNotReleased() {
-        assert !isReleased(); // a released operation can no longer be used
-    }
+    private Assertions() {}
 }

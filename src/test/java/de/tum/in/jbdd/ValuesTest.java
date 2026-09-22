@@ -25,7 +25,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * The operations that are about the numbering rather than about one map: where a result lands
- * ({@link BddMap#split}, {@link Values#cartesianProductMap}) and how one is re-typed
+ * ({@link BddMap#splitMap}, {@link Values#cartesianProductMap}) and how one is re-typed
  * ({@link Values#createRelabeling}).
  */
 class ValuesTest {

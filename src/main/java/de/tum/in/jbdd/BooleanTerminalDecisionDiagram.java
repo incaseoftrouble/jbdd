@@ -161,6 +161,21 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      */
     int and(int function1, int function2);
 
+    /**
+     * Constructs the conjunction of all {@code functions}, {@link #trueFunction()} for none.
+     */
+    default int and(int[] functions) {
+        // Held referenced throughout, the constant included: a diagram may count references on its leaves.
+        int result = reference(trueFunction());
+        for (int function : functions) {
+            result = updateWith(and(result, function), result);
+            if (result == falseFunction()) {
+                break;
+            }
+        }
+        return dereference(result);
+    }
+
     default int andSimplify(int function1, int function2, int domain) {
         return simplify(and(function1, function2), domain);
     }
@@ -244,6 +259,20 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      * Constructs the boolean function {@code function1 OR function2}.
      */
     int or(int function1, int function2);
+
+    /**
+     * Constructs the disjunction of all {@code functions}, {@link #falseFunction()} for none.
+     */
+    default int or(int[] functions) {
+        int result = reference(falseFunction());
+        for (int function : functions) {
+            result = updateWith(or(result, function), result);
+            if (result == trueFunction()) {
+                break;
+            }
+        }
+        return dereference(result);
+    }
 
     default int orSimplify(int function1, int function2, int domain) {
         return simplify(or(function1, function2), domain);

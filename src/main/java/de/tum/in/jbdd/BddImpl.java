@@ -41,8 +41,7 @@ import org.jspecify.annotations.Nullable;
     "DuplicatedCode",
     "AssertWithSideEffects"
 })
-public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
-    private static final BitSet EMPTY_BIT_SET = new BitSet(0);
+public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
 
     /* The variable order and everything else the BDD shares with its MTBDD, reordering included. */
     private final DdContextImpl context;
@@ -194,8 +193,17 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         return levelOfVariable(table.variable(positive(function)));
     }
 
+    int decisionLevelOrMax(int function) {
+        return isConstant(function) ? Integer.MAX_VALUE : decisionLevel(function);
+    }
+
     boolean isReordered() {
         return order.isExplicitOrder();
+    }
+
+    @Override
+    boolean isReordering() {
+        return order.isReordering();
     }
 
     @Override
@@ -241,13 +249,13 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         int rewriteCount = 0;
 
         // Gather all the nodes where (at least) one child is in the lower level
-        // The nodes array holds all nodes of this level, so it sufficies to hold these
+        // The nodes array holds all nodes of this level, so it suffices to hold these
         for (int index = 0; index < count; index++) {
             int node = nodes[index];
             if (decidesOn(table.low(node), level) || decidesOn(table.high(node), level)) {
                 nodes[rewriteCount] = node;
                 rewriteCount += 1;
-                table.hideForRewrite(node);
+                table.rewriteHideAndUnlink(node);
             } else {
                 // Neither child mentions the variable moving up, so this node just descends a level
                 table.addToVariableList(node, table.variable(node));
@@ -579,20 +587,49 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     }
 
     @Override
-    public Cursor<BinaryPath> pathCursor(int function) {
+    public Cursor<Cube> pathCursor(int function) {
         assert isValidFunction(function);
 
         if (function == FALSE) {
             return Cursors.empty();
         }
         if (function == TRUE) {
-            return Cursors.singleton(new BinaryPath(new BitSet(0), new BitSet(0)));
+            return Cursors.singleton(Cube.empty());
         }
         return new PathCursor(this, function);
     }
 
     @Override
-    public void forEachPath(int function, Consumer<? super BinaryPath> action) {
+    public int of(Cube path) {
+        assert path.support.stream().allMatch(this::isValidVariable);
+        assert accessGuard.acquire();
+        int node = cubeFunction(path);
+        assert accessGuard.release();
+        return node;
+    }
+
+    // Deepest level first: each literal lands above everything built so far, so a step is one node.
+    private int cubeFunction(Cube cube) {
+        assert table.workStacksEmpty();
+        BitSet support = cube.support;
+        int[] levels = new int[support.cardinality()];
+        BitSets.forEachWithIndex(support, (value, index) -> levels[index] = levelOfVariable(value));
+        Arrays.sort(levels);
+        int node = TRUE;
+        for (int index = levels.length - 1; index >= 0; index--) {
+            int level = levels[index];
+            table.pushToWorkStack(node);
+            node = cube.assignment.get(variableAtLevel(level))
+                    ? makeFunction(level, FALSE, node)
+                    : makeFunction(level, node, FALSE);
+            table.popFromWorkStack();
+        }
+        assert table.workStacksEmpty();
+        return node;
+    }
+
+    @Override
+    public void forEachPath(int function, Consumer<? super Cube> action) {
         assert isValidFunction(function);
 
         if (function == FALSE) {
@@ -600,19 +637,19 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
         assert accessGuard.acquire();
         if (function == TRUE) {
-            action.accept(new BinaryPath(new BitSet(0), new BitSet(0)));
+            action.accept(Cube.empty());
             assert accessGuard.release();
             return;
         }
 
         int numberOfVariables = numberOfVariables();
-        BinaryPath path = new BinaryPath(new BitSet(numberOfVariables), new BitSet(numberOfVariables));
+        Cube path = new Cube(new BitSet(numberOfVariables), new BitSet(numberOfVariables));
         forEachPathRecursive(positive(function), null, numberOfVariables, path, action, isPositive(function));
         assert accessGuard.release();
     }
 
     @Override
-    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super BinaryPath> action) {
+    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super Cube> action) {
         assert isValidFunction(function);
 
         if (function == FALSE) {
@@ -620,13 +657,13 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
         assert accessGuard.acquire();
         if (function == TRUE || relevantSet.isEmpty()) {
-            action.accept(new BinaryPath(new BitSet(0), new BitSet(0)));
+            action.accept(Cube.empty());
             assert accessGuard.release();
             return;
         }
 
         int maxRelevantLevel = maxLevel(relevantSet);
-        BinaryPath path = new BinaryPath(new BitSet(maxRelevantLevel + 1), new BitSet(maxRelevantLevel + 1));
+        Cube path = new Cube(new BitSet(maxRelevantLevel + 1), new BitSet(maxRelevantLevel + 1));
         forEachPathRecursive(positive(function), relevantSet, maxRelevantLevel, path, action, isPositive(function));
         assert accessGuard.release();
     }
@@ -635,8 +672,8 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             int node,
             @Nullable BitSet support,
             int depthLimit,
-            BinaryPath path,
-            Consumer<? super BinaryPath> action,
+            Cube path,
+            Consumer<? super Cube> action,
             boolean lookingFor) {
         if (node == TRUE) {
             assert lookingFor;
@@ -684,7 +721,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     }
 
     @Override
-    public boolean anyPathMatches(int function, Predicate<? super BinaryPath> predicate) {
+    public boolean anyPathMatches(int function, Predicate<? super Cube> predicate) {
         assert isValidFunction(function);
 
         if (function == FALSE) {
@@ -692,20 +729,20 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
         assert accessGuard.acquire();
         if (function == TRUE) {
-            boolean result = predicate.test(new BinaryPath(new BitSet(0), new BitSet(0)));
+            boolean result = predicate.test(Cube.empty());
             assert accessGuard.release();
             return result;
         }
 
         int numberOfVariables = numberOfVariables();
-        BinaryPath path = new BinaryPath(new BitSet(numberOfVariables), new BitSet(numberOfVariables));
+        Cube path = new Cube(new BitSet(numberOfVariables), new BitSet(numberOfVariables));
         boolean result = anyPathMatchesRecursive(positive(function), path, predicate, isPositive(function));
         assert accessGuard.release();
         return result;
     }
 
     private boolean anyPathMatchesRecursive(
-            int node, BinaryPath path, Predicate<? super BinaryPath> predicate, boolean lookingFor) {
+            int node, Cube path, Predicate<? super Cube> predicate, boolean lookingFor) {
         if (node == TRUE) {
             assert lookingFor;
             return predicate.test(path);
@@ -865,7 +902,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
         if (analysis.isRestrict) {
             // TODO Native
-            int result = simplify(restrict(function, analysis.restrictSupport, analysis.restrictValues), domain);
+            int result = simplify(restrict(function, analysis.restriction), domain);
             assert accessGuard.release();
             return result;
         }
@@ -904,9 +941,8 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             return RegisteredOperation.identity();
         }
         if (analysis.isRestrict) {
-            BitSet restrictSupport = analysis.restrictSupport;
-            BitSet restrictValues = analysis.restrictValues;
-            return function -> restrict(function, restrictSupport, restrictValues);
+            Cube restriction = analysis.restriction;
+            return function -> restrict(function, restriction);
         }
         return new BddOperations.Compose(
                 this, resolved, analysis.maxReplacedLevel, Util.protectNodes(this, resolved), false);
@@ -920,9 +956,8 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             return this::simplify;
         }
         if (analysis.isRestrict) {
-            BitSet restrictSupport = analysis.restrictSupport;
-            BitSet restrictValues = analysis.restrictValues;
-            return (function, domain) -> simplify(restrict(function, restrictSupport, restrictValues), domain);
+            Cube restriction = analysis.restriction;
+            return (function, domain) -> simplify(restrict(function, restriction), domain);
         }
         return new BddOperations.Compose(
                 this, resolved, analysis.maxReplacedLevel, Util.protectNodes(this, resolved), true);
@@ -949,7 +984,7 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             }
         }
         if (maxReplacedLevel == -1) {
-            return new ComposeAnalysis(-1, false, EMPTY_BIT_SET, EMPTY_BIT_SET);
+            return new ComposeAnalysis(-1, false, Cube.empty());
         }
 
         // Detect the simple case where every replacement is either the variable itself or a constant.
@@ -975,9 +1010,9 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
                     restrictValues.set(i, variableMapping[i] == TRUE);
                 }
             }
-            return new ComposeAnalysis(maxReplacedLevel, true, restrictSupport, restrictValues);
+            return new ComposeAnalysis(maxReplacedLevel, true, new Cube(restrictValues, restrictSupport));
         }
-        return new ComposeAnalysis(maxReplacedLevel, false, EMPTY_BIT_SET, EMPTY_BIT_SET);
+        return new ComposeAnalysis(maxReplacedLevel, false, Cube.empty());
     }
 
     int composeGeneral(
@@ -995,6 +1030,8 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             table.pushToWorkStack(domain);
             workStackCount++;
         }
+        // TODO Same as restrict: Keep walking the tree as long as variables are set to constant values;
+        //    this avoids pointless cache operations -- should we maybe do the same in the recursion?
         int result = computeComposeSimplify(
                 function, variableMapping, maxReplacedLevel, domain, composeCache, composeSimplifyCache);
         table.popFromWorkStack(workStackCount);
@@ -1005,14 +1042,13 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         final int maxReplacedLevel;
         final boolean isRestrict;
 
-        final BitSet restrictSupport;
-        final BitSet restrictValues;
+        // The restriction this compose amounts to, if it is one.
+        final Cube restriction;
 
-        ComposeAnalysis(int maxReplacedLevel, boolean isRestrict, BitSet restrictSupport, BitSet restrictValues) {
+        ComposeAnalysis(int maxReplacedLevel, boolean isRestrict, Cube restriction) {
             this.maxReplacedLevel = maxReplacedLevel;
             this.isRestrict = isRestrict;
-            this.restrictSupport = restrictSupport;
-            this.restrictValues = restrictValues;
+            this.restriction = restriction;
         }
     }
 
@@ -1130,30 +1166,38 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     }
 
     @Override
-    public int restrict(int function, BitSet restrictedVariables, BitSet restrictedVariableValues) {
+    public int restrict(int function, Cube restriction) {
         assert isValidFunction(function);
 
-        if (restrictedVariables.isEmpty()) {
+        if (restriction.isEmpty() || isConstant(function)) {
             return function;
         }
-        if (isConstant(function)) {
-            return function;
+
+        int current = function;
+        while (!isConstant(current) && restriction.support.get(table.variable(positive(current)))) {
+            current = restriction.assignment.get(table.variable(positive(current))) ? high(current) : low(current);
+        }
+        if (isConstant(current)) {
+            return current;
+        }
+        int maxRestrictedLevel = maxLevel(restriction.support);
+        if (decisionLevelOrMax(current) > maxRestrictedLevel) {
+            return current;
         }
 
         assert accessGuard.acquire();
         assert table.workStacksEmpty();
-        int maxRestrictedLevel = maxLevel(restrictedVariables);
-        table.pushToWorkStack(function);
-        cache.initRestrict(restrictedVariables, restrictedVariableValues);
-        int result = computeRestrict(function, restrictedVariables, restrictedVariableValues, maxRestrictedLevel);
+        Cube remaining = order.literalsBelow(restriction, decisionLevel(current));
+        table.pushToWorkStack(current);
+        cache.initRestrict(remaining);
+        int result = computeRestrict(current, remaining, maxRestrictedLevel);
         table.popFromWorkStack();
         assert table.workStacksEmpty();
         assert accessGuard.release();
         return result;
     }
 
-    private int computeRestrict(
-            int function, BitSet restrictedVariables, BitSet restrictedVariableValues, int maxRestrictedLevel) {
+    private int computeRestrict(int function, Cube restriction, int maxRestrictedLevel) {
         boolean func = isComplementFunction(function);
         int node = positive(function);
 
@@ -1173,14 +1217,12 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         int hash = cache.lookupHash();
 
         int result;
-        if (restrictedVariables.get(nodeVariable)) {
-            int child = restrictedVariableValues.get(nodeVariable) ? table.high(node) : table.low(node);
-            result = computeRestrict(child, restrictedVariables, restrictedVariableValues, maxRestrictedLevel);
+        if (restriction.support.get(nodeVariable)) {
+            int child = restriction.assignment.get(nodeVariable) ? table.high(node) : table.low(node);
+            result = computeRestrict(child, restriction, maxRestrictedLevel);
         } else {
-            int low = table.pushToWorkStack(computeRestrict(
-                    table.low(node), restrictedVariables, restrictedVariableValues, maxRestrictedLevel));
-            int high = table.pushToWorkStack(computeRestrict(
-                    table.high(node), restrictedVariables, restrictedVariableValues, maxRestrictedLevel));
+            int low = table.pushToWorkStack(computeRestrict(table.low(node), restriction, maxRestrictedLevel));
+            int high = table.pushToWorkStack(computeRestrict(table.high(node), restriction, maxRestrictedLevel));
             result = makeFunction(nodeLevel, low, high);
             table.popFromWorkStack(2);
         }
@@ -1192,47 +1234,10 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     // Bdd operations
 
     @Override
-    public int conjunction(int... variables) {
-        assert Arrays.stream(variables).allMatch(this::isValidVariable);
-        assert accessGuard.acquire();
-        assert table.workStacksEmpty();
-        int node = TRUE;
-        for (int variable : variables) {
-            // Variable nodes are saturated, no need to guard them
-            node = computeAnd(table.pushToWorkStack(node), variableNodes[variable]);
-            table.popFromWorkStack();
-        }
-        assert table.workStacksEmpty();
-        assert accessGuard.release();
-        return node;
-    }
-
-    @Override
     public int conjunction(BitSet variables) {
         assert variables.stream().allMatch(this::isValidVariable);
         assert accessGuard.acquire();
-        assert table.workStacksEmpty();
-        int node = TRUE;
-        for (int variable = variables.nextSetBit(0); variable >= 0; variable = variables.nextSetBit(variable + 1)) {
-            node = computeAnd(table.pushToWorkStack(node), variableNodes[variable]);
-            table.popFromWorkStack();
-        }
-        assert table.workStacksEmpty();
-        assert accessGuard.release();
-        return node;
-    }
-
-    @Override
-    public int disjunction(int... variables) {
-        assert Arrays.stream(variables).allMatch(this::isValidVariable);
-        assert accessGuard.acquire();
-        assert table.workStacksEmpty();
-        int node = FALSE;
-        for (int variable : variables) {
-            node = computeOr(table.pushToWorkStack(node), variableNodes[variable]);
-            table.popFromWorkStack();
-        }
-        assert table.workStacksEmpty();
+        int node = cubeFunction(new Cube(variables, variables));
         assert accessGuard.release();
         return node;
     }
@@ -1241,13 +1246,8 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
     public int disjunction(BitSet variables) {
         assert variables.stream().allMatch(this::isValidVariable);
         assert accessGuard.acquire();
-        assert table.workStacksEmpty();
-        int node = FALSE;
-        for (int variable = variables.nextSetBit(0); variable >= 0; variable = variables.nextSetBit(variable + 1)) {
-            node = computeOr(table.pushToWorkStack(node), variableNodes[variable]);
-            table.popFromWorkStack();
-        }
-        assert table.workStacksEmpty();
+        // x1 | ... | xn is !(!x1 & ... & !xn)
+        int node = not(cubeFunction(new Cube(new BitSet(0), variables)));
         assert accessGuard.release();
         return node;
     }
@@ -1263,6 +1263,74 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         table.popFromWorkStack(2);
         assert table.workStacksEmpty();
         assert accessGuard.release();
+        return result;
+    }
+
+    @Override
+    public int and(int[] functions) {
+        assert Arrays.stream(functions).allMatch(this::isValidFunction);
+
+        assert accessGuard.acquire();
+        assert table.workStacksEmpty();
+        int result = computeAndAll(functions);
+        assert table.workStacksEmpty();
+        assert accessGuard.release();
+        return result;
+    }
+
+    @Override
+    public int or(int[] functions) {
+        assert Arrays.stream(functions).allMatch(this::isValidFunction);
+
+        assert accessGuard.acquire();
+        assert table.workStacksEmpty();
+        complementAll(functions);
+        int result = not(computeAndAll(functions));
+        complementAll(functions);
+        assert table.workStacksEmpty();
+        assert accessGuard.release();
+        return result;
+    }
+
+    private static void complementAll(int[] functions) {
+        for (int i = 0; i < functions.length; i++) {
+            functions[i] = complement(functions[i]);
+        }
+    }
+
+    // Deepest top level first: the accumulator stays in the lower levels while it is built and each shallower
+    // operand adds on top, instead of being dragged through every level at each step. Constants sort first, so
+    // a false operand ends the fold at once.
+    // TODO True n-ary conjunction
+    private int computeAndAll(int[] functions) {
+        if (functions.length == 1) {
+            return functions[0];
+        }
+        if (functions.length == 2) {
+            table.pushToWorkStack(functions[0], functions[1]);
+            int result = computeAnd(functions[0], functions[1]);
+            table.popFromWorkStack(2);
+            return result;
+        }
+
+        long[] operands = new long[functions.length];
+        for (int i = 0; i < functions.length; i++) {
+            int function = functions[i];
+            table.pushToWorkStack(function);
+            operands[i] = ((long) (Integer.MAX_VALUE - decisionLevelOrMax(function)) << 32) | (function & 0xFFFF_FFFFL);
+        }
+        Arrays.sort(operands);
+
+        int result = TRUE;
+        for (long operand : operands) {
+            table.pushToWorkStack(result);
+            result = computeAnd(result, (int) operand);
+            table.popFromWorkStack();
+            if (result == FALSE) {
+                break;
+            }
+        }
+        table.popFromWorkStack(functions.length);
         return result;
     }
 
@@ -2265,10 +2333,6 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             return false;
         }
 
-        private int levelOf(int function) {
-            return bdd.isConstant(function) ? Integer.MAX_VALUE : bdd.decisionLevel(function);
-        }
-
         /**
          * Walks down from a pair, taking the low branch wherever both sides allow it. Returns whether it
          * reached a leaf; on a dead end it retracts the level it failed at, leaving the cursor where
@@ -2281,8 +2345,8 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
             while (function != TRUE || domain != TRUE) {
                 assert function != FALSE && domain != FALSE;
 
-                int functionLevel = levelOf(function);
-                int domainLevel = levelOf(domain);
+                int functionLevel = bdd.decisionLevelOrMax(function);
+                int domainLevel = bdd.decisionLevelOrMax(domain);
                 int level = Math.min(functionLevel, domainLevel);
                 boolean functionDecides = functionLevel == level;
                 boolean domainDecides = domainLevel == level;
@@ -2438,28 +2502,26 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
     }
 
-    static final class PathCursor implements Cursor<BinaryPath> {
+    static final class PathCursor implements Cursor<Cube> {
         private final BddImpl bdd;
         private final PathWalk path;
         /** Only on a reordered diagram, where the walk is by level and the caller wants variables. */
-        private final @Nullable BinaryPath translated;
+        private final @Nullable Cube translated;
         /** What {@link #current()} hands out: the translation buffer, or the walk's own sets wrapped. */
-        private final BinaryPath current;
+        private final Cube current;
 
         private boolean valid;
 
         PathCursor(BddImpl bdd, int function) {
             int variableCount = bdd.numberOfVariables();
             this.bdd = bdd;
-            this.translated =
-                    bdd.isReordered() ? new BinaryPath(new BitSet(variableCount), new BitSet(variableCount)) : null;
+            this.translated = bdd.isReordered() ? new Cube(new BitSet(variableCount), new BitSet(variableCount)) : null;
             // Both halves of a path are maintained by the walk itself, so a step rebuilds nothing.
             this.path = translated == null
                     ? new PathWalk(bdd, function, TRUE)
                     : new PathWalk(bdd, function, TRUE, translated.assignment, translated.support);
             this.valid = path.onPath();
-            this.current =
-                    translated == null ? new BinaryPath(path.levelAssignment(), path.pathSupportLevels()) : translated;
+            this.current = translated == null ? new Cube(path.levelAssignment(), path.pathSupportLevels()) : translated;
             assert !valid || currentIsConsistent();
         }
 
@@ -2469,8 +2531,8 @@ public class BddImpl extends BooleanBase<BitSet, BinaryPath> implements Bdd {
         }
 
         @Override
-        public BinaryPath current() {
-            assert valid : "current() is only defined while the cursor is valid";
+        public Cube current() {
+            assert valid; // current() is only defined while the cursor is valid
             return current;
         }
 

@@ -176,6 +176,32 @@ class ReorderTest {
     }
 
     @Test
+    void testReorderingCostIsReportedSeparately() {
+        DdContextImpl context = new DdContextImpl(CONFIG);
+        BddImpl bdd = context.bdd();
+        List<Integer> functions = randomFunctions(bdd, 8, 20, 123_456_789L);
+        assertEquals(0L, statistic(context, "bdd_node_table_reorder_created_nodes"));
+
+        long createdBefore = statistic(context, "bdd_created_nodes");
+        bdd.variableOrder().reorder();
+        long createdByReordering = statistic(context, "bdd_created_nodes") - createdBefore;
+        assertTrue(createdByReordering > 0, "sifting eight variables rewrote nothing");
+        assertEquals(createdByReordering, statistic(context, "bdd_node_table_reorder_created_nodes"));
+
+        // Operations after the reordering count toward the total only.
+        bdd.and(functions.get(0), functions.get(1));
+        assertEquals(createdByReordering, statistic(context, "bdd_node_table_reorder_created_nodes"));
+        assertTrue(
+                statistic(context, "bdd_node_table_reorder_gc_count") <= statistic(context, "bdd_node_table_gc_count"));
+    }
+
+    private static long statistic(DdContextImpl context, String key) {
+        Object value = context.statistics().get(key);
+        assertNotNull(value, key);
+        return Long.parseLong(value.toString());
+    }
+
+    @Test
     void testSupportAndEvaluateSurviveReordering() {
         // Everything that indexes *by variable* - a support set, an evaluation's assignment - has to keep
         // naming variables, not their positions. Reordering is where the two come apart, and confusing

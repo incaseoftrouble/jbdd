@@ -23,6 +23,8 @@ import org.jspecify.annotations.Nullable;
 final class BddOperations {
     private BddOperations() {}
 
+    // TODO Registerable restrict?
+
     static final class Exists implements RegisteredOperation.Unary, NodeTableObserver, VariableOrderObserver {
         private final BddImpl bdd;
         private final BitSet quantifiedVariables;
@@ -91,6 +93,11 @@ final class BddOperations {
         }
 
         private void pruneInvalidNodes(int invalidatedNodes) {
+            if (bdd.isReordering()) {
+                // See BooleanCache#onBddNodesInvalidated.
+                existsCache.invalidate();
+                return;
+            }
             if (invalidatedNodes == 0) {
                 return;
             }
@@ -144,12 +151,8 @@ final class BddOperations {
                 maxReplacedLevel = bdd.maxReplacedLevel(variableMapping);
             }
             assert maxReplacedLevel == bdd.maxReplacedLevel(variableMapping);
-
             // see BooleanCache#orderChanged
-            composeCache.invalidate();
-            if (composeSimplifyCache != null) {
-                composeSimplifyCache.invalidate();
-            }
+            invalidateCaches();
         }
 
         @Override
@@ -176,7 +179,8 @@ final class BddOperations {
             if (domain == bdd.falseFunction()) {
                 return bdd.falseFunction();
             }
-            assert domain == bdd.trueFunction() || composeSimplifyCache != null;
+            assert domain == bdd.trueFunction() || composeSimplifyCache != null
+                    : "A domain-carrying compose must be registered through registerComposeSimplify";
             int result = bdd.composeGeneral(
                     function, domain, variableMapping, maxReplacedLevel, composeCache, composeSimplifyCache);
             composeCache.growOnUsage();
@@ -203,7 +207,19 @@ final class BddOperations {
             growToTableFloor();
         }
 
+        private void invalidateCaches() {
+            composeCache.invalidate();
+            if (composeSimplifyCache != null) {
+                composeSimplifyCache.invalidate();
+            }
+        }
+
         private void pruneInvalidNodes(int invalidatedNodes) {
+            if (bdd.isReordering()) {
+                // See BooleanCache#onBddNodesInvalidated.
+                invalidateCaches();
+                return;
+            }
             if (invalidatedNodes == 0) {
                 return;
             }

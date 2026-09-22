@@ -115,16 +115,16 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
     /**
      * Walks all root-to-leaf paths of the given {@code function} in lexicographic ascending order, with
      * {@link ValuedCursor#value()} yielding the value the path leads to. A path constrains only the
-     * variables actually tested along it; every variable outside its {@link BinaryPath#support support} is
+     * variables actually tested along it; every variable outside its {@link Cube#support support} is
      * a "don't care".
      *
-     * <p><b>Note:</b> The {@link BinaryPath} it hands out is its own working state - see {@link Cursor}.
+     * <p><b>Note:</b> The {@link Cube} it hands out is its own working state - see {@link Cursor}.
      * If all paths should be gathered into a collection, they have to be
-     * {@link BinaryPath#copy() copied}.</p>
+     * {@link Cube#copy() copied}.</p>
      *
-     * @see #forEachPath(int, PathConsumer)
+     * @see #forEachPath(int, PathValueConsumer)
      */
-    ValuedCursor<BinaryPath> pathCursor(int function);
+    ValuedCursor<Cube> pathCursor(int function);
 
     /**
      * Executes the given action for each assignment under which the given {@code function} evaluates to the given
@@ -139,7 +139,7 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
     /**
      * Executes the given {@code action} once for each root-to-leaf path of the given {@code function},
      * together with the value that path leads to. A path constrains only the variables actually tested
-     * along it; every variable outside its {@link BinaryPath#support support} is a "don't care".
+     * along it; every variable outside its {@link Cube#support support} is a "don't care".
      *
      * <p>The paths are generated in lexicographic ascending order.</p>
      *
@@ -151,7 +151,7 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
      * @param action
      *     The action to be performed on each path and its value.
      */
-    void forEachPath(int function, PathConsumer action);
+    void forEachPath(int function, PathValueConsumer action);
 
     /**
      * Computes the co-domain of the given {@code function}.
@@ -235,25 +235,12 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
     RegisteredOperation.Binary registerComposeSimplify(int[] bddVariableMapping);
 
     /**
-     * Computes the restriction of the given {@code function}, where all variables specified by {@code
-     * restrictedVariables} are replaced by the value given in {@code restrictedVariableValues}.
-     * Formally, if {@code function} is {@code f(x_1, ..., x_n)}, this method computes the function
-     * {@code f(x_1, ..., x_{i_1-1}, c_1, x_{i_1+1}, ..., x_{i_2-1}, c_2, x_{i_2+1}, ...,
-     * x_n}, where {@code i_k} are the elements of the {@code restrictedVariables} set and
-     * {@code c_k := restrictedVariableValues.get(i_k)}.
-     *
-     * @param function
-     *     The function to be restricted.
-     * @param restrictedVariables
-     *     The variables used in the restriction.
-     * @param restrictedVariableValues
-     *     The values of the restricted variables.
-     *
-     * @return The restricted function.
+     * {@code function} with every variable of the {@code restriction} fixed to its value there, so the result no
+     * longer depends on them.
      *
      * @see #compose(int, int[])
      */
-    int restrict(int function, BitSet restrictedVariables, BitSet restrictedVariableValues);
+    int restrict(int function, Cube restriction);
 
     /**
      * Compute the function where all given {@code assignments} (represented as function in the underlying BDD)
@@ -454,6 +441,11 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
     int applyBoolean(int function1, int function2, MtBddBinaryPredicate predicate);
 
     /**
+     * Whether the two functions' values satisfy {@code predicate} at every valuation.
+     */
+    boolean allMatch(int function1, int function2, MtBddBinaryPredicate predicate);
+
+    /**
      * Registers an {@code applyBoolean} operation bound to a fixed {@code predicate} - see
      * {@link RegisteredOperation}.
      *
@@ -503,6 +495,15 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
      * evaluates to {@code f(x_1, ..., x_n)}.
      */
     FunctionToFunctionMap split(int function, BitSet splitVariables);
+
+    /**
+     * {@link #split} for a function of the associated BDD: the result's {@link FunctionToFunctionMap#function()}
+     * is a function of this diagram over just {@code splitVariables}, yielding for each of their assignments an
+     * index into {@link FunctionToFunctionMap#codomain()} whose associated <em>BDD</em> function is what {@code
+     * bddFunction} restricts to under that assignment. As with {@link #split}, the pieces are unprotected and
+     * must be referenced before any further call.
+     */
+    FunctionToFunctionMap splitBdd(int bddFunction, BitSet splitVariables);
 
     /**
      * Like {@link #split}, but instead of handing back a {@link FunctionToFunctionMap} whose pieces the
@@ -611,7 +612,7 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
     }
 
     @FunctionalInterface
-    interface PathConsumer {
-        void accept(BinaryPath path, int value);
+    interface PathValueConsumer {
+        void accept(Cube path, int value);
     }
 }

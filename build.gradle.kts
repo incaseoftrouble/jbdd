@@ -141,14 +141,13 @@ dependencies {
   jmhAnnotationProcessor("org.openjdk.jmh:jmh-generator-annprocess:1.37")
 }
 
-// Scales the generated theory suites, see TestProfile. Taken from -P so that it reaches the test
-// JVM rather than Gradle's own, and set as a system property so that Gradle tracks it as a task
-// input: switching scales re-runs the suite, unlike --tests, which is not tracked at all.
 fun Test.jbddTest(defaultScale: String) {
   useJUnitPlatform()
   minHeapSize = "2g"
   maxHeapSize = "8g"
   systemProperty("jbdd.test.scale", project.findProperty("jbdd.test.scale") ?: defaultScale)
+  // JBDD's own tests audit whole tables and caches, not just the entry at hand (Assertions).
+  systemProperty("JBDD_COSTLY_ASSERTIONS", "true")
 }
 
 tasks.test { jbddTest("1.0") }

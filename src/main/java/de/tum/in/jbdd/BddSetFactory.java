@@ -16,7 +16,9 @@
  */
 package de.tum.in.jbdd;
 
+import java.util.ArrayList;
 import java.util.BitSet;
+import java.util.List;
 import java.util.function.IntFunction;
 import java.util.function.IntUnaryOperator;
 
@@ -35,18 +37,26 @@ public interface BddSetFactory {
     /** {@link #universe()} if {@code true}, {@link #empty()} otherwise. */
     BddSet of(boolean booleanConstant);
 
-    /** The single-element set containing {@code valuation} restricted to {@code support}. */
-    BddSet of(BitSet valuation, BitSet support);
+    /** The valuations in {@code cube}: those agreeing with it on its support. */
+    BddSet of(Cube cube);
 
-    /** The union of the single-element sets ({@link #of(BitSet, BitSet)}) given by {@code valuations}. */
+    /** The union of the cubes fixing {@code support} as each of {@code valuations} assigns it. */
     default BddSet of(Iterable<BitSet> valuations, BitSet support) {
+        List<Cube> cubes = new ArrayList<>();
+        valuations.forEach(valuation -> cubes.add(Cube.of(valuation, support)));
+        return union(cubes);
+    }
+
+    /** The valuations in any of {@code cubes}. */
+    default BddSet union(Iterable<Cube> cubes) {
         BddSet result = empty();
-        for (BitSet valuation : valuations) {
-            result = result.union(of(valuation, support));
+        for (Cube cube : cubes) {
+            result = result.union(of(cube));
         }
         return result;
     }
 
+    /** The union of {@code sets}. */
     default BddSet union(BddSet... sets) {
         if (sets.length == 0) {
             return empty();
@@ -58,6 +68,7 @@ public interface BddSetFactory {
         return set;
     }
 
+    /** The intersection of {@code sets}. */
     default BddSet intersection(BddSet... sets) {
         if (sets.length == 0) {
             return universe();
@@ -68,6 +79,10 @@ public interface BddSetFactory {
         }
         return set;
     }
+
+    /** The valuations that are in {@code then} where {@code condition} holds and in {@code otherwise}
+     * elsewhere - one recursion rather than the union of two intersections. */
+    BddSet ifThenElse(BddSet condition, BddSet then, BddSet otherwise);
 
     /**
      * Binds {@code quantifiedVariables} once - see {@link BddSet.Quantifier}. The set is read here and may

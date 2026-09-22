@@ -26,11 +26,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.common.collect.Sets;
 import java.util.BitSet;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.function.BiPredicate;
 import org.junit.jupiter.api.Test;
 
+@SuppressWarnings("PMD.CouplingBetweenObjects")
 class BddMapTest {
     @Test
     void testBddSetBasics() {
@@ -60,6 +64,85 @@ class BddMapTest {
         assertEquals(either, x0.complement().intersection(x1.complement()).complement());
         assertTrue(x0.intersects(x1));
         assertFalse(x0.intersection(x1.complement()).intersects(x1));
+    }
+
+    /** Every valuation of the first {@code variables} variables. */
+    private static List<BitSet> valuations(int variables) {
+        List<BitSet> valuations = new java.util.ArrayList<>();
+        for (long bits = 0; bits < 1L << variables; bits++) {
+            valuations.add(BitSet.valueOf(new long[] {bits}));
+        }
+        return valuations;
+    }
+
+    @Test
+    void testFusedSplitAgreesWithSplitThenRelabel() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BddSetFactory sets = ctx.bddSets();
+        Values<String> strings = ctx.bddMaps().create();
+        BddMap<String> map = strings.of("c")
+                .update(sets.var(0).intersection(sets.var(2)), "a")
+                .update(sets.var(1).intersection(sets.var(3)), "b");
+        BitSet splitVariables = BitSets.of(0, 1);
+
+        Values<List<String>> fused = ctx.bddMaps().create();
+        BddMap<List<String>> direct = map.splitMap(
+                splitVariables, fused, residual -> List.copyOf(new java.util.TreeSet<>(residual.values())));
+        BddMap<BddMap<String>> meta = map.split(splitVariables, ctx.bddMaps().create());
+        for (BitSet valuation : valuations(4)) {
+            BddMap<String> residual = meta.evaluate(valuation);
+            assertEquals(List.copyOf(new java.util.TreeSet<>(residual.values())), direct.evaluate(valuation));
+            assertEquals(map.evaluate(valuation), residual.evaluate(valuation));
+        }
+    }
+
+    @Test
+    void testVariableIfThenElseAgreesWithSetCondition() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BddSetFactory sets = ctx.bddSets();
+        Values<String> strings = ctx.bddMaps().create();
+        BddMap<String> then = strings.of("t").update(sets.var(2), "t2");
+        BddMap<String> otherwise = strings.of("o").update(sets.var(1).intersection(sets.var(3)), "o2");
+
+        // Variable 0 comes before both - a single node - and variable 2 does not - the general construction.
+        for (int variable : new int[] {0, 2, 4}) {
+            BddMap<String> expected = strings.ifThenElse(sets.var(variable), then, otherwise);
+            assertSame(expected, strings.ifThenElse(variable, then, otherwise));
+        }
+    }
+
+    @Test
+    void testNaryApplyAgreesWithBinaryFold() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BddSetFactory sets = ctx.bddSets();
+        Values<String> strings = ctx.bddMaps().create();
+        List<BddMap<String>> maps = List.of(
+                strings.of("").update(sets.var(0), "a"),
+                strings.of("").update(sets.var(1).intersection(sets.var(0).complement()), "b"),
+                strings.of("c").update(sets.var(2), ""),
+                strings.of("d").update(sets.var(0).intersection(sets.var(3)), "e"));
+
+        List<BddMapBinaryOperator<String>> operators = List.of(
+                BddMapBinaryOperator.of(String::concat),
+                // Lexicographic maximum, whose neutral value is the empty string - monoid claims commutativity.
+                BddMapBinaryOperator.monoid((left, right) -> left.compareTo(right) >= 0 ? left : right, ""),
+                BddMapBinaryOperator.commutative((left, right) -> left.compareTo(right) >= 0 ? left : right));
+        for (BddMapBinaryOperator<String> operator : operators) {
+            for (int count = 1; count <= maps.size(); count++) {
+                List<BddMap<String>> operands = maps.subList(0, count);
+                BddMap<String> folded = operands.get(0);
+                for (BddMap<String> operand : operands.subList(1, count)) {
+                    folded = folded.apply(operand, operator);
+                }
+                assertSame(folded, strings.apply(operands, operator));
+            }
+        }
+        assertEquals(
+                strings.of(""),
+                strings.apply(List.of(), BddMapBinaryOperator.monoid((left, right) -> left + right, "")));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> strings.apply(List.of(), BddMapBinaryOperator.of(String::concat)));
     }
 
     @Test
@@ -174,7 +257,7 @@ class BddMapTest {
         assertEquals(x0, m.where(s -> s.size() > 1));
 
         BddMap<Set<String>> union = m.map(s -> {
-            Set<String> withC = new java.util.HashSet<>(s);
+            Set<String> withC = new HashSet<>(s);
             withC.add("c");
             return Set.copyOf(withC);
         });
@@ -442,5 +525,69 @@ class BddMapTest {
         assertTrue(agree.contains(BitSets.of()));
         assertFalse(agree.contains(BitSets.of(0)));
         assertEquals(a.agreement(b), agree);
+    }
+
+    @Test
+    void testInverse() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BddSetFactory sets = ctx.bddSets();
+        BddSet x0 = sets.var(0);
+        BddSet x1 = sets.var(1);
+        Values<String> values = ctx.bddMaps().create();
+
+        BddMap<String> map = values.of("a").update(x0, "b").update(x0.intersection(x1), "c");
+        Map<String, BddSet> inverse = map.inverse();
+        assertEquals(map.values(), inverse.keySet());
+        for (String value : map.values()) {
+            assertEquals(map.domainOf(value), inverse.get(value));
+        }
+        assertEquals(Map.of("a", sets.universe()), values.of("a").inverse());
+    }
+
+    @Test
+    void testShannonDecomposition() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BddSetFactory sets = ctx.bddSets();
+        BddSet x0 = sets.var(0);
+        BddSet x1 = sets.var(1);
+        Values<String> values = ctx.bddMaps().create();
+
+        BddMap<String> map = values.ifThenElse(x0, values.of("c").update(x1, "a"), values.of("b"));
+        assertEquals(OptionalInt.of(0), map.decisionVariable());
+        assertEquals(values.of("c").update(x1, "a"), map.high());
+        assertEquals(values.of("b"), map.low());
+        assertEquals(OptionalInt.of(1), map.high().decisionVariable());
+        assertEquals(OptionalInt.empty(), map.low().decisionVariable());
+        assertThrows(IllegalStateException.class, () -> map.low().high());
+    }
+
+    @Test
+    void testAgreementAcrossNumberings() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BddSetFactory sets = ctx.bddSets();
+        BddSet x0 = sets.var(0);
+        BddSet x1 = sets.var(1);
+        Values<String> first = ctx.bddMaps().create();
+        Values<String> second = ctx.bddMaps().create();
+        // Numbered in a different order, so the raw terminals differ.
+        second.of("b");
+
+        BddMap<String> left = first.of("a").update(x0, "b");
+        BddMap<String> right = second.of("a").update(x0, "b");
+        assertNotEquals(left, right);
+        assertTrue(left.agreesWith(right));
+        assertTrue(right.agreesWith(left));
+        assertTrue(left.agreesWith(first.of("a").update(x0, "b")));
+
+        BddMap<String> differing = second.of("a").update(x0.intersection(x1), "b");
+        assertFalse(left.agreesWith(differing));
+        assertFalse(left.agreesWith(first.of("a").update(x0.intersection(x1), "b")));
+
+        // A predicate across value types: the string is never longer than the number says.
+        Values<Integer> lengths = ctx.bddMaps().create();
+        BddMap<Integer> bound = lengths.of(1);
+        assertTrue(left.allMatch(bound, (value, length) -> value.length() <= length));
+        assertFalse(left.update(x1, "bb").allMatch(bound, (value, length) -> value.length() <= length));
+        assertTrue(left.allMatch(left, BddMapBinaryPredicate.reflexive(String::equals)));
     }
 }

@@ -332,7 +332,7 @@ class BddTheories {
     @AfterAll
     static void statistics() {
         for (BinaryDd bdd : infoMap.keySet()) {
-            logger.log(Level.INFO, DecisionDiagram.formatStatistics(((StatisticsSource) bdd).statistics()));
+            logger.log(Level.INFO, Util.formatStatistics(((StatisticsSource) bdd).statistics()));
         }
     }
 
@@ -1179,15 +1179,60 @@ class BddTheories {
         BitSet support = bdd.support(function);
         assumeTrue(support.cardinality() <= 7);
 
-        List<BinaryPath> paths = new ArrayList<>();
+        List<Cube> paths = new ArrayList<>();
         bdd.forEachPath(function, path -> paths.add(path.copy()));
 
-        List<BinaryPath> cursorPaths = new ArrayList<>();
-        for (Cursor<BinaryPath> cursor = bdd.pathCursor(function); cursor.valid(); cursor.advance()) {
+        List<Cube> cursorPaths = new ArrayList<>();
+        for (Cursor<Cube> cursor = bdd.pathCursor(function); cursor.valid(); cursor.advance()) {
             cursorPaths.add(cursor.current().copy());
         }
 
         assertThat(cursorPaths, is(paths));
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("unary")
+    void testImplicants(UnaryDataPoint<BinaryDd> dataPoint) {
+        BinaryDd binaryDd = dataPoint.bdd;
+        int function = dataPoint.function;
+        assumeTrue(binaryDd.isValidFunction(function));
+        BinaryDd bdd = binaryDd;
+
+        List<Cube> implicants = bdd.implicants(function);
+
+        // Each cube is contained in the function, and their union is exactly it - of(Cube) is what makes
+        // that an identity rather than a per-assignment check.
+        int union = bdd.falseFunction();
+        bdd.reference(union);
+        for (Cube cube : implicants) {
+            int cubeFunction = bdd.reference(bdd.of(cube));
+            assertThat(cube.toString(), bdd.implies(cubeFunction, function), is(true));
+            union = bdd.updateWith(bdd.or(union, cubeFunction), union);
+            bdd.dereference(cubeFunction);
+        }
+        assertThat(implicants.toString(), union, is(function));
+        bdd.dereference(union);
+
+        // No cube says the same as another one with more literals.
+        for (Cube candidate : implicants) {
+            for (Cube other : implicants) {
+                if (other != candidate) { // NOPMD - identity is the point
+                    assertThat(other + " subsumes " + candidate, other.implies(candidate), is(false));
+                }
+            }
+        }
+
+        // Complementing yields a CNF cover of the same function.
+        int complement = bdd.reference(bdd.not(function));
+        int conjunction = bdd.reference(bdd.trueFunction());
+        for (Cube cube : bdd.implicants(complement)) {
+            int clause = bdd.reference(bdd.not(bdd.of(cube)));
+            conjunction = bdd.updateWith(bdd.and(conjunction, clause), conjunction);
+            bdd.dereference(clause);
+        }
+        assertThat(conjunction, is(function));
+        bdd.dereference(conjunction);
+        bdd.dereference(complement);
     }
 
     @ParameterizedTest(name = "{index}")
@@ -1305,6 +1350,34 @@ class BddTheories {
         bdd.dereference(notIf, ifImpliesThen, notIfImpliesThen);
 
         bdd.dereference(ifThenElse);
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("ternary")
+    void testNaryAndOr(TernaryDataPoint<BinaryDd> dataPoint) {
+        BinaryDd bdd = dataPoint.bdd;
+        int first = dataPoint.first;
+        int second = dataPoint.second;
+        int third = dataPoint.third;
+        assumeTrue(bdd.isValidFunction(first));
+        assumeTrue(bdd.isValidFunction(second));
+        assumeTrue(bdd.isValidFunction(third));
+
+        int and = bdd.reference(bdd.and(new int[] {first, second, third}));
+        int or = bdd.reference(bdd.or(new int[] {first, second, third}));
+        for (boolean[] valuation : assignmentsOver(bdd.support(first), bdd.support(second), bdd.support(third))) {
+            boolean firstValue = bdd.evaluate(first, valuation);
+            boolean secondValue = bdd.evaluate(second, valuation);
+            boolean thirdValue = bdd.evaluate(third, valuation);
+            assertThat(bdd.evaluate(and, valuation), is(firstValue && secondValue && thirdValue));
+            assertThat(bdd.evaluate(or, valuation), is(firstValue || secondValue || thirdValue));
+        }
+        bdd.dereference(and, or);
+
+        assertThat(bdd.and(new int[0]), is(bdd.trueFunction()));
+        assertThat(bdd.or(new int[0]), is(bdd.falseFunction()));
+        assertThat(bdd.and(new int[] {first}), is(first));
+        assertThat(bdd.or(new int[] {first}), is(first));
     }
 
     @ParameterizedTest(name = "{index}")
@@ -1651,7 +1724,8 @@ class BddTheories {
                 }
             }
 
-            int restricted = bdd.reference(bdd.restrict(function, restrictedVariables, restrictedVariableValues));
+            int restricted =
+                    bdd.reference(bdd.restrict(function, Cube.of(restrictedVariableValues, restrictedVariables)));
             int composed = bdd.compose(function, composeArray);
             assertThat(restricted, is(composed));
             bdd.dereference(restricted);

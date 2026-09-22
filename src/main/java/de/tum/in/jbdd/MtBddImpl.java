@@ -170,7 +170,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         // Before reclaimUnmarkedNodes, whose closing assertion checks the leaf marks too.
         BitSet reclaimedValues = table.clearUnreferencedLeaves();
         int reclaimedNodes = table.reclaimUnmarkedNodes();
-        assert table().isNoneMarked();
+        assert !Assertions.COSTLY_ASSERTIONS || table().isNoneMarked();
         notifyAfterGc(reclaimedNodes, reclaimedValues);
         assert accessGuard.release();
         return reclaimedNodes;
@@ -330,6 +330,10 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     int decisionLevel(int function) {
         assert isValidNonConstantFunction(function);
         return order.levelOfVariable(table.variable(function));
+    }
+
+    int decisionLevelOrMax(int function) {
+        return isConstant(function) ? Integer.MAX_VALUE : decisionLevel(function);
     }
 
     @Override
@@ -501,14 +505,14 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     }
 
     void rewriteLevelAfterSwap(int[] nodes, int count, int level, int variable) {
-        // See BddImpl's implementation for details, its the same recursion
+        // See BddImpl's implementation for details, it's the same recursion
         int rewriteCount = 0;
         for (int index = 0; index < count; index++) {
             int node = nodes[index];
             if (decidesOn(low(node), level) || decidesOn(high(node), level)) {
                 nodes[rewriteCount] = node;
                 rewriteCount += 1;
-                table.hideForRewrite(node);
+                table.rewriteHideAndUnlink(node);
             } else {
                 // Neither child mentions the variable moving up, so this node just descends a level.
                 table.addToVariableList(node, table.variable(node));
@@ -626,23 +630,22 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     }
 
     @Override
-    public void forEachPath(int function, PathConsumer action) {
+    public void forEachPath(int function, PathValueConsumer action) {
         assert accessGuard.acquire();
-        for (ValuedCursor<BinaryPath> cursor = pathCursor(function); cursor.valid(); cursor.advance()) {
+        for (ValuedCursor<Cube> cursor = pathCursor(function); cursor.valid(); cursor.advance()) {
             action.accept(cursor.current(), cursor.value());
         }
         assert accessGuard.release();
     }
 
     @Override
-    public ValuedCursor<BinaryPath> pathCursor(int function) {
+    public ValuedCursor<Cube> pathCursor(int function) {
         assert isValidFunction(function);
 
         if (isConstant(function)) {
             // The single, entirely unconstrained path.
             BitSet empty = BitSets.of();
-            return new ValuedCursor.SingletonValuedCursor<>(
-                    new BinaryPath(empty, empty), constantFunctionToValue(function));
+            return new ValuedCursor.SingletonValuedCursor<>(new Cube(empty, empty), constantFunctionToValue(function));
         }
         return new PathCursor(this, function);
     }
@@ -848,7 +851,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             MtBddBinaryOperator operator,
             MtBddCache.BinaryToIntCache applyCache,
             MtBddCache.@Nullable ApplySimplifyCache applySimplifyCache) {
-        assert bddDomain != bdd.falseFunction();
+        assert bddDomain != bdd.falseFunction() : "Constrain is undefined for an empty domain";
         boolean universeDomain = bddDomain == bdd.trueFunction();
         assert universeDomain || applySimplifyCache != null;
 
@@ -881,8 +884,6 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             int functionSwap = function1;
             function1 = function2;
             function2 = functionSwap;
-            constant1 = isConstant(function1);
-            constant2 = isConstant(function2);
         }
 
         int lookup = universeDomain
@@ -893,9 +894,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
         int hash = universeDomain ? applyCache.lookupHash() : applySimplifyCache.lookupHash();
 
-        // To simplify branching, use MAX_VALUE as a sentinel for "this side has no level left"
-        int level1 = constant1 ? Integer.MAX_VALUE : decisionLevel(function1);
-        int level2 = constant2 ? Integer.MAX_VALUE : decisionLevel(function2);
+        int level1 = decisionLevelOrMax(function1);
+        int level2 = decisionLevelOrMax(function2);
         int level = Math.min(level1, level2);
         assert level != Integer.MAX_VALUE : "Two constants are handled above";
         int domainLevel = universeDomain ? Integer.MAX_VALUE : bdd.decisionLevel(bddDomain);
@@ -1098,6 +1098,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             Arrays.sort(copy);
         }
         int[] values = new int[functions.length];
+        cache.initNaryApply(operator);
         int result = computeNaryApply(copy, values, operator, 0, new DepthPool<>(() -> new int[functions.length]));
         table.popFromWorkStack(functions.length);
         assert table.workStacksEmpty();
@@ -1143,6 +1144,17 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             return of(operator.applyAsInt(values));
         }
 
+        // Without a memo the recursion walks every combination of paths, which sharing makes exponential.
+        int lookup = cache.lookupNaryApply(functions);
+        if (lookup != placeholder()) {
+            return lookup;
+        }
+        int hash = cache.lookupHash();
+        // The operand array is rewritten in place below, so the cache needs one of its own.
+        // TODO Copying is costly; can we do it better? Write in a DepthPool?
+        //   The array only needs to survive until the cache put
+        int[] key = Arrays.copyOf(functions, functions.length);
+
         int[] highFunctions = highPool.get(depth);
         splitByLevel(functions, highFunctions, level);
 
@@ -1150,6 +1162,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         int high = table.pushToWorkStack(computeNaryApply(highFunctions, values, operator, depth + 1, highPool));
         int result = makeFunction(level, low, high);
         table.popFromWorkStack(2);
+        cache.putNaryApply(hash, key, result);
         return result;
     }
 
@@ -1191,6 +1204,56 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     }
 
     @Override
+    public boolean allMatch(int mtbddFunction1, int mtbddFunction2, MtBddBinaryPredicate predicate) {
+        assert isValidFunction(mtbddFunction1) && isValidFunction(mtbddFunction2);
+        assert accessGuard.acquire();
+        cache.initAllMatch(predicate);
+        boolean result = allMatchRecursive(mtbddFunction1, mtbddFunction2, predicate, cache.allMatchCache());
+        assert accessGuard.release();
+        return result;
+    }
+
+    // applyBooleanRecursive's shape, but nothing is built, so nothing needs protecting either.
+    private boolean allMatchRecursive(
+            int mtbddNode1,
+            int mtbddNode2,
+            MtBddBinaryPredicate predicate,
+            MtBddCache.BinaryToBooleanCache matchCache) {
+        if (predicate.reflexive && mtbddNode1 == mtbddNode2) {
+            return true;
+        }
+
+        if (isConstant(mtbddNode1) && isConstant(mtbddNode2)) {
+            return predicate.test(constantFunctionToValue(mtbddNode1), constantFunctionToValue(mtbddNode2));
+        }
+
+        if (predicate.symmetric && mtbddNode1 > mtbddNode2) {
+            int nodeSwap = mtbddNode1;
+            mtbddNode1 = mtbddNode2;
+            mtbddNode2 = nodeSwap;
+        }
+
+        int lookup = matchCache.lookup(mtbddNode1, mtbddNode2);
+        if (lookup != MtBddCache.BinaryToBooleanCache.MISS) {
+            return lookup == 1;
+        }
+        int hash = matchCache.lookupHash();
+
+        int level1 = decisionLevelOrMax(mtbddNode1);
+        int level2 = decisionLevelOrMax(mtbddNode2);
+        int level = Math.min(level1, level2);
+        int mtbddLow1 = lowIf(mtbddNode1, level1 == level);
+        int mtbddHigh1 = highIf(mtbddNode1, level1 == level);
+        int mtbddLow2 = lowIf(mtbddNode2, level2 == level);
+        int mtbddHigh2 = highIf(mtbddNode2, level2 == level);
+
+        boolean result = allMatchRecursive(mtbddLow1, mtbddLow2, predicate, matchCache)
+                && allMatchRecursive(mtbddHigh1, mtbddHigh2, predicate, matchCache);
+        matchCache.put(hash, mtbddNode1, mtbddNode2, result);
+        return result;
+    }
+
+    @Override
     public RegisteredOperation.Binary registerApplyBoolean(MtBddBinaryPredicate predicate) {
         return new MtBddOperations.ApplyBoolean(this, predicate);
     }
@@ -1215,9 +1278,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             return bdd.trueFunction();
         }
 
-        boolean constant1 = isConstant(mtbddNode1);
-        boolean constant2 = isConstant(mtbddNode2);
-        if (constant1 && constant2) {
+        if (isConstant(mtbddNode1) && isConstant(mtbddNode2)) {
             boolean holds = predicate.test(constantFunctionToValue(mtbddNode1), constantFunctionToValue(mtbddNode2));
             return holds ? bdd.trueFunction() : bdd.falseFunction();
         }
@@ -1228,8 +1289,6 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             int nodeSwap = mtbddNode1;
             mtbddNode1 = mtbddNode2;
             mtbddNode2 = nodeSwap;
-            constant1 = isConstant(mtbddNode1);
-            constant2 = isConstant(mtbddNode2);
         }
 
         int lookup = cache.lookupBinaryToBdd(booleanCache, mtbddNode1, mtbddNode2);
@@ -1238,32 +1297,13 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
         int hash = cache.lookupHash();
 
-        int level;
-        int mtbddLow1;
-        int mtbddHigh1;
-        int mtbddLow2;
-        int mtbddHigh2;
-        if (constant1) {
-            level = decisionLevel(mtbddNode2);
-            mtbddLow1 = mtbddNode1;
-            mtbddHigh1 = mtbddNode1;
-            mtbddLow2 = low(mtbddNode2);
-            mtbddHigh2 = high(mtbddNode2);
-        } else if (constant2) {
-            level = decisionLevel(mtbddNode1);
-            mtbddLow1 = low(mtbddNode1);
-            mtbddHigh1 = high(mtbddNode1);
-            mtbddLow2 = mtbddNode2;
-            mtbddHigh2 = mtbddNode2;
-        } else {
-            int level1 = decisionLevel(mtbddNode1);
-            int level2 = decisionLevel(mtbddNode2);
-            level = Math.min(level1, level2);
-            mtbddLow1 = lowIf(mtbddNode1, level1 == level);
-            mtbddHigh1 = highIf(mtbddNode1, level1 == level);
-            mtbddLow2 = lowIf(mtbddNode2, level2 == level);
-            mtbddHigh2 = highIf(mtbddNode2, level2 == level);
-        }
+        int level1 = decisionLevelOrMax(mtbddNode1);
+        int level2 = decisionLevelOrMax(mtbddNode2);
+        int level = Math.min(level1, level2);
+        int mtbddLow1 = lowIf(mtbddNode1, level1 == level);
+        int mtbddHigh1 = highIf(mtbddNode1, level1 == level);
+        int mtbddLow2 = lowIf(mtbddNode2, level2 == level);
+        int mtbddHigh2 = highIf(mtbddNode2, level2 == level);
 
         NodeTable bddTable = bdd.table();
         int bddLow = bddTable.pushToWorkStack(applyBooleanRecursive(mtbddLow1, mtbddLow2, predicate, booleanCache));
@@ -1347,7 +1387,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         int hash = cache.lookupHash();
 
         int bddLevel = bdd.decisionLevel(bddNode);
-        int mtbddLevel = isConstant(mtbddNode) ? Integer.MAX_VALUE : decisionLevel(mtbddNode);
+        int mtbddLevel = decisionLevelOrMax(mtbddNode);
         int level = Math.min(bddLevel, mtbddLevel);
 
         int mtbddLow = lowIf(mtbddNode, mtbddLevel == level);
@@ -1425,9 +1465,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             return RegisteredOperation.identity();
         }
         if (analysis.isRestrict) {
-            BitSet restrictSupport = analysis.restrictSupport;
-            BitSet restrictValues = analysis.restrictValues;
-            return function -> restrict(function, restrictSupport, restrictValues);
+            Cube restriction = analysis.restriction;
+            return function -> restrict(function, restriction);
         }
         return new MtBddOperations.Compose(
                 this, resolved, analysis.maxReplacedLevel, Util.protectNodes(bdd, resolved), false);
@@ -1441,9 +1480,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             return this::simplify;
         }
         if (analysis.isRestrict) {
-            BitSet restrictSupport = analysis.restrictSupport;
-            BitSet restrictValues = analysis.restrictValues;
-            return (function, domain) -> simplify(restrict(function, restrictSupport, restrictValues), domain);
+            Cube restriction = analysis.restriction;
+            return (function, domain) -> simplify(restrict(function, restriction), domain);
         }
         return new MtBddOperations.Compose(
                 this, resolved, analysis.maxReplacedLevel, Util.protectNodes(bdd, resolved), true);
@@ -1600,33 +1638,43 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     }
 
     @Override
-    public int restrict(int mtbddFunction, BitSet restrictedVariables, BitSet restrictedVariableValues) {
+    public int restrict(int mtbddFunction, Cube restriction) {
         assert isValidFunction(mtbddFunction);
 
-        if (restrictedVariables.isEmpty() || isConstant(mtbddFunction)) {
+        if (restriction.isEmpty() || isConstant(mtbddFunction)) {
             return mtbddFunction;
         }
 
+        int current = mtbddFunction;
+        while (!isConstant(current) && restriction.support.get(decisionVariable(current))) {
+            current = restriction.assignment.get(decisionVariable(current)) ? high(current) : low(current);
+        }
+        if (isConstant(current)) {
+            return current;
+        }
+        int maxRestrictedLevel = bdd.maxLevel(restriction.support);
+        if (decisionLevel(current) > maxRestrictedLevel) {
+            return current;
+        }
         assert accessGuard.acquire();
-        int maxRestrictedLevel = bdd.maxLevel(restrictedVariables);
-        cache.initRestrict(restrictedVariables, restrictedVariableValues);
         assert table.workStacksEmpty();
-        table.pushToWorkStack(mtbddFunction);
-        int result =
-                restrictRecursive(mtbddFunction, restrictedVariables, restrictedVariableValues, maxRestrictedLevel);
+        // TODO Unclear if this (and the BDD parallel) really is beneficial for caching as the decent depth
+        //  probably depends on the structure of the current argument
+        Cube remaining = order.literalsBelow(restriction, decisionLevel(current));
+        cache.initRestrict(remaining);
+        table.pushToWorkStack(current);
+        int result = restrictRecursive(current, remaining, maxRestrictedLevel);
         table.popFromWorkStack();
         assert table.workStacksEmpty();
         assert accessGuard.release();
         return result;
     }
 
-    private int restrictRecursive(
-            int mtbddNode, BitSet restrictedVariables, BitSet restrictedVariableValues, int maxRestrictedLevel) {
+    private int restrictRecursive(int mtbddNode, Cube restriction, int maxRestrictedLevel) {
         if (isConstant(mtbddNode)) {
             return mtbddNode;
         }
-        /* The level orders the descent and is what makeFunction wants; the two BitSets are indexed by
-         * the variable itself. */
+        // The level orders the descent and is what makeFunction wants; the cube is indexed by the variable.
         int nodeVariable = decisionVariable(mtbddNode);
         int level = levelOfVariable(nodeVariable);
         if (level > maxRestrictedLevel) {
@@ -1640,14 +1688,12 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         int hash = cache.lookupHash();
 
         int result;
-        if (restrictedVariables.get(nodeVariable)) {
-            int child = restrictedVariableValues.get(nodeVariable) ? high(mtbddNode) : low(mtbddNode);
-            result = restrictRecursive(child, restrictedVariables, restrictedVariableValues, maxRestrictedLevel);
+        if (restriction.support.get(nodeVariable)) {
+            int child = restriction.assignment.get(nodeVariable) ? high(mtbddNode) : low(mtbddNode);
+            result = restrictRecursive(child, restriction, maxRestrictedLevel);
         } else {
-            int low = table.pushToWorkStack(restrictRecursive(
-                    low(mtbddNode), restrictedVariables, restrictedVariableValues, maxRestrictedLevel));
-            int high = table.pushToWorkStack(restrictRecursive(
-                    high(mtbddNode), restrictedVariables, restrictedVariableValues, maxRestrictedLevel));
+            int low = table.pushToWorkStack(restrictRecursive(low(mtbddNode), restriction, maxRestrictedLevel));
+            int high = table.pushToWorkStack(restrictRecursive(high(mtbddNode), restriction, maxRestrictedLevel));
             result = makeFunction(level, low, high);
             table.popFromWorkStack(2);
         }
@@ -1688,8 +1734,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         int hash = cache.lookupHash();
 
         int bddLevel = bdd.decisionLevel(bddNode);
-        int thenLevel = isConstant(mtbddThenNode) ? Integer.MAX_VALUE : decisionLevel(mtbddThenNode);
-        int elseLevel = isConstant(mtbddElseNode) ? Integer.MAX_VALUE : decisionLevel(mtbddElseNode);
+        int thenLevel = decisionLevelOrMax(mtbddThenNode);
+        int elseLevel = decisionLevelOrMax(mtbddElseNode);
         int level = Math.min(bddLevel, Math.min(thenLevel, elseLevel));
 
         int bddLow = bdd.lowIf(bddNode, bddLevel == level);
@@ -1917,6 +1963,134 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         return result;
     }
 
+    @Override
+    public FunctionToFunctionMap splitBdd(int bddFunction, BitSet splitVariables) {
+        assert bdd.isValidFunction(bddFunction);
+        assert accessGuard.acquire();
+        assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
+
+        SplitBijection residuals = new SplitBijection(bdd.table());
+        int mtbddG = splitBdd(bddFunction, splitVariables, residuals);
+        bdd.table().popFromSecondaryWorkStack(residuals.size());
+        assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
+        assert accessGuard.release();
+
+        BitSet indices = new BitSet();
+        indices.set(0, residuals.size());
+        return new FunctionToFunctionMap() {
+            @Override
+            public int function() {
+                return mtbddG;
+            }
+
+            @Override
+            public int functionFor(int value) {
+                return residuals.getFunction(value);
+            }
+
+            @Override
+            public BitSet codomain() {
+                return indices;
+            }
+        };
+    }
+
+    // splitBdd with the residuals relabeled, as splitRelabeled does for split.
+    int splitBddRelabeled(int bddFunction, BitSet splitVariables, IntUnaryOperator relabeler) {
+        assert bdd.isValidFunction(bddFunction);
+        assert accessGuard.acquire();
+        assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
+
+        SplitBijection residuals = new SplitBijection(bdd.table());
+        int mtbddG = table.pushToWorkStack(splitBdd(bddFunction, splitVariables, residuals));
+        // As in splitRelabeled: once per distinct residual, up front.
+        int[] relabeledResiduals = new int[residuals.size()];
+        for (int index = 0; index < relabeledResiduals.length; index++) {
+            relabeledResiduals[index] = relabeler.applyAsInt(residuals.getFunction(index));
+        }
+        IntUnaryOperator combined = value -> relabeledResiduals[value];
+        cache.initMap(combined);
+        int result = computeMap(mtbddG, bdd.trueFunction(), combined, cache.mapCache(), cache.mapSimplifyCache());
+        table.popFromWorkStack();
+
+        bdd.table().popFromSecondaryWorkStack(residuals.size());
+        assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
+        assert accessGuard.release();
+        return result;
+    }
+
+    // The residuals are BDD functions, interned on the BDD's secondary work stack for the whole call.
+    private int splitBdd(int bddFunction, BitSet splitVariables, SplitBijection residuals) {
+        cache.initSplitBdd();
+        bdd.table().pushToWorkStack(bddFunction);
+        int result = splitBddRecursive(bddFunction, splitVariables, bdd.maxLevel(splitVariables), residuals);
+        bdd.table().popFromWorkStack();
+        return result;
+    }
+
+    private int splitBddRecursive(int bddFunction, BitSet splitVariables, int maxSplitLevel, SplitBijection residuals) {
+        int level = bdd.decisionLevelOrMax(bddFunction);
+        if (level > maxSplitLevel) {
+            return of(residuals.intern(bddFunction));
+        }
+
+        int lookup = cache.lookupSplitBdd(bddFunction);
+        if (lookup != placeholder()) {
+            return lookup;
+        }
+        int hash = cache.lookupHash();
+
+        int low = table.pushToWorkStack(
+                splitBddRecursive(bdd.low(bddFunction), splitVariables, maxSplitLevel, residuals));
+        int high = table.pushToWorkStack(
+                splitBddRecursive(bdd.high(bddFunction), splitVariables, maxSplitLevel, residuals));
+        int result = splitVariables.get(bdd.decisionVariable(bddFunction))
+                ? makeFunction(level, low, high)
+                : splitBddCombineRecursive(low, high, level, residuals);
+        table.popFromWorkStack(2);
+        cache.putSplitBdd(hash, bddFunction, result);
+        return result;
+    }
+
+    // splitCombineRecursive's shape, building the residual on the BDD side.
+    private int splitBddCombineRecursive(int lowFragment, int highFragment, int level, SplitBijection residuals) {
+        if (lowFragment == highFragment) {
+            return lowFragment;
+        }
+
+        int lookup = cache.lookupSplitBddCombine(lowFragment, highFragment, level);
+        if (lookup != placeholder()) {
+            return lookup;
+        }
+        int hash = cache.lookupHash();
+
+        int result;
+        if (isConstant(lowFragment) && isConstant(highFragment)) {
+            int lowResidual = residuals.getFunction(constantFunctionToValue(lowFragment));
+            int highResidual = residuals.getFunction(constantFunctionToValue(highFragment));
+            result = of(residuals.intern(bdd.makeFunction(level, lowResidual, highResidual)));
+        } else {
+            int lowLevel = decisionLevelOrMax(lowFragment);
+            int highLevel = decisionLevelOrMax(highFragment);
+            int splitLevel = Math.min(lowLevel, highLevel);
+
+            int low = table.pushToWorkStack(splitBddCombineRecursive(
+                    lowIf(lowFragment, lowLevel == splitLevel),
+                    lowIf(highFragment, highLevel == splitLevel),
+                    level,
+                    residuals));
+            int high = table.pushToWorkStack(splitBddCombineRecursive(
+                    highIf(lowFragment, lowLevel == splitLevel),
+                    highIf(highFragment, highLevel == splitLevel),
+                    level,
+                    residuals));
+            result = makeFunction(splitLevel, low, high);
+            table.popFromWorkStack(2);
+        }
+        cache.putSplitBddCombine(hash, lowFragment, highFragment, level, result);
+        return result;
+    }
+
     private int splitRecursive(int mtbddNode, BitSet splitVariables, int maxSplitLevel, SplitBijection bijection) {
         if (isConstant(mtbddNode)) {
             return of(bijection.intern(mtbddNode));
@@ -1963,8 +2137,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             int newH = makeFunction(level, lowH, highH);
             result = of(bijection.intern(newH));
         } else {
-            int lowLevel = isConstant(lowFragment) ? Integer.MAX_VALUE : decisionLevel(lowFragment);
-            int highLevel = isConstant(highFragment) ? Integer.MAX_VALUE : decisionLevel(highFragment);
+            int lowLevel = decisionLevelOrMax(lowFragment);
+            int highLevel = decisionLevelOrMax(highFragment);
             int splitLevel = Math.min(lowLevel, highLevel);
 
             int lowLow = lowIf(lowFragment, lowLevel == splitLevel);
@@ -2255,7 +2429,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         statistics.put("mtbdd_allocated_values", allocatedValues.cardinality());
         statistics.put("mtbdd_value_triggered_collections", valueTriggeredCollectionCount);
         assert accessGuard.release();
-        return DecisionDiagram.prefixStatistics(bdd.configuration().name(), statistics);
+        return Util.prefixStatistics(bdd.configuration().name(), statistics);
     }
 
     /**
@@ -2407,13 +2581,13 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
      * exception is a diagram that has been reordered, where the walk is by level and the caller wants
      * variables, and a translation buffer is unavoidable.
      */
-    private static final class PathCursor implements ValuedCursor<BinaryPath> {
+    private static final class PathCursor implements ValuedCursor<Cube> {
         private final MtBddImpl mtbdd;
         private final PathWalk path;
         /** Only on a reordered diagram, where the walk is by level and the caller wants variables. */
-        private final @Nullable BinaryPath translated;
+        private final @Nullable Cube translated;
         /** What {@link #current()} hands out: the translation buffer, or the walk's own sets wrapped. */
-        private final BinaryPath current;
+        private final Cube current;
 
         private boolean valid;
 
@@ -2423,9 +2597,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             this.path = new PathWalk(mtbdd, function, null);
             this.valid = path.onPath();
             this.translated =
-                    mtbdd.isReordered() ? new BinaryPath(new BitSet(variableCount), new BitSet(variableCount)) : null;
-            this.current =
-                    translated == null ? new BinaryPath(path.levelAssignment(), path.pathSupportLevels()) : translated;
+                    mtbdd.isReordered() ? new Cube(new BitSet(variableCount), new BitSet(variableCount)) : null;
+            this.current = translated == null ? new Cube(path.levelAssignment(), path.pathSupportLevels()) : translated;
             if (valid) {
                 translate();
             }
@@ -2437,14 +2610,14 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
 
         @Override
-        public BinaryPath current() {
-            assert valid : "current() is only defined while the cursor is valid";
+        public Cube current() {
+            assert valid; // current() is only defined while the cursor is valid
             return current;
         }
 
         @Override
         public int value() {
-            assert valid : "value() is only defined while the cursor is valid";
+            assert valid; // value() is only defined while the cursor is valid
             return path.pathValue();
         }
 
@@ -2509,13 +2682,13 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
 
         @Override
         public BitSet current() {
-            assert valid : "current() is only defined while the cursor is valid";
+            assert valid; // current() is only defined while the cursor is valid
             return translated == null ? path.levelAssignment() : translated;
         }
 
         @Override
         public int value() {
-            assert valid : "value() is only defined while the cursor is valid";
+            assert valid; // value() is only defined while the cursor is valid
             return path.pathValue();
         }
 

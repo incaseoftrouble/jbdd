@@ -210,6 +210,7 @@ public final class BitSets {
         }
     }
 
+    @FunctionalInterface
     public interface BitSetIndexConsumer {
         void accept(int value, int index);
     }

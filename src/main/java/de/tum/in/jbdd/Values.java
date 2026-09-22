@@ -55,6 +55,20 @@ public interface Values<V> {
      * must be over this numbering. */
     BddMap<V> ifThenElse(BddSet condition, BddMap<V> then, BddMap<V> otherwise);
 
+    /**
+     * {@link #ifThenElse(BddSet, BddMap, BddMap)} on the existing {@code variable}: a single node when it comes
+     * before everything either map decides on, which is how a map is built from the top down.
+     */
+    BddMap<V> ifThenElse(int variable, BddMap<V> then, BddMap<V> otherwise);
+
+    /**
+     * {@code operator} folded over {@code maps} at every valuation, in one traversal rather than one per
+     * operand. {@code operator} must be associative; declared commutativity lets the operands be reordered,
+     * a declared neutral value drops operands, and a declared absorbing one ends the fold. No maps is the
+     * neutral value, which must then be declared. All {@code maps} must be over this numbering.
+     */
+    BddMap<V> apply(List<? extends BddMap<V>> maps, BddMapBinaryOperator<V> operator);
+
     /** The map yielding, at each valuation, the list of {@code maps}' values there - see {@link
      * MtBdd#cartesianProduct}. All {@code maps} must be over this numbering. */
     BddMap<List<V>> cartesianProduct(List<? extends BddMap<V>> maps, Values<List<V>> destination);

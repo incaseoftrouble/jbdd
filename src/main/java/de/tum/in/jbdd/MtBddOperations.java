@@ -87,10 +87,7 @@ final class MtBddOperations {
             // As BddOperations.Compose: the cut-off it holds is a level, and its caches used the old one.
             maxReplacedLevel = mtbdd.bddImpl().maxReplacedLevel(bddVariableMapping);
             // see BooleanCache#orderChanged
-            composeCache.invalidate();
-            if (composeSimplifyCache != null) {
-                composeSimplifyCache.invalidate();
-            }
+            invalidateCaches();
         }
 
         @Override
@@ -149,8 +146,20 @@ final class MtBddOperations {
             }
         }
 
+        private void invalidateCaches() {
+            composeCache.invalidate();
+            if (composeSimplifyCache != null) {
+                composeSimplifyCache.invalidate();
+            }
+        }
+
         @SuppressWarnings({"PMD.CompareObjectsWithEquals", "ObjectEquality"})
         private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            if (mtbdd.variableOrder().isReordering()) {
+                // See BooleanCache#onBddNodesInvalidated.
+                invalidateCaches();
+                return;
+            }
             if (invalidatedNodes == 0 && reclaimedValues.isEmpty()) {
                 return;
             }
@@ -232,6 +241,14 @@ final class MtBddOperations {
 
         @SuppressWarnings({"PMD.CompareObjectsWithEquals", "ObjectEquality"})
         private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            if (mtbdd.variableOrder().isReordering()) {
+                // See BooleanCache#onBddNodesInvalidated.
+                mapCache.invalidate();
+                if (mapSimplifyCache != null) {
+                    mapSimplifyCache.invalidate();
+                }
+                return;
+            }
             if (invalidatedNodes == 0 && reclaimedValues.isEmpty()) {
                 return;
             }
@@ -296,6 +313,11 @@ final class MtBddOperations {
 
         @SuppressWarnings({"PMD.CompareObjectsWithEquals", "ObjectEquality"})
         private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            if (mtbdd.variableOrder().isReordering()) {
+                // See BooleanCache#onBddNodesInvalidated.
+                mapBooleanCache.invalidate();
+                return;
+            }
             if (invalidatedNodes == 0 && reclaimedValues.isEmpty()) {
                 return;
             }
@@ -351,6 +373,11 @@ final class MtBddOperations {
 
         @SuppressWarnings({"PMD.CompareObjectsWithEquals", "ObjectEquality"})
         private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            if (mtbdd.variableOrder().isReordering()) {
+                // See BooleanCache#onBddNodesInvalidated.
+                applyBooleanCache.invalidate();
+                return;
+            }
             if (invalidatedNodes == 0 && reclaimedValues.isEmpty()) {
                 return;
             }
@@ -426,6 +453,14 @@ final class MtBddOperations {
 
         @SuppressWarnings({"PMD.CompareObjectsWithEquals", "ObjectEquality"})
         private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            if (mtbdd.variableOrder().isReordering()) {
+                // See BooleanCache#onBddNodesInvalidated.
+                applyCache.invalidate();
+                if (applySimplifyCache != null) {
+                    applySimplifyCache.invalidate();
+                }
+                return;
+            }
             if (invalidatedNodes == 0 && reclaimedValues.isEmpty()) {
                 return;
             }

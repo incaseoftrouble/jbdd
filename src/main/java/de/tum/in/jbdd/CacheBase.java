@@ -60,15 +60,14 @@ public abstract class CacheBase {
      * worthwhile.
      */
     protected void prune(boolean attemptPruning, IntPredicate validityCheck) {
-        if (cacheInvalid || !cacheDependenciesValid.getAsBoolean()) {
-            cacheInvalid = true;
+        if (cacheInvalid) {
             return;
         }
         if (statistics.putCountSinceClear() == 0) {
             assert isEmpty();
             return;
         }
-        if (!attemptPruning || statistics.putCountSinceClear() < size() / 4) {
+        if (!attemptPruning || !cacheDependenciesValid.getAsBoolean() || statistics.putCountSinceClear() < size() / 4) {
             cacheInvalid = true;
             return;
         }
@@ -106,7 +105,7 @@ public abstract class CacheBase {
             cacheInvalid = false;
             assert isEmpty();
         }
-        assert allEntriesValid();
+        assert !Assertions.COSTLY_ASSERTIONS || allEntriesValid();
         assert !cacheInvalid;
     }
 

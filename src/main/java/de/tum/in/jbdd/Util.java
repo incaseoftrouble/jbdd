@@ -24,6 +24,7 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 import org.jspecify.annotations.Nullable;
 
 final class Util {
@@ -41,6 +42,24 @@ final class Util {
 
     static boolean binarySymmetricWellOrdered(int node1, int node2) {
         return node1 <= node2;
+    }
+
+    /** Sorted {@code key=value} lines, which is what a statistics map is read as. */
+    static String formatStatistics(Map<String, Object> statistics) {
+        return statistics.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(e -> String.format("%s=%s", e.getKey(), e.getValue()))
+                .collect(Collectors.joining("\n"));
+    }
+
+    /** Puts {@code name} in front of every key, so several structures can be read side by side. */
+    static Map<String, Object> prefixStatistics(String name, Map<String, Object> statistics) {
+        if (name.isEmpty()) {
+            return statistics;
+        }
+        return statistics.entrySet().stream()
+                .collect(Collectors.toUnmodifiableMap(
+                        e -> String.format("%s_%s", name, e.getKey()), Map.Entry::getValue));
     }
 
     static void registerForCleanupStatistics(StatisticsSource owner, @Nullable String name) {
@@ -95,8 +114,7 @@ final class Util {
                 return false;
             }
             Map<String, Object> statistics = owner.statistics();
-            logger.info(() ->
-                    String.format("CACHE STATISTICS (%s):\n%s", label, DecisionDiagram.formatStatistics(statistics)));
+            logger.info(() -> String.format("CACHE STATISTICS (%s):\n%s", label, formatStatistics(statistics)));
             return true;
         }
     }

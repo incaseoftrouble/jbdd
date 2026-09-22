@@ -54,6 +54,7 @@ final class MtBddCache implements VariableOrderObserver {
     private int mapReuseCount = 0;
     private int mapBooleanReuseCount = 0;
     private int applyBooleanReuseCount = 0;
+    private int allMatchReuseCount = 0;
     private int composeReuseCount = 0;
     private int restrictReuseCount = 0;
     private int reachesMatchReuseCount = 0;
@@ -70,6 +71,8 @@ final class MtBddCache implements VariableOrderObserver {
     private final BinaryToBddCache agreementCache;
     private final BinaryToBddCache applyBooleanCache;
     private @Nullable MtBddBinaryPredicate currentApplyBooleanPredicate;
+    private final BinaryToBooleanCache allMatchCache;
+    private @Nullable MtBddBinaryPredicate currentAllMatchPredicate;
     private final MtbddBddToIntCache simplifyCache;
     private final MtbddBddToIntCache constrainCache;
     private final UpdateCache updateCache;
@@ -78,13 +81,16 @@ final class MtBddCache implements VariableOrderObserver {
     private final MtbddBddToIntCache composeSimplifyCache;
     private int[] composeArray = EMPTY_INT_ARRAY;
     private final UnaryToIntCache restrictCache;
-    private BitSet restrictVariables = new BitSet(0);
-    private BitSet restrictValues = new BitSet(0);
+    private Cube restriction = Cube.empty();
     private final BitSet noValueMatchesCache = new BitSet();
     private @Nullable IntPredicate currentAnyValueMatches;
     private final UnaryToIntCache splitCache;
     private final SplitCombineCache splitCombineCache;
+    private final BddToMtbddCache splitBddCache;
+    private final SplitCombineCache splitBddCombineCache;
     private final MtbddNodesToIntCache cartesianProductCache;
+    private final MtbddNodesToIntCache naryApplyCache;
+    private @Nullable MtBddNaryOperator currentNaryApplyOp;
     private final UnaryToObjectCache<BigInteger> satisfactionCache;
     private @Nullable IntPredicate currentCountPredicate;
 
@@ -104,6 +110,7 @@ final class MtBddCache implements VariableOrderObserver {
         mapBooleanCache = new UnaryToBddCache(mtbdd, bdd);
         agreementCache = new BinaryToBddCache(mtbdd, bdd);
         applyBooleanCache = new BinaryToBddCache(mtbdd, bdd);
+        allMatchCache = new BinaryToBooleanCache(mtbdd, bdd);
         simplifyCache = new MtbddBddToIntCache(mtbdd, bdd);
         constrainCache = new MtbddBddToIntCache(mtbdd, bdd);
         updateCache = new UpdateCache(mtbdd, bdd);
@@ -111,7 +118,10 @@ final class MtBddCache implements VariableOrderObserver {
         restrictCache = new UnaryToIntCache(mtbdd, bdd);
         splitCache = new UnaryToIntCache(mtbdd, bdd);
         splitCombineCache = new SplitCombineCache(mtbdd, bdd);
+        splitBddCache = new BddToMtbddCache(mtbdd, bdd);
+        splitBddCombineCache = new SplitCombineCache(mtbdd, bdd);
         cartesianProductCache = new MtbddNodesToIntCache(mtbdd, bdd);
+        naryApplyCache = new MtbddNodesToIntCache(mtbdd, bdd);
         satisfactionCache = new UnaryToObjectCache<>(mtbdd, bdd);
 
         // Like BooleanCache's own composeValid: composeArray holds Bdd function ids the caller supplies,
@@ -140,6 +150,7 @@ final class MtBddCache implements VariableOrderObserver {
                 entry("map_boolean", mapBooleanCache),
                 entry("agreement", agreementCache),
                 entry("apply_boolean", applyBooleanCache),
+                entry("all_match", allMatchCache),
                 entry("simplify", simplifyCache),
                 entry("constrain", constrainCache),
                 entry("update", updateCache),
@@ -148,7 +159,10 @@ final class MtBddCache implements VariableOrderObserver {
                 entry("restrict", restrictCache),
                 entry("split", splitCache),
                 entry("split_combine", splitCombineCache),
+                entry("split_bdd", splitBddCache),
+                entry("split_bdd_combine", splitBddCombineCache),
                 entry("cartesian_product", cartesianProductCache),
+                entry("nary_apply", naryApplyCache),
                 entry("count", satisfactionCache));
 
         tableSizeChanged(0, BitSets.of());
@@ -207,10 +221,12 @@ final class MtBddCache implements VariableOrderObserver {
         updateCache.grow(ternarySize);
         ifThenElseCache.grow(ternarySize);
         splitCombineCache.grow(ternarySize);
+        splitBddCombineCache.grow(ternarySize);
 
         int ephemeralSize = size / configuration.mtbddCacheEphemeralMultiplier();
         applyCache.grow(ephemeralSize);
         applyBooleanCache.grow(ephemeralSize);
+        allMatchCache.grow(ephemeralSize);
         applySimplifyCache.grow(ephemeralSize);
         mapCache.grow(ephemeralSize);
         mapSimplifyCache.grow(ephemeralSize);
@@ -218,7 +234,9 @@ final class MtBddCache implements VariableOrderObserver {
         composeSimplifyCache.grow(ephemeralSize);
         restrictCache.grow(ephemeralSize);
         splitCache.grow(ephemeralSize);
+        splitBddCache.grow(ephemeralSize);
         cartesianProductCache.grow(ephemeralSize);
+        naryApplyCache.grow(ephemeralSize);
     }
 
     void variablesChanged() {
@@ -263,11 +281,14 @@ final class MtBddCache implements VariableOrderObserver {
     }
 
     void onBooleanNodesInvalidated(int invalidatedNodes) {
+        if (bdd.isReordering()) {
+            // See BooleanCache#onBddNodesInvalidated.
+            invalidate();
+            return;
+        }
         if (invalidatedNodes == 0) {
             return;
         }
-        // See BooleanCache#onBddNodesInvalidated: a freed id is exactly when the mapping can lie.
-        composeArray = EMPTY_INT_ARRAY;
         // If we reclaimed a lot of nodes, we won't be able to save much, so don't try
         boolean preserve = bdd.configuration().useCachePreserve() && invalidatedNodes < bdd.tableSize() / 2;
         for (MtbddCacheStorage cache : caches()) {
@@ -276,6 +297,11 @@ final class MtBddCache implements VariableOrderObserver {
     }
 
     void onMultiTerminalNodesInvalidated(int invalidatedNodes, BitSet reclaimedValues) {
+        if (bdd.isReordering()) {
+            // See BooleanCache#onBddNodesInvalidated.
+            invalidate();
+            return;
+        }
         if (invalidatedNodes == 0 && reclaimedValues.isEmpty()) {
             return;
         }
@@ -315,6 +341,15 @@ final class MtBddCache implements VariableOrderObserver {
         }
         currentApplyBooleanPredicate = predicate;
         applyBooleanCache.invalidate();
+    }
+
+    void initAllMatch(MtBddBinaryPredicate predicate) {
+        if (predicate.equals(currentAllMatchPredicate)) {
+            allMatchReuseCount += 1;
+            return;
+        }
+        currentAllMatchPredicate = predicate;
+        allMatchCache.invalidate();
     }
 
     void initMapBoolean(IntPredicate predicate) {
@@ -358,14 +393,13 @@ final class MtBddCache implements VariableOrderObserver {
         composeSimplifyCache.invalidate();
     }
 
-    void initRestrict(BitSet restrictedVariables, BitSet restrictedVariableValues) {
-        if (restrictedVariables.equals(this.restrictVariables)
-                && restrictedVariableValues.equals(this.restrictValues)) {
+    void initRestrict(Cube restriction) {
+        if (restriction.equals(this.restriction)) {
             restrictReuseCount += 1;
             return;
         }
-        this.restrictVariables = BitSets.copyOf(restrictedVariables);
-        this.restrictValues = BitSets.copyOf(restrictedVariableValues);
+        // A copy: the caller's cube may be a walk's working state.
+        this.restriction = restriction.copy();
         restrictCache.invalidate();
     }
 
@@ -401,6 +435,19 @@ final class MtBddCache implements VariableOrderObserver {
         cartesianProductCache.invalidate();
     }
 
+    void initNaryApply(MtBddNaryOperator op) {
+        if (op.equals(currentNaryApplyOp)) {
+            return;
+        }
+        currentNaryApplyOp = op;
+        naryApplyCache.invalidate();
+    }
+
+    void initSplitBdd() {
+        splitBddCache.invalidate();
+        splitBddCombineCache.invalidate();
+    }
+
     void initSplit() {
         splitCache.invalidate();
         splitCombineCache.invalidate();
@@ -423,6 +470,10 @@ final class MtBddCache implements VariableOrderObserver {
 
     BinaryToBddCache applyBooleanCache() {
         return applyBooleanCache;
+    }
+
+    BinaryToBooleanCache allMatchCache() {
+        return allMatchCache;
     }
 
     int lookupBinaryToBdd(BinaryToBddCache cache, int function1, int function2) {
@@ -484,11 +535,48 @@ final class MtBddCache implements VariableOrderObserver {
         return result;
     }
 
+    int lookupSplitBdd(int bddFunction) {
+        assert bdd.isValidNonConstantFunction(bddFunction);
+        int result = splitBddCache.lookup(bddFunction);
+        lookupHash = splitBddCache.lookupHash();
+        return result;
+    }
+
+    void putSplitBdd(int hash, int bddFunction, int result) {
+        assert bdd.isValidNonConstantFunction(bddFunction) && mtbdd.isValidFunction(result);
+        splitBddCache.put(hash, bddFunction, result);
+    }
+
+    int lookupSplitBddCombine(int lowFragment, int highFragment, int level) {
+        assert mtbdd.isValidFunction(lowFragment) && mtbdd.isValidFunction(highFragment);
+        int result = splitBddCombineCache.lookup(lowFragment, highFragment, level);
+        lookupHash = splitBddCombineCache.lookupHash();
+        return result;
+    }
+
+    void putSplitBddCombine(int hash, int lowFragment, int highFragment, int level, int result) {
+        assert mtbdd.isValidFunction(lowFragment) && mtbdd.isValidFunction(highFragment);
+        splitBddCombineCache.put(hash, lowFragment, highFragment, level, result);
+    }
+
     int lookupSplitCombine(int lowFragment, int highFragment, int variable) {
         assert mtbdd.isValidFunction(lowFragment) && mtbdd.isValidFunction(highFragment);
         int result = splitCombineCache.lookup(lowFragment, highFragment, variable);
         lookupHash = splitCombineCache.lookupHash();
         return result;
+    }
+
+    int lookupNaryApply(int[] functions) {
+        assert Arrays.stream(functions).allMatch(mtbdd::isValidFunction);
+        int result = naryApplyCache.lookup(functions);
+        lookupHash = naryApplyCache.lookupHash();
+        return result;
+    }
+
+    // Retains functions as the key, as putCartesianProduct does.
+    void putNaryApply(int hash, int[] functions, int result) {
+        assert Arrays.stream(functions).allMatch(mtbdd::isValidFunction) && mtbdd.isValidFunction(result);
+        naryApplyCache.put(hash, functions, result);
     }
 
     int lookupCartesianProduct(int[] functions) {
@@ -577,6 +665,7 @@ final class MtBddCache implements VariableOrderObserver {
         statistics.put("mtbdd_cache_map_reuse_count", String.valueOf(mapReuseCount));
         statistics.put("mtbdd_cache_map_boolean_reuse_count", String.valueOf(mapBooleanReuseCount));
         statistics.put("mtbdd_cache_apply_boolean_reuse_count", String.valueOf(applyBooleanReuseCount));
+        statistics.put("mtbdd_cache_all_match_reuse_count", String.valueOf(allMatchReuseCount));
         statistics.put("mtbdd_cache_compose_reuse_count", String.valueOf(composeReuseCount));
         statistics.put("mtbdd_cache_restrict_reuse_count", String.valueOf(restrictReuseCount));
         statistics.put("mtbdd_cache_reaches_match_reuse_count", String.valueOf(reachesMatchReuseCount));
@@ -665,6 +754,7 @@ final class MtBddCache implements VariableOrderObserver {
             lookupHash = hash;
             int binStart = binSize * binIndex(hash);
             if (function1 == cache[binStart] && function2 == cache[binStart + 1]) {
+                assert isValid(binStart);
                 statistics.hit();
                 return cache[binStart + 2];
             }
@@ -680,6 +770,46 @@ final class MtBddCache implements VariableOrderObserver {
             cache[binStart] = function1;
             cache[binStart + 1] = function2;
             cache[binStart + 2] = result;
+        }
+    }
+
+    /** A BDD key to an MTBDD result. */
+    static final class BddToMtbddCache extends IntCache {
+        BddToMtbddCache(MtBddImpl mtbdd, BddImpl bdd) {
+            super(mtbdd, bdd, 1, 2);
+        }
+
+        @Override
+        protected boolean isValidBdd(int binStart) {
+            return bdd.isValidFunction(cache[binStart]);
+        }
+
+        @Override
+        protected boolean isValidMtbdd(int binStart) {
+            return mtbdd.isValidFunction(cache[binStart + 1]);
+        }
+
+        int lookup(int function) {
+            ensureValid();
+            int hash = HashUtil.hash(function);
+            lookupHash = hash;
+            int binStart = binSize * binIndex(hash);
+            if (function == cache[binStart]) {
+                assert isValid(binStart);
+                statistics.hit();
+                return cache[binStart + 1];
+            }
+            statistics.miss();
+            return mtbdd.placeholder();
+        }
+
+        void put(int hash, int function, int result) {
+            ensureValid();
+            assert hash == HashUtil.hash(function);
+            statistics.put();
+            int binStart = binSize * binIndex(hash);
+            cache[binStart] = function;
+            cache[binStart + 1] = result;
         }
     }
 
@@ -708,6 +838,7 @@ final class MtBddCache implements VariableOrderObserver {
             lookupHash = hash;
             int binStart = binSize * binIndex(hash);
             if (function == cache[binStart]) {
+                assert isValid(binStart);
                 statistics.hit();
                 return cache[binStart + 1];
             }
@@ -746,6 +877,7 @@ final class MtBddCache implements VariableOrderObserver {
             lookupHash = hash;
             int binStart = binSize * binIndex(hash);
             if (function == cache[binStart]) {
+                assert isValid(binStart);
                 statistics.hit();
                 return cache[binStart + 1];
             }
@@ -784,6 +916,7 @@ final class MtBddCache implements VariableOrderObserver {
             lookupHash = hash;
             int binStart = binSize * binIndex(hash);
             if (function1 == cache[binStart] && function2 == cache[binStart + 1]) {
+                assert isValid(binStart);
                 statistics.hit();
                 return cache[binStart + 2];
             }
@@ -799,6 +932,49 @@ final class MtBddCache implements VariableOrderObserver {
             cache[binStart] = function1;
             cache[binStart + 1] = function2;
             cache[binStart + 2] = result;
+        }
+    }
+
+    /** Two MTBDD keys to a bit - an answer, not a function, so only the keys can go stale. */
+    static final class BinaryToBooleanCache extends IntCache {
+        static final int MISS = -1;
+
+        BinaryToBooleanCache(MtBddImpl mtbdd, BddImpl bdd) {
+            super(mtbdd, bdd, 2, 3);
+        }
+
+        @Override
+        protected boolean isValidBdd(int binStart) {
+            return true;
+        }
+
+        @Override
+        protected boolean isValidMtbdd(int binStart) {
+            return mtbdd.isValidFunction(cache[binStart]) && mtbdd.isValidFunction(cache[binStart + 1]);
+        }
+
+        int lookup(int function1, int function2) {
+            ensureValid();
+            int hash = HashUtil.hash(function1, function2);
+            lookupHash = hash;
+            int binStart = binSize * binIndex(hash);
+            if (function1 == cache[binStart] && function2 == cache[binStart + 1]) {
+                assert isValid(binStart);
+                statistics.hit();
+                return cache[binStart + 2];
+            }
+            statistics.miss();
+            return MISS;
+        }
+
+        void put(int hash, int function1, int function2, boolean result) {
+            ensureValid();
+            assert hash == HashUtil.hash(function1, function2);
+            statistics.put();
+            int binStart = binSize * binIndex(hash);
+            cache[binStart] = function1;
+            cache[binStart + 1] = function2;
+            cache[binStart + 2] = result ? 1 : 0;
         }
     }
 
@@ -827,6 +1003,7 @@ final class MtBddCache implements VariableOrderObserver {
             lookupHash = hash;
             int binStart = binSize * binIndex(hash);
             if (function == cache[binStart] && domain == cache[binStart + 1]) {
+                assert isValid(binStart);
                 statistics.hit();
                 return cache[binStart + 2];
             }
@@ -874,6 +1051,7 @@ final class MtBddCache implements VariableOrderObserver {
             lookupHash = hash;
             int binStart = binSize * binIndex(hash);
             if (function1 == cache[binStart] && function2 == cache[binStart + 1] && domain == cache[binStart + 2]) {
+                assert isValid(binStart);
                 statistics.hit();
                 return cache[binStart + 3];
             }
@@ -914,6 +1092,7 @@ final class MtBddCache implements VariableOrderObserver {
             lookupHash = hash;
             int binStart = binSize * binIndex(hash);
             if (function == cache[binStart] && bddAssignments == cache[binStart + 1] && value == cache[binStart + 2]) {
+                assert isValid(binStart);
                 statistics.hit();
                 return cache[binStart + 3];
             }
@@ -958,6 +1137,7 @@ final class MtBddCache implements VariableOrderObserver {
             if (lowFragment == cache[binStart]
                     && highFragment == cache[binStart + 1]
                     && variable == cache[binStart + 2]) {
+                assert isValid(binStart);
                 statistics.hit();
                 return cache[binStart + 3];
             }
@@ -1000,6 +1180,7 @@ final class MtBddCache implements VariableOrderObserver {
             lookupHash = hash;
             int binStart = binSize * binIndex(hash);
             if (bddIf == cache[binStart] && mtbddThen == cache[binStart + 1] && mtbddElse == cache[binStart + 2]) {
+                assert isValid(binStart);
                 statistics.hit();
                 return cache[binStart + 3];
             }
@@ -1056,6 +1237,7 @@ final class MtBddCache implements VariableOrderObserver {
             int binIndex = binIndex(hash);
             int binStart = binSize * binIndex;
             if (function == cache[binStart]) {
+                assert isValid(binStart);
                 statistics.hit();
                 return (V) values[binIndex];
             }
@@ -1148,6 +1330,7 @@ final class MtBddCache implements VariableOrderObserver {
             lookupHash = hash;
             int index = binIndex(hash);
             if (Arrays.equals(key, cache[index])) {
+                assert isValid(index);
                 statistics.hit();
                 return values[index];
             }

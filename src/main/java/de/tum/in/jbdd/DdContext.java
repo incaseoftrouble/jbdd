@@ -71,4 +71,12 @@ public interface DdContext {
      * The content may change between versions; the values are primitives.
      */
     Map<String, Object> statistics();
+
+    /**
+     * Renders a statistics map - this one's, or an {@link Mdd}'s - as sorted {@code key=value} lines,
+     * which is what one is read as.
+     */
+    static String formatStatistics(Map<String, Object> statistics) {
+        return Util.formatStatistics(statistics);
+    }
 }

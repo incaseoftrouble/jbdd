@@ -22,7 +22,7 @@ package de.tum.in.jbdd;
 public interface ValuedCursor<E> extends Cursor<E> {
     /** A walk with nothing in it, for a function no assignment satisfies. */
     static <E> ValuedCursor<E> emptyValued() {
-        return new ValuedCursor<E>() {
+        return new ValuedCursor<>() {
             @Override
             public boolean valid() {
                 return false;
@@ -68,13 +68,13 @@ public interface ValuedCursor<E> extends Cursor<E> {
 
         @Override
         public E current() {
-            assert valid : "current() is only defined while the cursor is valid";
+            assert valid; // current() is only defined while the cursor is valid
             return element;
         }
 
         @Override
         public int value() {
-            assert valid : "value() is only defined while the cursor is valid";
+            assert valid; // value() is only defined while the cursor is valid
             return value;
         }
 
@@ -107,7 +107,7 @@ public interface ValuedCursor<E> extends Cursor<E> {
 
         @Override
         public int value() {
-            assert cursor.valid() : "value() is only defined while the cursor is valid";
+            assert cursor.valid(); // value() is only defined while the cursor is valid
             return value;
         }
 

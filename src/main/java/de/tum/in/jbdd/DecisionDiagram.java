@@ -17,9 +17,7 @@
 package de.tum.in.jbdd;
 
 import java.util.BitSet;
-import java.util.Map;
 import java.util.function.IntConsumer;
-import java.util.stream.Collectors;
 
 /**
  * Generic interface for (binary) decision diagrams, i.e. a data structure that represents functions mapping
@@ -192,22 +190,6 @@ public interface DecisionDiagram {
      * @see #forEachSupportVariable(int, IntConsumer)
      */
     void forEachSupportVariableFiltered(int function, BitSet filter, IntConsumer action);
-
-    static String formatStatistics(Map<String, Object> statistics) {
-        return statistics.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .map(e -> String.format("%s=%s", e.getKey(), e.getValue()))
-                .collect(Collectors.joining("\n"));
-    }
-
-    static Map<String, Object> prefixStatistics(String name, Map<String, Object> statistics) {
-        if (name.isEmpty()) {
-            return statistics;
-        }
-        return statistics.entrySet().stream()
-                .collect(Collectors.toUnmodifiableMap(
-                        e -> String.format("%s_%s", name, e.getKey()), Map.Entry::getValue));
-    }
 
     /**
      * A wrapper class to guard some function in an area where exceptions can occur. It increases

@@ -341,7 +341,7 @@ class MtBddTheories {
     @AfterAll
     static void statistics() {
         for (Context context : contexts) {
-            logger.log(Level.INFO, DecisionDiagram.formatStatistics(context.ddContext.statistics()));
+            logger.log(Level.INFO, Util.formatStatistics(context.ddContext.statistics()));
         }
     }
 
@@ -644,6 +644,36 @@ class MtBddTheories {
     }
 
     @ParameterizedTest(name = "{index}")
+    @MethodSource("intBinary")
+    void testAllMatchMatchesApplyBoolean(IntBinaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
+        BitSet relevant =
+                BitSets.union(dataPoint.leftTree.containedVariables(), dataPoint.rightTree.containedVariables());
+        // Every combination of the claims the traversal exploits: both, reflexive, neither, symmetric.
+        List<MtBddBinaryPredicate> predicates = List.of(
+                MtBddBinaryPredicate.equality(),
+                MtBddBinaryPredicate.of((a, b) -> a <= b, false, true),
+                MtBddBinaryPredicate.of((a, b) -> a < b, false, false),
+                MtBddBinaryPredicate.of((a, b) -> (a + b) % 2 == 0, true, false));
+        for (MtBddBinaryPredicate predicate : predicates) {
+            boolean expected = true;
+            for (boolean[] assignment : assignmentsOver(relevant)) {
+                if (!predicate.test(
+                        dataPoint.leftTree.evaluate(assignment), dataPoint.rightTree.evaluate(assignment))) {
+                    expected = false;
+                    break;
+                }
+            }
+            assertThat(mt.allMatch(dataPoint.left, dataPoint.right, predicate), is(expected));
+            // A second time, from a warm cache.
+            assertThat(mt.allMatch(dataPoint.left, dataPoint.right, predicate), is(expected));
+            assertThat(mt.applyBoolean(dataPoint.left, dataPoint.right, predicate) == bdd.trueFunction(), is(expected));
+        }
+        assertThat(mt.allMatch(dataPoint.left, dataPoint.left, MtBddBinaryPredicate.equality()), is(true));
+    }
+
+    @ParameterizedTest(name = "{index}")
     @MethodSource("intUnary")
     void testAgreementReflexive(IntUnaryDataPoint dataPoint) {
         MtBddImpl mt = dataPoint.context.mt;
@@ -859,7 +889,8 @@ class MtBddTheories {
     void testRestrictMatchesCompose(IntUnaryDataPoint dataPoint) {
         MtBddImpl mt = dataPoint.context.mt;
         BddImpl bdd = dataPoint.context.bdd;
-        int viaRestrict = mt.reference(mt.restrict(dataPoint.function, restrictedVariables, restrictedVariableValues));
+        int viaRestrict =
+                mt.reference(mt.restrict(dataPoint.function, Cube.of(restrictedVariableValues, restrictedVariables)));
         int[] mapping = new int[variableCount];
         for (int v = 0; v < variableCount; v++) {
             if (restrictedVariables.get(v)) {

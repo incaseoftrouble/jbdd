@@ -54,7 +54,7 @@ public class RandomBenchmark extends BaseBddBenchmark {
                         values.set(i, n.random.nextBoolean());
                     }
                 }
-                n.add(n.bdd.restrict(n.get(), mask, values));
+                n.add(n.bdd.restrict(n.get(), Cube.of(values, mask)));
             },
             n -> {
                 int[] compose = new int[Math.min(n.bdd.numberOfVariables(), 10)];

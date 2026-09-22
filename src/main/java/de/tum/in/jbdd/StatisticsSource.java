@@ -16,23 +16,14 @@
  */
 package de.tum.in.jbdd;
 
-abstract class ProtectedOperation implements RegisteredOperation {
-    private final ProtectionTracker.Protection protection;
+import java.util.Map;
 
-    ProtectedOperation(ProtectionTracker tracker, Runnable onRelease) {
-        this.protection = tracker.track(this, onRelease);
-    }
-
-    final boolean isReleased() {
-        return protection.isReleased();
-    }
-
-    @Override
-    public final void release() {
-        protection.releaseNow();
-    }
-
-    final void checkNotReleased() {
-        assert !isReleased(); // a released operation can no longer be used
-    }
+/**
+ * Reports the statistics of one structure. Not the public way to ask - that is {@link DdContext} for a
+ * BDD/MTBDD pair and {@link Mdd} for an MDD, both of which report a complete key space. This is what those
+ * are assembled from, and what {@link Util#registerForCleanupStatistics} logs.
+ */
+@FunctionalInterface
+interface StatisticsSource {
+    Map<String, Object> statistics();
 }

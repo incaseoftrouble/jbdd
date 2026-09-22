@@ -40,7 +40,6 @@ final class BooleanCache implements VariableOrderObserver {
     private final BooleanBase<?, ?> bdd;
     private int existsReuseCount = 0;
     private int restrictReuseCount = 0;
-    private int validityChecks = 0;
 
     private final BinaryToIntCache andCache;
     private final TernaryToIntCache andSimplifyCache;
@@ -60,8 +59,7 @@ final class BooleanCache implements VariableOrderObserver {
     private int[] composeArray = EMPTY_INT_ARRAY;
     private int composeReuseCount = 0;
     private final UnaryToIntCache restrictCache;
-    private BitSet restrictVariables = new BitSet(0);
-    private BitSet restrictValues = new BitSet(0);
+    private Cube restriction = Cube.empty();
     private final Map<String, IntCache> caches;
 
     private int lookupHash;
@@ -185,10 +183,9 @@ final class BooleanCache implements VariableOrderObserver {
 
     @Override
     public void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, BitSet movedVariables) {
-        // This fires after reordering. By construction, reordering sifts around until it hits a limit.
-        // With high probability, pruning runs happen in between, as every sift leaves garbage. These
-        // empty the caches through the prune hook anyway - even for a reordering that found nothing to move.
-        // Hence, we just invalidate.
+        /* Everything goes. Only the counts (ranging over the levels below their node) and constrain (deciding
+         * top-down) are wrong now; the rest hold in any order, reordering rewriting in place. But keeping them
+         * saves one clear at most: invalidation is lazy, and a reordering that collects has cleared them already. */
         invalidate();
     }
 
@@ -207,14 +204,16 @@ final class BooleanCache implements VariableOrderObserver {
     }
 
     void onBddNodesInvalidated(int invalidatedNodes) {
+        if (bdd.isReordering()) {
+            /* A reordering's swaps orphan the old nodes, so its collections reclaim most of what the caches name.
+             * One clear beats pruning repeatedly, and clearing on a growth too spares rehashing entries that will
+             * not survive either. */
+            invalidate();
+            return;
+        }
         if (invalidatedNodes == 0) {
             return;
         }
-        /* An id just came free and can be handed to an unrelated function, which is exactly what would
-         * make the remembered mapping compare equal while denoting something else - see initCompose. So
-         * forget it; the next call rebuilds it and clears the caches keyed under it. */
-        composeArray = EMPTY_INT_ARRAY;
-        validityChecks += 1;
         // If we reclaimed a lot of nodes, we won't be able to save much, so don't try
         boolean preserve = bdd.configuration().useCachePreserve() && invalidatedNodes < bdd.tableSize() / 2;
         for (IntCache cache : caches()) {
@@ -225,7 +224,7 @@ final class BooleanCache implements VariableOrderObserver {
     // Lookup
 
     void initCompose(int[] replacements) {
-        assert replacements.length > 0;
+        assert replacements.length > 0 : "A mapping replacing nothing must not reach the compose caches";
         if (Arrays.equals(composeArray, replacements)) {
             composeReuseCount += 1;
             return;
@@ -244,14 +243,13 @@ final class BooleanCache implements VariableOrderObserver {
         existsCache.invalidate();
     }
 
-    void initRestrict(BitSet restrictedVariables, BitSet restrictedVariableValues) {
-        if (restrictedVariables.equals(this.restrictVariables)
-                && restrictedVariableValues.equals(this.restrictValues)) {
+    void initRestrict(Cube restriction) {
+        if (restriction.equals(this.restriction)) {
             restrictReuseCount += 1;
             return;
         }
-        this.restrictVariables = BitSets.copyOf(restrictedVariables);
-        this.restrictValues = BitSets.copyOf(restrictedVariableValues);
+        // A copy: the caller's cube may be a walk's working state.
+        this.restriction = restriction.copy();
         restrictCache.invalidate();
     }
 
@@ -475,7 +473,6 @@ final class BooleanCache implements VariableOrderObserver {
     Map<String, Object> statistics() {
         Map<String, Object> statistics = new HashMap<>();
         caches.forEach((name, cache) -> statistics.putAll(cache.statistics("cache_" + name)));
-        statistics.put("validity_checks", String.valueOf(validityChecks));
         statistics.put("compose_reuse_count", String.valueOf(composeReuseCount));
         statistics.put("exists_reuse_count", String.valueOf(existsReuseCount));
         statistics.put("restrict_reuse_count", String.valueOf(restrictReuseCount));
@@ -544,7 +541,7 @@ final class BooleanCache implements VariableOrderObserver {
             int binStart = binSize * binIndex(hash);
             if (function == cache[binStart]) {
                 int result = cache[binStart + 1];
-                assert bdd.isValidFunction(result);
+                assert isValid(binStart);
                 statistics.hit();
                 return result;
             }
@@ -586,7 +583,7 @@ final class BooleanCache implements VariableOrderObserver {
             int binStart = binSize * binIndex;
             if (function1 == cache[binStart] && function2 == cache[binStart + 1]) {
                 int result = cache[binStart + 2];
-                assert bdd.isValidFunction(result);
+                assert isValid(binStart);
                 statistics.hit();
                 return result;
             }
@@ -625,7 +622,7 @@ final class BooleanCache implements VariableOrderObserver {
             int binStart = binSize * binIndex(hash);
             if (function1 == cache[binStart] && function2 == cache[binStart + 1] && function3 == cache[binStart + 2]) {
                 int result = cache[binStart + 3];
-                assert bdd.isValidFunction(result);
+                assert isValid(binStart);
                 statistics.hit();
                 return result;
             }
@@ -667,7 +664,7 @@ final class BooleanCache implements VariableOrderObserver {
                     && function3 == cache[binStart + 2]
                     && function4 == cache[binStart + 3]) {
                 int result = cache[binStart + 4];
-                assert bdd.isValidFunction(result);
+                assert isValid(binStart);
                 statistics.hit();
                 return result;
             }
@@ -720,6 +717,7 @@ final class BooleanCache implements VariableOrderObserver {
 
             int binStart = binSize * binIndex;
             if (function1 == cache[binStart] && function2 == cache[binStart + 1]) {
+                assert isValid(binStart);
                 statistics.hit();
                 return values.get(binIndex) ? bdd.trueFunction() : bdd.falseFunction();
             }
@@ -773,6 +771,7 @@ final class BooleanCache implements VariableOrderObserver {
 
             int binStart = binSize * binIndex;
             if (function == cache[binStart]) {
+                assert isValid(binStart);
                 statistics.hit();
                 return (V) values[binIndex];
             }
@@ -825,6 +824,7 @@ final class BooleanCache implements VariableOrderObserver {
 
             int binStart = binSize * binIndex;
             if (function1 == cache[binStart] && function2 == cache[binStart + 1]) {
+                assert isValid(binStart);
                 statistics.hit();
                 return (V) values[binIndex];
             }

@@ -68,6 +68,11 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
         return table().check();
     }
 
+    /** See {@link DdVariableOrderImpl#isReordering()}; false for a diagram that has no order. */
+    boolean isReordering() {
+        return false;
+    }
+
     /** The key-space prefix of this diagram's table, keeping the two disjoint within one context. */
     abstract String statisticsPrefix();
 
@@ -81,7 +86,7 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
                 .flatMap(stream -> stream)
                 .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
         assert accessGuard.release();
-        return DecisionDiagram.prefixStatistics(configuration().name(), statistics);
+        return Util.prefixStatistics(configuration().name(), statistics);
     }
 
     /** Whatever the concrete diagram wants to report beyond its table's and its caches'. */
@@ -131,7 +136,7 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
         notifyBeforeGc();
         table().markAllReferencedNodes();
         int reclaimedNodes = table().reclaimUnmarkedNodes();
-        assert table().isNoneMarked();
+        assert !Assertions.COSTLY_ASSERTIONS || table().isNoneMarked();
         notifyAfterGc(reclaimedNodes);
         assert accessGuard.release();
         return reclaimedNodes;

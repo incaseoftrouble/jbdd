@@ -19,6 +19,7 @@ package de.tum.in.jbdd;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.BitSet;
@@ -27,6 +28,17 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 
 class UtilityTest {
+    /**
+     * JBDD's own tests run the assertions auditing whole structures (Assertions); without -ea or without
+     * JBDD_COSTLY_ASSERTIONS they would silently skip them, and the suite would still pass.
+     */
+    @Test
+    void testWholeStructureAssertionsAreEnabled() {
+        assertThrows(AssertionError.class, () -> {
+            assert !Assertions.COSTLY_ASSERTIONS;
+        });
+    }
+
     @Test
     void testPowerIterator() {
         Random random = new Random(0);

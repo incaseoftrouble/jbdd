@@ -309,7 +309,7 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     }
 
     @Override
-    public Cursor<BinaryPath> pathCursor(int function) {
+    public Cursor<Cube> pathCursor(int function) {
         BitSet assignment = new BitSet(mdd.numberOfVariables());
         BitSet support = new BitSet(mdd.numberOfVariables());
         return map(mdd.pathCursor(function), a -> {
@@ -324,23 +324,23 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
                     assignment.set(i, a[i] == TRUE);
                 }
             }
-            return new BinaryPath(assignment, support);
+            return new Cube(assignment, support);
         });
     }
 
     @Override
-    public void forEachPath(int function, Consumer<? super BinaryPath> action) {
+    public void forEachPath(int function, Consumer<? super Cube> action) {
         BitSet everything = new BitSet();
         everything.set(0, mdd.numberOfVariables());
         forEachPartialPath(function, everything, action);
     }
 
     @Override
-    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super BinaryPath> action) {
+    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super Cube> action) {
         int variables = mdd.numberOfVariables();
         BitSet values = new BitSet(variables);
         BitSet support = new BitSet(variables);
-        BinaryPath bddPath = new BinaryPath(values, support);
+        Cube bddPath = new Cube(values, support);
         mdd.forEachPartialPath(function, relevantSet, path -> {
             for (int var = 0; var < path.length; var++) {
                 assert path[var] == -1 || path[var] == TRUE || path[var] == FALSE;
@@ -359,11 +359,11 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     }
 
     @Override
-    public boolean anyPathMatches(int function, Predicate<? super BinaryPath> predicate) {
+    public boolean anyPathMatches(int function, Predicate<? super Cube> predicate) {
         int variables = mdd.numberOfVariables();
         BitSet values = new BitSet(variables);
         BitSet support = new BitSet(variables);
-        BinaryPath bddPath = new BinaryPath(values, support);
+        Cube bddPath = new Cube(values, support);
         return mdd.anyPathMatches(function, path -> {
             for (int var = 0; var < path.length; var++) {
                 assert path[var] == -1 || path[var] == TRUE || path[var] == FALSE;
@@ -513,7 +513,7 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
         int result = falseFunction();
         while (iterator.hasNext()) {
             var assigment = iterator.next();
-            int restrict = mdd.reference(restrict(base, replaced, assigment));
+            int restrict = mdd.reference(restrict(base, Cube.of(assigment, replaced)));
 
             int assignment = trueFunction();
             for (int var = replaced.nextSetBit(0); var >= 0; var = replaced.nextSetBit(var + 1)) {
@@ -530,11 +530,11 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     }
 
     @Override
-    public int restrict(int function, BitSet restrictedVariables, BitSet restrictedVariableValues) {
+    public int restrict(int function, Cube cube) {
         int[] restriction = new int[mdd.numberOfVariables()];
         for (int var = 0; var < restriction.length; var++) {
-            if (restrictedVariables.get(var)) {
-                restriction[var] = restrictedVariableValues.get(var) ? TRUE : FALSE;
+            if (cube.fixes(var)) {
+                restriction[var] = cube.value(var) ? TRUE : FALSE;
             } else {
                 restriction[var] = -1;
             }

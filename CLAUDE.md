@@ -167,7 +167,7 @@ DecisionDiagram                     ids, ref counting, support, statistics, Refe
   `BinaryDecisionDiagram`, and `MtBdd` narrows it covariantly to `Bdd`, so only the facade hands out the
   implementation-side surface.
 - `BooleanTerminalDecisionDiagram<S, P>` is the whole boolean-valued logical API over assignment type `S`
-  and path type `P` (`BitSet`/`BinaryPath` for BDDs, `int[]`/`int[]` for MDDs): `and`, `andNot`, `exists`,
+  and path type `P` (`BitSet`/`Cube` for BDDs, `int[]`/`int[]` for MDDs): `and`, `andNot`, `exists`,
   `forall`, `ifThenElse`, `constrain`/`simplify`, solution and path cursors, the `xyIn` / `xySimplify`
   variants.
 
@@ -202,11 +202,15 @@ Entry points — never `new BddImpl(...)` outside tests:
   `variableOrder()`), the two `createVariable*AtLevel` forms, and **the** `statistics()`: both diagrams,
   their tables and caches, and the order, in one map. It is the only public accessor over a pair — neither
   `Bdd` nor `MtBdd` reports its own, since a partial view of one key space is what made the numbers hard to
-  find. Internally each contributor implements the package-private `StatisticsSource` (the two tables
-  prefix their keys `bdd_`/`mtbdd_` through `statisticsPrefix()`, so the spaces stay disjoint and the merge
-  loses nothing), and that is also what the shutdown log holds weakly. `Mdd` keeps an accessor of its own:
-  it is its own variable universe, with no context above it. Creating a variable is the context's because
-  it is about the *universe*, and it hands back a **BDD** function whichever diagram the caller came from.
+  find. Internally each contributor implements the package-private `StatisticsSource` (the two tables prefix
+  their keys `bdd_`/`mtbdd_` through `statisticsPrefix()`, so the spaces stay disjoint and the merge loses
+  nothing), and the rest of the machinery — `formatStatistics`, `prefixStatistics`,
+  `registerForCleanupStatistics` — sits in `Util`. `logStatisticsOnShutdown()` registers the **context**,
+  weakly, which is sound because either diagram reaches it back through the order; a context therefore logs
+  one complete block rather than a partial one per diagram. `Mdd` keeps an accessor of its own and registers
+  itself: it is its own variable universe, with no context above it. Creating a variable is the context's
+  because it is about the *universe*, and it hands back a **BDD** function whichever diagram the caller came
+  from.
 - `BinaryFactoryContext.create(...)` — a context plus the object-layer factories `bddSets()`, `bddMaps()`
   (one each per context).
 - `BddConfiguration` — an `org.immutables` `@Value.Immutable` generating `ImmutableBddConfiguration`:
@@ -222,6 +226,9 @@ Entry points — never `new BddImpl(...)` outside tests:
   function id alone is ambiguous across numberings).
 - `BddSet` deliberately exposes nothing assuming a fixed variable universe — callers always name the
   support they mean.
+- `Cube` is the one type for a conjunction of literals - equivalently a partial assignment: path walks
+  and `implicants` hand them out, `restrict` and `BddSetFactory.of` take them, `of(Cube)` builds one's
+  function. Its operations return new cubes; a walk's cube is working state (§8).
 - `DimacsReader` parses DIMACS CNF (benchmarks/tests).
 
 ### Navigation: types that are not in a file of their own
@@ -375,7 +382,9 @@ Every `compute*` / `*Recursive` follows six steps; deviations are where bugs liv
 2. Canonicalize operand order, *only* if the operation is genuinely commutative.
 3. Cache lookup; keep the raw pre-modulo hash (`lookupHash()`).
 4. Shannon-expand on the smallest top **level**; an operand not carrying that variable passes through
-   unchanged on both branches. `Integer.MAX_VALUE` is the usual "this side is constant" sentinel.
+   unchanged on both branches. `decisionLevelOrMax` gives a constant `Integer.MAX_VALUE`, below every
+   level, so the minimum over the operands picks the step and `lowIf`/`highIf` pass a constant through -
+   no per-operand constant branches.
 5. Recurse, pushing each result to the work stack before building the parent.
 6. Build, pop, `put(hash, …)`, return.
 
@@ -400,7 +409,9 @@ Purity is the general contract; a method's javadoc should document only a *devia
 **one candidate bin per key** — direct-mapped (`mod(hash, size)`, no probing), so a collision *overwrites*.
 These are memos, not maps: **a cached result may vanish and every caller must be correct without it.**
 Two key flavours: `CacheBase.IntKeys` packs `int` keys into the bin (`keyCount` leading slots the key,
-the rest the result); `CacheBase.ObjectKeys<V>` keys on an object (`cartesianProduct`'s operand tuple).
+the rest the result) — and `BooleanCache.IntCache` asserts every key is a *non-constant* function, since
+step 1 of §5 short-circuits constants before any lookup. `CacheBase.ObjectKeys<V>` keys on an object
+(`cartesianProduct`'s operand tuple).
 Resizing lives in the base (`rehashInto`, hashing the stored key exactly as `lookup` did); a cache whose
 result sits in a *parallel* array overrides `growInto` and passes a `BinRelocation`. `BooleanCache` (one
 table) and `MtBddCache` (entries can straddle *two* tables) subclass it separately — each concrete cache
@@ -420,15 +431,19 @@ consequences that are easy to get wrong:
   changes. Four flavours:
   - **Stable** — keys are plain ids (`agreement`, `ite`, `update`, `simplify`, `constrain`). Nothing extra.
   - **Ephemeral "current parameter"** — `compose` (`int[]` mapping), `exists` (a `BitSet`), `restrict`
-    (two `BitSet`s), `apply`/`map`/`mapBoolean`/`applyBoolean` (an opaque operator compared by identity;
-    the paired `*Simplify` cache is invalidated by the same `initX`), `count` (a predicate),
-    `canReachMatch` (a predicate). `initX(...)`
+    (a `Cube` - only the literals below the prefix it walks without the cache, so restrictions differing
+    in that prefix share it), `apply`/`map`/`mapBoolean`/`applyBoolean` and the n-ary `apply` (an opaque
+    operator compared by identity; the paired `*Simplify` cache is invalidated by the same `initX`; the
+    n-ary one keys on the cloned operand tuple, as `cartesianProduct` does), `count` (a predicate),
+    `canReachMatch` (a predicate), `allMatch` (a predicate, like `applyBoolean`). `initX(...)`
     compares against the previous call's parameter and invalidates wholesale on change. **This works only
     for eagerly-completing calls** — the lazy cursor from `assignmentCursor` outlives its own `initX` and
     must be drained before any other query runs; an assertion enforces it.
-  - **Per-call scratch state** — `split`/`splitCombine` and `cartesianProduct` produce *indices into a
-    bijection built fresh per call*, so an older entry names a numbering that no longer exists.
-    `initSplit()`/`initCartesianProduct()` therefore invalidate unconditionally at every entry. Within one
+  - **Per-call scratch state** — `split`/`splitCombine`, `splitBdd`/`splitBddCombine` and
+    `cartesianProduct` produce *indices into a bijection built fresh per call*, so an older entry names a
+    numbering that no longer exists. `initSplit()`/`initSplitBdd()`/`initCartesianProduct()` therefore
+    invalidate unconditionally at every entry. `splitBdd`'s residuals are BDD functions, interned on the
+    BDD's secondary work stack, and its first cache is keyed on a BDD node (`BddToMtbddCache`). Within one
     call they are sound because interning is idempotent. Note `cartesianProduct`'s key is the whole
     operand tuple and its recursion rewrites that array in place — it must be cloned before descending,
     which is also what the cache stores.
@@ -594,7 +609,7 @@ variable universe. `reorder()` returns nodes saved **across every diagram over t
 it belongs there and not on a `Bdd` that would appear to be answering for itself.
 
 `rewriteLevelAfterSwap` (one per diagram, same recursion, `MtBddImpl`'s without complement edges) decides
-which nodes change and `hideForRewrite`s all of them out of the unique table **before building anything**:
+which nodes change and `rewriteHideAndUnlink`s all of them out of the unique table **before building anything**:
 until a node is rewritten it still carries the old variable, so a `makeNode` below could hand it out as a
 fresh child and it would then be rewritten out from under that parent. The nodes that do *not* change stay
 in the table on purpose — they are genuine nodes of the variable moving down, and a new child matching one
@@ -651,14 +666,23 @@ implement it and are registered with the order directly. Table events (`NodeTabl
 two of them (§6) — and `MtBddCache` responds to each differently, which is why those stay small adapters
 in the diagram rather than a branch on `origin` inside the cache.
 
-- An **order change** changes relative order, so anything folding a level comparison into a value is stale.
-  Both operation caches drop everything. They need not — reordering rewrites in place, so an entry that is
-  only a statement about node ids (`and`, `xor`, `ite`, `intersects`; MTBDD-side `apply`, `map`,
-  `map_boolean`, `agreement`, `update`, `ite`) is still true. Keeping them was built and measured and bought
-  nothing: the total `and` hit count over swaps-then-replay was identical to within one hit, because the
-  swap reshapes the diagram and the surviving entries simply stop being asked about. A keep-list is a
-  classification every new operation would have to be sorted into, and a wrong sort is silent corruption.
-  `BooleanCache.orderChanged` therefore drops everything, and this paragraph is the reason it may.
+- An **order change** changes relative order, so anything folding a level into a value is stale. Every
+  cache listening to the order drops everything - both operation caches and the registered `Exists` and
+  `Compose`. Strictly, only the satisfaction counts (ranging over the levels below their node) and
+  `constrain` (deciding top-down) are wrong afterwards: reordering rewrites in place, so an entry that is a
+  statement about functions - `exists`, `compose`, `restrict` and the simplify family included, whose level
+  cut-offs only decide where the recursion stops - still holds. Keeping those was built and is not worth
+  its classification: invalidation is lazy, so dropping costs one clear per cache on next use; `reorder()`
+  collects before sifting, which clears everything anyway (below); and the kept entries are hardly ever
+  asked again, since the swaps reshape the diagram (the `and` hit count over swaps-then-replay was the same
+  to within one hit). `RegressionTests` pins the counts and `constrain` for whoever tries again.
+
+  **During a reordering, caches are cleared rather than maintained** (`isReordering`): a collection or a
+  growth then invalidates every cache over the tables, registered ones included, before its "nothing died"
+  check. The swaps orphan the old nodes - a rewritten node gets new children - so a collection in between
+  reclaims most of what the caches name: one sifting pass pruned the whole `and` cache away (33,083 of
+  33,083 bins on a 17-bit comparator, 2,068 of 2,069 on queens-9). One clear beats pruning repeatedly, and
+  clearing on a growth spares rehashing entries into a grown cache only to lose them.
 
   **It fires once per reordering, not once per swap.** `siftDown` is the public one-swap form and brackets
   itself like any other entry point; the primitive underneath (`swapWithNextLevel`) is silent, so a sifting
@@ -708,7 +732,11 @@ map and prefixed with `configuration().name()`, which is empty by default): `reo
 `reorder_abandoned_directions` whether `MAXIMUM_SIFT_GROWTH` is, and `reorder_notifications` against
 `reorder_swaps` what batching the order-change event is worth. `reorder_identity_reverts` outside a
 deliberate `reorderToIdentity()`
-signals the fast path is worth more than it looks.
+signals the fast path is worth more than it looks. Each table additionally reports the share of its own
+counters that fell inside a reordering bracket - `node_table_reorder_created_nodes`, `_reorder_gc_count`,
+`_reorder_gc_collected_nodes`, `_reorder_gc_time_milliseconds` - as differences between snapshots taken
+in `beginReordering`/`endReordering`, so the operations' cost is the total minus that and nothing on the
+hot path pays for the split.
 
 Reordering is explicit and must not run while an operation is in flight or from inside a callback.
 Saturated nodes stay saturated: 14 bits is the refcount, and pinning is by design.
@@ -767,8 +795,12 @@ entry point (`of`, `ifThenElse`, `cartesianProduct`, `createRelabeling`, `relabe
   numbering assertion. `where(BddMap, BddMapBinaryPredicate)` (as `<W extends V>`, keeping the two `where`
   overloads unambiguous), `agreement` and `difference` are the exceptions, and only because they do have a
   cross-numbering path at runtime.
-- **Indices are recycled, not append-only.** `ValuesImpl` is a `NodeTableObserver`: on GC it forgets
-  entries whose raw terminal was *globally* reclaimed, walks its high-water mark (`biggestAliveIndex`)
+- **Indices are recycled, not append-only.** `ValuesImpl` is a `NodeTableObserver`: on a collection
+  (or the growth one turned into) it forgets entries whose raw terminal was *globally* reclaimed - except
+  those assigned since the previous one. The raw space is shared with every other numbering and with a
+  split's intermediate indices, so a fresh index can name a terminal a dead, unrelated structure still has
+  allocated; the reclaim is about that one, and forgetting would lose a value handed out before the map
+  using it exists (`RegressionTests`). It then walks its high-water mark (`biggestAliveIndex`)
   back and rebuilds `freeGaps` by one ascending scan, so fresh values pack in from the bottom. The mapping
   is a bijection at all times and an index's meaning is stable while it is alive — which is what lets a
   cached raw result stay valid. `afterGc` returns immediately unless something below `biggestAliveIndex`
@@ -777,9 +809,11 @@ entry point (`of`, `ifThenElse`, `cartesianProduct`, `createRelabeling`, `relabe
   Reclamation is conservative: with several numberings sharing the raw int space, a reclaimed value cannot
   be attributed to one, so only globally dead entries are dropped.
 - **No canonicalization, freezing or interning of numberings.** Two consequences to design around:
-  structure sharing is insertion-order dependent, and equality across numberings is pessimistic (same
-  function + different numbering counts as unequal even when semantically equal). Use
-  `agreement(other).isUniverse()` where semantic comparison is wanted.
+  structure sharing is insertion-order dependent, and `equals` (with the function id as hash) is only
+  meaningful within one numbering - a hash structure never mixes maps over two numberings, since those
+  would not share values either. Semantic comparison across numberings is `agreesWith`/`allMatch`,
+  backed by `MtBdd.allMatch`: `applyBoolean`'s traversal answering a bit, which builds nothing and stops
+  at the first valuation that fails. Within one numbering `agreesWith` is the O(1) id comparison.
 - Underneath, `MtBddImpl.applyBoolean(f1, f2, MtBddBinaryPredicate)` is the boolean-valued counterpart of
   `apply`: it folds two terminals into a bit, so the result is a BDD. `reflexive` lets identical operand
   nodes answer true without descending, `symmetric` lets a pair and its mirror share a cache entry; both
@@ -810,7 +844,11 @@ entry point (`of`, `ifThenElse`, `cartesianProduct`, `createRelabeling`, `relabe
   `assert accessGuard.acquire()`.
 - **Assertions carry real work.** `assert accessGuard.acquire(); … assert accessGuard.release();` and
   `assert isValidFunction(f)` are the standard preamble of a public method. Tests run with `-ea` and rely
-  on it. Keep validation in assertions, not in runtime checks, on hot paths — with `-ea` off, invalid
+  on it. An assertion auditing a *whole* structure where the operation touches one part of it - a table
+  `check()`, `isNoneMarked()`, a full cache scan - is written `assert !Assertions.COSTLY_ASSERTIONS || …`:
+  it runs only with the system property `JBDD_COSTLY_ASSERTIONS`, which JBDD's own test tasks set. Without it
+  a user's `-ea` run would be quadratic (a caller once saw an HOA test go from 2 s to 700 s); with `-ea`
+  alone, a cache still checks every entry it hands out, and audits itself fully after each prune. Keep validation in assertions, not in runtime checks, on hot paths — with `-ea` off, invalid
   arguments corrupt the structure quietly rather than throwing.
 - **Internally everything is by level; everything crossing the API boundary is by variable.** Name locals
   `...Level` / `...Variable` and translate at exactly one point per class.
@@ -858,8 +896,14 @@ intuitions transfer badly. Two habits follow:
   a swap, caching high edges in the path stack). Anything performance-motivated is backed by `src/jmh`.
 - **Watch what a change does to inlining, not just to instruction count.** The JIT's inlining budget is in
   *bytecode size*, and that size includes code the JVM may never execute — an assertion counts, so adding
-  a message to an `assert` in a small static helper can push it over the threshold and make every caller
-  pay a call, which is why some of them carry a bare `assert`. That is one instance, not the rule: field
+  a message to an `assert` in a tiny method can push it over `MaxInlineSize` (35 bytes, below which it is
+  inlined wherever it is called) and make every caller pay a call. Hence an assertion in a method that
+  small - an accessor, a cursor's `current()`, a one-line utility - carries no message; say it in a
+  comment instead. Larger methods keep their messages: they are inlined only when hot, against a budget
+  ten times larger, and the message is what makes a failure diagnosable. Independently of size, no
+  assertion another one already implies: a cache hit asserts `isValid(binStart)`, which covers the
+  result, not the result again - the redundant pair measured ~3% on an `and`-bound workload with
+  assertions *off*. That is one instance, not the rule: field
   layout, megamorphic call sites (§8), allocation on a per-element path (§14.5) and escape analysis all
   bite the same way. Treat any "obviously harmless" edit to a small, hot, frequently called method as a
   measurable change.
@@ -899,14 +943,16 @@ intuitions transfer badly. Two habits follow:
   zero: an empty `@MethodSource` is a failing test method, not a skipped one.
   `SyntheticTest` reads the same scale but as a *bound*, not a factor: its boards grow exponentially, so
   the largest alone dominates the test and it drops from 9 queens to 8 below 0.9 and to 7 below 0.5.
-- Targeted tests: `BddTest`, `MtBddTest`, `BddMapTest`, `ValuesTest`, `ReorderTest`, `HashTest`,
-  `UtilityTest`, `DimacsReaderTest`. `SyntheticTest` — n-queens counts as an end-to-end sanity check.
+- Targeted tests: `BddTest`, `MtBddTest`, `BddMapTest`, `BddSetTest`, `CubeTest`,
+  `ValuesTest`, `ReorderTest`, `HashTest`, `UtilityTest`, `DimacsReaderTest`. `UtilityTest` also asserts
+  that the costly assertions are on (`Assertions`), so a test task that forgot the property fails. `SyntheticTest` — n-queens counts as an end-to-end sanity check.
   **`RegressionTests` — one test per past bug; add here when fixing one.**
 - `ValuesTest` holds the numbering-level tests: split residuals, a merging cartesian product and a
   supertype view via `createRelabeling`. `RegisteredOperationsTest` holds the object layer's handles —
   that each agrees with the plain operation it stands for, warm cache included (the `applyIn`/`replaceIn`
-  ones pinned to their contract via `agreement(…).containsAll`). PMD's coupling limit applies to test
-  classes too, which is what keeps these two apart and out of `BddMapTest`.
+  ones pinned to their contract via `agreement(…).containsAll`). Test classes are split by subject
+  (sets in `BddSetTest`, maps in `BddMapTest`); when one trips PMD's coupling limit anyway, suppress
+  `PMD.CouplingBetweenObjects` on it rather than splitting it further.
 - **New operations need:** theory coverage against the reference evaluation, an invariant check, and — if
   it touches ordering — a reordered variant.
 
@@ -965,12 +1011,6 @@ one are `// TODO`s in the source, with their reasoning in `TODO.md`.
   skipped. `computeApply` and `computeMap` both recurse low-then-high; write it down. The deciding
   measurement: with a per-automaton numbering, how much structural sharing is lost against a canonicalized
   per-state numbering?
-- **Inverted split: `Map<BddMap<V>, BddSet>`** — per distinct residual, the set of split-variable
-  valuations reaching it; the shape a hand-built `Map<Edge, BddSet>` has. Mechanically `split` followed by
-  `invert` of the index function, but it must live inside `MtBddImpl`: `split`'s pieces are unprotected and
-  must be referenced before any further call (which is why `splitRelabeled` exists). Outside, it would
-  rest on "a BDD-side `invert` happens not to collect MTBDD nodes" — true today, and exactly the kind of
-  cross-table reasoning that breaks quietly.
 - **`invert` sizes its array-vs-`HashMap` path from a global watermark.** `MtBddImpl.invert` takes
   `domainSize = allocatedValues.length()` — monotone and global — to decide a *per-function* operation, so
   one high-out-degree map permanently forces every later `invert` onto the `HashMap` path. `domainSize`

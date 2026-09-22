@@ -119,6 +119,13 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
         return explicitOrder;
     }
 
+    /**
+     * Whether a reordering is running.
+     */
+    boolean isReordering() {
+        return reorderingFrom != null;
+    }
+
     @Override
     public int levelOfVariable(int variable) {
         assert 0 <= variable;
@@ -129,6 +136,22 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
     public int variableAtLevel(int level) {
         assert 0 <= level;
         return explicitOrder ? levelToVariable[level] : level;
+    }
+
+    Cube literalsBelow(Cube cube, int level) {
+        BitSet support = cube.support;
+        if (BitSets.allMatch(support, variable -> variable > level)) {
+            return cube;
+        }
+        BitSet remainingSupport = new BitSet();
+        BitSet remainingAssignment = new BitSet();
+        BitSets.forEach(support, variable -> {
+            if (levelOfVariable(variable) > level) {
+                remainingSupport.set(variable);
+                remainingAssignment.set(variable, cube.assignment.get(variable));
+            }
+        });
+        return new Cube(remainingAssignment, remainingSupport);
     }
 
     private void ensureOrderCapacity(int variables) {
@@ -235,12 +258,16 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
     private void beginReordering() {
         assert reorderingFrom == null : "A reordering is already in progress";
         reorderingFrom = currentVariableToLevel();
+        bdd().table().beginReorderingStatistics();
+        mtbdd().table().beginReorderingStatistics();
     }
 
     private void endReordering() {
         int[] previous = reorderingFrom;
         assert previous != null : "No reordering in progress";
         reorderingFrom = null;
+        bdd().table().endReorderingStatistics();
+        mtbdd().table().endReorderingStatistics();
 
         int[] current = currentVariableToLevel();
         BitSet movedVariables = new BitSet(numberOfVariables);
@@ -384,7 +411,7 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
         int index = 0;
         int nextFreeStart = 0;
 
-        // Create a heuristical order of the blocks
+        // Create a heuristic order of the blocks
         for (BitSet block : blocks) {
             checkState(!block.intersects(listed), "Reordering blocks overlap");
             int size = block.cardinality();
@@ -437,8 +464,8 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
         }
 
         endReordering();
-        assert groupsAreDisjointContiguousBlocks(blocks);
-        assert bdd().check();
+        assert checkDisjointContiguousBlocks(blocks);
+        assert !Assertions.COSTLY_ASSERTIONS || bdd().check();
         assert bdd().accessGuard.release();
     }
 
@@ -458,10 +485,10 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
         reorderTimeMilliseconds += System.currentTimeMillis() - startTimestamp;
 
         boolean implicit = makeImplicitIfIdentity();
-        assert implicit;
+        assert implicit : "Permuting to the identity did not produce the identity";
 
         endReordering();
-        assert bdd().check();
+        assert !Assertions.COSTLY_ASSERTIONS || bdd().check();
         assert bdd().accessGuard.release();
     }
 
@@ -473,11 +500,6 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
         return reorder(List.of(BitSets.range(0, numberOfVariables)));
     }
 
-    /**
-     * Applies reordering within the given groups. This means all variables in the first group will be
-     * below those in the second group etc. and only reordered within their given group. The groups
-     * must be disjoint and contiguous; unlisted variables are not considered at all.
-     */
     @Override
     public int reorder(List<BitSet> groups) {
         if (numberOfVariables < 2) {
@@ -485,8 +507,9 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
         }
         BddImpl bdd = bdd();
         MtBddImpl mtbdd = mtbdd();
+        assert bdd.accessGuard.acquire();
         assert bdd.table().workStacksEmpty() && mtbdd.table().workStacksEmpty();
-        assert groupsAreDisjointContiguousBlocks(groups);
+        assert checkDisjointContiguousBlocks(groups);
         beginReordering();
 
         bdd.gc();
@@ -536,11 +559,12 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
         if (!context.configuration().keepReorderingStructures()) {
             dropReorderStructures();
         }
-        assert bdd.check();
+        assert !Assertions.COSTLY_ASSERTIONS || bdd.check();
+        assert bdd.accessGuard.release();
         return saved;
     }
 
-    private boolean groupsAreDisjointContiguousBlocks(List<BitSet> groups) {
+    private boolean checkDisjointContiguousBlocks(List<BitSet> groups) {
         BitSet seen = new BitSet(numberOfVariables);
         for (BitSet group : groups) {
             checkState(!group.intersects(seen), "Reordering groups overlap");

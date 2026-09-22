@@ -22,10 +22,5 @@ import java.util.Map;
  * The implementation of a {@link MultiValuedDecisionDiagram} actually provided by this library.
  */
 public interface Mdd extends MultiValuedDecisionDiagram, NodeBasedDd {
-    /**
-     * A snapshot of the statistics of this diagram and everything under it. The content may change
-     * between versions; the values are primitives. An MDD is its own variable universe, so this is the
-     * whole of them - {@link DdContext#statistics()} is the counterpart for a BDD and its MTBDD.
-     */
     Map<String, Object> statistics();
 }
