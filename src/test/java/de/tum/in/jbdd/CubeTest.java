@@ -18,10 +18,12 @@ package de.tum.in.jbdd;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
@@ -40,6 +42,30 @@ class CubeTest {
         assertEquals(Cube.of(BitSets.of(), BitSets.of(1, 2)), Cube.negative(BitSets.of(1, 2)));
         assertTrue(Cube.empty().isEmpty());
         assertEquals("1?0", CUBE.toString());
+    }
+
+    @Test
+    void testSafeAndUnsafeAccess() {
+        // The plain factory and accessors copy: nothing done to the sets changes the cube.
+        BitSet valuation = BitSets.of(0);
+        BitSet support = BitSets.of(0, 2);
+        Cube safe = Cube.of(valuation, support);
+        valuation.clear();
+        support.clear();
+        safe.assignment().clear();
+        safe.support().clear();
+        assertEquals(CUBE, safe);
+        Cube.empty().support().set(1);
+        assertTrue(Cube.empty().isEmpty());
+
+        // The unsafe ones share: the cube is the sets it was given and hands out.
+        BitSet assignment = BitSets.of(0);
+        BitSet owned = BitSets.of(0, 2);
+        Cube unsafe = Cube.ofUnsafe(assignment, owned);
+        assertSame(assignment, unsafe.assignmentUnsafe());
+        assertSame(owned, unsafe.supportUnsafe());
+        assertEquals(CUBE, unsafe);
+        assertThrows(IllegalArgumentException.class, () -> Cube.ofUnsafe(BitSets.of(1), BitSets.of(0)));
     }
 
     @Test

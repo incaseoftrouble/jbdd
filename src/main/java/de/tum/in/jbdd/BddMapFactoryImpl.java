@@ -19,6 +19,7 @@ package de.tum.in.jbdd;
 import static de.tum.in.jbdd.RegisteredOperation.*;
 
 import de.tum.in.jbdd.RegisteredOperation.Forwarding;
+import java.lang.ref.Reference;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -50,6 +51,8 @@ import org.jspecify.annotations.Nullable;
 final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMapImpl<?>, MtBddImpl>
         implements BddMapFactory {
     private final BddSetFactoryImpl bddSets;
+    // The last numbering's key space, the high half of its maps' canonical keys; 0 is left to plain functions.
+    private int lastNumbering;
 
     BddMapFactoryImpl(BddSetFactoryImpl bddSets) {
         super(bddSets.dd.mtbdd());
@@ -132,46 +135,22 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
         return String.format("MtBddF{%s}", dd);
     }
 
-    private static final class MapKey {
-        private final int function;
-        private final ValuesImpl<?> values;
-
-        MapKey(int function, ValuesImpl<?> values) {
-            this.function = function;
-            this.values = values;
+    private int nextNumbering() {
+        lastNumbering += 1;
+        if (lastNumbering == 0) {
+            throw new IllegalStateException("Out of value numberings");
         }
-
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) {
-                return true;
-            }
-            if (!(o instanceof MapKey)) {
-                return false;
-            }
-            MapKey that = (MapKey) o;
-            return function == that.function && values == that.values;
-        }
-
-        @Override
-        public int hashCode() {
-            return HashUtil.hash(function, System.identityHashCode(values));
-        }
+        return lastNumbering;
     }
 
     static final class ValuesImpl<V> implements Values<V>, NodeTableObserver {
         private final BddMapFactoryImpl factory;
+        // A function is a map only together with its numbering: this goes into the high half of the key.
+        private final long keySpace;
         private final Map<V, Integer> toIndex;
         private final List<@Nullable V> toValue;
         private final Deque<Integer> freeGaps;
         private int biggestAliveIndex = -1;
-        /* Value indices assigned since the last collection. The raw terminal space is shared - e.g. with
-         * every other numbering - so a fresh index we allocate can name a raw terminal an unrelated, dead
-         * structure still has allocated. If that dead structure is reclaimed before the value we hand out
-         * is protected, the value would be cleared. */
-        // TODO This happens only in operations that don't protect their intermediate results (like split?)
-        //      It would be cleaner if they did
-        private final BitSet assignedSinceCollection = new BitSet();
 
         ValuesImpl(BddMapFactoryImpl factory) {
             this(factory, new HashMap<>(), new ArrayList<@Nullable V>(), new ArrayDeque<>()); // NOPMD
@@ -183,6 +162,7 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
                 List<@Nullable V> toValue,
                 Deque<Integer> freeGaps) {
             this.factory = factory;
+            this.keySpace = (long) factory.nextNumbering() << Integer.SIZE;
             this.toIndex = toIndex;
             this.toValue = toValue;
             this.freeGaps = freeGaps;
@@ -211,7 +191,6 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
                         biggestAliveIndex = index;
                     }
                 }
-                assignedSinceCollection.set(index);
                 return index;
             });
         }
@@ -430,6 +409,34 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
         }
 
         @Override
+        public <O> BddMap<V> adopt(
+                BddMap<O> map, IntUnaryOperator variableMapping, Function<? super O, ? extends V> valueMapping) {
+            assert map instanceof BddMapImpl<?>;
+            BddMapImpl<O> foreign = (BddMapImpl<O>) map;
+            MtBddImpl source = foreign.factory.dd;
+            MtBddImpl dd = factory.dd;
+            int[] variables = factory.bddSets.mapSupport(foreign.support(), variableMapping);
+            BitSet rawValues = source.valuesOf(foreign.function);
+            int[] indices = new int[rawValues.length()];
+            // Each index keeps its terminal referenced, so no collection in between can hand the index out again.
+            List<Integer> terminals = new ArrayList<>(rawValues.cardinality());
+            try {
+                BitSets.forEach(rawValues, raw -> {
+                    indices[raw] = getOrAssignIndex(valueMapping.apply(foreign.values.valueOf(raw)));
+                    terminals.add(dd.reference(dd.of(indices[raw])));
+                });
+                int result = dd.adopt(source, foreign.function, variable -> variables[variable], raw -> indices[raw]);
+                return factory.make(result, this);
+            } finally {
+                for (int terminal : terminals) {
+                    dd.dereference(terminal);
+                }
+                // The source diagram lives only as long as its wrapper.
+                Reference.reachabilityFence(foreign);
+            }
+        }
+
+        @Override
         public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
             forgetReclaimed(reclaimedValues);
         }
@@ -443,7 +450,6 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
             int first = reclaimedValues.nextSetBit(0);
             // Nothing reclaimed or first reclaim beyond what we use -> Nothing to do
             if (first < 0 || first > biggestAliveIndex) {
-                assignedSinceCollection.clear();
                 return;
             }
 
@@ -451,7 +457,7 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
                     index >= 0 && index <= biggestAliveIndex;
                     index = reclaimedValues.nextSetBit(index + 1)) {
                 V value = toValue.get(index);
-                if (value != null && !assignedSinceCollection.get(index)) {
+                if (value != null) {
                     toValue.set(index, null);
                     toIndex.remove(value);
                 }
@@ -472,8 +478,6 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
                     freeGaps.add(index);
                 }
             }
-
-            assignedSinceCollection.clear();
 
             assert toValue.size() == biggestAliveIndex + 1;
             assert IntStream.range(0, toValue.size())
@@ -685,8 +689,8 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
         }
 
         @Override
-        public Object canonicalKey() {
-            return new MapKey(function, values);
+        public long canonicalKey() {
+            return values.keySpace | Integer.toUnsignedLong(function);
         }
 
         @Override
@@ -964,7 +968,7 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
 
         @Override
         public boolean equals(Object o) {
-            // Canonicalized on (function, values) - see BddMapFactoryImpl.MapKey.
+            // Canonicalized on (function, values) - see canonicalKey.
             assert (this == o)
                     == (o instanceof BddMapFactoryImpl.BddMapImpl
                             && function == ((BddMapImpl<?>) o).function

@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.BiFunction;
 import java.util.function.Function;
+import java.util.function.IntUnaryOperator;
 import java.util.function.Predicate;
 
 /**
@@ -130,4 +131,14 @@ public interface Values<V> {
      * this numbering.
      */
     BddMap<V> adopt(BddMap<? extends V> map);
+
+    /**
+     * {@code map}, typically of another context, rebuilt in this numbering with each variable {@code v} of it read
+     * as {@code variableMapping(v)} and each value {@code x} as {@code valueMapping(x)}; variables that do not
+     * exist here yet are created. {@code valueMapping} runs first, once per distinct value of {@code map} and
+     * outside any operation, so it may build sets and maps of either context; it need not be injective. Then one
+     * pass over {@code map}'s diagram, linear where the mapping keeps each variable above those below it - see
+     * {@link MultiTerminalDecisionDiagram#adopt}.
+     */
+    <O> BddMap<V> adopt(BddMap<O> map, IntUnaryOperator variableMapping, Function<? super O, ? extends V> valueMapping);
 }

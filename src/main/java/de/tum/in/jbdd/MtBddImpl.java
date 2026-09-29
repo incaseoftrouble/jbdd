@@ -1508,7 +1508,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         return result;
     }
 
-    // simplify is integrated directly due to most code paths being shared - see BddImpl#computeComposeSimplify
+    // simplify is integrated directly due to most code paths being shared
     private int composeRecursive(
             int mtbddNode,
             int[] bddVariableMapping,
@@ -1699,6 +1699,47 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
         cache.putRestrict(hash, mtbddNode, result);
         return result;
+    }
+
+    @Override
+    public int adopt(
+            MultiTerminalDecisionDiagram source,
+            int function,
+            IntUnaryOperator variableMapping,
+            IntUnaryOperator valueMapping) {
+        // Every rebuilt node stays referenced until the end, so no collection in between invalidates the memo.
+        Map<Integer, Integer> adopted = new HashMap<>();
+        // TODO No try-finally needed
+        try {
+            return adoptRecursive(source, function, variableMapping, valueMapping, adopted);
+        } finally {
+            for (int rebuilt : adopted.values()) {
+                dereference(rebuilt);
+            }
+        }
+    }
+
+    private int adoptRecursive(
+            MultiTerminalDecisionDiagram source,
+            int function,
+            IntUnaryOperator variableMapping,
+            IntUnaryOperator valueMapping,
+            Map<Integer, Integer> adopted) {
+        Integer known = adopted.get(function);
+        if (known != null) {
+            return known;
+        }
+        int rebuilt;
+        if (source.isConstant(function)) {
+            rebuilt = of(valueMapping.applyAsInt(source.evaluate(function, new BitSet(0))));
+        } else {
+            int high = adoptRecursive(source, source.highOf(function), variableMapping, valueMapping, adopted);
+            int low = adoptRecursive(source, source.lowOf(function), variableMapping, valueMapping, adopted);
+            int variable = variableMapping.applyAsInt(source.decisionVariable(function));
+            rebuilt = ifThenElse(bdd.variableFunction(variable), high, low);
+        }
+        adopted.put(function, reference(rebuilt));
+        return rebuilt;
     }
 
     @Override
@@ -1950,12 +1991,15 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         int[] relabeledResiduals = new int[residualCount];
         for (int index = 0; index < residualCount; index++) {
             relabeledResiduals[index] = relabeler.applyAsInt(bijection.getFunction(index));
+            // Handed out before any node holds it, so protected until computeMap has built it in. Every one is a
+            // terminal of the result, so this keeps nothing alive the result would not, and a terminal is no node.
+            table.pushToWorkStack(of(relabeledResiduals[index]));
         }
 
         IntUnaryOperator combined = value -> relabeledResiduals[value];
         cache.initMap(combined);
         int result = computeMap(mtbddG, bdd.trueFunction(), combined, cache.mapCache(), cache.mapSimplifyCache());
-        table.popFromWorkStack();
+        table.popFromWorkStack(residualCount + 1);
 
         table.popFromSecondaryWorkStack(bijection.size());
         assert table.workStacksEmpty();
@@ -2007,11 +2051,12 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         int[] relabeledResiduals = new int[residuals.size()];
         for (int index = 0; index < relabeledResiduals.length; index++) {
             relabeledResiduals[index] = relabeler.applyAsInt(residuals.getFunction(index));
+            table.pushToWorkStack(of(relabeledResiduals[index]));
         }
         IntUnaryOperator combined = value -> relabeledResiduals[value];
         cache.initMap(combined);
         int result = computeMap(mtbddG, bdd.trueFunction(), combined, cache.mapCache(), cache.mapSimplifyCache());
-        table.popFromWorkStack();
+        table.popFromWorkStack(relabeledResiduals.length + 1);
 
         bdd.table().popFromSecondaryWorkStack(residuals.size());
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();

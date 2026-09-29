@@ -97,6 +97,34 @@ class MtBddTest {
     }
 
     @Test
+    void testAdoptRebuildsUnderVariableAndValueMappings() {
+        DdContextImpl source = new DdContextImpl(config);
+        int[] v = source.bdd().createVariables(4);
+        MtBddImpl sourceMt = source.mtBdd();
+        int condition = source.bdd().reference(source.bdd().or(source.bdd().and(v[0], v[3]), v[2]));
+        int map = sourceMt.reference(sourceMt.ifThenElse(
+                condition, sourceMt.of(1), sourceMt.ifThenElse(v[1], sourceMt.of(2), sourceMt.of(3))));
+
+        // Reversed variables, so the target has to restructure; values shifted by ten.
+        DdContextImpl target = new DdContextImpl(config);
+        target.bdd().createVariables(4);
+        MtBddImpl targetMt = target.mtBdd();
+        IntUnaryOperator reversed = variable -> 3 - variable;
+        int adopted = targetMt.reference(targetMt.adopt(sourceMt, map, reversed, value -> value + 10));
+        for (int mask = 0; mask < 16; mask++) {
+            boolean[] assignment = maskToAssignment(mask, 4);
+            boolean[] reversedAssignment = new boolean[4];
+            for (int variable = 0; variable < 4; variable++) {
+                reversedAssignment[reversed.applyAsInt(variable)] = assignment[variable];
+            }
+            assertEquals(sourceMt.evaluate(map, assignment) + 10, targetMt.evaluate(adopted, reversedAssignment));
+        }
+        // And back: the same function, as the diagram is canonical.
+        assertEquals(map, sourceMt.adopt(targetMt, adopted, reversed, value -> value - 10));
+        assertTrue(sourceMt.check() && targetMt.check());
+    }
+
+    @Test
     void testOfConstantEvaluatesToValueEverywhere() {
         BddImpl bdd = new DdContextImpl(config).bdd();
         int numVars = 3;
@@ -487,7 +515,7 @@ class MtBddTest {
             assertEquals(2, path.support().cardinality());
             boolean[] assignment = {path.assignment().get(0), path.assignment().get(1)};
             assertEquals((int) values.get(i), mt.evaluate(f, assignment));
-            distinctAssignments.add(path.copyAssignment());
+            distinctAssignments.add(path.assignment());
         }
         assertEquals(4, distinctAssignments.size());
     }

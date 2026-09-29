@@ -17,6 +17,7 @@
 package de.tum.in.jbdd;
 
 import java.util.Map;
+import java.util.function.Function;
 
 final class BinaryFactoryContextImpl implements BinaryFactoryContext {
     private final DdContextImpl context;
@@ -67,6 +68,11 @@ final class BinaryFactoryContextImpl implements BinaryFactoryContext {
     @Override
     public BddMapFactory bddMaps() {
         return bddMaps;
+    }
+
+    @Override
+    public <A> Attachment<BddSet, A> attachToSets(Function<? super BddSet, ? extends A> constructor) {
+        return bddSets.attach(constructor);
     }
 
     @Override

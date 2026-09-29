@@ -52,6 +52,7 @@ import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.IntUnaryOperator;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
@@ -760,6 +761,73 @@ class BddTheories {
         bdd.dereference(simplifiedArray);
     }
 
+    /**
+     * As {@link #buildComposeArray}, but leaves about half of the function's own variables alone, so that the
+     * path through them carries their value down to the replacements that depend on them.
+     */
+    @SuppressWarnings("NullAway")
+    private static int[] buildPartialComposeArray(BinaryDd bdd, int function, SyntaxTree syntaxTree) {
+        int[] composeArray = buildComposeArray(bdd, function, syntaxTree);
+        Info<BinaryDd> bddInfo = infoMap.get(bdd).bddInfo;
+        Random keepRandom = new Random(~function);
+        for (int variable : syntaxTree.containedVariables()) {
+            if (keepRandom.nextBoolean()) {
+                composeArray[variable] = bddInfo.variableList.get(variable);
+            }
+        }
+        return composeArray;
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("unary")
+    void testComposePartialTree(UnaryDataPoint<BinaryDd> dataPoint) {
+        BinaryDd bdd = dataPoint.bdd;
+        int function = dataPoint.function;
+        assumeTrue(bdd.isValidFunction(function));
+
+        int[] composeArray = buildPartialComposeArray(bdd, function, dataPoint.tree);
+        SyntaxTree composeTree = buildComposeTree(bdd, dataPoint.tree, composeArray);
+        assumeTrue(composeTree.depth() <= 25);
+        int composed = bdd.reference(bdd.compose(function, composeArray));
+        checkTree(bdd, composed, composeTree, "compose");
+
+        if (bdd instanceof BddImpl) {
+            RegisteredOperation.Unary registered = bdd.registerCompose(composeArray);
+            // Twice: the second application reads the private cache the first filled.
+            assertThat(registered.applyAsInt(function), is(composed));
+            assertThat(registered.applyAsInt(function), is(composed));
+            registered.release();
+        }
+        bdd.dereference(composed);
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("binary")
+    void testComposePartialTreeSimplify(BinaryDataPoint<BinaryDd> dataPoint) {
+        BinaryDd bdd = dataPoint.bdd;
+        int function = dataPoint.left;
+        int domain = dataPoint.right;
+        assumeTrue(bdd.isValidFunction(function));
+        assumeTrue(bdd.isValidFunction(domain));
+
+        int[] composeArray = buildPartialComposeArray(bdd, function, dataPoint.leftTree);
+        SyntaxTree composeTree = buildComposeTree(bdd, dataPoint.leftTree, composeArray);
+        assumeTrue(composeTree.depth() <= 25);
+        int composed = bdd.reference(bdd.compose(function, composeArray));
+        int direct = bdd.reference(bdd.composeSimplify(function, composeArray, domain));
+        testSimplify(bdd, direct, composed, domain);
+
+        if (bdd instanceof BddImpl) {
+            RegisteredOperation.Binary registered = bdd.registerComposeSimplify(composeArray);
+            int viaRegistered = bdd.reference(registered.applyAsInt(function, domain));
+            testSimplify(bdd, viaRegistered, composed, domain);
+            assertThat(registered.applyAsInt(function, bdd.trueFunction()), is(composed));
+            registered.release();
+            bdd.dereference(viaRegistered);
+        }
+        bdd.dereference(composed, direct);
+    }
+
     @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
     void testConsume(BinaryDataPoint<BinaryDd> dataPoint) {
@@ -846,6 +914,21 @@ class BddTheories {
     }
 
     @ParameterizedTest(name = "{index}")
+    @MethodSource("unary")
+    void testSatisfyingFraction(UnaryDataPoint<BinaryDd> dataPoint) {
+        BinaryDd bdd = dataPoint.bdd;
+        int function = dataPoint.function;
+        assumeTrue(bdd.isValidFunction(function));
+
+        // Exact over at most 53 variables: every intermediate is a multiple of 2^-n in [0, 1].
+        assumeTrue(bdd.numberOfVariables() <= 53);
+        double expected = Math.scalb(
+                (double) bdd.countSatisfyingAssignments(function).longValueExact(), -bdd.numberOfVariables());
+        assertThat(bdd.satisfyingFraction(function), is(expected));
+        assertThat(bdd.satisfyingFraction(bdd.not(function)), is(1.0d - expected));
+    }
+
+    @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
     void testCountSatisfyingAssignmentsIn(BinaryDataPoint<BinaryDd> dataPoint) {
         BinaryDd bdd = dataPoint.bdd;
@@ -866,6 +949,31 @@ class BddTheories {
         int and = bdd.reference(bdd.and(function1, function2));
         assertThat(bdd.countSatisfyingAssignmentsIn(function1, function2), is(bdd.countSatisfyingAssignments(and)));
         bdd.dereference(and);
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("binary")
+    void testSatisfyingFractionIn(BinaryDataPoint<BinaryDd> dataPoint) {
+        BinaryDd bdd = dataPoint.bdd;
+        int function = dataPoint.left;
+        int domain = dataPoint.right;
+        assumeTrue(bdd.isValidFunction(function));
+        assumeTrue(bdd.isValidFunction(domain));
+
+        if (domain == bdd.falseFunction()) {
+            assertThrowsExactly(IllegalArgumentException.class, () -> bdd.satisfyingFractionIn(function, domain));
+            return;
+        }
+
+        // Correctly rounded over at most 53 variables: both counts are exact doubles, and the one division rounds.
+        assumeTrue(bdd.numberOfVariables() <= 53);
+        long inDomain = bdd.countSatisfyingAssignments(domain).longValueExact();
+        long satisfying = bdd.countSatisfyingAssignmentsIn(function, domain).longValueExact();
+        assertThat(bdd.satisfyingFractionIn(function, domain), is((double) satisfying / inDomain));
+        int negation = bdd.reference(bdd.not(function));
+        assertThat(bdd.satisfyingFractionIn(negation, domain), is((double) (inDomain - satisfying) / inDomain));
+        bdd.dereference(negation);
+        assertThat(bdd.satisfyingFractionIn(function, bdd.trueFunction()), is(bdd.satisfyingFraction(function)));
     }
 
     @ParameterizedTest(name = "{index}")
@@ -1064,8 +1172,8 @@ class BddTheories {
 
         List<BitSet> paths = new ArrayList<>();
         bdd.forEachPath(function, path -> {
-            paths.add(path.copyAssignment());
-            supportFromPathSupport.or(path.copySupport());
+            paths.add(path.assignment());
+            supportFromPathSupport.or(path.support());
         });
         assertThat(supportFromPathSupport, is(support));
 
@@ -1116,7 +1224,7 @@ class BddTheories {
         Set<BitSet> paths = new HashSet<>();
         bdd.forEachPartialPath(function, supportRestriction, path -> {
             assertThat(BitSets.isSubset(path.support(), supportRestriction), is(true));
-            paths.add(path.copyAssignment());
+            paths.add(path.assignment());
             supportFromPathSupport.or(path.support());
         });
         var supportCopy = BitSets.copyOf(support);
@@ -1150,8 +1258,8 @@ class BddTheories {
         List<BitSet> minimalSolutions = new ArrayList<>();
         int variableCount = bdd.numberOfVariables();
         bdd.forEachPath(function, path -> {
-            minimalSolutions.add(path.copyAssignment());
-            BitSet nonRelevantVariables = path.copySupport();
+            minimalSolutions.add(path.assignment());
+            BitSet nonRelevantVariables = path.support();
             nonRelevantVariables.flip(0, variableCount);
             assertThat(nonRelevantVariables.intersects(path.assignment()), is(false));
             assertThat(bdd.evaluate(function, path.assignment()), is(true));
@@ -1165,7 +1273,7 @@ class BddTheories {
         });
 
         List<BitSet> otherMinimalSolutions = new ArrayList<>();
-        bdd.forEachPath(function, path -> otherMinimalSolutions.add(path.copyAssignment()));
+        bdd.forEachPath(function, path -> otherMinimalSolutions.add(path.assignment()));
         assertThat(minimalSolutions, is(otherMinimalSolutions));
     }
 
@@ -1233,6 +1341,73 @@ class BddTheories {
         assertThat(conjunction, is(function));
         bdd.dereference(conjunction);
         bdd.dereference(complement);
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("unary")
+    void testAdopt(UnaryDataPoint<BinaryDd> dataPoint) {
+        BinaryDd bdd = dataPoint.bdd;
+        int function = dataPoint.function;
+        assumeTrue(bdd.isValidFunction(function));
+
+        // Into a fresh diagram with the variables reversed - so it has to restructure - and back: the same function.
+        int variables = bdd.numberOfVariables();
+        IntUnaryOperator reversed = variable -> variables - 1 - variable;
+        BddImpl other = new DdContextImpl(ImmutableBddConfiguration.builder().build()).bdd();
+        other.createVariables(variables);
+        int adopted = other.reference(other.adopt(bdd, function, reversed));
+        assertThat(other.satisfyingFraction(adopted), is(bdd.satisfyingFraction(function)));
+        assertThat(bdd.adopt(other, adopted, reversed), is(function));
+        other.dereference(adopted);
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("unary")
+    void testShortestPath(UnaryDataPoint<BinaryDd> dataPoint) {
+        BinaryDd bdd = dataPoint.bdd;
+        int function = dataPoint.function;
+        assumeTrue(bdd.isValidFunction(function));
+
+        // The first of the shortest paths in forEachPath order.
+        Cube[] expected = {null};
+        bdd.forEachPath(function, path -> {
+            if (expected[0] == null || path.size() < expected[0].size()) {
+                expected[0] = path.copy();
+            }
+        });
+        assertThat(bdd.shortestPath(function).orElse(null), is(expected[0]));
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("unary")
+    void testPrimeImplicants(UnaryDataPoint<BinaryDd> dataPoint) {
+        BinaryDd bdd = dataPoint.bdd;
+        int function = dataPoint.function;
+        assumeTrue(bdd.isValidFunction(function));
+
+        List<Cube> primes = bdd.primeImplicants(function);
+
+        // Every prime implies the function and stops doing so without any one of its literals; together they are it.
+        int union = bdd.reference(bdd.falseFunction());
+        for (Cube prime : primes) {
+            int primeFunction = bdd.reference(bdd.of(prime));
+            assertThat(prime.toString(), bdd.implies(primeFunction, function), is(true));
+            union = bdd.updateWith(bdd.or(union, primeFunction), union);
+            bdd.dereference(primeFunction);
+            prime.forEachLiteral((variable, value) -> {
+                int weaker = bdd.reference(bdd.of(prime.without(variable)));
+                assertThat(prime + " without " + variable, bdd.implies(weaker, function), is(false));
+                bdd.dereference(weaker);
+            });
+        }
+        assertThat(primes.toString(), union, is(function));
+        bdd.dereference(union);
+
+        // Every implicant of the diagram's cover contains a prime.
+        for (Cube implicant : bdd.implicants(function)) {
+            assertThat(implicant.toString(), primes.stream().anyMatch(implicant::implies), is(true));
+        }
+        assertThat(primes.toString(), Set.copyOf(primes).size(), is(primes.size()));
     }
 
     @ParameterizedTest(name = "{index}")

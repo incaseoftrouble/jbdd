@@ -140,6 +140,13 @@ public interface BddSet {
     List<Cube> implicants();
 
     /**
+     * All prime implicants of this set, independent of the variable order.
+     *
+     * @see BinaryDecisionDiagram#primeImplicants(int)
+     */
+    List<Cube> primeImplicants();
+
+    /**
      * Splits this set into a map over just {@code splitVariables}, whose value at each of their valuations is
      * what this set restricts to there - a set over the remaining variables. Its {@link BddMap#inverse()}
      * partitions the valuations of {@code splitVariables} by residual. {@code destination} must belong to
@@ -162,6 +169,20 @@ public interface BddSet {
     /** Counts elements the same way {@link #cursor(BitSet)} does. */
     BigInteger size(BitSet support);
 
+    /**
+     * The fraction of all valuations in this set, independent of how many variables exist. Best-effort, see {@link
+     * BinaryDecisionDiagram#satisfyingFraction(int)}.
+     */
+    double satisfyingFraction();
+
+    /**
+     * The probability that a valuation drawn uniformly at random from {@code domain} is in this set. Best-effort, see
+     * {@link BinaryDecisionDiagram#satisfyingFractionIn(int, int)}.
+     *
+     * @throws IllegalArgumentException if {@code domain} is empty
+     */
+    double satisfyingFractionIn(BddSet domain);
+
     /** Calls {@code consumer} once per element, treating variables outside {@code support} as "don't care". */
     void forEach(BitSet support, Consumer<? super BitSet> consumer);
 
@@ -172,6 +193,13 @@ public interface BddSet {
      * working state - see {@link Cursor}.
      */
     void forEachPath(Consumer<? super Cube> action);
+
+    /**
+     * The shortest of the {@link #forEachPath paths}, the first of them in that order; empty for the empty set.
+     *
+     * @see BinaryDecisionDiagram#shortestPath(int)
+     */
+    Optional<Cube> shortestPath();
 
     /** Like {@link #forEachPath}, stopping at the first path {@code predicate} accepts; whether one did. */
     boolean anyPathMatches(Predicate<? super Cube> predicate);

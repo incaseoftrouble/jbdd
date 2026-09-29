@@ -696,13 +696,12 @@ public abstract class NodeTable {
             // kept alive by other nodes "above" it.
             approximateDeadNodeCount++;
             if (node == biggestReferencedNode) {
-                // Update biggestReferencedNode
-                for (int i = biggestReferencedNode - 1; i >= FIRST_NODE; i--) {
-                    if (dataIsReferencedOrSaturated(nodeData[i])) {
-                        biggestReferencedNode = i;
-                        break;
-                    }
+                // Update biggestReferencedNode: the next referenced node below, PLACEHOLDER if there is none
+                int below = node - 1;
+                while (below >= FIRST_NODE && !dataIsReferencedOrSaturated(nodeData[below])) {
+                    below -= 1;
                 }
+                biggestReferencedNode = below >= FIRST_NODE ? below : PLACEHOLDER;
             }
         }
         nodeData[node] = dataDecreaseReferenceCount(metadata);

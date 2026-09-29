@@ -20,20 +20,26 @@ import java.lang.ref.Reference;
 import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.BitSet;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.IntFunction;
 import java.util.function.IntUnaryOperator;
 import java.util.function.Predicate;
 import org.jspecify.annotations.Nullable;
 
-@SuppressWarnings("ObjectEquality")
+@SuppressWarnings({"ObjectEquality", "PMD.CouplingBetweenObjects"})
 final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSetImpl, BddImpl>
         implements BddSetFactory {
     private final BddSet empty;
     private final BddSet universe;
+
+    private boolean attached;
 
     BddSetFactoryImpl(BddImpl dd) {
         super(dd);
@@ -118,6 +124,46 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
     }
 
     @Override
+    public BddSet adopt(BddSet set, IntUnaryOperator variableMapping) {
+        BddSetImpl foreign = (BddSetImpl) set;
+        int[] variables = mapSupport(foreign.support(), variableMapping);
+        try {
+            return make(dd.adopt(foreign.factory.dd, foreign.function, variable -> variables[variable]));
+        } finally {
+            // The source diagram lives only as long as its wrapper.
+            Reference.reachabilityFence(foreign);
+        }
+    }
+
+    // variableMapping on each variable of support, all of which then exist here; adopt asks once per node.
+    int[] mapSupport(BitSet support, IntUnaryOperator variableMapping) {
+        int[] mapped = new int[support.length()];
+        BitSets.forEach(support, variable -> {
+            int target = variableMapping.applyAsInt(variable);
+            if (target < 0) {
+                throw new IllegalArgumentException(String.format("Invalid mapping %s -> %s", variable, target));
+            }
+            variableFunction(target);
+            mapped[variable] = target;
+        });
+        return mapped;
+    }
+
+    @Override
+    public void pin(BddSet set) {
+        dd.pin(functionOf(set));
+    }
+
+    // See BinaryFactoryContext#attachToSets.
+    <A> Attachment<BddSet, A> attach(Function<? super BddSet, ? extends A> constructor) {
+        if (attached) {
+            throw new IllegalStateException("The sets already have an attachment");
+        }
+        attached = true;
+        return new AttachmentImpl<>(this, constructor);
+    }
+
+    @Override
     public BddSet.Quantifier registerExists(BitSet quantifiedVariables) {
         return new RegisteredQuantifier(this, dd.registerExists(quantifiedVariables));
     }
@@ -164,6 +210,63 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         return make(variableFunction(variable));
     }
 
+    @Override
+    public <E> BddSet of(E expression, ExpressionStructure<E> structure) {
+        // Every function built stays referenced until the end, so no collection in between invalidates the memo.
+        Map<E, Integer> built = new HashMap<>();
+        // TODO No need for try-finally
+        try {
+            return make(build(expression, structure, built));
+        } finally {
+            for (int function : built.values()) {
+                dd.dereference(function);
+            }
+        }
+    }
+
+    private <E> int build(E expression, ExpressionStructure<E> structure, Map<E, Integer> built) {
+        Integer memoized = built.get(expression);
+        if (memoized != null) {
+            return memoized;
+        }
+        BddSet known = structure.known(expression);
+        int function = known == null ? buildOperator(expression, structure, built) : functionOf(known);
+        built.put(expression, dd.reference(function));
+        return function;
+    }
+
+    private <E> int buildOperator(E expression, ExpressionStructure<E> structure, Map<E, Integer> built) {
+        ExpressionStructure.Kind kind = structure.kind(expression);
+        switch (kind) {
+            case FALSE:
+                return dd.falseFunction();
+            case TRUE:
+                return dd.trueFunction();
+            case VARIABLE:
+                return variableFunction(structure.variable(expression));
+            case NOT:
+                return dd.not(build(structure.operand(expression, 0), structure, built));
+            case AND:
+            case OR:
+                int absorbing = kind == ExpressionStructure.Kind.AND ? dd.falseFunction() : dd.trueFunction();
+                int arity = structure.arity(expression);
+                int[] operands = new int[arity];
+                for (int index = 0; index < arity; index++) {
+                    operands[index] = build(structure.operand(expression, index), structure, built);
+                    if (operands[index] == absorbing) {
+                        return absorbing;
+                    }
+                }
+                return kind == ExpressionStructure.Kind.AND ? dd.and(operands) : dd.or(operands);
+            case XOR:
+            case IFF:
+                int left = build(structure.operand(expression, 0), structure, built);
+                int right = build(structure.operand(expression, 1), structure, built);
+                return kind == ExpressionStructure.Kind.XOR ? dd.xor(left, right) : dd.equivalence(left, right);
+        }
+        throw new AssertionError(kind);
+    }
+
     int functionOf(BddSet set) {
         assert (set instanceof BddSetImpl) && (this == ((BddSetImpl) set).factory); // NOPMD
         // assert bdd.nodeReferenceCount(node) > 0 || bdd.nodeReferenceCount(node) == -1;
@@ -205,12 +308,39 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         }
     }
 
+    private static final class AttachmentImpl<A> implements Attachment<BddSet, A> {
+        private final BddSetFactoryImpl factory;
+        private final Function<? super BddSet, ? extends A> constructor;
+
+        AttachmentImpl(BddSetFactoryImpl factory, Function<? super BddSet, ? extends A> constructor) {
+            this.factory = factory;
+            this.constructor = constructor;
+        }
+
+        @Override
+        @SuppressWarnings("unchecked") // The factory has this one attachment, so every slot holds an A.
+        public A of(BddSet set) {
+            assert (set instanceof BddSetImpl) && (factory == ((BddSetImpl) set).factory); // NOPMD
+            BddSetImpl impl = (BddSetImpl) set;
+            Object attached = impl.attachment;
+            if (attached == null) {
+                attached = Objects.requireNonNull(constructor.apply(set));
+                assert impl.attachment == null : "the constructor asked for the attachment it is building";
+                impl.attachment = attached;
+            }
+            return (A) attached;
+        }
+    }
+
     static final class BddSetImpl implements BddSet, DdContainer {
         private final BddSetFactoryImpl factory;
         private final int function;
 
         @Nullable
         private BitSet supportCache;
+
+        @Nullable
+        private Object attachment;
 
         BddSetImpl(BddSetFactoryImpl factory, int function) {
             this.factory = factory;
@@ -349,6 +479,11 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         }
 
         @Override
+        public List<Cube> primeImplicants() {
+            return factory.dd.primeImplicants(function);
+        }
+
+        @Override
         public BddMap<BddSet> split(BitSet splitVariables, Values<BddSet> destination) {
             return ((BddMapFactoryImpl) destination.factory()).split(this, splitVariables, destination);
         }
@@ -397,6 +532,16 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         }
 
         @Override
+        public double satisfyingFraction() {
+            return factory.dd.satisfyingFraction(function);
+        }
+
+        @Override
+        public double satisfyingFractionIn(BddSet domain) {
+            return factory.dd.satisfyingFractionIn(function, factory.functionOf(domain));
+        }
+
+        @Override
         public void forEach(BitSet support, Consumer<? super BitSet> consumer) {
             factory.dd.forEachSolution(function, support, consumer);
         }
@@ -404,6 +549,11 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         @Override
         public void forEachPath(Consumer<? super Cube> action) {
             factory.dd.forEachPath(function, action);
+        }
+
+        @Override
+        public Optional<Cube> shortestPath() {
+            return factory.dd.shortestPath(function);
         }
 
         @Override

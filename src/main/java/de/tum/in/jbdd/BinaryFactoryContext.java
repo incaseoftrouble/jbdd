@@ -16,6 +16,8 @@
  */
 package de.tum.in.jbdd;
 
+import java.util.function.Function;
+
 /**
  * A {@link DdContext} together with the object-oriented views over it - the {@link BddSetFactory} and
  * the {@link BddMapFactory}, which are one per context because they share its diagrams.
@@ -39,4 +41,15 @@ public interface BinaryFactoryContext extends DdContext {
 
     /** The unique {@link BddMapFactory}. */
     BddMapFactory bddMaps();
+
+    /**
+     * Binds an object to every set of {@link #bddSets()}: {@link Attachment#of} builds it with
+     * {@code constructor} the first time a set is asked for it and hands out that same object for as long as
+     * the set lives. Sets are canonical per function, so the attachment is too; set and attachment may hold each
+     * other, and are collected together. The constructor runs outside any operation and may start one, but must
+     * not ask for the attachment of the set it is building.
+     *
+     * @throws IllegalStateException if the sets already have an attachment - there is one slot per set
+     */
+    <A> Attachment<BddSet, A> attachToSets(Function<? super BddSet, ? extends A> constructor);
 }

@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
+import java.util.BitSet;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -95,5 +96,34 @@ class ValuesTest {
 
         // The two numberings are distinct, so this is a cross-numbering comparison - which is fine.
         assertEquals(ctx.bddSets().universe(), map.where(retyped, String::contentEquals));
+    }
+
+    @Test
+    void testAdoptFromAnotherContext() {
+        BinaryFactoryContext source = BinaryFactoryContext.create();
+        BddSet x0 = source.bddSets().var(0);
+        BddSet x2 = source.bddSets().var(2);
+        BddMap<String> map = source.bddMaps()
+                .<String>create()
+                .of("none")
+                .update(x0, "x0")
+                .update(x2, "x2")
+                .update(x0.intersection(x2), "both");
+
+        /* Variables shift by one, and each value becomes a set of the target, built by the value mapping itself -
+         * which merges "x0" with "x2" and "none" with "both". */
+        BinaryFactoryContext target = BinaryFactoryContext.create();
+        Values<BddSet> sets = target.bddMaps().create();
+        BddMap<BddSet> adopted = sets.adopt(
+                map, variable -> variable + 1, value -> target.bddSets().var(value.length()));
+
+        assertSame(sets, adopted.valueDomain());
+        assertEquals(BitSets.of(1, 3), adopted.support());
+        assertEquals(2, adopted.values().size());
+        for (BitSet assignment : List.of(BitSets.of(), BitSets.of(0), BitSets.of(2), BitSets.of(0, 2))) {
+            BitSet shifted = new BitSet();
+            BitSets.forEach(assignment, variable -> shifted.set(variable + 1));
+            assertEquals(target.bddSets().var(map.evaluate(assignment).length()), adopted.evaluate(shifted));
+        }
     }
 }

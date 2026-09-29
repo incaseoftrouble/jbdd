@@ -115,6 +115,18 @@ class RegressionTests {
     }
 
     @Test
+    void testReleasingTheLastReferencedNodeLeavesNothingReferenced() {
+        // A BDD table always keeps its saturated variable nodes; an MTBDD table can let go of every node.
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        bdd.createVariables(1);
+        MtBddImpl mt = bdd.mtbdd();
+        int node = mt.reference(mt.of(0, mt.of(1), mt.of(2)));
+        mt.dereference(node);
+        mt.gc();
+        assertTrue(mt.check());
+    }
+
+    @Test
     void testBooleanCacheIsPrunedAfterAJvmGarbageCollection() {
         BddImpl bdd = new DdContextImpl(config).bdd();
         int[] v = bdd.createVariables(6);
@@ -352,6 +364,50 @@ class RegressionTests {
         assertTrue(maps.protectedObjectCount() < 10, "wrappers were pinned: " + maps.protectedObjectCount());
     }
 
+    private static BddSet cube(BddSetFactory sets, int index) {
+        return sets.of(Cube.of(BitSet.valueOf(new long[] {index}), BitSets.range(0, 13)));
+    }
+
+    @Test
+    void testWrapperTableStaysCanonicalThroughCollections() throws InterruptedException {
+        // Enough wrappers to grow the table several times, half of them collected, so lookups probe across the
+        // holes the backward-shift deletion closes - and a function and its complement are separate keys.
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BddSetFactoryImpl sets = (BddSetFactoryImpl) ctx.bddSets();
+        int count = 4096;
+        List<BddSet> held = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            BddSet cube = cube(sets, i);
+            BddSet complement = cube.complement();
+            if (i % 2 == 0) {
+                held.add(cube);
+                held.add(complement);
+            }
+        }
+        assertTrue(sets.protectedObjectCount() >= held.size());
+
+        forceJvmGarbageCollection();
+        // Collected wrappers are queued asynchronously; every miss drains what has arrived.
+        for (int miss = 0; miss < 1000 && sets.protectedObjectCount() > held.size() + 1100; miss++) {
+            Thread.sleep(1);
+            cube(sets, count + miss);
+        }
+        assertTrue(
+                sets.protectedObjectCount() <= held.size() + 1100,
+                "collected wrappers stayed: " + sets.protectedObjectCount());
+
+        for (int i = 0; i < count; i += 2) {
+            assertSame(held.get(i), cube(sets, i));
+            assertSame(held.get(i + 1), cube(sets, i).complement());
+        }
+        for (int i = 1; i < count; i += 2) {
+            BddSet rebuilt = cube(sets, i);
+            assertSame(rebuilt, cube(sets, i));
+            assertSame(rebuilt, rebuilt.complement().complement());
+        }
+        assertTrue(ctx.bdd().check());
+    }
+
     @Test
     void testBddMapValuesSurviveAValueSweep() {
         BddImpl bdd = new DdContextImpl(config).bdd();
@@ -471,8 +527,8 @@ class RegressionTests {
 
     /**
      * Collects with the replacement dead and hands its id out again. Asserts the compose cache holds enough
-     * entries to be pruned selectively: with only a few the collection drops it wholesale, and the mapping's
-     * validity check this is about would never be asked.
+     * entries to be pruned selectively: with only a few the collection drops it wholesale, and the validity
+     * check of the entries naming the replacement, which this is about, would never be asked.
      */
     private static void collectAndRecycle(DdContextImpl context, String cache, int freed) {
         Map<String, Object> statistics = context.statistics();
@@ -496,13 +552,14 @@ class RegressionTests {
         // mapping mean something else, and the entries computed under the old one must not be reused.
         DdContextImpl context = new DdContextImpl(config);
         BddImpl bdd = context.bdd();
-        int[] v = bdd.createVariables(8);
-        int function = bdd.reference(manyNodesAboveTheLast(bdd, v));
-        int replacement = bdd.reference(bdd.and(v[1], v[2]));
+        // v9 in the function keeps the replacement's own node out of the result, so the collection can reclaim it.
+        int[] v = bdd.createVariables(10);
+        int function = bdd.reference(bdd.and(manyNodesAboveTheLast(bdd, v), v[9]));
+        int replacement = bdd.reference(bdd.or(v[8], v[9]));
         int stale = bdd.reference(bdd.compose(function, replacingLast(bdd, replacement)));
 
         bdd.dereference(replacement);
-        collectAndRecycle(context, "cache_compose", replacement);
+        collectAndRecycle(context, "cache_compose_tuple", replacement);
 
         int high = bdd.reference(bdd.restrict(function, Cube.literal(7, true)));
         int low = bdd.reference(bdd.restrict(function, Cube.literal(7, false)));
@@ -532,23 +589,36 @@ class RegressionTests {
     }
 
     @Test
-    void testFreshIndexSurvivesTheReclaimOfADeadAllocationOfItsTerminal() {
-        // Raw terminals are shared by every numbering (and a split's intermediate indices), so a numbering can
-        // hand out an index whose terminal a dead structure still has allocated. Reclaiming that must not make
-        // the numbering forget the value it just assigned, before any map using it exists.
+    void testSplitProtectsTheValuesItHandsOutUntilItsResultHoldsThem() {
+        // A split relabels every residual up front and builds its result afterwards. A value it hands out -
+        // here an existing index whose terminal only a dead structure holds - must survive a collection in
+        // between, as a growth while building the result would run one.
         BinaryFactoryContext context = BinaryFactoryContext.create(config);
         MtBddImpl mt = (MtBddImpl) context.mtBdd();
-        int dead = mt.of(0);
-        assertTrue(mt.isConstant(dead));
+        context.bdd().createVariables(2);
         BddMapFactoryImpl.ValuesImpl<String> values =
                 (BddMapFactoryImpl.ValuesImpl<String>) context.bddMaps().<String>create();
+        BddSetFactory sets = context.bddSets();
+        BddMap<String> map = values.ifThenElse(
+                sets.var(0), values.ifThenElse(sets.var(1), values.of("a"), values.of("b")), values.of("c"));
+        // Above the split's own intermediate indices (0 and 1 here), which would keep its terminal alive.
+        int old = values.getOrAssignIndex("old");
+        assertTrue(old > 1);
+        assertTrue(mt.isConstant(mt.of(old)));
+        List<BddMap<String>> residuals = new ArrayList<>();
+        BddMap<String> split = map.splitMap(BitSets.of(0), values, residual -> {
+            residuals.add(residual);
+            if (residuals.size() == 1) {
+                return "old";
+            }
+            mt.gc();
+            return "new";
+        });
 
-        int index = values.getOrAssignIndex("fresh");
-        assertEquals(0, index);
-        mt.gc();
-        assertEquals("fresh", values.valueOf(index));
-        assertEquals(index, values.peek("fresh"));
-        assertEquals("fresh", values.of("fresh").evaluate(new BitSet()));
+        assertEquals(2, residuals.size());
+        assertEquals(java.util.Set.of("old", "new"), split.values());
+        assertEquals(java.util.Set.of("old", "new"), split.inverse().keySet());
+        assertTrue(mt.check());
     }
 
     @Test
@@ -667,11 +737,10 @@ class RegressionTests {
     }
 
     @Test
-    void testRegisteredComposeNeverNeedsTheDomainCache() {
-        // A plain registered compose is only ever invoked with a TRUE domain and must therefore keep the
-        // domain TRUE all the way down: it carries no domain-keyed cache to look anything else up in. (The
-        // recursion used to narrow the domain to the current branch condition regardless, which both
-        // needed that cache and, since it wasn't allocated, tripped an assertion on the very first use.)
+    void testRegisteredComposeAgreesWithThePlainOne() {
+        // A registered compose only binds its mapping: it must agree with the ordinary compose, and with the
+        // domain-carrying variant at a TRUE domain - here with a replacement reading v1, which the function
+        // decides above the replaced v2.
         BddImpl bdd = new DdContextImpl(config).bdd();
         int[] v = bdd.createVariables(4);
         int function = bdd.reference(bdd.or(bdd.and(v[0], v[2]), bdd.and(v[1], v[3])));
@@ -680,7 +749,6 @@ class RegressionTests {
         RegisteredOperation.Unary compose = bdd.registerCompose(mapping.clone());
         int registered = bdd.reference(assertDoesNotThrow(() -> compose.applyAsInt(function)));
 
-        // Must agree with the ordinary compose, which does narrow (and has both caches).
         assertEquals(bdd.compose(function, mapping.clone()), registered);
 
         // And with the domain-carrying variant at a TRUE domain.

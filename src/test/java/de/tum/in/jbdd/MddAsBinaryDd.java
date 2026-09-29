@@ -16,6 +16,7 @@
  */
 package de.tum.in.jbdd;
 
+import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.BitSet;
@@ -216,6 +217,22 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     @Override
     public BigInteger countSatisfyingAssignmentsIn(int function, int domain) {
         return mdd.countSatisfyingAssignmentsIn(function, domain);
+    }
+
+    @Override
+    public double satisfyingFraction(int function) {
+        // The exact reference: 2^-n is a finite decimal, so only the conversion rounds.
+        return new BigDecimal(countSatisfyingAssignments(function))
+                .multiply(BigDecimal.valueOf(5, 1).pow(numberOfVariables()))
+                .doubleValue();
+    }
+
+    @Override
+    public double satisfyingFractionIn(int function, int domain) {
+        if (domain == falseFunction()) {
+            throw new IllegalArgumentException("Empty domain");
+        }
+        return Util.quotient(countSatisfyingAssignmentsIn(function, domain), countSatisfyingAssignments(domain));
     }
 
     /** Presents a cursor's elements as something else, without copying or stepping anything itself. */

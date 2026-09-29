@@ -28,9 +28,13 @@ import java.util.Optional;
  * fixed to true among them. Equivalently a partial assignment, standing for all its completions - a minterm
  * being the cube over every variable, the empty cube the constant true.
  *
- * <p>Operations return new cubes and never modify their operands. A cube handed out by a path walk or cursor
- * is that walk's working state, though, and changes under the caller - see {@link Cursor}; {@link #copy()}
- * it to keep it.
+ * <p>Operations return new cubes and never modify their operands. The plain accessors and {@link #of} copy, so a
+ * cube cannot be changed through them. The {@code Unsafe} variants ({@link #ofUnsafe}, {@link #assignmentUnsafe},
+ * {@link #supportUnsafe}) hand the sets over as they are, for callers that only read them, or give up the sets
+ * they pass: modifying a set obtained or passed that way modifies the cube.
+ *
+ * <p>A cube handed out by a path walk or cursor is that walk's working state and changes under the caller - see
+ * {@link Cursor}; {@link #copy()} it to keep it.
  */
 public final class Cube {
     private static final Cube EMPTY = new Cube(new BitSet(0), new BitSet(0));
@@ -45,11 +49,22 @@ public final class Cube {
         this.support = support;
     }
 
-    /** The cube fixing the variables of {@code support} as {@code valuation} assigns them. */
+    /** The cube fixing the variables of {@code support} as {@code valuation} assigns them. Copies both. */
     public static Cube of(BitSet valuation, BitSet support) {
         BitSet assignment = BitSets.copyOf(valuation);
         assignment.and(support);
         return new Cube(assignment, BitSets.copyOf(support));
+    }
+
+    /**
+     * The cube over {@code support} with {@code assignment} (a subset of it) true, taking both sets as they are:
+     * the caller gives them up and must not modify them afterwards.
+     */
+    public static Cube ofUnsafe(BitSet assignment, BitSet support) {
+        if (!BitSets.isSubset(assignment, support)) {
+            throw new IllegalArgumentException("Assignment " + assignment + " outside of support " + support);
+        }
+        return new Cube(assignment, support);
     }
 
     /** The cube fixing nothing - the constant true. */
@@ -75,22 +90,24 @@ public final class Cube {
         return new Cube(new BitSet(0), BitSets.copyOf(variables));
     }
 
-    /** The variables fixed to true. Handed out as-is, so callers must not modify it. */
+    /** The variables fixed to true, as a set the caller owns. */
     public BitSet assignment() {
-        return assignment;
-    }
-
-    /** The variables fixed. Handed out as-is, so callers must not modify it. */
-    public BitSet support() {
-        return support;
-    }
-
-    public BitSet copyAssignment() {
         return BitSets.copyOf(assignment);
     }
 
-    public BitSet copySupport() {
+    /** The variables fixed to true, the cube's own set: to be read, never modified. */
+    public BitSet assignmentUnsafe() {
+        return assignment;
+    }
+
+    /** The variables fixed, as a set the caller owns. */
+    public BitSet support() {
         return BitSets.copyOf(support);
+    }
+
+    /** The variables fixed, the cube's own set: to be read, never modified. */
+    public BitSet supportUnsafe() {
+        return support;
     }
 
     /** A cube equal to this one that owns its sets - see the class comment. */
@@ -122,7 +139,7 @@ public final class Cube {
 
     /** The variables fixed to true, as a set the caller owns. */
     public BitSet positives() {
-        return copyAssignment();
+        return assignment();
     }
 
     /** The variables fixed to false, as a set the caller owns. */

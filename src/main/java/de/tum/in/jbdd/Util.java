@@ -17,6 +17,7 @@
 package de.tum.in.jbdd;
 
 import java.lang.ref.WeakReference;
+import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Map;
@@ -95,6 +96,23 @@ final class Util {
 
     static double ratio(long value, long total) {
         return total == 0 ? 0.0 : value / (double) total;
+    }
+
+    /**
+     * {@code numerator / denominator} for {@code 0 <= numerator <= denominator}, correctly rounded unless below
+     * {@code 2^-1022}: a quotient of at least 55 bits with the remainder as sticky bit rounds as the exact value
+     * does.
+     */
+    static double quotient(BigInteger numerator, BigInteger denominator) {
+        assert numerator.signum() >= 0 && denominator.compareTo(numerator) >= 0 && denominator.signum() > 0;
+        if (numerator.signum() == 0) {
+            return 0.0d;
+        }
+        int shift = denominator.bitLength() - numerator.bitLength() + 55;
+        BigInteger[] quotientAndRemainder = numerator.shiftLeft(shift).divideAndRemainder(denominator);
+        BigInteger quotient =
+                quotientAndRemainder[1].signum() == 0 ? quotientAndRemainder[0] : quotientAndRemainder[0].setBit(0);
+        return Math.scalb(quotient.doubleValue(), -shift);
     }
 
     private static final class CleanupStatisticsRef extends WeakReference<StatisticsSource> {

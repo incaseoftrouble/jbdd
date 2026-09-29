@@ -309,8 +309,8 @@ class ReorderTest {
             // own support. Together the paths must cover the solutions exactly.
             Set<BitSet> covered = new HashSet<>();
             bdd.forEachPath(function, path -> {
-                BitSet pathSupport = path.copySupport();
-                BitSet pathAssignment = path.copyAssignment();
+                BitSet pathSupport = path.support();
+                BitSet pathAssignment = path.assignment();
                 for (BitSet assignment : valuations(variables)) {
                     BitSet masked = (BitSet) assignment.clone();
                     masked.and(pathSupport);

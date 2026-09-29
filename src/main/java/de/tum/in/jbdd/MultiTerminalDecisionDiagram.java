@@ -257,6 +257,20 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
     int ifThenElse(int ifFunction, int thenFunction, int elseFunction);
 
     /**
+     * {@code function} of {@code source}, another multi-terminal diagram, rebuilt in this one with each variable
+     * {@code v} of it read as {@code variableMapping(v)} here, which must exist, and each value {@code x} as
+     * {@code valueMapping(x)}. The source is only read; the result is not referenced.
+     *
+     * <p>As {@link BinaryDecisionDiagram#adopt}: one memoized pass over the source's nodes, a single node each where
+     * the mapped variable lies above both rebuilt children in this diagram's order.
+     */
+    int adopt(
+            MultiTerminalDecisionDiagram source,
+            int function,
+            IntUnaryOperator variableMapping,
+            IntUnaryOperator valueMapping);
+
+    /**
      * The single canonical entry point every other {@code apply}/{@code applyXxx} overload below funnels
      * through, by wrapping its {@link IntBinaryOperator} into an {@link MtBddBinaryOperator} declaring
      * whatever properties that particular overload's name promises. {@code operator}'s properties are

@@ -174,6 +174,18 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
         return function;
     }
 
+    /** Saturates the node of {@code function}: it is never collected, and reference counting leaves it alone. */
+    void pin(int function) {
+        assert isValidFunction(function);
+        int positive = positive(function);
+        if (positive == TRUE) {
+            return;
+        }
+        assert accessGuard.acquire();
+        table().saturateNode(positive);
+        assert accessGuard.release();
+    }
+
     @Override
     public boolean isUnmanaged(int function) {
         return isSaturatedNode(nodeFor(function));

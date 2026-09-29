@@ -874,6 +874,120 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         return result;
     }
 
+    // TODO Read this satisfyingFraction and composeJoin / restrictCube in detail
+
+    /* What computeSatisfyingFraction leaves: the fraction of the function it was called on and of its complement.
+     * Fields rather than a returned pair, so the recursion allocates nothing. */
+    // TODO Make this a double[2] passed into the recursion
+    private double lastFraction;
+    private double lastComplementFraction;
+
+    @Override
+    public double satisfyingFraction(int function) {
+        assert isValidFunction(function);
+
+        assert accessGuard.acquire();
+        computeSatisfyingFraction(function);
+        assert accessGuard.release();
+        return lastFraction;
+    }
+
+    private void computeSatisfyingFraction(int function) {
+        if (function == TRUE || function == FALSE) {
+            lastFraction = function == TRUE ? 1.0d : 0.0d;
+            lastComplementFraction = 1.0d - lastFraction;
+            return;
+        }
+
+        // Each side is the mean of the children's same side, a complemented edge swapping them: only sums of
+        // non-negative terms, never 1 - x, so both keep their relative precision however close to 0 they get.
+        int node = positive(function);
+        BooleanCache.FractionCache fractions = cache.fractionCache();
+        double fraction;
+        double complementFraction;
+        if (fractions.lookup(node)) {
+            fraction = fractions.fraction();
+            complementFraction = fractions.complementFraction();
+        } else {
+            int hash = fractions.lookupHash();
+            computeSatisfyingFraction(low(node));
+            double lowFraction = lastFraction;
+            double lowComplementFraction = lastComplementFraction;
+            computeSatisfyingFraction(high(node));
+            fraction = (lowFraction + lastFraction) * 0.5d;
+            complementFraction = (lowComplementFraction + lastComplementFraction) * 0.5d;
+            fractions.put(hash, node, fraction, complementFraction);
+        }
+        boolean complement = function != node;
+        lastFraction = complement ? complementFraction : fraction;
+        lastComplementFraction = complement ? fraction : complementFraction;
+    }
+
+    @Override
+    public double satisfyingFractionIn(int function, int domain) {
+        assert isValidFunction(function) && isValidFunction(domain);
+        if (domain == FALSE) {
+            throw new IllegalArgumentException("No assignment to draw from the empty domain");
+        }
+
+        assert accessGuard.acquire();
+        computeSatisfyingFractionIn(function, domain);
+        assert accessGuard.release();
+
+        // The domain's fraction is the sum of both sides, so neither the probability nor its complement is 1 - x.
+        double domainFraction = lastFraction + lastComplementFraction;
+        if (domainFraction < Double.MIN_NORMAL) {
+            return Util.quotient(countSatisfyingAssignmentsIn(function, domain), countSatisfyingAssignments(domain));
+        }
+        return lastFraction / domainFraction;
+    }
+
+    /* Leaves the satisfying fractions of function AND domain and of NOT function AND domain in the fields
+     * computeSatisfyingFraction uses, by the same scheme. */
+    private void computeSatisfyingFractionIn(int function, int domain) {
+        if (domain == TRUE) {
+            computeSatisfyingFraction(function);
+            return;
+        }
+        if (domain == FALSE) {
+            lastFraction = 0.0d;
+            lastComplementFraction = 0.0d;
+            return;
+        }
+        if (isConstant(function) || function == domain || function == complement(domain)) {
+            boolean satisfied = function == TRUE || function == domain;
+            computeSatisfyingFraction(domain);
+            double domainFraction = lastFraction;
+            lastFraction = satisfied ? domainFraction : 0.0d;
+            lastComplementFraction = satisfied ? 0.0d : domainFraction;
+            return;
+        }
+
+        int node = positive(function);
+        BooleanCache.FractionInCache fractions = cache.fractionInCache();
+        double fraction;
+        double complementFraction;
+        if (fractions.lookup(node, domain)) {
+            fraction = fractions.fraction();
+            complementFraction = fractions.complementFraction();
+        } else {
+            int hash = fractions.lookupHash();
+            int nodeLevel = decisionLevel(node);
+            int domainLevel = decisionLevel(domain);
+            int level = Math.min(nodeLevel, domainLevel);
+            computeSatisfyingFractionIn(lowIf(node, nodeLevel == level), lowIf(domain, domainLevel == level));
+            double lowFraction = lastFraction;
+            double lowComplementFraction = lastComplementFraction;
+            computeSatisfyingFractionIn(highIf(node, nodeLevel == level), highIf(domain, domainLevel == level));
+            fraction = (lowFraction + lastFraction) * 0.5d;
+            complementFraction = (lowComplementFraction + lastComplementFraction) * 0.5d;
+            fractions.put(hash, node, domain, fraction, complementFraction);
+        }
+        boolean complement = function != node;
+        lastFraction = complement ? complementFraction : fraction;
+        lastComplementFraction = complement ? fraction : complementFraction;
+    }
+
     // General operations
 
     @Override
@@ -919,14 +1033,7 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
             }
         }
 
-        cache.initCompose(variableMapping);
-        int result = composeGeneral(
-                function,
-                domain,
-                variableMapping,
-                analysis.maxReplacedLevel,
-                cache.composeCache(),
-                cache.composeSimplifyCache());
+        int result = composeJoint(function, domain, variableMapping);
         table.popFromWorkStack(arrayWorkStackCount);
         assert table.workStacksEmpty();
         assert accessGuard.release();
@@ -944,8 +1051,7 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
             Cube restriction = analysis.restriction;
             return function -> restrict(function, restriction);
         }
-        return new BddOperations.Compose(
-                this, resolved, analysis.maxReplacedLevel, Util.protectNodes(this, resolved), false);
+        return new BddOperations.Compose(this, resolved, Util.protectNodes(this, resolved));
     }
 
     @Override
@@ -959,8 +1065,7 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
             Cube restriction = analysis.restriction;
             return (function, domain) -> simplify(restrict(function, restriction), domain);
         }
-        return new BddOperations.Compose(
-                this, resolved, analysis.maxReplacedLevel, Util.protectNodes(this, resolved), true);
+        return new BddOperations.Compose(this, resolved, Util.protectNodes(this, resolved));
     }
 
     /** The greatest level a resolved mapping touches, or -1 if it replaces nothing. */
@@ -1015,27 +1120,318 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         return new ComposeAnalysis(maxReplacedLevel, false, Cube.empty());
     }
 
-    int composeGeneral(
-            int function,
-            int domain,
-            int[] variableMapping,
-            int maxReplacedLevel,
-            BooleanCache.UnaryToIntCache composeCache,
-            BooleanCache.@Nullable BinaryToIntCache composeSimplifyCache) {
-        assert domain != FALSE;
-        assert domain == TRUE || composeSimplifyCache != null;
-        table.pushToWorkStack(function);
-        int workStackCount = 1;
-        if (domain != TRUE) {
-            table.pushToWorkStack(domain);
-            workStackCount++;
+    // Joint composition
+
+    /** What a composition's recursion needs besides its state: the replaced variables. */
+    private static final class ComposeContext {
+        final BitSet replaced;
+
+        ComposeContext(BitSet replaced) {
+            this.replaced = replaced;
         }
-        // TODO Same as restrict: Keep walking the tree as long as variables are set to constant values;
-        //    this avoids pointless cache operations -- should we maybe do the same in the recursion?
-        int result = computeComposeSimplify(
-                function, variableMapping, maxReplacedLevel, domain, composeCache, composeSimplifyCache);
-        table.popFromWorkStack(workStackCount);
+    }
+
+    private Cube[] literalCubes = new Cube[0];
+
+    private int[] literalCubeHashes = EMPTY_INT_ARRAY;
+
+    private Cube literalCube(int variable, boolean value) {
+        int index = 2 * variable + (value ? 1 : 0);
+        Cube[] cubes = literalCubes;
+        if (index >= cubes.length) {
+            int size = 2 * Math.max(numberOfVariables(), variable + 1);
+            cubes = Arrays.copyOf(cubes, size);
+            literalCubeHashes = Arrays.copyOf(literalCubeHashes, size);
+            literalCubes = cubes;
+        }
+        Cube cube = cubes[index];
+        if (cube == null) {
+            cube = Cube.literal(variable, value);
+            cubes[index] = cube;
+            literalCubeHashes[index] = cube.hashCode();
+        }
+        return cube;
+    }
+
+    /** {@code function} with one variable fixed, through the stable restrict cache. */
+    int restrictLiteral(int function, int variable, boolean value) {
+        if (isConstant(function) || decisionLevel(function) > levelOfVariable(variable)) {
+            return function;
+        }
+        Cube cube = literalCube(variable, value);
+        return computeRestrictCube(
+                function, cube, literalCubeHashes[2 * variable + (value ? 1 : 0)], levelOfVariable(variable));
+    }
+
+    private int computeRestrictCube(int function, Cube restriction, int cubeHash, int maxRestrictedLevel) {
+        boolean func = isComplementFunction(function);
+        int node = positive(function);
+        if (node == TRUE) {
+            return function;
+        }
+        int nodeVariable = table.variable(node);
+        int nodeLevel = levelOfVariable(nodeVariable);
+        if (nodeLevel > maxRestrictedLevel) {
+            return function;
+        }
+        if (restriction.support.get(nodeVariable)) {
+            int child = restriction.assignment.get(nodeVariable) ? table.high(node) : table.low(node);
+            return complementIf(computeRestrictCube(child, restriction, cubeHash, maxRestrictedLevel), func);
+        }
+
+        BooleanCache.RestrictCubeCache restrictCache = cache.restrictCubeCache();
+        int lookup = restrictCache.lookup(node, restriction, cubeHash);
+        if (lookup != placeholder()) {
+            return complementIf(lookup, func);
+        }
+        int hash = restrictCache.lookupHash;
+        int low =
+                table.pushToWorkStack(computeRestrictCube(table.low(node), restriction, cubeHash, maxRestrictedLevel));
+        int high =
+                table.pushToWorkStack(computeRestrictCube(table.high(node), restriction, cubeHash, maxRestrictedLevel));
+        int result = makeFunction(nodeLevel, low, high);
+        table.popFromWorkStack(2);
+        restrictCache.put(hash, node, restriction, result);
+        return complementIf(result, func);
+    }
+
+    /** The support of a function as ascending variables, cached per node. Never to be modified. */
+    int[] supportArray(int function) {
+        int node = positive(function);
+        if (node == TRUE) {
+            return EMPTY_INT_ARRAY;
+        }
+        BooleanCache.UnaryToObjectCache<int[]> supportCache = cache.supportCache();
+        int[] cached = supportCache.lookup(node);
+        if (cached != null) {
+            return cached;
+        }
+        int hash = supportCache.lookupHash();
+        int[] low = supportArray(table.low(node));
+        int[] high = supportArray(table.high(node));
+        int variable = table.variable(node);
+        int[] merged = new int[low.length + high.length + 1];
+        int size = 0;
+        int lowIndex = 0;
+        int highIndex = 0;
+        boolean variablePlaced = false;
+        while (lowIndex < low.length || highIndex < high.length || !variablePlaced) {
+            int next = Integer.MAX_VALUE;
+            if (lowIndex < low.length) {
+                next = low[lowIndex];
+            }
+            if (highIndex < high.length) {
+                next = Math.min(next, high[highIndex]);
+            }
+            if (!variablePlaced) {
+                next = Math.min(next, variable);
+            }
+            merged[size++] = next;
+            if (lowIndex < low.length && low[lowIndex] == next) {
+                lowIndex++;
+            }
+            if (highIndex < high.length && high[highIndex] == next) {
+                highIndex++;
+            }
+            if (variable == next) {
+                variablePlaced = true;
+            }
+        }
+        int[] result = size == merged.length ? merged : Arrays.copyOf(merged, size);
+        supportCache.put(hash, node, result);
         return result;
+    }
+
+    /** The replaced variables in {@code support}, ascending. */
+    private static int[] replacedIn(int[] support, BitSet replaced) {
+        int count = 0;
+        for (int variable : support) {
+            if (replaced.get(variable)) {
+                count++;
+            }
+        }
+        int[] variables = new int[count];
+        int index = 0;
+        for (int variable : support) {
+            if (replaced.get(variable)) {
+                variables[index++] = variable;
+            }
+        }
+        return variables;
+    }
+
+    /** Replacements aligned with {@code from}, cut down to the variables of {@code to} (a subset). */
+    private static int[] project(int[] from, int[] replacements, int[] to) {
+        if (from.length == to.length) {
+            return replacements;
+        }
+        int[] projected = new int[to.length];
+        int source = 0;
+        for (int index = 0; index < to.length; index++) {
+            while (from[source] != to[index]) {
+                source++;
+            }
+            projected[index] = replacements[source];
+        }
+        return projected;
+    }
+
+    /*
+     * Composition as a joint descent over (F, D, R_1..R_k): the function and the domain restricted to the path,
+     * with the path-restricted replacements of the replaced variables F reads, all keyed in one stable cache.
+     * A replacement the path made constant is substituted into F right away. Otherwise the step splits on F's
+     * top variable: left alone, it is a path literal - the domain and every replacement are restricted by it, a
+     * branch outside the domain is skipped, and the children are reassembled over it; replaced, it is the
+     * classic if-then-else over the replacement (descending directly where the domain decides it). The result
+     * agrees with the composition wherever the domain holds, and equals it for a TRUE domain.
+     */
+    int composeJoint(int function, int domain, int[] resolvedMapping) {
+        BitSet replaced = new BitSet();
+        for (int variable = 0; variable < resolvedMapping.length; variable++) {
+            if (resolvedMapping[variable] != this.variableNodes[variable]) {
+                replaced.set(variable);
+            }
+        }
+        ComposeContext context = new ComposeContext(replaced);
+        table.pushToWorkStack(function);
+        table.pushToWorkStack(domain);
+        int[] variables = replacedIn(supportArray(function), replaced);
+        int[] replacements = new int[variables.length];
+        for (int index = 0; index < variables.length; index++) {
+            replacements[index] = resolvedMapping[variables[index]];
+        }
+        int result = computeComposeJoint(function, domain, variables, replacements, context);
+        table.popFromWorkStack(2);
+        return result;
+    }
+
+    private int computeComposeJoint(
+            int function, int domain, int[] variables, int[] replacements, ComposeContext context) {
+        int pushed = 0;
+        while (true) {
+            if (domain == FALSE) {
+                table.popFromWorkStack(pushed);
+                return FALSE;
+            }
+            if (isConstant(function)) {
+                table.popFromWorkStack(pushed);
+                return function;
+            }
+            int decided = -1;
+            for (int index = 0; index < replacements.length; index++) {
+                if (isConstant(replacements[index])) {
+                    decided = index;
+                    break;
+                }
+            }
+            if (decided < 0) {
+                break;
+            }
+            int next =
+                    table.pushToWorkStack(restrictLiteral(function, variables[decided], replacements[decided] == TRUE));
+            pushed++;
+            int[] nextVariables = replacedIn(supportArray(next), context.replaced);
+            replacements = project(variables, replacements, nextVariables);
+            variables = nextVariables;
+            function = next;
+        }
+
+        boolean complement = isComplementFunction(function);
+        int node = positive(function);
+        int[] key = new int[2 + 2 * variables.length];
+        key[0] = node;
+        key[1] = domain;
+        for (int index = 0; index < variables.length; index++) {
+            key[2 + 2 * index] = variables[index];
+            key[3 + 2 * index] = replacements[index];
+        }
+        BooleanCache.ComposeTupleCache tupleCache = cache.composeTupleCache();
+        int lookup = tupleCache.lookup(key);
+        if (lookup != placeholder()) {
+            table.popFromWorkStack(pushed);
+            return complementIf(lookup, complement);
+        }
+        int hash = tupleCache.lookupHash;
+
+        int topVariable = table.variable(node);
+        int topLevel = levelOfVariable(topVariable);
+        int lowFunction = table.low(node);
+        int highFunction = table.high(node);
+        int result;
+        if (context.replaced.get(topVariable)) {
+            int condition = replacements[Arrays.binarySearch(variables, topVariable)];
+            if (domain != TRUE) {
+                if (!intersectsRecursive(domain, condition)) {
+                    condition = FALSE;
+                } else if (!intersectsRecursive(domain, complement(condition))) {
+                    condition = TRUE;
+                }
+            }
+            if (condition == TRUE || condition == FALSE) {
+                int child = condition == TRUE ? highFunction : lowFunction;
+                int[] childVariables = replacedIn(supportArray(child), context.replaced);
+                result = computeComposeJoint(
+                        child, domain, childVariables, project(variables, replacements, childVariables), context);
+            } else {
+                int[] lowVariables = replacedIn(supportArray(lowFunction), context.replaced);
+                int low = table.pushToWorkStack(computeComposeJoint(
+                        lowFunction, domain, lowVariables, project(variables, replacements, lowVariables), context));
+                int[] highVariables = replacedIn(supportArray(highFunction), context.replaced);
+                int high = table.pushToWorkStack(computeComposeJoint(
+                        highFunction, domain, highVariables, project(variables, replacements, highVariables), context));
+                result = computeIfThenElse(condition, high, low);
+                table.popFromWorkStack(2);
+            }
+        } else {
+            int lowDomain = table.pushToWorkStack(restrictLiteral(domain, topVariable, false));
+            int highDomain = table.pushToWorkStack(restrictLiteral(domain, topVariable, true));
+            int[] lowReplacements = new int[replacements.length];
+            int[] highReplacements = new int[replacements.length];
+            for (int index = 0; index < replacements.length; index++) {
+                lowReplacements[index] =
+                        table.pushToWorkStack(restrictLiteral(replacements[index], topVariable, false));
+                highReplacements[index] =
+                        table.pushToWorkStack(restrictLiteral(replacements[index], topVariable, true));
+            }
+            int[] lowVariables = replacedIn(supportArray(lowFunction), context.replaced);
+            int[] highVariables = replacedIn(supportArray(highFunction), context.replaced);
+            if (lowDomain == FALSE) {
+                result = computeComposeJoint(
+                        highFunction,
+                        highDomain,
+                        highVariables,
+                        project(variables, highReplacements, highVariables),
+                        context);
+            } else if (highDomain == FALSE) {
+                result = computeComposeJoint(
+                        lowFunction,
+                        lowDomain,
+                        lowVariables,
+                        project(variables, lowReplacements, lowVariables),
+                        context);
+            } else {
+                int low = table.pushToWorkStack(computeComposeJoint(
+                        lowFunction,
+                        lowDomain,
+                        lowVariables,
+                        project(variables, lowReplacements, lowVariables),
+                        context));
+                int high = table.pushToWorkStack(computeComposeJoint(
+                        highFunction,
+                        highDomain,
+                        highVariables,
+                        project(variables, highReplacements, highVariables),
+                        context));
+                result = decisionLevelOrMax(high) > topLevel && decisionLevelOrMax(low) > topLevel
+                        ? makeFunction(topLevel, low, high)
+                        : computeIfThenElse(this.variableNodes[topVariable], high, low);
+                table.popFromWorkStack(2);
+            }
+            table.popFromWorkStack(2 + 2 * replacements.length);
+        }
+        tupleCache.put(hash, key, result);
+        table.popFromWorkStack(pushed);
+        return complementIf(result, complement);
     }
 
     static final class ComposeAnalysis {
@@ -1050,119 +1446,6 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
             this.isRestrict = isRestrict;
             this.restriction = restriction;
         }
-    }
-
-    @SuppressWarnings("NullAway")
-    private int computeComposeSimplify(
-            int function,
-            int[] replacements,
-            int maxReplacedLevel,
-            int domain,
-            BooleanCache.UnaryToIntCache composeCache,
-            BooleanCache.@Nullable BinaryToIntCache composeSimplifyCache) {
-        assert domain != FALSE;
-        boolean fullDomain = domain == TRUE;
-        assert fullDomain || composeSimplifyCache != null;
-
-        boolean func = isComplementFunction(function);
-        int node = positive(function);
-
-        if (node == TRUE) {
-            return function;
-        }
-
-        int nodeVariable = table.variable(node);
-        int nodeLevel = levelOfVariable(nodeVariable);
-        if (nodeLevel > maxReplacedLevel) {
-            return computeSimplify(function, domain);
-        }
-
-        int lookup = fullDomain ? composeCache.lookup(node) : composeSimplifyCache.lookup(node, domain);
-        if (lookup != placeholder()) {
-            return complementIf(lookup, func);
-        }
-        int hash = fullDomain ? composeCache.lookupHash : composeSimplifyCache.lookupHash;
-
-        int domainLevel = fullDomain ? Integer.MAX_VALUE : decisionLevel(domain);
-        int domainLow = lowIf(domain, domainLevel <= nodeLevel);
-        int domainHigh = highIf(domain, domainLevel <= nodeLevel);
-
-        int result;
-        if (domainLevel < nodeLevel) {
-            if (domainLow == FALSE) {
-                result = computeComposeSimplify(
-                        node, replacements, maxReplacedLevel, domainHigh, composeCache, composeSimplifyCache);
-            } else if (domainHigh == FALSE) {
-                result = computeComposeSimplify(
-                        node, replacements, maxReplacedLevel, domainLow, composeCache, composeSimplifyCache);
-            } else {
-                result = computeComposeSimplify(
-                        node,
-                        replacements,
-                        maxReplacedLevel,
-                        table.pushToWorkStack(computeOr(domainLow, domainHigh)),
-                        composeCache,
-                        composeSimplifyCache);
-                table.popFromWorkStack();
-            }
-        } else {
-            int replacement =
-                    nodeVariable < replacements.length ? replacements[nodeVariable] : this.variableNodes[nodeVariable];
-            // Short-circuit constant replacements.
-            if (replacement == TRUE) {
-                result = computeComposeSimplify(
-                        table.high(node), replacements, maxReplacedLevel, domain, composeCache, composeSimplifyCache);
-            } else if (replacement == FALSE) {
-                result = computeComposeSimplify(
-                        table.low(node), replacements, maxReplacedLevel, domain, composeCache, composeSimplifyCache);
-            } else {
-                boolean aligned = domainLevel == nodeLevel && replacement == this.variableNodes[nodeVariable];
-                int lowDomain = aligned ? domainLow : domain;
-                int highDomain = aligned ? domainHigh : domain;
-
-                if (lowDomain == FALSE) {
-                    // The domain forces this nodeLevel, so only one branch is reachable within it.
-                    result = computeComposeSimplify(
-                            table.high(node),
-                            replacements,
-                            maxReplacedLevel,
-                            highDomain,
-                            composeCache,
-                            composeSimplifyCache);
-                } else if (highDomain == FALSE) {
-                    result = computeComposeSimplify(
-                            table.low(node),
-                            replacements,
-                            maxReplacedLevel,
-                            lowDomain,
-                            composeCache,
-                            composeSimplifyCache);
-                } else {
-                    int low = table.pushToWorkStack(computeComposeSimplify(
-                            table.low(node),
-                            replacements,
-                            maxReplacedLevel,
-                            lowDomain,
-                            composeCache,
-                            composeSimplifyCache));
-                    int high = table.pushToWorkStack(computeComposeSimplify(
-                            table.high(node),
-                            replacements,
-                            maxReplacedLevel,
-                            highDomain,
-                            composeCache,
-                            composeSimplifyCache));
-                    result = computeIfThenElseSimplify(replacement, high, low, domain);
-                    table.popFromWorkStack(2);
-                }
-            }
-        }
-        if (fullDomain) {
-            composeCache.put(hash, node, result);
-        } else {
-            composeSimplifyCache.put(hash, node, domain, result);
-        }
-        return complementIf(result, func);
     }
 
     @Override
@@ -1189,49 +1472,12 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         assert table.workStacksEmpty();
         Cube remaining = order.literalsBelow(restriction, decisionLevel(current));
         table.pushToWorkStack(current);
-        cache.initRestrict(remaining);
-        int result = computeRestrict(current, remaining, maxRestrictedLevel);
+        int result = computeRestrictCube(current, remaining, remaining.hashCode(), maxRestrictedLevel);
         table.popFromWorkStack();
         assert table.workStacksEmpty();
         assert accessGuard.release();
         return result;
     }
-
-    private int computeRestrict(int function, Cube restriction, int maxRestrictedLevel) {
-        boolean func = isComplementFunction(function);
-        int node = positive(function);
-
-        if (node == TRUE) {
-            return function;
-        }
-        int nodeVariable = table.variable(node);
-        int nodeLevel = levelOfVariable(nodeVariable);
-        if (nodeLevel > maxRestrictedLevel) {
-            return function;
-        }
-
-        int lookup = cache.lookupRestrict(node);
-        if (lookup != placeholder()) {
-            return complementIf(lookup, func);
-        }
-        int hash = cache.lookupHash();
-
-        int result;
-        if (restriction.support.get(nodeVariable)) {
-            int child = restriction.assignment.get(nodeVariable) ? table.high(node) : table.low(node);
-            result = computeRestrict(child, restriction, maxRestrictedLevel);
-        } else {
-            int low = table.pushToWorkStack(computeRestrict(table.low(node), restriction, maxRestrictedLevel));
-            int high = table.pushToWorkStack(computeRestrict(table.high(node), restriction, maxRestrictedLevel));
-            result = makeFunction(nodeLevel, low, high);
-            table.popFromWorkStack(2);
-        }
-
-        cache.putRestrict(hash, node, result);
-        return complementIf(result, func);
-    }
-
-    // Bdd operations
 
     @Override
     public int conjunction(BitSet variables) {

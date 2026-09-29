@@ -40,6 +40,12 @@ public interface BddSetFactory {
     /** The valuations in {@code cube}: those agreeing with it on its support. */
     BddSet of(Cube cube);
 
+    /**
+     * The set of {@code expression}, a propositional expression of the caller's own type that JBDD reads through
+     * {@code structure}.
+     */
+    <E> BddSet of(E expression, ExpressionStructure<E> structure);
+
     /** The union of the cubes fixing {@code support} as each of {@code valuations} assigns it. */
     default BddSet of(Iterable<BitSet> valuations, BitSet support) {
         List<Cube> cubes = new ArrayList<>();
@@ -83,6 +89,23 @@ public interface BddSetFactory {
     /** The valuations that are in {@code then} where {@code condition} holds and in {@code otherwise}
      * elsewhere - one recursion rather than the union of two intersections. */
     BddSet ifThenElse(BddSet condition, BddSet then, BddSet otherwise);
+
+    /**
+     * {@code set}, typically of another context, rebuilt here with each variable {@code v} of it read as {@code
+     * variableMapping(v)}; variables that do not exist here yet are created.
+     */
+    BddSet adopt(BddSet set, IntUnaryOperator variableMapping);
+
+    /** {@link #adopt(BddSet, IntUnaryOperator)} with every variable read as itself. */
+    default BddSet adopt(BddSet set) {
+        return adopt(set, IntUnaryOperator.identity());
+    }
+
+    /**
+     * Keeps {@code set}'s diagram in the table for the rest of the factory's life, whether or not anything
+     * still names it.
+     */
+    void pin(BddSet set);
 
     /**
      * Binds {@code quantifiedVariables} once - see {@link BddSet.Quantifier}. The set is read here and may

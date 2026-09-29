@@ -18,6 +18,9 @@ package de.tum.in.jbdd;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
@@ -28,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 
 class BddSetTest {
@@ -98,6 +102,55 @@ class BddSetTest {
         // x0 & x1 | x2 holds for both values of x1 exactly where x2 holds.
         assertEquals(x2, set.forall(quantified));
         assertEquals(set.complement().exists(quantified).complement(), set.forall(quantified));
+    }
+
+    @Test
+    void testPinnedSetSurvivesItsReferences() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BddSetFactoryImpl sets = (BddSetFactoryImpl) ctx.bddSets();
+        Bdd bdd = ctx.bdd();
+        // A complement, so the pin has to reach the node through the complement edge.
+        BddSet set = sets.var(0).intersection(sets.var(1)).complement();
+        int function = sets.functionOf(set);
+
+        assertFalse(bdd.isUnmanaged(function));
+        sets.pin(set);
+        sets.pin(set);
+        sets.pin(sets.universe());
+        assertTrue(bdd.isUnmanaged(function));
+
+        // What the reference manager does once the object is collected: nothing, for a pinned node.
+        bdd.dereference(function);
+        bdd.gc();
+        assertTrue(bdd.isValidFunction(function));
+        assertTrue(bdd.isUnmanaged(function));
+        assertEquals(
+                function, sets.functionOf(sets.var(0).intersection(sets.var(1)).complement()));
+    }
+
+    @Test
+    void testAttachmentIsBuiltOncePerFunction() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BddSetFactory sets = ctx.bddSets();
+        List<BddSet> built = new ArrayList<>();
+        Attachment<BddSet, List<BddSet>> attachment = ctx.attachToSets(set -> {
+            built.add(set);
+            return List.of(set);
+        });
+
+        BddSet set = sets.var(0).intersection(sets.var(1));
+        List<BddSet> attached = attachment.of(set);
+        assertEquals(List.of(set), attached);
+        // The same function, reached another way, is the same set and so carries the same object.
+        assertSame(attached, attachment.of(sets.var(1).intersection(sets.var(0))));
+        assertSame(attached, attachment.of(set.complement().complement()));
+        assertEquals(List.of(set), built);
+
+        // The constants exist before the attachment does, and get theirs on request like any other set.
+        assertEquals(List.of(sets.universe()), attachment.of(sets.universe()));
+        assertEquals(2, built.size());
+
+        assertThrows(IllegalStateException.class, () -> ctx.attachToSets(other -> List.of()));
     }
 
     @Test
@@ -193,6 +246,19 @@ class BddSetTest {
                         Cube.literal(0, true).with(1, false),
                         Cube.literal(0, false).with(1, true)),
                 Set.copyOf(x0.symmetricDifference(x1).implicants()));
+
+        // x3 implies both cofactors of x0, so it comes out once and without x0; the resolvent x1 & x2 does not.
+        BddSet x2 = sets.var(2);
+        BddSet x3 = sets.var(3);
+        assertEquals(
+                Set.of(
+                        Cube.literal(0, true).with(1, true),
+                        Cube.literal(0, false).with(2, true),
+                        Cube.literal(3, true)),
+                Set.copyOf(x0.intersection(x1)
+                        .union(x0.complement().intersection(x2))
+                        .union(x3)
+                        .implicants()));
     }
 
     @Test
@@ -234,6 +300,217 @@ class BddSetTest {
                 assertFalse(function.intersects(sets.of(clause.copy())), clause::toString);
             }
         }
+    }
+
+    @Test
+    void testPrimeImplicantsOfSmallExamples() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BddSetFactory sets = ctx.bddSets();
+        BddSet x0 = sets.var(0);
+        BddSet x1 = sets.var(1);
+        BddSet x2 = sets.var(2);
+
+        assertEquals(List.of(Cube.empty()), sets.universe().primeImplicants());
+        assertEquals(List.of(), sets.empty().primeImplicants());
+
+        // The consensus x1 & x2 is prime but in no cover implicants() builds from the diagram.
+        BddSet function = x0.intersection(x1).union(x0.complement().intersection(x2));
+        assertEquals(
+                Set.of(
+                        Cube.literal(0, true).with(1, true),
+                        Cube.literal(0, false).with(2, true),
+                        Cube.literal(1, true).with(2, true)),
+                Set.copyOf(function.primeImplicants()));
+        assertEquals(2, function.implicants().size());
+    }
+
+    @Test
+    void testPrimeImplicantsOfEveryFunctionOfThreeVariables() {
+        int variables = 3;
+        int valuations = 1 << variables;
+
+        for (int truthTable = 0; truthTable < (1 << valuations); truthTable++) {
+            BinaryFactoryContext ctx = BinaryFactoryContext.create();
+            BddSetFactory sets = ctx.bddSets();
+            BddSet function = sets.empty();
+            for (int valuation = 0; valuation < valuations; valuation++) {
+                if ((truthTable & (1 << valuation)) != 0) {
+                    function = function.union(
+                            sets.of(Cube.of(BitSets.of(bits(valuation, variables)), BitSets.range(0, variables))));
+                }
+            }
+
+            // By brute force: the implicants among all cubes, and of those the ones no shorter implicant implies.
+            List<Cube> implicants = new ArrayList<>();
+            for (int support = 0; support < valuations; support++) {
+                for (int assignment = 0; assignment < valuations; assignment++) {
+                    if ((assignment & ~support) == 0) {
+                        Cube cube =
+                                Cube.of(BitSets.of(bits(assignment, variables)), BitSets.of(bits(support, variables)));
+                        if (sets.of(cube.copy()).subsetOf(function)) {
+                            implicants.add(cube);
+                        }
+                    }
+                }
+            }
+            Set<Cube> expected = new HashSet<>();
+            for (Cube cube : implicants) {
+                if (implicants.stream().noneMatch(other -> !other.equals(cube) && cube.implies(other))) {
+                    expected.add(cube);
+                }
+            }
+
+            List<Cube> primes = function.primeImplicants();
+            BddSet printed = function;
+            assertEquals(expected, Set.copyOf(primes), () -> "primes of " + printed);
+            assertEquals(primes.size(), Set.copyOf(primes).size(), () -> "duplicates in " + primes);
+        }
+    }
+
+    /** A propositional expression of a type JBDD does not know, read through {@link #STRUCTURE}. */
+    private static final class Expression {
+        final ExpressionStructure.Kind kind;
+        final int variable;
+        final List<Expression> operands;
+
+        Expression(ExpressionStructure.Kind kind, int variable, Expression... operands) {
+            this.kind = kind;
+            this.variable = variable;
+            this.operands = List.of(operands);
+        }
+
+        static Expression of(ExpressionStructure.Kind kind, Expression... operands) {
+            return new Expression(kind, -1, operands);
+        }
+
+        static Expression var(int variable) {
+            return new Expression(ExpressionStructure.Kind.VARIABLE, variable);
+        }
+    }
+
+    private static final ExpressionStructure<Expression> STRUCTURE = new ExpressionStructure<>() {
+        @Override
+        public Kind kind(Expression expression) {
+            return expression.kind;
+        }
+
+        @Override
+        public int variable(Expression expression) {
+            return expression.variable;
+        }
+
+        @Override
+        public int arity(Expression expression) {
+            return expression.operands.size();
+        }
+
+        @Override
+        public Expression operand(Expression expression, int index) {
+            return expression.operands.get(index);
+        }
+    };
+
+    @Test
+    void testExpressionsBuildTheirSets() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BddSetFactory sets = ctx.bddSets();
+        Expression x0 = Expression.var(0);
+        Expression x1 = Expression.var(1);
+        Expression x2 = Expression.var(2);
+
+        // (x0 & !x1) | (x0 <-> x2) | (x1 ^ x2), sharing x0 and building x3 - which does not exist yet - on the way.
+        Expression expression = Expression.of(
+                ExpressionStructure.Kind.OR,
+                Expression.of(ExpressionStructure.Kind.AND, x0, Expression.of(ExpressionStructure.Kind.NOT, x1)),
+                Expression.of(ExpressionStructure.Kind.IFF, x0, x2),
+                Expression.of(ExpressionStructure.Kind.XOR, x1, x2),
+                Expression.of(ExpressionStructure.Kind.AND, Expression.var(3), x0));
+        BddSet expected = sets.var(0)
+                .intersection(sets.var(1).complement())
+                .union(sets.var(0).symmetricDifference(sets.var(2)).complement())
+                .union(sets.var(1).symmetricDifference(sets.var(2)))
+                .union(sets.var(3).intersection(sets.var(0)));
+        assertEquals(expected, sets.of(expression, STRUCTURE));
+
+        assertEquals(sets.universe(), sets.of(Expression.of(ExpressionStructure.Kind.AND), STRUCTURE));
+        assertEquals(sets.empty(), sets.of(Expression.of(ExpressionStructure.Kind.OR), STRUCTURE));
+    }
+
+    @Test
+    void testExpressionsStopAtTheAbsorbingOperandAndUseKnownSets() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BddSetFactory sets = ctx.bddSets();
+        Expression unreadable = Expression.var(-1);
+        Expression known = Expression.var(-2);
+        BddSet knownSet = sets.var(4).union(sets.var(5));
+        ExpressionStructure<Expression> structure = new ExpressionStructure<>() {
+            @Override
+            public Kind kind(Expression expression) {
+                assertNotSame(unreadable, expression, "read past the absorbing operand");
+                assertNotSame(known, expression, "built a known expression");
+                return expression.kind;
+            }
+
+            @Override
+            public int variable(Expression expression) {
+                return expression.variable;
+            }
+
+            @Override
+            public int arity(Expression expression) {
+                return expression.operands.size();
+            }
+
+            @Override
+            public Expression operand(Expression expression, int index) {
+                return expression.operands.get(index);
+            }
+
+            @Override
+            public @Nullable BddSet known(Expression expression) {
+                return expression == known ? knownSet : null; // NOPMD - identity is the point
+            }
+        };
+
+        Expression falseExpression = Expression.of(ExpressionStructure.Kind.FALSE);
+        assertEquals(
+                sets.empty(),
+                sets.of(
+                        Expression.of(ExpressionStructure.Kind.AND, Expression.var(0), falseExpression, unreadable),
+                        structure));
+        assertEquals(
+                knownSet.intersection(sets.var(0)),
+                sets.of(Expression.of(ExpressionStructure.Kind.AND, known, Expression.var(0)), structure));
+    }
+
+    @Test
+    void testAdoptFromAnotherContext() {
+        BddSetFactory source = BinaryFactoryContext.create().bddSets();
+        BddSet set = source.var(0)
+                .intersection(source.var(1))
+                .union(source.var(0).complement().intersection(source.var(3)))
+                .union(source.var(2));
+
+        // The target has no variables yet: adopt creates them, in both an order-preserving and a reversing mapping.
+        BddSetFactory target = BinaryFactoryContext.create().bddSets();
+        BddSet spread = target.adopt(set, variable -> 2 * variable + 1);
+        BddSet reversed = target.adopt(set, variable -> 3 - variable);
+
+        assertEquals(
+                target.var(1)
+                        .intersection(target.var(3))
+                        .union(target.var(1).complement().intersection(target.var(7)))
+                        .union(target.var(5)),
+                spread);
+        assertEquals(
+                target.var(3)
+                        .intersection(target.var(2))
+                        .union(target.var(3).complement().intersection(target.var(0)))
+                        .union(target.var(1)),
+                reversed);
+        assertSame(set, source.adopt(reversed, variable -> 3 - variable));
+        assertSame(set, source.adopt(target.adopt(set)));
+        assertThrows(IllegalArgumentException.class, () -> target.adopt(set, variable -> -1));
     }
 
     private static int[] bits(int valuation, int variables) {

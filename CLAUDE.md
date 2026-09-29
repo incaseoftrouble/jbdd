@@ -222,13 +222,31 @@ Entry points — never `new BddImpl(...)` outside tests:
 - `BddSet`/`BddSetFactory` over a `Bdd`; `BddMap<V>`/`Values<V>`/`BddMapFactory` over the MTBDD.
 - `GcReferenceManager`: wrappers are held by `WeakReference` and a `ReferenceQueue` drives
   `reference`/`dereference` — no `finalize()`, which carries a hefty penalty. `protect(container)` is
-  canonical per `canonicalKey()` (function id by default; `BddMap` keys on `(function, values)`, since a
-  function id alone is ambiguous across numberings).
+  canonical per the `long` `canonicalKey()`: the function's 32 bits by default; a `BddMap` puts its
+  numbering's key space (a per-`ValuesImpl` counter) in the high half, since a function id alone is
+  ambiguous across numberings. The wrappers sit in one open-addressing table per manager (linear probing,
+  backward-shift deletion, key `0` empty because `PLACEHOLDER` is never a function), so a lookup allocates
+  nothing. **Never split it per key space**: the table is what keeps the weak references reachable, and a
+  `Reference` that is itself unreachable is never enqueued - its function would stay referenced for good.
+  A wrapper collected but not yet queued is replaced in place, the new one inheriting its reference.
+- A caller wrapping sets in its own type binds it with `BinaryFactoryContext.attachToSets` (an
+  `Attachment<BddSet, A>`) - one slot per `BddSetImpl`, built lazily, living exactly as long as the set -
+  rather than keeping a second canonical map of its own. It stays off `BddSet`/`BddSetFactory`, which are
+  the semantic interfaces.
+- `BddSetFactory.of(expression, ExpressionStructure)` builds a set from a caller's own propositional expression
+  type, read through the structure (a pure callback, like every other); `known` lets the caller supply sets it
+  already has for subexpressions. One memoized build, every intermediate referenced until its end.
+- A set or map crosses contexts only by `BddSetFactory.adopt(set, variableMapping)` /
+  `Values.adopt(map, variableMapping, valueMapping)`, over the int layer's `adopt`. Both create the mapped
+  variables first; the map version maps each distinct value before the traversal (so the mapping may build
+  anything) and keeps those terminals referenced until the end, so no collection frees their indices.
 - `BddSet` deliberately exposes nothing assuming a fixed variable universe — callers always name the
   support they mean.
 - `Cube` is the one type for a conjunction of literals - equivalently a partial assignment: path walks
-  and `implicants` hand them out, `restrict` and `BddSetFactory.of` take them, `of(Cube)` builds one's
-  function. Its operations return new cubes; a walk's cube is working state (§8).
+  and `implicants` / `primeImplicants` / `shortestPath` hand them out, `restrict` and `BddSetFactory.of` take them, `of(Cube)` builds one's
+  function. Its operations return new cubes; a walk's cube is working state (§8). `of` and the accessors
+  `assignment()` / `support()` copy; `ofUnsafe` / `assignmentUnsafe()` / `supportUnsafe()` share the sets,
+  for callers that only read (or give up) them. JBDD's own code reads the fields directly.
 - `DimacsReader` parses DIMACS CNF (benchmarks/tests).
 
 ### Navigation: types that are not in a file of their own
@@ -237,7 +255,7 @@ Many important types are nested. Searching for `ValuesImpl.java` will fail.
 
 | Type | Lives in |
 |---|---|
-| `ValuesImpl`, `BddMapImpl`, `MapKey`, `RelabelerImpl`, `RegisteredApply`, `RegisteredReplacer` | `BddMapFactoryImpl.java` |
+| `ValuesImpl`, `BddMapImpl`, `RelabelerImpl`, `RegisteredApply`, `RegisteredReplacer` | `BddMapFactoryImpl.java` |
 | `BddSetImpl` | `BddSetFactoryImpl.java` |
 | `PathWalk`, `SolutionCursor`, `PathCursor`, `BddTable`, `ComposeAnalysis` | `BddImpl.java` |
 | `PathWalk`, `SolutionCursor`, `PathCursor`, `MddTable` | `MddImpl.java` |
@@ -252,7 +270,8 @@ Many important types are nested. Searching for `ValuesImpl.java` will fail.
 Manual, and the three protect against different things. Confusing them is the classic bug.
 
 1. **Reference counts.** Per node, 14 saturating bits in the metadata word. Saturated = pinned forever,
-   ref/deref become no-ops (variable nodes are saturated at creation). `consume`/`updateWith`/
+   ref/deref become no-ops (variable nodes are saturated at creation; `BddSetFactory.pin` saturates a
+   set's root, so there is no unpin and pinning twice is free). `consume`/`updateWith`/
    `ReferenceGuard` are the rebalancing helpers. MTBDD *terminals* get a parallel `byte[]
    valueReferenceCounts` indexed by value — same saturating scheme, separate array.
    **Nothing returned by any operation is automatically referenced.** Chaining two constructing calls
@@ -273,9 +292,8 @@ allocating BDD nodes must protect its BDD operands the way `BddImpl` would.
 
 The `*Simplify` family is the sharpest instance: narrowing a domain quantifies a variable out via
 `bdd.computeOr`, which allocates BDD nodes, so every domain (the caller's and each widened one, for the
-duration of its subtree) lives on the BDD work stack. Plain `compose` gets away with not protecting its
-replacement array because it builds no BDD node anywhere; `composeSimplify` must push the mapping too (a
-registered composer references it instead).
+duration of its subtree) lives on the BDD work stack. The BDD `compose` pushes its mapping for the whole call
+(a registered composer references it instead).
 
 Two things a work-stack push does **not** do: survive past the call, and cover a *bare terminal value* the
 caller referenced but has not embedded under any node — the mark phase only reaches leaves transitively.
@@ -429,10 +447,17 @@ consequences that are easy to get wrong:
   appear at random — **always `registerStrongly` for those.**
 - Anything a key *implicitly* depends on but does not encode must invalidate the whole cache when it
   changes. Four flavours:
-  - **Stable** — keys are plain ids (`agreement`, `ite`, `update`, `simplify`, `constrain`). Nothing extra.
-  - **Ephemeral "current parameter"** — `compose` (`int[]` mapping), `exists` (a `BitSet`), `restrict`
-    (a `Cube` - only the literals below the prefix it walks without the cache, so restrictions differing
-    in that prefix share it), `apply`/`map`/`mapBoolean`/`applyBoolean` and the n-ary `apply` (an opaque
+  - **Stable** — keys are plain ids (`agreement`, `ite`, `update`, `simplify`, `constrain`), or carry the
+    whole context: the BDD `compose` (`ComposeTupleCache`, see below), `restrict` (`RestrictCubeCache`, the
+    node and the cube of the literals below the prefix it walks without the cache, so restrictions differing
+    in that prefix share it), the support (`supportCache`, ascending variables per node) and the satisfying
+    fraction (`FractionCache`: per regular node its own fraction and its complement's, interleaved, so that
+    neither is ever derived as `1 - x`, which would round a small complement to 0; a fraction depends on
+    neither the variable count nor the order; `FractionInCache` is the same pair per node and domain, and
+    `satisfyingFractionIn` divides by their sum, the domain's fraction, falling back to exact counts when
+    that is subnormal). Nothing extra.
+  - **Ephemeral "current parameter"** — the MTBDD `compose` (`int[]` mapping) and `restrict` (a `Cube`),
+    `exists` (a `BitSet`), `apply`/`map`/`mapBoolean`/`applyBoolean` and the n-ary `apply` (an opaque
     operator compared by identity; the paired `*Simplify` cache is invalidated by the same `initX`; the
     n-ary one keys on the cloned operand tuple, as `cartesianProduct` does), `count` (a predicate),
     `canReachMatch` (a predicate), `allMatch` (a predicate, like `applyBoolean`). `initX(...)`
@@ -452,7 +477,7 @@ consequences that are easy to get wrong:
     `numberOfVariables()` appears in no key. Both caches are `VariableOrderObserver`s and hear it as
     `variablesInserted`; `MddImpl` has no order, so it calls `variablesChanged()` on its cache itself.
 
-**Simplify-fused operations.** `andSimplify`/`composeSimplify` (BDD) and `applySimplify`/`mapSimplify`/
+**Simplify-fused operations.** `andSimplify` (BDD) and `applySimplify`/`mapSimplify`/
 `composeSimplify` (MTBDD) are *one* recursion with the plain operation as the `domain == TRUE` special
 case, not a wrapper around `simplify(op(...))` — the domain is cofactored on the way down, so a branch the
 domain excludes is never visited. Each carries a second cache keyed on the same arguments plus the domain,
@@ -462,8 +487,23 @@ registered `apply`/`compose` only needs the MTBDD's.
 
 Two invariants easily lost: widening a domain (`domainVar < variable` → `or` of the cofactors) is always
 sound because a *larger* domain constrains more; cofactoring the domain on a variable is sound only when
-that variable means the same on both sides — for `composeSimplify` only when it maps to itself
+that variable means the same on both sides — for the MTBDD's `composeSimplify` only when it maps to itself
 (`aligned`), since the domain speaks about *post*-substitution variables.
+
+**The BDD compose is a joint descent** (`composeJoint`, also `composeSimplify` and both registered forms). Its
+state is the function and the domain restricted to the path, with each replaced variable the function still
+reads and that replacement restricted to the path. That tuple is the whole context, so results go to the
+stable `ComposeTupleCache`, keyed `[F, D, v_1, R_1, ..., v_k, R_k]` (the variables are part of the key: the
+same replacement for another variable means something else). A replacement the path made constant is
+substituted into `F` right away, so a decided disjunct or conjunct ends the descent. Otherwise the step splits
+on `F`'s top variable. Left alone, it is a path literal: the domain and every replacement are restricted by it
+(`restrictLiteral`, one prebuilt cube per literal, through `RestrictCubeCache`), a branch outside the domain is
+skipped, and the children are reassembled over it - a node per level where they lie below. Replaced, it is an
+if-then-else over its replacement, taking one branch directly where the domain decides it. Carrying the path
+is what keeps compose from building a branch for both values of a variable its replacements read and
+discarding one half - exponential where the replaced variables sit below those
+(`testComposeCarriesThePathToTheReplacements`); keying on content shares a state reached along paths that
+restrict alike. Results agree with the composition wherever the domain holds.
 
 ## 7. Registered operations
 
@@ -474,8 +514,9 @@ repeating one operation never reuses an entry.
 
 Int layer: `registerCompose`/`registerComposeSimplify` on both `Bdd` and `MtBdd`, `Bdd#registerExists`,
 and `MtBdd#registerApply`/`registerApplySimplify`/`registerMap`/`registerMapSimplify`/`registerMapBoolean`/
-`registerApplyBoolean`, returning `RegisteredOperation.Unary`/`Binary`/`Ternary`. Only the compose forms
-bind *nodes*, and those own them: `ProtectedOperation` + `ProtectionTracker` reference the operands on
+`registerApplyBoolean`, returning `RegisteredOperation.Unary`/`Binary`/`Ternary`. The BDD compose forms hold
+no cache: the composition's is keyed on its whole context (§6), so they only resolve and protect the mapping
+once. Only the compose forms bind *nodes*, and those own them: `ProtectedOperation` + `ProtectionTracker` reference the operands on
 construction and drop them via a `PhantomReference` when released or unreachable. The rest bind a lambda or
 a `BitSet` and hold nothing. Their private caches grow on usage (`growOnUsage`) rather than tracking table
 size, and each registers its prune hook with *every* table its entries can name — the two boolean-valued
@@ -668,7 +709,7 @@ in the diagram rather than a branch on `origin` inside the cache.
 
 - An **order change** changes relative order, so anything folding a level into a value is stale. Every
   cache listening to the order drops everything - both operation caches and the registered `Exists` and
-  `Compose`. Strictly, only the satisfaction counts (ranging over the levels below their node) and
+  MTBDD `Compose`. Strictly, only the satisfaction counts (ranging over the levels below their node) and
   `constrain` (deciding top-down) are wrong afterwards: reordering rewrites in place, so an entry that is a
   statement about functions - `exists`, `compose`, `restrict` and the simplify family included, whose level
   cut-offs only decide where the recursion stops - still holds. Keeping those was built and is not worth
@@ -694,8 +735,8 @@ in the diagram rather than a branch on `origin` inside the cache.
   `reorder_notifications` against `reorder_swaps` is what the batching is worth.
 - An **insertion** preserves relative order, which is stronger than it looks: every level *comparison*
   answers as before, since both sides shift by the same rule (`l < L ? l : l + count`). So nothing goes
-  stale by the *order* having changed. What moves is a *stored* level, and there are
-  exactly two: `BddOperations.Compose` and `MtBddOperations.Compose` hold a `maxReplacedLevel`, shifted by
+  stale by the *order* having changed. What moves is a *stored* level, and there is
+  exactly one: `MtBddOperations.Compose` holds a `maxReplacedLevel`, shifted by
   `count` if at or below the insertion point. On an order change they rescan for it instead — skipped
   when `movedVariables` holds none of the replaced ones, since the maximum is over exactly those, and
   asserted against the full rescan either way — and drop their own caches. `BddOperations.Exists` rebuilds
@@ -761,7 +802,8 @@ entry point (`of`, `ifThenElse`, `cartesianProduct`, `createRelabeling`, `relabe
   operation cross-numbering. Neither is imposed. Per-automaton and per-SCC are the scopes worth measuring.
 - **Same numbering ⇒ raw int operations.** `agreement` is raw terminal equality on its own cache;
   `ifThenElse`, `update`, `where`, `domainOf` never unwrap a value. Maps are canonicalized on
-  `(function, values)` (`MapKey`, identity on the numbering), so `equals` is `==` and O(1), and
+  `(function, values)` (the numbering's key space in the high half of the key, §3), so `equals` is `==` and
+  O(1), and
   semantically equal maps over one numbering *are* the same object.
 - **Cross-numbering is supported, not forbidden.** `apply(other, combiner, destination)` and
   `where(other, BiPredicate)` resolve each side through its own numbering in a single traversal — no
@@ -796,11 +838,12 @@ entry point (`of`, `ifThenElse`, `cartesianProduct`, `createRelabeling`, `relabe
   overloads unambiguous), `agreement` and `difference` are the exceptions, and only because they do have a
   cross-numbering path at runtime.
 - **Indices are recycled, not append-only.** `ValuesImpl` is a `NodeTableObserver`: on a collection
-  (or the growth one turned into) it forgets entries whose raw terminal was *globally* reclaimed - except
-  those assigned since the previous one. The raw space is shared with every other numbering and with a
-  split's intermediate indices, so a fresh index can name a terminal a dead, unrelated structure still has
-  allocated; the reclaim is about that one, and forgetting would lose a value handed out before the map
-  using it exists (`RegressionTests`). It then walks its high-water mark (`biggestAliveIndex`)
+  (or the growth one turned into) it forgets entries whose raw terminal was *globally* reclaimed. The raw
+  space is shared with every other numbering and with a split's intermediate indices, and a handed-out
+  index - fresh or existing - can name a terminal that nothing live holds yet. So **whoever hands out an
+  index protects it until a node holds it**: inside a traversal the leaf is built on the spot, and the two
+  splits, which relabel every residual up front, keep each relabeled terminal on the work stack until
+  `computeMap` has built it in (`RegressionTests`). It then walks its high-water mark (`biggestAliveIndex`)
   back and rebuilds `freeGaps` by one ascending scan, so fresh values pack in from the bottom. The mapping
   is a bijection at all times and an index's meaning is stable while it is alive — which is what lets a
   cached raw result stay valid. `afterGc` returns immediately unless something below `biggestAliveIndex`

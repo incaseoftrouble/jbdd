@@ -19,6 +19,8 @@ package de.tum.in.jbdd;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.core.Is.is;
+import static org.junit.jupiter.api.Assertions.assertThrowsExactly;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.google.common.collect.Lists;
 import java.util.ArrayList;
@@ -182,6 +184,76 @@ class BddTest {
         assertThat(bdd.countSatisfyingAssignments(equivalence).longValueExact(), is(8L));
     }
 
+    @Test
+    void testSatisfyingFractionDoesNotDependOnTheVariableCount() {
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int v1 = bdd.createVariable();
+        int v2 = bdd.createVariable();
+        int and = bdd.reference(bdd.and(v1, v2));
+        int equivalence = bdd.reference(bdd.equivalence(v1, v2));
+
+        assertThat(bdd.satisfyingFraction(bdd.falseFunction()), is(0.0d));
+        assertThat(bdd.satisfyingFraction(bdd.trueFunction()), is(1.0d));
+        assertThat(bdd.satisfyingFraction(v1), is(0.5d));
+        assertThat(bdd.satisfyingFraction(and), is(0.25d));
+        assertThat(bdd.satisfyingFraction(bdd.not(and)), is(0.75d));
+        assertThat(bdd.satisfyingFraction(equivalence), is(0.5d));
+
+        bdd.createVariables(5);
+        assertThat(bdd.satisfyingFraction(and), is(0.25d));
+        bdd.gc();
+        assertThat(bdd.satisfyingFraction(and), is(0.25d));
+        List<BitSet> reversed = new ArrayList<>();
+        for (int variable = bdd.numberOfVariables() - 1; variable >= 0; variable--) {
+            BitSet block = new BitSet();
+            block.set(variable);
+            reversed.add(block);
+        }
+        bdd.variableOrder().reorderTo(reversed);
+        assertThat(bdd.satisfyingFraction(and), is(0.25d));
+        assertThat(bdd.satisfyingFraction(bdd.not(equivalence)), is(0.5d));
+    }
+
+    @Test
+    void testSatisfyingFractionKeepsSmallComplementsPrecise() {
+        // The conjunction of negated literals is stored as the complement of the disjunction, whose fraction is
+        // 1 - 2^-200, i.e. 1.0 as a double: deriving the conjunction's as 1 - x would give 0.
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int variables = 200;
+        int[] nodes = bdd.createVariables(variables);
+        int disjunction = bdd.falseFunction();
+        for (int node : nodes) {
+            disjunction = bdd.updateWith(bdd.or(disjunction, node), disjunction);
+        }
+        int conjunction = bdd.not(disjunction);
+        assertThat(bdd.isPositive(conjunction), is(false));
+
+        assertThat(bdd.satisfyingFraction(conjunction), is(Math.scalb(1.0d, -variables)));
+        assertThat(bdd.satisfyingFraction(disjunction), is(1.0d));
+        assertThat(bdd.satisfyingFraction(bdd.and(bdd.not(nodes[0]), bdd.not(nodes[1]))), is(0.25d));
+    }
+
+    @Test
+    void testSatisfyingFractionInCountsATinyDomainExactly() {
+        // A cube over 1100 variables is 2^-1100 of all assignments, below any double: the probabilities within it
+        // are still plain.
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int[] nodes = bdd.createVariables(1102);
+        int domain = bdd.trueFunction();
+        for (int i = 2; i < nodes.length; i++) {
+            domain = bdd.updateWith(bdd.and(domain, nodes[i]), domain);
+        }
+        assertThat(bdd.satisfyingFraction(domain), is(0.0d));
+
+        int function = bdd.reference(bdd.and(nodes[0], nodes[1]));
+        assertThat(bdd.satisfyingFractionIn(function, domain), is(0.25d));
+        assertThat(bdd.satisfyingFractionIn(bdd.not(function), domain), is(0.75d));
+        assertThat(bdd.satisfyingFractionIn(nodes[5], domain), is(1.0d));
+        assertThat(bdd.satisfyingFractionIn(bdd.not(nodes[5]), domain), is(0.0d));
+        assertThrowsExactly(
+                IllegalArgumentException.class, () -> bdd.satisfyingFractionIn(function, bdd.falseFunction()));
+    }
+
     @SuppressWarnings("ReuseOfLocalVariable")
     @Test
     void testCompose() {
@@ -207,6 +279,84 @@ class BddTest {
         composition = bdd.compose(v1andv2, new int[] {v2, v2});
         assertThat(composition, is(v2));
         bdd.dereference(composition);
+    }
+
+    /**
+     * Replacements depending on variables the function tests above the replaced ones: {@code f = (a_0 | ... |
+     * a_n-1) | (o1 & o2)} with {@code o1 -> OR_i (a_i xor x_i)}, {@code o2 -> OR_i (a_i xor y_i)}, the a above
+     * o1, o2 above the x and y. The result is {@code (OR a) | ((OR x) & (OR y))}, linear; composing o1 & o2 without
+     * the path (where every a is false) builds the conjunction of the replacements, exponential in this order.
+     */
+    @Test
+    void testComposeCarriesThePathToTheReplacements() {
+        int n = 14;
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int[] a = bdd.createVariables(n);
+        int o1 = bdd.createVariable();
+        int o2 = bdd.createVariable();
+        int[] x = bdd.createVariables(n);
+        int[] y = bdd.createVariables(n);
+
+        int anyA = bdd.reference(bdd.falseFunction());
+        int anyX = bdd.reference(bdd.falseFunction());
+        int anyY = bdd.reference(bdd.falseFunction());
+        int g1 = bdd.reference(bdd.falseFunction());
+        int g2 = bdd.reference(bdd.falseFunction());
+        for (int i = 0; i < n; i++) {
+            anyA = bdd.updateWith(bdd.or(anyA, a[i]), anyA);
+            anyX = bdd.updateWith(bdd.or(anyX, x[i]), anyX);
+            anyY = bdd.updateWith(bdd.or(anyY, y[i]), anyY);
+            g1 = bdd.updateWith(bdd.or(g1, bdd.xor(a[i], x[i])), g1);
+            g2 = bdd.updateWith(bdd.or(g2, bdd.xor(a[i], y[i])), g2);
+        }
+        int f = bdd.reference(bdd.or(anyA, bdd.and(o1, o2)));
+        int expected = bdd.reference(bdd.or(anyA, bdd.and(anyX, anyY)));
+
+        int[] mapping = new int[3 * n + 2];
+        Arrays.fill(mapping, bdd.placeholder());
+        mapping[bdd.decisionVariable(o1)] = g1;
+        mapping[bdd.decisionVariable(o2)] = g2;
+
+        long before = bdd.table().createdNodeCount();
+        assertThat(bdd.compose(f, mapping), is(expected));
+        assertThat(bdd.table().createdNodeCount() - before < 100L * n, is(true));
+
+        RegisteredOperation.Unary registered = bdd.registerCompose(mapping);
+        before = bdd.table().createdNodeCount();
+        assertThat(registered.applyAsInt(f), is(expected));
+        assertThat(bdd.table().createdNodeCount() - before < 100L * n, is(true));
+        registered.release();
+    }
+
+    @Test
+    void testComposeAlongThePathDropsAMappingWhoseReplacementWasRecycled() {
+        // As RegressionTests#testComposeCacheDropsAMappingWhoseReplacementWasRecycled, with a replacement reading
+        // v2, which the function decides above v7: the composition restricts the replacement along the path, and
+        // entries keyed on it must not answer an equal-looking mapping whose replacement id now names another
+        // function.
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int[] v = bdd.createVariables(8);
+        int function =
+                bdd.reference(bdd.and(new int[] {bdd.xor(v[0], v[3]), bdd.xor(v[4], v[5]), bdd.xor(v[2], v[6]), v[7]}));
+        int replacement = bdd.reference(bdd.and(v[1], v[2]));
+        int[] mapping = new int[8];
+        Arrays.fill(mapping, bdd.placeholder());
+        mapping[7] = replacement;
+        int stale = bdd.reference(bdd.compose(function, mapping.clone()));
+
+        bdd.dereference(replacement);
+        bdd.gc();
+        assertThat(bdd.isValidFunction(replacement), is(false));
+        for (long mask = 1; mask < 1L << 8 && !bdd.isValidFunction(replacement); mask++) {
+            bdd.reference(bdd.of(Cube.negative(BitSet.valueOf(new long[] {mask}))));
+        }
+        assumeTrue(bdd.isValidFunction(replacement), "The freed id was never handed out again");
+
+        int high = bdd.reference(bdd.restrict(function, Cube.literal(7, true)));
+        int low = bdd.reference(bdd.restrict(function, Cube.literal(7, false)));
+        int expected = bdd.reference(bdd.ifThenElse(replacement, high, low));
+        assumeTrue(expected != stale);
+        assertThat(bdd.compose(function, mapping.clone()), is(expected));
     }
 
     @Test
