@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import de.tum.in.jbdd.collections.BitSets;
 import java.util.BitSet;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;

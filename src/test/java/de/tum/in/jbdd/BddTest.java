@@ -23,6 +23,8 @@ import static org.junit.jupiter.api.Assertions.assertThrowsExactly;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.google.common.collect.Lists;
+import de.tum.in.jbdd.collections.BitSets;
+import de.tum.in.jbdd.collections.Cube;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
@@ -254,6 +256,34 @@ class BddTest {
                 IllegalArgumentException.class, () -> bdd.satisfyingFractionIn(function, bdd.falseFunction()));
     }
 
+    @Test
+    void testSatisfyingFractionInATinyDomain() {
+        // A domain of 3 * 2^-1502 of all assignments, far below what a double holds: x_0 .. x_1499 all true, and
+        // one of x_1500, x_1501. Deciding the pinned variables at either end of the order.
+        for (boolean pinnedFirst : new boolean[] {true, false}) {
+            BddImpl bdd = new DdContextImpl(config).bdd();
+            int[] variables = bdd.createVariables(1502);
+            int offset = pinnedFirst ? 0 : 2;
+            int pinned = bdd.reference(bdd.trueFunction());
+            for (int index = 0; index < 1500; index++) {
+                pinned = bdd.updateWith(bdd.and(pinned, variables[offset + index]), pinned);
+            }
+            int first = variables[pinnedFirst ? 1500 : 0];
+            int second = variables[pinnedFirst ? 1501 : 1];
+            int domain = bdd.reference(bdd.and(pinned, bdd.reference(bdd.or(first, second))));
+            int both = bdd.reference(bdd.and(first, second));
+
+            assertThat(bdd.satisfyingFraction(domain), is(0.0d));
+            assertThat(bdd.satisfyingFractionIn(both, domain), is(1.0d / 3.0d));
+            assertThat(bdd.satisfyingFractionIn(bdd.not(both), domain), is(2.0d / 3.0d));
+            assertThat(bdd.satisfyingFractionIn(first, domain), is(2.0d / 3.0d));
+            assertThat(bdd.satisfyingFractionIn(bdd.trueFunction(), domain), is(1.0d));
+            assertThat(bdd.satisfyingFractionIn(domain, domain), is(1.0d));
+            assertThat(bdd.satisfyingFractionIn(bdd.not(domain), domain), is(0.0d));
+            assertThat(bdd.satisfyingFractionIn(bdd.falseFunction(), domain), is(0.0d));
+        }
+    }
+
     @SuppressWarnings("ReuseOfLocalVariable")
     @Test
     void testCompose() {
@@ -423,11 +453,11 @@ class BddTest {
         BddImpl bdd = new DdContextImpl(config).bdd();
 
         List<BitSet> falseSolutions = Lists.newArrayList();
-        bdd.forEachPath(bdd.falseFunction(), path -> falseSolutions.add(BitSets.copyOf(path.assignment)));
+        bdd.forEachPath(bdd.falseFunction(), path -> falseSolutions.add(BitSets.copyOf(path.assignmentUnsafe())));
         assertThat(falseSolutions, is(Collections.emptyList()));
 
         List<BitSet> trueSolutions = Lists.newArrayList();
-        bdd.forEachPath(bdd.trueFunction(), path -> trueSolutions.add(BitSets.copyOf(path.assignment)));
+        bdd.forEachPath(bdd.trueFunction(), path -> trueSolutions.add(BitSets.copyOf(path.assignmentUnsafe())));
         assertThat(trueSolutions, is(Collections.singletonList(new BitSet(0))));
     }
 

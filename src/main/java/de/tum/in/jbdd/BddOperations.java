@@ -138,7 +138,7 @@ final class BddOperations {
             if (domain == bdd.falseFunction()) {
                 return bdd.falseFunction();
             }
-            return bdd.composeJoint(function, domain, variableMapping);
+            return bdd.computeCompose(function, domain, variableMapping);
         }
     }
 }

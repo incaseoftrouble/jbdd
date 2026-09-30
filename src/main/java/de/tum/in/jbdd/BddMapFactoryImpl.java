@@ -19,6 +19,9 @@ package de.tum.in.jbdd;
 import static de.tum.in.jbdd.RegisteredOperation.*;
 
 import de.tum.in.jbdd.RegisteredOperation.Forwarding;
+import de.tum.in.jbdd.collections.BitSets;
+import de.tum.in.jbdd.collections.Cube;
+import de.tum.in.jbdd.collections.IntIntHashMap;
 import java.lang.ref.Reference;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -426,11 +429,12 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
                     terminals.add(dd.reference(dd.of(indices[raw])));
                 });
                 int result = dd.adopt(source, foreign.function, variable -> variables[variable], raw -> indices[raw]);
-                return factory.make(result, this);
-            } finally {
+                BddMap<V> adopted = factory.make(result, this);
                 for (int terminal : terminals) {
                     dd.dereference(terminal);
                 }
+                return adopted;
+            } finally {
                 // The source diagram lives only as long as its wrapper.
                 Reference.reachabilityFence(foreign);
             }
@@ -953,6 +957,31 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
         @Override
         public BddMap<BddMap<V>> split(BitSet splitVariables, Values<BddMap<V>> destination) {
             return splitMap(splitVariables, destination, Function.identity());
+        }
+
+        @Override
+        public Dag<V> dag() {
+            Dag.Builder<V> builder = new Dag.Builder<>();
+            builder.addRoot(dagEntry(function, builder, new IntIntHashMap(), new BitSet(0)));
+            return builder.build();
+        }
+
+        private int dagEntry(int node, Dag.Builder<V> builder, IntIntHashMap entries, BitSet noAssignment) {
+            int known = entries.get(node, -1);
+            if (known >= 0) {
+                return known;
+            }
+            MtBddImpl dd = factory.dd;
+            int entry;
+            if (dd.isConstant(node)) {
+                entry = builder.addValue(values.valueOf(dd.evaluate(node, noAssignment)));
+            } else {
+                int high = dagEntry(dd.highOf(node), builder, entries, noAssignment);
+                int low = dagEntry(dd.lowOf(node), builder, entries, noAssignment);
+                entry = builder.addDecision(dd.decisionVariable(node), high, low);
+            }
+            entries.put(node, entry);
+            return entry;
         }
 
         @Override

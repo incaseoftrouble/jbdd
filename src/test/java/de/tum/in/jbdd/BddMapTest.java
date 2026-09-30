@@ -25,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.common.collect.Sets;
+import de.tum.in.jbdd.collections.BitSets;
 import java.util.BitSet;
 import java.util.HashSet;
 import java.util.List;
@@ -589,5 +590,36 @@ class BddMapTest {
         assertTrue(left.allMatch(bound, (value, length) -> value.length() <= length));
         assertFalse(left.update(x1, "bb").allMatch(bound, (value, length) -> value.length() <= length));
         assertTrue(left.allMatch(left, BddMapBinaryPredicate.reflexive(String::equals)));
+    }
+
+    @Test
+    void testSmallMapsAfterALargeOneClearOnlyWhatTheyWrote() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BddSetFactory sets = ctx.bddSets();
+        Values<Integer> numbers = ctx.bddMaps().create();
+
+        // A map over 12 variables with a distinct value per valuation of the first 8 grows the map cache large.
+        BddMap<Integer> large = numbers.of(0);
+        for (int valuation = 0; valuation < 256; valuation++) {
+            BddSet cube = sets.universe();
+            for (int variable = 0; variable < 8; variable++) {
+                cube = cube.intersection(
+                        (valuation & (1 << variable)) == 0 ? sets.var(variable).complement() : sets.var(variable));
+            }
+            large = large.update(cube.intersection(sets.var(8 + valuation % 4)), valuation);
+        }
+        BddMap<Integer> doubled = large.map(value -> 2 * value);
+        assertEquals(2 * large.evaluate(BitSets.of(0, 1, 8)), doubled.evaluate(BitSets.of(0, 1, 8)));
+
+        // Each small map with a new function invalidates the cache; its clear then resets just the bins written.
+        BddMap<Integer> small = numbers.of(1).update(sets.var(0), 2).update(sets.var(1), 3);
+        for (int offset = 0; offset < 50; offset++) {
+            int shift = offset;
+            BddMap<Integer> shifted = small.map(value -> value + shift);
+            for (BitSet valuation : List.of(BitSets.of(), BitSets.of(0), BitSets.of(1), BitSets.of(0, 1))) {
+                assertEquals(small.evaluate(valuation) + shift, shifted.evaluate(valuation));
+            }
+        }
+        assertTrue(Integer.parseInt(String.valueOf(ctx.statistics().get("mtbdd_cache_map_sparse_clear_count"))) > 0);
     }
 }

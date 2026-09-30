@@ -16,6 +16,8 @@
  */
 package de.tum.in.jbdd;
 
+import de.tum.in.jbdd.collections.BitSets;
+import de.tum.in.jbdd.collections.Cube;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.Arrays;
@@ -25,6 +27,7 @@ import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.IntConsumer;
+import java.util.function.IntUnaryOperator;
 import java.util.function.Predicate;
 
 class MddAsBinaryDd implements BinaryDd, StatisticsSource {
@@ -341,7 +344,7 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
                     assignment.set(i, a[i] == TRUE);
                 }
             }
-            return new Cube(assignment, support);
+            return Cube.ofUnsafe(assignment, support);
         });
     }
 
@@ -357,7 +360,7 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
         int variables = mdd.numberOfVariables();
         BitSet values = new BitSet(variables);
         BitSet support = new BitSet(variables);
-        Cube bddPath = new Cube(values, support);
+        Cube bddPath = Cube.ofUnsafe(values, support);
         mdd.forEachPartialPath(function, relevantSet, path -> {
             for (int var = 0; var < path.length; var++) {
                 assert path[var] == -1 || path[var] == TRUE || path[var] == FALSE;
@@ -380,7 +383,7 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
         int variables = mdd.numberOfVariables();
         BitSet values = new BitSet(variables);
         BitSet support = new BitSet(variables);
-        Cube bddPath = new Cube(values, support);
+        Cube bddPath = Cube.ofUnsafe(values, support);
         return mdd.anyPathMatches(function, path -> {
             for (int var = 0; var < path.length; var++) {
                 assert path[var] == -1 || path[var] == TRUE || path[var] == FALSE;
@@ -544,6 +547,11 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
         }
         mdd.dereference(result);
         return result;
+    }
+
+    @Override
+    public int adopt(BinaryDecisionDiagram source, int function, IntUnaryOperator variableMapping) {
+        return BddUtil.adopt(this, source, function, variableMapping);
     }
 
     @Override

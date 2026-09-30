@@ -14,7 +14,7 @@
  * You should have received a copy of the GNU General Public License
  * along with JBDD. If not, see <http://www.gnu.org/licenses/>.
  */
-package de.tum.in.jbdd;
+package de.tum.in.jbdd.collections;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -22,6 +22,8 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import de.tum.in.jbdd.BddSetFactory;
+import de.tum.in.jbdd.BinaryFactoryContext;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
@@ -65,7 +67,7 @@ class CubeTest {
         assertSame(assignment, unsafe.assignmentUnsafe());
         assertSame(owned, unsafe.supportUnsafe());
         assertEquals(CUBE, unsafe);
-        assertThrows(IllegalArgumentException.class, () -> Cube.ofUnsafe(BitSets.of(1), BitSets.of(0)));
+        assertThrows(AssertionError.class, () -> Cube.ofUnsafe(BitSets.of(1), BitSets.of(0)));
     }
 
     @Test

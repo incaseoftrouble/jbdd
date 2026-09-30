@@ -18,6 +18,7 @@ package de.tum.in.jbdd;
 
 import static de.tum.in.jbdd.NodeTable.PLACEHOLDER;
 
+import de.tum.in.jbdd.collections.BitSets;
 import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.BitSet;

@@ -16,6 +16,9 @@
  */
 package de.tum.in.jbdd;
 
+import static de.tum.in.jbdd.MtBddCache.Slot.BDD;
+import static de.tum.in.jbdd.MtBddCache.Slot.MTBDD;
+
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.function.IntPredicate;
@@ -44,8 +47,8 @@ final class MtBddOperations {
         private final MtBddImpl mtbdd;
         private final int[] bddVariableMapping;
         private int maxReplacedLevel;
-        private final MtBddCache.UnaryToIntCache composeCache;
-        private final MtBddCache.@Nullable MtbddBddToIntCache composeSimplifyCache;
+        private final MtBddCache.UnaryCache composeCache;
+        private final MtBddCache.@Nullable BinaryCache composeSimplifyCache;
 
         Compose(
                 MtBddImpl mtbdd,
@@ -61,8 +64,9 @@ final class MtBddOperations {
             this.mtbdd = mtbdd;
             this.bddVariableMapping = resolvedMapping;
             this.maxReplacedLevel = maxReplacedLevel;
-            this.composeCache = new MtBddCache.UnaryToIntCache(mtbdd, mtbdd.bddImpl());
-            this.composeSimplifyCache = withSimplify ? new MtBddCache.MtbddBddToIntCache(mtbdd, mtbdd.bddImpl()) : null;
+            this.composeCache = new MtBddCache.UnaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, MTBDD);
+            this.composeSimplifyCache =
+                    withSimplify ? new MtBddCache.BinaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, BDD, MTBDD) : null;
             mtbdd.registerObserver(this);
             if (withSimplify) {
                 mtbdd.bddImpl().registerObserver(this);
@@ -180,16 +184,17 @@ final class MtBddOperations {
     static final class Mapper implements RegisteredOperation.Unary, RegisteredOperation.Binary, NodeTableObserver {
         private final MtBddImpl mtbdd;
         private final IntUnaryOperator operator;
-        private final MtBddCache.UnaryToIntCache mapCache;
+        private final MtBddCache.UnaryCache mapCache;
 
         /** Only allocated for {@code registerMapSimplify}; see {@link Compose#composeSimplifyCache}. */
-        private final MtBddCache.@Nullable MtbddBddToIntCache mapSimplifyCache;
+        private final MtBddCache.@Nullable BinaryCache mapSimplifyCache;
 
         Mapper(MtBddImpl mtbdd, IntUnaryOperator operator, boolean withSimplify) {
             this.mtbdd = mtbdd;
             this.operator = operator;
-            this.mapCache = new MtBddCache.UnaryToIntCache(mtbdd, mtbdd.bddImpl());
-            this.mapSimplifyCache = withSimplify ? new MtBddCache.MtbddBddToIntCache(mtbdd, mtbdd.bddImpl()) : null;
+            this.mapCache = new MtBddCache.UnaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, MTBDD);
+            this.mapSimplifyCache =
+                    withSimplify ? new MtBddCache.BinaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, BDD, MTBDD) : null;
             mtbdd.registerObserver(this);
             if (withSimplify) {
                 mtbdd.bddImpl().registerObserver(this);
@@ -274,12 +279,12 @@ final class MtBddOperations {
     static final class MapBoolean implements RegisteredOperation.Unary, NodeTableObserver {
         private final MtBddImpl mtbdd;
         private final IntPredicate values;
-        private final MtBddCache.UnaryToBddCache mapBooleanCache;
+        private final MtBddCache.UnaryCache mapBooleanCache;
 
         MapBoolean(MtBddImpl mtbdd, IntPredicate values) {
             this.mtbdd = mtbdd;
             this.values = values;
-            this.mapBooleanCache = new MtBddCache.UnaryToBddCache(mtbdd, mtbdd.bddImpl());
+            this.mapBooleanCache = new MtBddCache.UnaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, BDD);
             mtbdd.registerObserver(this);
             mtbdd.bddImpl().registerObserver(this);
             growToTableFloor();
@@ -334,12 +339,12 @@ final class MtBddOperations {
     static final class ApplyBoolean implements RegisteredOperation.Binary, NodeTableObserver {
         private final MtBddImpl mtbdd;
         private final MtBddBinaryPredicate predicate;
-        private final MtBddCache.BinaryToBddCache applyBooleanCache;
+        private final MtBddCache.BinaryCache applyBooleanCache;
 
         ApplyBoolean(MtBddImpl mtbdd, MtBddBinaryPredicate predicate) {
             this.mtbdd = mtbdd;
             this.predicate = predicate;
-            this.applyBooleanCache = new MtBddCache.BinaryToBddCache(mtbdd, mtbdd.bddImpl());
+            this.applyBooleanCache = new MtBddCache.BinaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, MTBDD, BDD);
             mtbdd.registerObserver(this);
             mtbdd.bddImpl().registerObserver(this);
             growToTableFloor();
@@ -394,14 +399,15 @@ final class MtBddOperations {
     static final class Apply implements RegisteredOperation.Binary, RegisteredOperation.Ternary, NodeTableObserver {
         private final MtBddImpl mtbdd;
         private final MtBddBinaryOperator operator;
-        private final MtBddCache.BinaryToIntCache applyCache;
-        private final MtBddCache.@Nullable ApplySimplifyCache applySimplifyCache;
+        private final MtBddCache.BinaryCache applyCache;
+        private final MtBddCache.@Nullable TernaryCache applySimplifyCache;
 
         Apply(MtBddImpl mtbdd, MtBddBinaryOperator operator, boolean withSimplify) {
             this.mtbdd = mtbdd;
             this.operator = operator;
-            this.applyCache = new MtBddCache.BinaryToIntCache(mtbdd, mtbdd.bddImpl());
-            this.applySimplifyCache = withSimplify ? new MtBddCache.ApplySimplifyCache(mtbdd, mtbdd.bddImpl()) : null;
+            this.applyCache = new MtBddCache.BinaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, MTBDD, MTBDD);
+            this.applySimplifyCache =
+                    withSimplify ? new MtBddCache.TernaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, MTBDD, BDD, MTBDD) : null;
             mtbdd.registerObserver(this);
             if (withSimplify) {
                 mtbdd.bddImpl().registerObserver(this);

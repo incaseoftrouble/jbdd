@@ -16,6 +16,7 @@
  */
 package de.tum.in.jbdd;
 
+import de.tum.in.jbdd.io.DimacsReader;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;

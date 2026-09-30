@@ -28,6 +28,7 @@ final class CacheStatistics {
     private int missCount = 0;
     private int missCountSinceClear = 0;
     private int clearCount = 0;
+    private int sparseClearCount = 0;
     private int pruningCount = 0;
     private int totalPrunedEntries = 0;
 
@@ -53,6 +54,10 @@ final class CacheStatistics {
         missCountSinceClear = 0;
     }
 
+    void sparseClear() {
+        sparseClearCount++;
+    }
+
     void prune(int prunedEntries) {
         pruningCount++;
         totalPrunedEntries += prunedEntries;
@@ -73,6 +78,7 @@ final class CacheStatistics {
                 entry("hit_ratio", hitRatio),
                 entry("hit_to_put_ratio", hitToPutRatio),
                 entry("clear_count", clearCount),
+                entry("sparse_clear_count", sparseClearCount),
                 entry("put_since_clear", putCountSinceClear),
                 entry("hit_since_clear", hitCountSinceClear),
                 entry("miss_since_clear", missCountSinceClear),

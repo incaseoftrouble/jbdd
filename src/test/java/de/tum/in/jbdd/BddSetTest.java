@@ -23,6 +23,8 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import de.tum.in.jbdd.collections.BitSets;
+import de.tum.in.jbdd.collections.Cube;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.HashSet;
@@ -511,6 +513,81 @@ class BddSetTest {
         assertSame(set, source.adopt(reversed, variable -> 3 - variable));
         assertSame(set, source.adopt(target.adopt(set)));
         assertThrows(IllegalArgumentException.class, () -> target.adopt(set, variable -> -1));
+    }
+
+    private static List<BddSet> rebuild(BddSetFactory sets, Dag<Boolean> dag) {
+        List<BddSet> entries = new ArrayList<>(dag.size());
+        for (int entry = 0; entry < dag.size(); entry++) {
+            switch (dag.kind(entry)) {
+                case VALUE:
+                    entries.add(sets.of(dag.value(entry)));
+                    break;
+                case DECISION:
+                    assertTrue(dag.high(entry) < entry && dag.low(entry) < entry);
+                    entries.add(sets.ifThenElse(
+                            sets.var(dag.variable(entry)), entries.get(dag.high(entry)), entries.get(dag.low(entry))));
+                    break;
+                case COMPLEMENT:
+                    assertTrue(dag.complementOf(entry) < entry);
+                    entries.add(entries.get(dag.complementOf(entry)).complement());
+                    break;
+            }
+        }
+        return entries;
+    }
+
+    @Test
+    void testDagOfEveryFunctionOfThreeVariables() {
+        int variables = 3;
+        int valuations = 1 << variables;
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BddSetFactory sets = ctx.bddSets();
+
+        for (int truthTable = 0; truthTable < (1 << valuations); truthTable++) {
+            BddSet function = sets.empty();
+            for (int valuation = 0; valuation < valuations; valuation++) {
+                if ((truthTable & (1 << valuation)) != 0) {
+                    function = function.union(
+                            sets.of(Cube.of(BitSets.of(bits(valuation, variables)), BitSets.range(0, variables))));
+                }
+            }
+
+            // One entry per distinct function, and folding it back gives the set.
+            Dag<Boolean> dag = function.dag();
+            List<BddSet> entries = rebuild(sets, dag);
+            assertEquals(1, dag.numberOfRoots());
+            assertEquals(function, entries.get(dag.root(0)));
+            assertEquals(dag.size(), new HashSet<>(entries).size());
+
+            // With its complement as a second root, shared: the complement is one more entry, and sharing inside the
+            // function can only save entries (a complemented subfunction's children are not visited).
+            Dag<Boolean> shared = sets.dag(List.of(function, function.complement()), true);
+            List<BddSet> sharedEntries = rebuild(sets, shared);
+            assertEquals(function, sharedEntries.get(shared.root(0)));
+            assertEquals(function.complement(), sharedEntries.get(shared.root(1)));
+            if (!function.isEmpty() && !function.isUniverse()) {
+                assertEquals(Dag.Kind.COMPLEMENT, shared.kind(shared.root(1)));
+                assertEquals(shared.root(0), shared.complementOf(shared.root(1)));
+                assertTrue(shared.size() <= dag.size() + 1);
+            }
+        }
+    }
+
+    @Test
+    void testDagOrderIsHighFirstPostOrder() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BddSetFactory sets = ctx.bddSets();
+        Dag<Boolean> dag = sets.var(0).intersection(sets.var(1)).dag();
+
+        // x0 ? (x1 ? true : false) : false - the high branch first, each child before its parent.
+        assertEquals(4, dag.size());
+        assertEquals(true, dag.value(0));
+        assertEquals(false, dag.value(1));
+        assertEquals(1, dag.variable(2));
+        assertEquals(0, dag.variable(3));
+        assertEquals(List.of(2, 1), List.of(dag.high(3), dag.low(3)));
+        assertEquals(3, dag.root(0));
+        assertThrows(IllegalArgumentException.class, () -> dag.variable(0));
     }
 
     private static int[] bits(int valuation, int variables) {

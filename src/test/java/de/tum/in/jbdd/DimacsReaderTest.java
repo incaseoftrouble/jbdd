@@ -18,6 +18,7 @@ package de.tum.in.jbdd;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import de.tum.in.jbdd.io.DimacsReader;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.StringReader;

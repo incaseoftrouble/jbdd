@@ -24,6 +24,8 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import com.google.common.collect.Streams;
 import de.tum.in.jbdd.Generator.Info;
 import de.tum.in.jbdd.Generator.UnaryDataPoint;
+import de.tum.in.jbdd.collections.BitSets;
+import de.tum.in.jbdd.collections.Cube;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;

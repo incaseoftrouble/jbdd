@@ -19,6 +19,8 @@ package de.tum.in.jbdd;
 import static de.tum.in.jbdd.BooleanBase.EMPTY_INT_ARRAY;
 import static de.tum.in.jbdd.Preconditions.checkState;
 
+import de.tum.in.jbdd.collections.BitSets;
+import de.tum.in.jbdd.collections.Cube;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
@@ -139,7 +141,7 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
     }
 
     Cube literalsBelow(Cube cube, int level) {
-        BitSet support = cube.support;
+        BitSet support = cube.supportUnsafe();
         if (BitSets.allMatch(support, variable -> variable > level)) {
             return cube;
         }
@@ -148,10 +150,10 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
         BitSets.forEach(support, variable -> {
             if (levelOfVariable(variable) > level) {
                 remainingSupport.set(variable);
-                remainingAssignment.set(variable, cube.assignment.get(variable));
+                remainingAssignment.set(variable, cube.assignmentUnsafe().get(variable));
             }
         });
-        return new Cube(remainingAssignment, remainingSupport);
+        return Cube.ofUnsafe(remainingAssignment, remainingSupport);
     }
 
     private void ensureOrderCapacity(int variables) {

@@ -14,8 +14,9 @@
  * You should have received a copy of the GNU General Public License
  * along with JBDD. If not, see <http://www.gnu.org/licenses/>.
  */
-package de.tum.in.jbdd;
+package de.tum.in.jbdd.io;
 
+import de.tum.in.jbdd.BinaryDecisionDiagram;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.util.regex.Pattern;

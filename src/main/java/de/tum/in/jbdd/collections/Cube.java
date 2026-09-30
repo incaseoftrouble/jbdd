@@ -14,8 +14,9 @@
  * You should have received a copy of the GNU General Public License
  * along with JBDD. If not, see <http://www.gnu.org/licenses/>.
  */
-package de.tum.in.jbdd;
+package de.tum.in.jbdd.collections;
 
+import de.tum.in.jbdd.Cursor;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Collection;
@@ -39,11 +40,11 @@ import java.util.Optional;
 public final class Cube {
     private static final Cube EMPTY = new Cube(new BitSet(0), new BitSet(0));
 
-    final BitSet assignment;
-    final BitSet support;
+    private final BitSet assignment;
+    private final BitSet support;
 
     // Takes ownership of both sets; the walks mutate them in place.
-    Cube(BitSet assignment, BitSet support) {
+    private Cube(BitSet assignment, BitSet support) {
         assert assignment.stream().allMatch(support::get);
         this.assignment = assignment;
         this.support = support;
@@ -57,13 +58,10 @@ public final class Cube {
     }
 
     /**
-     * The cube over {@code support} with {@code assignment} (a subset of it) true, taking both sets as they are:
-     * the caller gives them up and must not modify them afterwards.
+     * The cube over {@code support} with {@code assignment} (a subset of it, checked by assertion only) true, taking
+     * both sets as they are: the caller gives them up and must not modify them afterwards.
      */
     public static Cube ofUnsafe(BitSet assignment, BitSet support) {
-        if (!BitSets.isSubset(assignment, support)) {
-            throw new IllegalArgumentException("Assignment " + assignment + " outside of support " + support);
-        }
         return new Cube(assignment, support);
     }
 

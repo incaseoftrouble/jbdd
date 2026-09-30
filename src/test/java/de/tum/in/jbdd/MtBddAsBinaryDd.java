@@ -16,6 +16,8 @@
  */
 package de.tum.in.jbdd;
 
+import de.tum.in.jbdd.collections.BitSets;
+import de.tum.in.jbdd.collections.Cube;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.ArrayList;
@@ -26,6 +28,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
+import java.util.function.IntUnaryOperator;
 import java.util.function.Predicate;
 import org.jspecify.annotations.Nullable;
 
@@ -327,7 +330,7 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
             return;
         }
         if (function == trueFunction() || relevantSet.isEmpty()) {
-            action.accept(new Cube(new BitSet(0), new BitSet(0)));
+            action.accept(Cube.ofUnsafe(new BitSet(0), new BitSet(0)));
             return;
         }
         /* By level, not by variable: the cut-off is "the walk is past everything relevant", which is a
@@ -337,7 +340,7 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
             maxRelevantLevel = Math.max(maxRelevantLevel, mt.levelOfVariable(v));
         }
         int variables = mt.numberOfVariables();
-        Cube path = new Cube(new BitSet(variables), new BitSet(variables));
+        Cube path = Cube.ofUnsafe(new BitSet(variables), new BitSet(variables));
         forEachPathRecursive(function, relevantSet, maxRelevantLevel, path, action);
     }
 
@@ -359,22 +362,22 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
         boolean relevant = relevantSet.get(variable);
 
         if (relevant) {
-            path.support.set(variable);
+            path.supportUnsafe().set(variable);
         }
         if (low != falseFunction()) {
             forEachPathRecursive(low, relevantSet, depthLimit, path, action);
         }
         if (high != falseFunction()) {
             if (relevant) {
-                path.assignment.set(variable);
+                path.assignmentUnsafe().set(variable);
                 forEachPathRecursive(high, relevantSet, depthLimit, path, action);
-                path.assignment.clear(variable);
+                path.assignmentUnsafe().clear(variable);
             } else {
                 forEachPathRecursive(high, relevantSet, depthLimit, path, action);
             }
         }
         if (relevant) {
-            path.support.clear(variable);
+            path.supportUnsafe().clear(variable);
         }
     }
 
@@ -384,10 +387,10 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
             return false;
         }
         if (function == trueFunction()) {
-            return predicate.test(new Cube(new BitSet(0), new BitSet(0)));
+            return predicate.test(Cube.ofUnsafe(new BitSet(0), new BitSet(0)));
         }
         int numberOfVariables = mt.numberOfVariables();
-        Cube path = new Cube(new BitSet(numberOfVariables), new BitSet(numberOfVariables));
+        Cube path = Cube.ofUnsafe(new BitSet(numberOfVariables), new BitSet(numberOfVariables));
         return anyPathMatchesRecursive(function, path, predicate);
     }
 
@@ -399,18 +402,18 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
         int low = mt.lowOf(node);
         int high = mt.highOf(node);
 
-        path.support.set(variable);
+        path.supportUnsafe().set(variable);
         if (low != falseFunction() && anyPathMatchesRecursive(low, path, predicate)) {
-            path.support.clear(variable);
+            path.supportUnsafe().clear(variable);
             return true;
         }
         boolean matched = false;
         if (high != falseFunction()) {
-            path.assignment.set(variable);
+            path.assignmentUnsafe().set(variable);
             matched = anyPathMatchesRecursive(high, path, predicate);
-            path.assignment.clear(variable);
+            path.assignmentUnsafe().clear(variable);
         }
-        path.support.clear(variable);
+        path.supportUnsafe().clear(variable);
         return matched;
     }
 
@@ -580,6 +583,11 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
             }
         }
         return result;
+    }
+
+    @Override
+    public int adopt(BinaryDecisionDiagram source, int function, IntUnaryOperator variableMapping) {
+        return BddUtil.adopt(this, source, function, variableMapping);
     }
 
     @Override

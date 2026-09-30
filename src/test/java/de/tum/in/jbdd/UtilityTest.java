@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import de.tum.in.jbdd.collections.BitSets;
 import java.util.BitSet;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicLong;

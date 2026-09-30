@@ -14,7 +14,7 @@
  * You should have received a copy of the GNU General Public License
  * along with JBDD. If not, see <http://www.gnu.org/licenses/>.
  */
-package de.tum.in.jbdd;
+package de.tum.in.jbdd.collections;
 
 import java.util.Arrays;
 import java.util.BitSet;

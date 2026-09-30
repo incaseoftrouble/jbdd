@@ -19,6 +19,7 @@ package de.tum.in.jbdd;
 import static de.tum.in.jbdd.Preconditions.checkState;
 import static java.util.Map.entry;
 
+import de.tum.in.jbdd.collections.BitSets;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.BitSet;

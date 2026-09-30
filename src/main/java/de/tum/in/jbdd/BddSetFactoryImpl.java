@@ -16,6 +16,9 @@
  */
 package de.tum.in.jbdd;
 
+import de.tum.in.jbdd.collections.BitSets;
+import de.tum.in.jbdd.collections.Cube;
+import de.tum.in.jbdd.collections.IntIntHashMap;
 import java.lang.ref.Reference;
 import java.math.BigInteger;
 import java.util.Arrays;
@@ -77,7 +80,7 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
     @Override
     public BddSet of(Cube cube) {
         if (!cube.isEmpty()) {
-            variableFunction(cube.support.length() - 1);
+            variableFunction(cube.supportUnsafe().length() - 1);
         }
         return make(dd.of(cube));
     }
@@ -87,7 +90,7 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         int result = dd.falseFunction();
         for (Cube cube : cubes) {
             if (!cube.isEmpty()) {
-                variableFunction(cube.support.length() - 1);
+                variableFunction(cube.supportUnsafe().length() - 1);
             }
             // The cube is unreferenced, but or protects its operands and nothing allocates in between.
             result = dd.updateWith(dd.or(result, dd.of(cube)), result);
@@ -133,6 +136,43 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
             // The source diagram lives only as long as its wrapper.
             Reference.reachabilityFence(foreign);
         }
+    }
+
+    @Override
+    public Dag<Boolean> dag(List<? extends BddSet> roots, boolean shareComplements) {
+        Dag.Builder<Boolean> builder = new Dag.Builder<>();
+        IntIntHashMap entries = new IntIntHashMap();
+        try {
+            for (BddSet root : roots) {
+                builder.addRoot(dagEntry(functionOf(root), shareComplements, builder, entries));
+            }
+            return builder.build();
+        } finally {
+            // The walk only reads, so nothing is collected meanwhile - as long as the roots' wrappers live.
+            Reference.reachabilityFence(roots);
+        }
+    }
+
+    private int dagEntry(int function, boolean shareComplements, Dag.Builder<Boolean> builder, IntIntHashMap entries) {
+        int known = entries.get(function, -1);
+        if (known >= 0) {
+            return known;
+        }
+        int entry;
+        if (dd.isConstant(function)) {
+            entry = builder.addValue(function == dd.trueFunction());
+        } else {
+            int complement = shareComplements ? entries.get(dd.not(function), -1) : -1;
+            if (complement < 0) {
+                int high = dagEntry(dd.highOf(function), shareComplements, builder, entries);
+                int low = dagEntry(dd.lowOf(function), shareComplements, builder, entries);
+                entry = builder.addDecision(dd.decisionVariable(function), high, low);
+            } else {
+                entry = builder.addComplement(complement);
+            }
+        }
+        entries.put(function, entry);
+        return entry;
     }
 
     // variableMapping on each variable of support, all of which then exist here; adopt asks once per node.
@@ -214,14 +254,11 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
     public <E> BddSet of(E expression, ExpressionStructure<E> structure) {
         // Every function built stays referenced until the end, so no collection in between invalidates the memo.
         Map<E, Integer> built = new HashMap<>();
-        // TODO No need for try-finally
-        try {
-            return make(build(expression, structure, built));
-        } finally {
-            for (int function : built.values()) {
-                dd.dereference(function);
-            }
+        BddSet result = make(build(expression, structure, built));
+        for (int function : built.values()) {
+            dd.dereference(function);
         }
+        return result;
     }
 
     private <E> int build(E expression, ExpressionStructure<E> structure, Map<E, Integer> built) {
@@ -475,12 +512,12 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
 
         @Override
         public List<Cube> implicants() {
-            return factory.dd.implicants(function);
+            return BddUtil.implicants(factory.dd, function);
         }
 
         @Override
         public List<Cube> primeImplicants() {
-            return factory.dd.primeImplicants(function);
+            return BddUtil.primeImplicants(factory.dd, function);
         }
 
         @Override
@@ -553,7 +590,7 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
 
         @Override
         public Optional<Cube> shortestPath() {
-            return factory.dd.shortestPath(function);
+            return BddUtil.shortestPath(factory.dd, function);
         }
 
         @Override

@@ -1,12 +1,13 @@
 # JBDD — agent guide
 
-Pure-Java (Reduced Ordered) Binary Decision Diagrams and variants. Single Gradle module, single package
-`de.tum.in.jbdd`, GPLv3, `group = de.tum.in`, version `0.7.0` (in `build.gradle.kts` + `README.md`).
+Pure-Java (Reduced Ordered) Binary Decision Diagrams and variants. Single Gradle module; the diagrams in one
+package `de.tum.in.jbdd` (the implementations are intertwined, the interfaces mark the public surface), with
+`de.tum.in.jbdd.collections` (§3) and `de.tum.in.jbdd.io` beside it. GPLv3, `group = de.tum.in`, version `0.7.0` (in `build.gradle.kts` + `README.md`).
 Design goals, in this order: **correctness, simplicity, performance, zero runtime dependencies.**
 
-This file is the whole design reference; there is no companion document. Read the relevant section before
-touching memory management, caches, enumeration, reordering or the value numbering — those are the areas
-where a plausible-looking change is silently wrong. Decision diagrams are hard to get right: **prefer
+This file is the whole design reference; `docs/natset-draft.md` is the one plan beside it. Read the relevant
+section before touching memory management, caches, enumeration, reordering or the value numbering — those are the
+areas where a plausible-looking change is silently wrong. Decision diagrams are hard to get right: **prefer
 asking for clarification over guessing.**
 
 ## 0. Working agreements
@@ -228,7 +229,8 @@ Entry points — never `new BddImpl(...)` outside tests:
   backward-shift deletion, key `0` empty because `PLACEHOLDER` is never a function), so a lookup allocates
   nothing. **Never split it per key space**: the table is what keeps the weak references reachable, and a
   `Reference` that is itself unreachable is never enqueued - its function would stay referenced for good.
-  A wrapper collected but not yet queued is replaced in place, the new one inheriting its reference.
+  A wrapper collected but not yet queued is replaced in place, the new one inheriting its reference. The table
+  grows at 2/3 load and shrinks when a drain leaves it below 1/8.
 - A caller wrapping sets in its own type binds it with `BinaryFactoryContext.attachToSets` (an
   `Attachment<BddSet, A>`) - one slot per `BddSetImpl`, built lazily, living exactly as long as the set -
   rather than keeping a second canonical map of its own. It stays off `BddSet`/`BddSetFactory`, which are
@@ -236,18 +238,50 @@ Entry points — never `new BddImpl(...)` outside tests:
 - `BddSetFactory.of(expression, ExpressionStructure)` builds a set from a caller's own propositional expression
   type, read through the structure (a pure callback, like every other); `known` lets the caller supply sets it
   already has for subexpressions. One memoized build, every intermediate referenced until its end.
+- A caller that folds over a diagram (conversions, exports, encodings) takes a `Dag` snapshot rather than walking
+  `high()`/`low()`: one int-keyed walk, no wrappers, and the fold runs outside every operation. Entries are
+  snapshot indices, not nodes, so a `Dag` holds nothing and outlives any collection.
 - A set or map crosses contexts only by `BddSetFactory.adopt(set, variableMapping)` /
   `Values.adopt(map, variableMapping, valueMapping)`, over the int layer's `adopt`. Both create the mapped
   variables first; the map version maps each distinct value before the traversal (so the mapping may build
-  anything) and keeps those terminals referenced until the end, so no collection frees their indices.
+  anything) and keeps those terminals referenced until the end, so no collection frees their indices. The int
+  layer's `adopt` is native in `BddImpl` (complement edges shared) and `MtBddImpl`: a primitive memo, each
+  rebuilt node on the work stack until the end, and a node made directly where the mapped variable lies above
+  both rebuilt children. A source of another implementation goes through `BddUtil.adopt`.
+- `BddUtil` holds what is computed from a `BinaryDecisionDiagram`'s public operations alone and has no native
+  counterpart: `implicants`, `primeImplicants`, `shortestPath`, and the generic `adopt`.
 - `BddSet` deliberately exposes nothing assuming a fixed variable universe — callers always name the
   support they mean.
-- `Cube` is the one type for a conjunction of literals - equivalently a partial assignment: path walks
-  and `implicants` / `primeImplicants` / `shortestPath` hand them out, `restrict` and `BddSetFactory.of` take them, `of(Cube)` builds one's
-  function. Its operations return new cubes; a walk's cube is working state (§8). `of` and the accessors
-  `assignment()` / `support()` copy; `ofUnsafe` / `assignmentUnsafe()` / `supportUnsafe()` share the sets,
-  for callers that only read (or give up) them. JBDD's own code reads the fields directly.
-- `DimacsReader` parses DIMACS CNF (benchmarks/tests).
+- `Cube` (in `collections`) is the one type for a conjunction of literals - equivalently a partial assignment:
+  path walks and `BddUtil`'s `implicants` / `primeImplicants` / `shortestPath` hand them out, `restrict` and
+  `BddSetFactory.of` take them, `of(Cube)` builds one's function. Its operations return new cubes; a walk's cube
+  is working state (§8). `of` and the accessors `assignment()` / `support()` copy; `ofUnsafe` /
+  `assignmentUnsafe()` / `supportUnsafe()` share the sets, for callers that only read (or give up) them - JBDD's
+  own code included - and `ofUnsafe` checks the assignment against the support by assertion only.
+- `io.DimacsReader` parses DIMACS CNF (benchmarks/tests).
+
+### `de.tum.in.jbdd.collections`
+
+Collections independent of decision diagrams, public for users too; nothing here depends on the core package.
+
+- `NatSet` / `MutableNatSet`: a finite set of naturals, primitives only, not a `Set<Integer>` (`boxed()` is that,
+  a view). What `NatSet`'s factories and operations return never changes and is shared, not copied (`copyOf` of
+  such a set is the set itself; `union` and friends may return an operand that never changes); a
+  `MutableNatSet` is the holder's own - what a method returning a copy returns, and what `MutableNatSet.copyOf` makes.
+  Equality, hash code and `toString` are `Set<Integer>`'s; `NatSet.ORDER` orders by size, then
+  lexicographically. `MutableNatSet` has `java.util.BitSet`'s mutators under their names and exceptions. Not yet
+  used by the core; `docs/natset-draft.md` is the plan for that and for SemML.
+- **Two implementation classes, never more**, so a call site stays at most bimorphic: `ImmutableNatSet` (an
+  exact ascending array or words, whichever is smaller, in one `final` `Object` field told apart by `instanceof` -
+  24 bytes rather than 32 for two typed fields; its hash code computed once; the empty set and the singletons
+  below 128 shared) and `MutableNatSetImpl` (at most 16 elements as a sorted `int[]` where
+  that is smaller than words over their span, words otherwise; an insertion may move it to words, only
+  `optimize()` moves it back, so removing never changes the representation). Both extend `AbstractSet<Integer>`,
+  which is what makes `boxed()` `this`; the immutable one's `Set` mutators always throw. The read algorithms
+  over either store are static functions in `NatSetUtil`, shared by both. There is no primitive iterator:
+  `forEach` is the fast path (over words it samples the first 1024 bits and then walks run by run or bit by bit,
+  as naturals-util does), a `nextSetBit` loop the one that stops early.
+- `Cube`, `BitSets` (helpers around `java.util.BitSet`), `IntIntHashMap` / `IntObjectHashMap`.
 
 ### Navigation: types that are not in a file of their own
 
@@ -263,7 +297,7 @@ Many important types are nested. Searching for `ValuesImpl.java` will fail.
 | the registered operations (`Compose`, `Exists`, `Apply`, `Mapper`, …) | `BddOperations.java`, `MtBddOperations.java` |
 | `BddMap.Operator/VariableReplacer/Mapper/Combiner/Selector/Relation/Relabeler` | `BddMap.java` |
 | `BddSet.Quantifier`, `BddSet.VariableReplacer` | `BddSet.java` |
-| the concrete cache shapes (`BinaryToIntCache`, `ApplySimplifyCache`, …) | `BooleanCache.java`, `MtBddCache.java` |
+| the concrete cache shapes (`UnaryCache`/`BinaryCache`/`TernaryCache` with their `Slot`s, `BinaryToIntCache`, …) | `BooleanCache.java`, `MtBddCache.java` |
 
 ## 4. Memory management: three overlapping mechanisms
 
@@ -427,8 +461,12 @@ Purity is the general contract; a method's javadoc should document only a *devia
 **one candidate bin per key** — direct-mapped (`mod(hash, size)`, no probing), so a collision *overwrites*.
 These are memos, not maps: **a cached result may vanish and every caller must be correct without it.**
 Two key flavours: `CacheBase.IntKeys` packs `int` keys into the bin (`keyCount` leading slots the key,
-the rest the result) — and `BooleanCache.IntCache` asserts every key is a *non-constant* function, since
-step 1 of §5 short-circuits constants before any lookup. `CacheBase.ObjectKeys<V>` keys on an object
+the rest the result) and does every lookup and put (`findBin`/`storeKeys` by key count, `resultIn`/`storeResult`
+for a result kept in the bin); a concrete cache adds only where its result lives and what makes an entry stale.
+`BooleanCache.IntCache` asserts every key is a *non-constant* function, since step 1 of §5 short-circuits
+constants before any lookup. The MTBDD int caches are one class per key count, told apart by their `Slot`s
+(`MTBDD`, `BDD`, `PLAIN` per key and result), from which the per-table validity checks follow. A boolean result
+is a bit (`CacheBase.Bits`), not a slot. `CacheBase.ObjectKeys<V>` keys on an object
 (`cartesianProduct`'s operand tuple).
 Resizing lives in the base (`rehashInto`, hashing the stored key exactly as `lookup` did); a cache whose
 result sits in a *parallel* array overrides `growInto` and passes a `BinRelocation`. `BooleanCache` (one
@@ -453,9 +491,10 @@ consequences that are easy to get wrong:
     in that prefix share it), the support (`supportCache`, ascending variables per node) and the satisfying
     fraction (`FractionCache`: per regular node its own fraction and its complement's, interleaved, so that
     neither is ever derived as `1 - x`, which would round a small complement to 0; a fraction depends on
-    neither the variable count nor the order; `FractionInCache` is the same pair per node and domain, and
-    `satisfyingFractionIn` divides by their sum, the domain's fraction, falling back to exact counts when
-    that is subnormal). Nothing extra.
+    neither the variable count nor the order; `FractionInCache` is the same pair per node and domain, both
+    scaled by one binary exponent that keeps the larger in `[1, 2)`, so a domain far below `2^-1074` of all
+    assignments neither underflows nor needs exact counts; `satisfyingFractionIn` divides by their sum, where
+    the exponent cancels). Nothing extra.
   - **Ephemeral "current parameter"** — the MTBDD `compose` (`int[]` mapping) and `restrict` (a `Cube`),
     `exists` (a `BitSet`), `apply`/`map`/`mapBoolean`/`applyBoolean` and the n-ary `apply` (an opaque
     operator compared by identity; the paired `*Simplify` cache is invalidated by the same `initX`; the
@@ -468,7 +507,7 @@ consequences that are easy to get wrong:
     `cartesianProduct` produce *indices into a bijection built fresh per call*, so an older entry names a
     numbering that no longer exists. `initSplit()`/`initSplitBdd()`/`initCartesianProduct()` therefore
     invalidate unconditionally at every entry. `splitBdd`'s residuals are BDD functions, interned on the
-    BDD's secondary work stack, and its first cache is keyed on a BDD node (`BddToMtbddCache`). Within one
+    BDD's secondary work stack, and its first cache is keyed on a BDD node (a `UnaryCache` of `BDD` to `MTBDD`). Within one
     call they are sound because interning is idempotent. Note `cartesianProduct`'s key is the whole
     operand tuple and its recursion rewrites that array in place — it must be cloned before descending,
     which is also what the cache stores.
@@ -476,6 +515,14 @@ consequences that are easy to get wrong:
     numberOfVariables)`, so creating a variable invalidates them (`variablesChanged()`) though
     `numberOfVariables()` appears in no key. Both caches are `VariableOrderObserver`s and hear it as
     `variablesInserted`; `MddImpl` has no order, so it calls `variablesChanged()` on its cache itself.
+
+**An invalidation is cleared lazily, and usually sparsely.** `invalidate()` only marks the cache; its next use
+clears it. Every write goes through `CacheBase.putBin`, which records the bin while fewer than size / 32 were
+written since the last clear, so the clear resets just those (`sparse_clear_count`); past that, or after a growth
+that rehashed entries, it fills the whole array. The ephemeral and per-call caches above need this: they keep
+the size of their largest call, and most later calls write a handful of entries (SemML's hard samples: the MTBDD
+`map` cache cleared 1.3M times, ~16,000 bins for ~38 entries each - 3% of synthesis time before). A write
+bypassing `putBin` would survive a clear; `ensureValid` asserts the cache empty after every clear.
 
 **Simplify-fused operations.** `andSimplify` (BDD) and `applySimplify`/`mapSimplify`/
 `composeSimplify` (MTBDD) are *one* recursion with the plain operation as the `domain == TRUE` special
@@ -490,17 +537,17 @@ sound because a *larger* domain constrains more; cofactoring the domain on a var
 that variable means the same on both sides — for the MTBDD's `composeSimplify` only when it maps to itself
 (`aligned`), since the domain speaks about *post*-substitution variables.
 
-**The BDD compose is a joint descent** (`composeJoint`, also `composeSimplify` and both registered forms). Its
+**The BDD compose is a joint descent** (`computeCompose`, also `composeSimplify` and both registered forms). Its
 state is the function and the domain restricted to the path, with each replaced variable the function still
 reads and that replacement restricted to the path. That tuple is the whole context, so results go to the
-stable `ComposeTupleCache`, keyed `[F, D, v_1, R_1, ..., v_k, R_k]` (the variables are part of the key: the
+stable `ComposeTupleCache`, keyed `[F, D, v_1, ..., v_k, R_1, ..., R_k]` (the variables are part of the key: the
 same replacement for another variable means something else). A replacement the path made constant is
 substituted into `F` right away, so a decided disjunct or conjunct ends the descent. Otherwise the step splits
-on `F`'s top variable. Left alone, it is a path literal: the domain and every replacement are restricted by it
-(`restrictLiteral`, one prebuilt cube per literal, through `RestrictCubeCache`), a branch outside the domain is
-skipped, and the children are reassembled over it - a node per level where they lie below. Replaced, it is an
-if-then-else over its replacement, taking one branch directly where the domain decides it. Carrying the path
-is what keeps compose from building a branch for both values of a variable its replacements read and
+on `F`'s top variable. Left alone, it is a path literal: the domain is restricted by it, and so is each
+replacement the child still reads (`restrictLiteral`, one prebuilt cube per literal, through `RestrictCubeCache`);
+a branch outside the domain is skipped, its replacements never restricted, and the children are reassembled over
+it - a node per level where they lie below. Replaced, it is an if-then-else over its replacement, taking one
+branch directly where the domain decides it. Carrying the path is what keeps compose from building a branch for both values of a variable its replacements read and
 discarding one half - exponential where the replaced variables sit below those
 (`testComposeCarriesThePathToTheReplacements`); keying on content shares a state reached along paths that
 restrict alike. Results agree with the composition wherever the domain holds.
@@ -883,6 +930,8 @@ entry point (`of`, `ifThenElse`, `cartesianProduct`, `createRelabeling`, `relabe
 - Suppressions are narrow and carry a reason: `@SuppressWarnings("NullAway.Init")` per field on JMH
   `@State` fields, `// NOPMD - <reason>` on deliberate reference comparisons (factory and numbering
   identity is *the* check; `equals` would be wrong) and on `System.out` in benchmark mains.
+  `@SuppressWarnings("PMD.LooseCoupling")` sits on the two `NatSet` classes, whose own concrete types are where
+  the fast paths are.
   `@SuppressWarnings("AssertWithSideEffects")` sits on the classes whose public methods bracket with
   `assert accessGuard.acquire()`.
 - **Assertions carry real work.** `assert accessGuard.acquire(); … assert accessGuard.release();` and
@@ -893,6 +942,11 @@ entry point (`of`, `ifThenElse`, `cartesianProduct`, `createRelabeling`, `relabe
   a user's `-ea` run would be quadratic (a caller once saw an HOA test go from 2 s to 700 s); with `-ea`
   alone, a cache still checks every entry it hands out, and audits itself fully after each prune. Keep validation in assertions, not in runtime checks, on hot paths — with `-ea` off, invalid
   arguments corrupt the structure quietly rather than throwing.
+- **An exception inside an operation, including one a callback throws, is fatal.** Nothing is written to
+  recover from one: no `try`/`finally` releasing references on the way out. `finally` is only for
+  `Reference.reachabilityFence`, which keeps a wrapper alive, not the diagram consistent.
+- Per-call memos keyed by functions, nodes or indices are `collections.IntIntHashMap` / `IntObjectHashMap` (public, for
+  users too), never a boxing `Map<Integer, ...>`.
 - **Internally everything is by level; everything crossing the API boundary is by variable.** Name locals
   `...Level` / `...Variable` and translate at exactly one point per class.
 - **Name the ends of the level axis `min`/`max`, never `low`/`high` or `shallow`/`deep`.** A level is an
@@ -986,8 +1040,10 @@ intuitions transfer badly. Two habits follow:
   zero: an empty `@MethodSource` is a failing test method, not a skipped one.
   `SyntheticTest` reads the same scale but as a *bound*, not a factor: its boards grow exponentially, so
   the largest alone dominates the test and it drops from 9 queens to 8 below 0.9 and to 7 below 0.5.
-- Targeted tests: `BddTest`, `MtBddTest`, `BddMapTest`, `BddSetTest`, `CubeTest`,
-  `ValuesTest`, `ReorderTest`, `HashTest`, `UtilityTest`, `DimacsReaderTest`. `UtilityTest` also asserts
+- Targeted tests: `BddTest`, `MtBddTest`, `BddMapTest`, `BddSetTest`, `ValuesTest`, `ReorderTest`, `HashTest`,
+  `UtilityTest`, `DimacsReaderTest`; in `collections`, `NatSetTest` (every operation against `java.util.BitSet`,
+  over spans that keep a set in the array, move it to words, or mix both; one set in every representation equal
+  to itself, hash code and order included), `CubeTest` and `IntHashMapTest`. `UtilityTest` also asserts
   that the costly assertions are on (`Assertions`), so a test task that forgot the property fails. `SyntheticTest` — n-queens counts as an end-to-end sanity check.
   **`RegressionTests` — one test per past bug; add here when fixing one.**
 - `ValuesTest` holds the numbering-level tests: split residuals, a merging cartesian product and a

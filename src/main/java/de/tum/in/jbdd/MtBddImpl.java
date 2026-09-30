@@ -20,6 +20,9 @@ import static de.tum.in.jbdd.BooleanBase.TWO;
 import static de.tum.in.jbdd.Preconditions.checkState;
 import static java.math.BigInteger.ZERO;
 
+import de.tum.in.jbdd.collections.BitSets;
+import de.tum.in.jbdd.collections.Cube;
+import de.tum.in.jbdd.collections.IntIntHashMap;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -448,8 +451,14 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
 
     @Override
     public int of(int value) {
-        assert value >= 0;
         assert accessGuard.acquire();
+        int function = constant(value);
+        assert accessGuard.release();
+        return function;
+    }
+
+    private int constant(int value) {
+        assert value >= 0;
         int function = valueToConstantFunction(value);
         if (!allocatedValues.get(value)) {
             allocatedValues.set(value);
@@ -458,7 +467,6 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
                 collectForValues(function);
             }
         }
-        assert accessGuard.release();
         return function;
     }
 
@@ -645,7 +653,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         if (isConstant(function)) {
             // The single, entirely unconstrained path.
             BitSet empty = BitSets.of();
-            return new ValuedCursor.SingletonValuedCursor<>(new Cube(empty, empty), constantFunctionToValue(function));
+            return new ValuedCursor.SingletonValuedCursor<>(
+                    Cube.ofUnsafe(empty, empty), constantFunctionToValue(function));
         }
         return new PathCursor(this, function);
     }
@@ -807,8 +816,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             int function2,
             int bddDomain,
             MtBddBinaryOperator operator,
-            MtBddCache.@Nullable BinaryToIntCache registeredApplyCache,
-            MtBddCache.@Nullable ApplySimplifyCache registeredApplySimplifyCache) {
+            MtBddCache.@Nullable BinaryCache registeredApplyCache,
+            MtBddCache.@Nullable TernaryCache registeredApplySimplifyCache) {
         assert isValidFunction(function1) && isValidFunction(function2);
         assert bdd.isValidFunction(bddDomain);
 
@@ -821,8 +830,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         assert accessGuard.acquire();
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
 
-        MtBddCache.BinaryToIntCache applyCache = registeredApplyCache;
-        MtBddCache.ApplySimplifyCache applySimplifyCache = registeredApplySimplifyCache;
+        MtBddCache.BinaryCache applyCache = registeredApplyCache;
+        MtBddCache.TernaryCache applySimplifyCache = registeredApplySimplifyCache;
         if (applyCache == null) {
             cache.initApply(operator);
             applyCache = cache.applyCache();
@@ -849,8 +858,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             int function2,
             int bddDomain,
             MtBddBinaryOperator operator,
-            MtBddCache.BinaryToIntCache applyCache,
-            MtBddCache.@Nullable ApplySimplifyCache applySimplifyCache) {
+            MtBddCache.BinaryCache applyCache,
+            MtBddCache.@Nullable TernaryCache applySimplifyCache) {
         assert bddDomain != bdd.falseFunction() : "Constrain is undefined for an empty domain";
         boolean universeDomain = bddDomain == bdd.trueFunction();
         assert universeDomain || applySimplifyCache != null;
@@ -970,8 +979,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             int function,
             int bddDomain,
             IntUnaryOperator map,
-            MtBddCache.@Nullable UnaryToIntCache registeredMapCache,
-            MtBddCache.@Nullable MtbddBddToIntCache registeredMapSimplifyCache) {
+            MtBddCache.@Nullable UnaryCache registeredMapCache,
+            MtBddCache.@Nullable BinaryCache registeredMapSimplifyCache) {
         assert isValidFunction(function);
         assert bdd.isValidFunction(bddDomain);
 
@@ -982,8 +991,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         assert accessGuard.acquire();
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
 
-        MtBddCache.UnaryToIntCache mapCache = registeredMapCache;
-        MtBddCache.MtbddBddToIntCache mapSimplifyCache = registeredMapSimplifyCache;
+        MtBddCache.UnaryCache mapCache = registeredMapCache;
+        MtBddCache.BinaryCache mapSimplifyCache = registeredMapSimplifyCache;
         if (mapCache == null) {
             cache.initMap(map);
             mapCache = cache.mapCache();
@@ -1008,8 +1017,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             int function,
             int bddDomain,
             IntUnaryOperator map,
-            MtBddCache.UnaryToIntCache mapCache,
-            MtBddCache.@Nullable MtbddBddToIntCache mapSimplifyCache) {
+            MtBddCache.UnaryCache mapCache,
+            MtBddCache.@Nullable BinaryCache mapSimplifyCache) {
         assert bddDomain != bdd.falseFunction();
         boolean universeDomain = bddDomain == bdd.trueFunction();
         assert universeDomain || mapSimplifyCache != null;
@@ -1262,7 +1271,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             int mtbddFunction1,
             int mtbddFunction2,
             MtBddBinaryPredicate predicate,
-            MtBddCache.BinaryToBddCache booleanCache) {
+            MtBddCache.BinaryCache booleanCache) {
         assert isValidFunction(mtbddFunction1) && isValidFunction(mtbddFunction2);
         assert accessGuard.acquire();
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
@@ -1273,7 +1282,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     }
 
     private int applyBooleanRecursive(
-            int mtbddNode1, int mtbddNode2, MtBddBinaryPredicate predicate, MtBddCache.BinaryToBddCache booleanCache) {
+            int mtbddNode1, int mtbddNode2, MtBddBinaryPredicate predicate, MtBddCache.BinaryCache booleanCache) {
         if (predicate.reflexive && mtbddNode1 == mtbddNode2) {
             return bdd.trueFunction();
         }
@@ -1326,7 +1335,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         return new MtBddOperations.MapBoolean(this, values);
     }
 
-    int mapBoolean(int mtbddFunction, IntPredicate values, MtBddCache.UnaryToBddCache mapBooleanCache) {
+    int mapBoolean(int mtbddFunction, IntPredicate values, MtBddCache.UnaryCache mapBooleanCache) {
         assert isValidFunction(mtbddFunction);
         assert accessGuard.acquire();
         assert bdd.table().workStacksEmpty();
@@ -1336,7 +1345,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         return result;
     }
 
-    private int mapBooleanRecursive(int mtbddNode, IntPredicate values, MtBddCache.UnaryToBddCache mapBooleanCache) {
+    private int mapBooleanRecursive(int mtbddNode, IntPredicate values, MtBddCache.UnaryCache mapBooleanCache) {
         if (isConstant(mtbddNode)) {
             return values.test(constantFunctionToValue(mtbddNode)) ? bdd.trueFunction() : bdd.falseFunction();
         }
@@ -1492,8 +1501,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             int bddDomain,
             int[] bddVariableMapping,
             int maxReplacedLevel,
-            MtBddCache.UnaryToIntCache composeCache,
-            MtBddCache.@Nullable MtbddBddToIntCache composeSimplifyCache) {
+            MtBddCache.UnaryCache composeCache,
+            MtBddCache.@Nullable BinaryCache composeSimplifyCache) {
         assert bddDomain != bdd.falseFunction();
         assert bddDomain == bdd.trueFunction() || composeSimplifyCache != null;
 
@@ -1514,8 +1523,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             int[] bddVariableMapping,
             int maxReplacedLevel,
             int bddDomain,
-            MtBddCache.UnaryToIntCache composeCache,
-            MtBddCache.@Nullable MtbddBddToIntCache composeSimplifyCache) {
+            MtBddCache.UnaryCache composeCache,
+            MtBddCache.@Nullable BinaryCache composeSimplifyCache) {
         assert bddDomain != bdd.falseFunction();
 
         if (isConstant(mtbddNode)) {
@@ -1646,13 +1655,13 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
 
         int current = mtbddFunction;
-        while (!isConstant(current) && restriction.support.get(decisionVariable(current))) {
-            current = restriction.assignment.get(decisionVariable(current)) ? high(current) : low(current);
+        while (!isConstant(current) && restriction.supportUnsafe().get(decisionVariable(current))) {
+            current = restriction.assignmentUnsafe().get(decisionVariable(current)) ? high(current) : low(current);
         }
         if (isConstant(current)) {
             return current;
         }
-        int maxRestrictedLevel = bdd.maxLevel(restriction.support);
+        int maxRestrictedLevel = bdd.maxLevel(restriction.supportUnsafe());
         if (decisionLevel(current) > maxRestrictedLevel) {
             return current;
         }
@@ -1688,8 +1697,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         int hash = cache.lookupHash();
 
         int result;
-        if (restriction.support.get(nodeVariable)) {
-            int child = restriction.assignment.get(nodeVariable) ? high(mtbddNode) : low(mtbddNode);
+        if (restriction.supportUnsafe().get(nodeVariable)) {
+            int child = restriction.assignmentUnsafe().get(nodeVariable) ? high(mtbddNode) : low(mtbddNode);
             result = restrictRecursive(child, restriction, maxRestrictedLevel);
         } else {
             int low = table.pushToWorkStack(restrictRecursive(low(mtbddNode), restriction, maxRestrictedLevel));
@@ -1707,38 +1716,59 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             int function,
             IntUnaryOperator variableMapping,
             IntUnaryOperator valueMapping) {
-        // Every rebuilt node stays referenced until the end, so no collection in between invalidates the memo.
-        Map<Integer, Integer> adopted = new HashMap<>();
-        // TODO No try-finally needed
-        try {
-            return adoptRecursive(source, function, variableMapping, valueMapping, adopted);
-        } finally {
-            for (int rebuilt : adopted.values()) {
-                dereference(rebuilt);
-            }
+        if (!(source instanceof MtBddImpl)) {
+            throw new IllegalArgumentException("Can only adopt from " + MtBddImpl.class.getSimpleName());
         }
+        MtBddImpl mtBddSource = (MtBddImpl) source;
+        assert mtBddSource.isValidFunction(function);
+
+        assert accessGuard.acquire();
+        assert table.workStacksEmpty();
+        // Adopting from this diagram itself, the source must survive the collections the rebuilding may cause.
+        boolean fromItself = mtBddSource == this;
+        if (fromItself) {
+            table.pushToWorkStack(function);
+        }
+        // Every rebuilt node sits on the work stack until the end, so no collection in between invalidates the memo.
+        IntIntHashMap adopted = new IntIntHashMap();
+        int result = adoptRecursive(mtBddSource, function, variableMapping, valueMapping, adopted);
+        table.popFromWorkStack(adopted.size() + (fromItself ? 1 : 0));
+        assert table.workStacksEmpty();
+        assert accessGuard.release();
+        return result;
     }
 
+    /* One memo entry per source node, terminals included, so valueMapping runs once per value. A node whose mapped
+     * variable lies above both rebuilt children is a single node here; otherwise the if-then-else restructures. */
     private int adoptRecursive(
-            MultiTerminalDecisionDiagram source,
+            MtBddImpl source,
             int function,
             IntUnaryOperator variableMapping,
             IntUnaryOperator valueMapping,
-            Map<Integer, Integer> adopted) {
-        Integer known = adopted.get(function);
-        if (known != null) {
-            return known;
+            IntIntHashMap adopted) {
+        int rebuilt = adopted.get(function, NodeTable.PLACEHOLDER);
+        if (rebuilt != NodeTable.PLACEHOLDER) {
+            return rebuilt;
         }
-        int rebuilt;
-        if (source.isConstant(function)) {
-            rebuilt = of(valueMapping.applyAsInt(source.evaluate(function, new BitSet(0))));
+        if (function < 0) {
+            rebuilt = constant(valueMapping.applyAsInt(constantFunctionToValue(function)));
         } else {
-            int high = adoptRecursive(source, source.highOf(function), variableMapping, valueMapping, adopted);
-            int low = adoptRecursive(source, source.lowOf(function), variableMapping, valueMapping, adopted);
-            int variable = variableMapping.applyAsInt(source.decisionVariable(function));
-            rebuilt = ifThenElse(bdd.variableFunction(variable), high, low);
+            MtBddTable sourceTable = source.table;
+            int high =
+                    adoptRecursive(source, sourceTable.highUnchecked(function), variableMapping, valueMapping, adopted);
+            int low =
+                    adoptRecursive(source, sourceTable.lowUnchecked(function), variableMapping, valueMapping, adopted);
+            int variable = variableMapping.applyAsInt(sourceTable.variable(function));
+            if (variable < 0 || variable >= numberOfVariables()) {
+                throw new IllegalArgumentException(String.format("Variable %d does not exist", variable));
+            }
+            int level = levelOfVariable(variable);
+            rebuilt = level < decisionLevelOrMax(high) && level < decisionLevelOrMax(low)
+                    ? makeFunction(level, low, high)
+                    : ifThenElseRecursive(bdd.variableFunction(variable), high, low);
         }
-        adopted.put(function, reference(rebuilt));
+        table.pushToWorkStack(rebuilt);
+        adopted.put(function, rebuilt);
         return rebuilt;
     }
 
@@ -1816,11 +1846,11 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
                             : falseFunction,
                     values);
         } else {
-            Map<Integer, Integer> bddFunctions = invertRecursive(mtbddFunction, 0, new DepthPool<>(HashMap::new));
+            IntIntHashMap bddFunctions = invertRecursive(mtbddFunction, 0, new DepthPool<>(IntIntHashMap::new));
             bdd.table().popFromWorkStack(bddFunctions.size());
             BitSet values = new BitSet();
-            bddFunctions.keySet().forEach(values::set);
-            result = new FunctionInverse(mtbddFunction, v -> bddFunctions.getOrDefault(v, falseFunction), values);
+            bddFunctions.forEach((value, bddFunction) -> values.set(value));
+            result = new FunctionInverse(mtbddFunction, v -> bddFunctions.get(v, falseFunction), values);
         }
 
         assert bdd.table().workStacksEmpty();
@@ -1828,19 +1858,18 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         return result;
     }
 
-    private Map<Integer, Integer> invertRecursive(
-            int mtbddNode, int depth, DepthPool<Map<Integer, Integer>> highLeafPool) {
+    private IntIntHashMap invertRecursive(int mtbddNode, int depth, DepthPool<IntIntHashMap> highLeafPool) {
         if (isConstant(mtbddNode)) {
-            Map<Integer, Integer> result = new HashMap<>();
+            IntIntHashMap result = new IntIntHashMap();
             result.put(constantFunctionToValue(mtbddNode), bdd.table().pushToWorkStack(bdd.trueFunction()));
             return result;
         }
 
         int level = decisionLevel(mtbddNode);
-        Map<Integer, Integer> mtbddLowMap = invertRecursive(low(mtbddNode), depth + 1, highLeafPool);
+        IntIntHashMap mtbddLowMap = invertRecursive(low(mtbddNode), depth + 1, highLeafPool);
 
         int highChild = high(mtbddNode);
-        Map<Integer, Integer> mtbddHighMap;
+        IntIntHashMap mtbddHighMap;
         if (isConstant(highChild)) {
             mtbddHighMap = highLeafPool.get(depth);
             mtbddHighMap.clear();
@@ -1852,18 +1881,13 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         int lowCount = mtbddLowMap.size();
         int highCount = mtbddHighMap.size();
 
-        for (Map.Entry<Integer, Integer> entry : mtbddLowMap.entrySet()) {
-            int value = entry.getKey();
-            int bddLow = entry.getValue();
-            int bddHigh = mtbddHighMap.getOrDefault(value, bdd.falseFunction());
-            int bddResult = bdd.table().pushToWorkStack(bdd.makeFunction(level, bddLow, bddHigh));
-            entry.setValue(bddResult);
-        }
+        mtbddLowMap.replaceAll((value, bddLow) -> bdd.table()
+                .pushToWorkStack(bdd.makeFunction(level, bddLow, mtbddHighMap.get(value, bdd.falseFunction()))));
         mtbddHighMap.forEach((value, bddHigh) -> mtbddLowMap.computeIfAbsent(
                 value, k -> bdd.table().pushToWorkStack(bdd.makeFunction(level, bdd.falseFunction(), bddHigh))));
 
         bdd.table().popFromWorkStack(lowCount + highCount + mtbddLowMap.size());
-        mtbddLowMap.values().forEach(bdd.table()::pushToWorkStack);
+        mtbddLowMap.forEach((value, bddFunction) -> bdd.table().pushToWorkStack(bddFunction));
         return mtbddLowMap;
     }
 
@@ -2205,7 +2229,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     }
 
     private static final class SplitBijection {
-        private final Map<Integer, Integer> functionToValue = new HashMap<>();
+        private final IntIntHashMap functionToValue = new IntIntHashMap();
         private final IntArrayList valueToFunction = new IntArrayList();
         private final NodeTable table;
 
@@ -2642,8 +2666,9 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             this.path = new PathWalk(mtbdd, function, null);
             this.valid = path.onPath();
             this.translated =
-                    mtbdd.isReordered() ? new Cube(new BitSet(variableCount), new BitSet(variableCount)) : null;
-            this.current = translated == null ? new Cube(path.levelAssignment(), path.pathSupportLevels()) : translated;
+                    mtbdd.isReordered() ? Cube.ofUnsafe(new BitSet(variableCount), new BitSet(variableCount)) : null;
+            this.current =
+                    translated == null ? Cube.ofUnsafe(path.levelAssignment(), path.pathSupportLevels()) : translated;
             if (valid) {
                 translate();
             }
@@ -2680,8 +2705,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
 
         private void translate() {
             if (translated != null) {
-                BitSets.map(path.levelAssignment(), translated.assignment, mtbdd::variableAtLevel);
-                BitSets.map(path.pathSupportLevels(), translated.support, mtbdd::variableAtLevel);
+                BitSets.map(path.levelAssignment(), translated.assignmentUnsafe(), mtbdd::variableAtLevel);
+                BitSets.map(path.pathSupportLevels(), translated.supportUnsafe(), mtbdd::variableAtLevel);
             }
         }
     }

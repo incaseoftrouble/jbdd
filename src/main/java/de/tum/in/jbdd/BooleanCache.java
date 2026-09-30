@@ -19,6 +19,8 @@ package de.tum.in.jbdd;
 import static de.tum.in.jbdd.Util.*;
 import static java.util.Map.entry;
 
+import de.tum.in.jbdd.collections.BitSets;
+import de.tum.in.jbdd.collections.Cube;
 import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.BitSet;
@@ -457,7 +459,6 @@ final class BooleanCache implements VariableOrderObserver {
 
     abstract static class IntCache extends CacheBase.IntKeys {
         final BooleanBase<?, ?> bdd;
-        int lookupHash = 0;
 
         IntCache(BooleanBase<?, ?> bdd, int arity, int binSize) {
             super(arity, binSize);
@@ -467,10 +468,6 @@ final class BooleanCache implements VariableOrderObserver {
         IntCache(BooleanBase<?, ?> bdd, int arity, int binSize, BooleanSupplier cacheDependenciesValid) {
             super(arity, binSize, cacheDependenciesValid);
             this.bdd = bdd;
-        }
-
-        int lookupHash() {
-            return lookupHash;
         }
 
         @Override
@@ -495,175 +492,89 @@ final class BooleanCache implements VariableOrderObserver {
         protected abstract boolean isValidResult(int binStart);
     }
 
-    static class UnaryToIntCache extends IntCache {
+    /** Function keys to a function, the result in the bin after the keys; the subclasses fix the key count. */
+    abstract static class ToIntCache extends IntCache {
+        ToIntCache(BooleanBase<?, ?> bdd, int arity) {
+            super(bdd, arity, arity + 1);
+        }
+
+        ToIntCache(BooleanBase<?, ?> bdd, int arity, BooleanSupplier cacheDependenciesValid) {
+            super(bdd, arity, arity + 1, cacheDependenciesValid);
+        }
+
+        @Override
+        protected boolean isValidResult(int binStart) {
+            return bdd.isValidFunction(cache[binStart + keyCount]);
+        }
+    }
+
+    static class UnaryToIntCache extends ToIntCache {
         UnaryToIntCache(BooleanBase<?, ?> bdd) {
-            super(bdd, 1, 2);
+            super(bdd, 1);
         }
 
         UnaryToIntCache(BooleanBase<?, ?> bdd, BooleanSupplier pruningValid) {
-            super(bdd, 1, 2, pruningValid);
-        }
-
-        @Override
-        protected boolean isValidResult(int binStart) {
-            return bdd.isValidFunction(cache[binStart + 1]);
+            super(bdd, 1, pruningValid);
         }
 
         protected int lookup(int function) {
-            ensureValid();
-            int hash = HashUtil.hash(function);
-            lookupHash = hash;
-
-            int binStart = binSize * binIndex(hash);
-            if (function == cache[binStart]) {
-                int result = cache[binStart + 1];
-                assert isValid(binStart);
-                statistics.hit();
-                return result;
-            }
-            statistics.miss();
-            return NodeTable.PLACEHOLDER;
+            return resultIn(findBin(function));
         }
 
         void put(int hash, int function, int result) {
-            ensureValid();
-            assert hash == HashUtil.hash(function);
-            statistics.put();
-
-            int binStart = binSize * binIndex(hash);
-            cache[binStart] = function;
-            cache[binStart + 1] = result;
+            storeResult(storeKeys(hash, function), result);
         }
     }
 
-    static class BinaryToIntCache extends IntCache {
+    static class BinaryToIntCache extends ToIntCache {
         BinaryToIntCache(BooleanBase<?, ?> bdd) {
-            super(bdd, 2, 3);
+            super(bdd, 2);
         }
 
         BinaryToIntCache(BooleanBase<?, ?> bdd, BooleanSupplier cacheDependenciesValid) {
-            super(bdd, 2, 3, cacheDependenciesValid);
-        }
-
-        @Override
-        protected boolean isValidResult(int binStart) {
-            return bdd.isValidFunction(cache[binStart + 2]);
+            super(bdd, 2, cacheDependenciesValid);
         }
 
         protected int lookup(int function1, int function2) {
-            ensureValid();
-            int hash = HashUtil.hash(function1, function2);
-            lookupHash = hash;
-            int binIndex = binIndex(hash);
-
-            int binStart = binSize * binIndex;
-            if (function1 == cache[binStart] && function2 == cache[binStart + 1]) {
-                int result = cache[binStart + 2];
-                assert isValid(binStart);
-                statistics.hit();
-                return result;
-            }
-            statistics.miss();
-            return NodeTable.PLACEHOLDER;
+            return resultIn(findBin(function1, function2));
         }
 
         void put(int hash, int function1, int function2, int result) {
-            ensureValid();
-            assert hash == HashUtil.hash(function1, function2);
-            statistics.put();
-
-            int binIndex = binIndex(hash);
-            int binStart = binSize * binIndex;
-            cache[binStart] = function1;
-            cache[binStart + 1] = function2;
-            cache[binStart + 2] = result;
+            storeResult(storeKeys(hash, function1, function2), result);
         }
     }
 
-    static class TernaryToIntCache extends IntCache {
+    static class TernaryToIntCache extends ToIntCache {
         TernaryToIntCache(BooleanBase<?, ?> bdd) {
-            super(bdd, 3, 4);
-        }
-
-        @Override
-        protected boolean isValidResult(int binStart) {
-            return bdd.isValidFunction(cache[binStart + 3]);
+            super(bdd, 3);
         }
 
         protected int lookup(int function1, int function2, int function3) {
-            ensureValid();
-            int hash = HashUtil.hash(function1, function2, function3);
-            lookupHash = hash;
-
-            int binStart = binSize * binIndex(hash);
-            if (function1 == cache[binStart] && function2 == cache[binStart + 1] && function3 == cache[binStart + 2]) {
-                int result = cache[binStart + 3];
-                assert isValid(binStart);
-                statistics.hit();
-                return result;
-            }
-            statistics.miss();
-            return NodeTable.PLACEHOLDER;
+            return resultIn(findBin(function1, function2, function3));
         }
 
         void put(int hash, int function1, int function2, int function3, int result) {
-            ensureValid();
-            assert hash == HashUtil.hash(function1, function2, function3);
-            statistics.put();
-
-            int binStart = binSize * binIndex(hash);
-            cache[binStart] = function1;
-            cache[binStart + 1] = function2;
-            cache[binStart + 2] = function3;
-            cache[binStart + 3] = result;
+            storeResult(storeKeys(hash, function1, function2, function3), result);
         }
     }
 
-    static class QuaternaryToIntCache extends IntCache {
+    static class QuaternaryToIntCache extends ToIntCache {
         QuaternaryToIntCache(BooleanBase<?, ?> bdd) {
-            super(bdd, 4, 5);
-        }
-
-        @Override
-        protected boolean isValidResult(int binStart) {
-            return bdd.isValidFunction(cache[binStart + 4]);
+            super(bdd, 4);
         }
 
         protected int lookup(int function1, int function2, int function3, int function4) {
-            ensureValid();
-            int hash = HashUtil.hash(function1, function2, function3, function4);
-            lookupHash = hash;
-
-            int binStart = binSize * binIndex(hash);
-            if (function1 == cache[binStart]
-                    && function2 == cache[binStart + 1]
-                    && function3 == cache[binStart + 2]
-                    && function4 == cache[binStart + 3]) {
-                int result = cache[binStart + 4];
-                assert isValid(binStart);
-                statistics.hit();
-                return result;
-            }
-            statistics.miss();
-            return NodeTable.PLACEHOLDER;
+            return resultIn(findBin(function1, function2, function3, function4));
         }
 
         void put(int hash, int function1, int function2, int function3, int function4, int result) {
-            ensureValid();
-            assert hash == HashUtil.hash(function1, function2, function3, function4);
-            statistics.put();
-
-            int binStart = binSize * binIndex(hash);
-            cache[binStart] = function1;
-            cache[binStart + 1] = function2;
-            cache[binStart + 2] = function3;
-            cache[binStart + 3] = function4;
-            cache[binStart + 4] = result;
+            storeResult(storeKeys(hash, function1, function2, function3, function4), result);
         }
     }
 
+    /** Two function keys to a bit, kept beside the keys in {@link CacheBase.Bits}. */
     static class BinaryToBooleanCache extends IntCache {
-        private BitSet values = new BitSet();
+        private Bits values = new Bits(0);
 
         BinaryToBooleanCache(BooleanBase<?, ?> bdd) {
             super(bdd, 2, 2);
@@ -676,41 +587,23 @@ final class BooleanCache implements VariableOrderObserver {
 
         @Override
         protected void growInto(int newSize, int[] newCache, boolean preserve) {
+            Bits newValues = new Bits(newSize);
             if (preserve) {
-                BitSet newValues = new BitSet();
                 rehashInto(newSize, newCache, (oldBin, newBin) -> newValues.set(newBin, values.get(oldBin)));
-                this.values = newValues;
-            } else {
-                values.clear();
             }
+            this.values = newValues;
         }
 
         protected int lookup(int function1, int function2) {
-            ensureValid();
-            int hash = HashUtil.hash(function1, function2);
-            lookupHash = hash;
-            int binIndex = binIndex(hash);
-
-            int binStart = binSize * binIndex;
-            if (function1 == cache[binStart] && function2 == cache[binStart + 1]) {
-                assert isValid(binStart);
-                statistics.hit();
-                return values.get(binIndex) ? bdd.trueFunction() : bdd.falseFunction();
+            int bin = findBin(function1, function2);
+            if (bin < 0) {
+                return NodeTable.PLACEHOLDER;
             }
-            statistics.miss();
-            return NodeTable.PLACEHOLDER;
+            return values.get(bin) ? bdd.trueFunction() : bdd.falseFunction();
         }
 
         void put(int hash, int function1, int function2, boolean result) {
-            ensureValid();
-            assert hash == HashUtil.hash(function1, function2);
-            statistics.put();
-
-            int binIndex = binIndex(hash);
-            int binStart = binSize * binIndex;
-            cache[binStart] = function1;
-            cache[binStart + 1] = function2;
-            values.set(binIndex, result);
+            values.set(storeKeys(hash, function1, function2), result);
         }
     }
 
@@ -740,30 +633,12 @@ final class BooleanCache implements VariableOrderObserver {
 
         @Nullable
         protected V lookup(int function) {
-            ensureValid();
-            int hash = HashUtil.hash(function);
-            lookupHash = hash;
-            int binIndex = binIndex(hash);
-
-            int binStart = binSize * binIndex;
-            if (function == cache[binStart]) {
-                assert isValid(binStart);
-                statistics.hit();
-                return (V) values[binIndex];
-            }
-            statistics.miss();
-            return null;
+            int bin = findBin(function);
+            return bin < 0 ? null : (V) values[bin];
         }
 
         void put(int hash, int function, V result) {
-            ensureValid();
-            assert hash == HashUtil.hash(function);
-            statistics.put();
-
-            int binIndex = binIndex(hash);
-            int binStart = binSize * binIndex;
-            cache[binStart] = function;
-            values[binIndex] = result;
+            values[storeKeys(hash, function)] = result;
         }
     }
 
@@ -796,19 +671,8 @@ final class BooleanCache implements VariableOrderObserver {
 
         /** Whether {@code node} is cached; if so, {@link #fraction()} and {@link #complementFraction()} read it. */
         boolean lookup(int node) {
-            ensureValid();
-            int hash = HashUtil.hash(node);
-            lookupHash = hash;
-            int binIndex = binIndex(hash);
-
-            if (node == cache[binIndex]) {
-                assert isValid(binIndex);
-                statistics.hit();
-                lookupBin = binIndex;
-                return true;
-            }
-            statistics.miss();
-            return false;
+            lookupBin = findBin(node);
+            return lookupBin >= 0;
         }
 
         double fraction() {
@@ -821,11 +685,8 @@ final class BooleanCache implements VariableOrderObserver {
 
         void put(int hash, int node, double fraction, double complementFraction) {
             ensureValid();
-            assert hash == HashUtil.hash(node) && bdd.isValidNonConstantFunction(node) && bdd.isPositive(node);
-            statistics.put();
-
-            int binIndex = binIndex(hash);
-            cache[binIndex] = node;
+            assert bdd.isValidNonConstantFunction(node) && bdd.isPositive(node);
+            int binIndex = storeKeys(hash, node);
             fractions[2 * binIndex] = fraction;
             fractions[2 * binIndex + 1] = complementFraction;
         }
@@ -833,11 +694,12 @@ final class BooleanCache implements VariableOrderObserver {
 
     /**
      * {@link FractionCache} relative to a domain: per regular node and domain, the satisfying fractions of the node's
-     * and its complement's conjunction with the domain (see {@link BddImpl#satisfyingFractionIn}). Stable for the same
-     * reasons.
+     * and its complement's conjunction with the domain, both scaled by one binary exponent (see
+     * {@link BddImpl#satisfyingFractionIn}). Stable for the same reasons.
      */
     static final class FractionInCache extends IntCache {
         private double[] fractions = EMPTY_DOUBLE_ARRAY;
+        private int[] exponents = EMPTY_INT_ARRAY;
         private int lookupBin = -1;
 
         FractionInCache(BooleanBase<?, ?> bdd) {
@@ -853,32 +715,27 @@ final class BooleanCache implements VariableOrderObserver {
         protected void growInto(int newSize, int[] newCache, boolean preserve) {
             if (preserve) {
                 double[] newFractions = new double[2 * newSize];
+                int[] newExponents = new int[newSize];
                 rehashInto(newSize, newCache, (oldBin, newBin) -> {
                     newFractions[2 * newBin] = fractions[2 * oldBin];
                     newFractions[2 * newBin + 1] = fractions[2 * oldBin + 1];
+                    newExponents[newBin] = exponents[oldBin];
                 });
                 this.fractions = newFractions;
+                this.exponents = newExponents;
             } else {
                 this.fractions = new double[2 * newSize];
+                this.exponents = new int[newSize];
             }
         }
 
-        /** Whether the pair is cached; if so, {@link #fraction()} and {@link #complementFraction()} read it. */
+        /**
+         * Whether the pair is cached; if so, {@link #fraction()}, {@link #complementFraction()} and
+         * {@link #exponent()} read it.
+         */
         boolean lookup(int node, int domain) {
-            ensureValid();
-            int hash = HashUtil.hash(node, domain);
-            lookupHash = hash;
-            int binIndex = binIndex(hash);
-
-            int binStart = binSize * binIndex;
-            if (node == cache[binStart] && domain == cache[binStart + 1]) {
-                assert isValid(binStart);
-                statistics.hit();
-                lookupBin = binIndex;
-                return true;
-            }
-            statistics.miss();
-            return false;
+            lookupBin = findBin(node, domain);
+            return lookupBin >= 0;
         }
 
         double fraction() {
@@ -889,27 +746,26 @@ final class BooleanCache implements VariableOrderObserver {
             return fractions[2 * lookupBin + 1];
         }
 
-        void put(int hash, int node, int domain, double fraction, double complementFraction) {
+        int exponent() {
+            return exponents[lookupBin];
+        }
+
+        void put(int hash, int node, int domain, double fraction, double complementFraction, int exponent) {
             ensureValid();
-            assert hash == HashUtil.hash(node, domain)
-                    && bdd.isValidNonConstantFunction(node)
+            assert bdd.isValidNonConstantFunction(node)
                     && bdd.isPositive(node)
                     && bdd.isValidNonConstantFunction(domain);
-            statistics.put();
-
-            int binIndex = binIndex(hash);
-            int binStart = binSize * binIndex;
-            cache[binStart] = node;
-            cache[binStart + 1] = domain;
+            int binIndex = storeKeys(hash, node, domain);
             fractions[2 * binIndex] = fraction;
             fractions[2 * binIndex + 1] = complementFraction;
+            exponents[binIndex] = exponent;
         }
     }
 
     /**
-     * Compositions keyed on their whole context: {@code [F, D, v_1, R_1, ..., v_k, R_k]} - the function, the
-     * domain, and each replaced variable in F's support with its replacement. Position 0, 1 and every odd one
-     * from 3 on name functions, the rest variables. Stable: nothing outside the key enters the result.
+     * Compositions keyed on their whole context: {@code [F, D, v_1, ..., v_k, R_1, ..., R_k]} - the function, the
+     * domain, and each replaced variable in F's support, then their replacements. Positions 0, 1 and the last k name
+     * functions, the rest variables. Stable: nothing outside the key enters the result.
      */
     static final class ComposeTupleCache extends CacheBase.ObjectKeys<int[]> {
         private final BooleanBase<?, ?> bdd;
@@ -929,7 +785,8 @@ final class BooleanCache implements VariableOrderObserver {
             if (!bdd.isValidFunction(key[0]) || !bdd.isValidFunction(key[1])) {
                 return false;
             }
-            for (int index = 3; index < key.length; index += 2) {
+            // The node and the domain, then the variables, then their replacements.
+            for (int index = 2 + (key.length - 2) / 2; index < key.length; index++) {
                 if (!bdd.isValidFunction(key[index])) {
                     return false;
                 }
@@ -984,8 +841,7 @@ final class BooleanCache implements VariableOrderObserver {
         void put(int hash, int[] key, int result) {
             ensureValid();
             assert hash == Arrays.hashCode(key);
-            statistics.put();
-            int index = binIndex(hash);
+            int index = putBin(hash);
             cache[index] = key;
             values[index] = result;
         }
@@ -1071,8 +927,7 @@ final class BooleanCache implements VariableOrderObserver {
 
         void put(int hash, int node, Cube cube, int result) {
             ensureValid();
-            statistics.put();
-            int index = binIndex(hash);
+            int index = putBin(hash);
             cache[index] = new RestrictKey(node, cube, hash);
             values[index] = result;
         }
@@ -1104,31 +959,12 @@ final class BooleanCache implements VariableOrderObserver {
 
         @Nullable
         protected V lookup(int function1, int function2) {
-            ensureValid();
-            int hash = HashUtil.hash(function1, function2);
-            lookupHash = hash;
-            int binIndex = binIndex(hash);
-
-            int binStart = binSize * binIndex;
-            if (function1 == cache[binStart] && function2 == cache[binStart + 1]) {
-                assert isValid(binStart);
-                statistics.hit();
-                return (V) values[binIndex];
-            }
-            statistics.miss();
-            return null;
+            int bin = findBin(function1, function2);
+            return bin < 0 ? null : (V) values[bin];
         }
 
         void put(int hash, int function1, int function2, V result) {
-            ensureValid();
-            assert hash == HashUtil.hash(function1, function2);
-            statistics.put();
-
-            int binIndex = binIndex(hash);
-            int binStart = binSize * binIndex;
-            cache[binStart] = function1;
-            cache[binStart + 1] = function2;
-            values[binIndex] = result;
+            values[storeKeys(hash, function1, function2)] = result;
         }
     }
 }

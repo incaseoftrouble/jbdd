@@ -33,6 +33,8 @@ import de.tum.in.jbdd.Generator.UnaryDataPoint;
 import de.tum.in.jbdd.SyntaxTree.SyntaxTreeLiteral;
 import de.tum.in.jbdd.SyntaxTree.SyntaxTreeNode;
 import de.tum.in.jbdd.SyntaxTree.SyntaxTreeNot;
+import de.tum.in.jbdd.collections.BitSets;
+import de.tum.in.jbdd.collections.Cube;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
@@ -715,7 +717,7 @@ class BddTheories {
         BitSet pathMap = new BitSet();
         bdd.forEachPath(composeNode, path -> {
             pathMap.clear();
-            BitSets.forEach(path.assignment, i -> pathMap.set(inverse[i]));
+            BitSets.forEach(path.assignmentUnsafe(), i -> pathMap.set(inverse[i]));
             assertThat(bdd.evaluate(function, pathMap), is(true));
         });
 
@@ -1306,7 +1308,7 @@ class BddTheories {
         assumeTrue(binaryDd.isValidFunction(function));
         BinaryDd bdd = binaryDd;
 
-        List<Cube> implicants = bdd.implicants(function);
+        List<Cube> implicants = BddUtil.implicants(bdd, function);
 
         // Each cube is contained in the function, and their union is exactly it - of(Cube) is what makes
         // that an identity rather than a per-assignment check.
@@ -1333,7 +1335,7 @@ class BddTheories {
         // Complementing yields a CNF cover of the same function.
         int complement = bdd.reference(bdd.not(function));
         int conjunction = bdd.reference(bdd.trueFunction());
-        for (Cube cube : bdd.implicants(complement)) {
+        for (Cube cube : BddUtil.implicants(bdd, complement)) {
             int clause = bdd.reference(bdd.not(bdd.of(cube)));
             conjunction = bdd.updateWith(bdd.and(conjunction, clause), conjunction);
             bdd.dereference(clause);
@@ -1359,6 +1361,13 @@ class BddTheories {
         assertThat(other.satisfyingFraction(adopted), is(bdd.satisfyingFraction(function)));
         assertThat(bdd.adopt(other, adopted, reversed), is(function));
         other.dereference(adopted);
+
+        // Order-preserving, where each node is rebuilt as one node, and within the diagram itself.
+        int copied = other.reference(other.adopt(bdd, function, IntUnaryOperator.identity()));
+        assertThat(other.satisfyingFraction(copied), is(bdd.satisfyingFraction(function)));
+        assertThat(bdd.adopt(other, copied, IntUnaryOperator.identity()), is(function));
+        other.dereference(copied);
+        assertThat(bdd.adopt(bdd, function, IntUnaryOperator.identity()), is(function));
     }
 
     @ParameterizedTest(name = "{index}")
@@ -1375,7 +1384,7 @@ class BddTheories {
                 expected[0] = path.copy();
             }
         });
-        assertThat(bdd.shortestPath(function).orElse(null), is(expected[0]));
+        assertThat(BddUtil.shortestPath(bdd, function).orElse(null), is(expected[0]));
     }
 
     @ParameterizedTest(name = "{index}")
@@ -1385,7 +1394,7 @@ class BddTheories {
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
 
-        List<Cube> primes = bdd.primeImplicants(function);
+        List<Cube> primes = BddUtil.primeImplicants(bdd, function);
 
         // Every prime implies the function and stops doing so without any one of its literals; together they are it.
         int union = bdd.reference(bdd.falseFunction());
@@ -1404,7 +1413,7 @@ class BddTheories {
         bdd.dereference(union);
 
         // Every implicant of the diagram's cover contains a prime.
-        for (Cube implicant : bdd.implicants(function)) {
+        for (Cube implicant : BddUtil.implicants(bdd, function)) {
             assertThat(implicant.toString(), primes.stream().anyMatch(implicant::implies), is(true));
         }
         assertThat(primes.toString(), Set.copyOf(primes).size(), is(primes.size()));

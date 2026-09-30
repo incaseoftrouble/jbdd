@@ -16,6 +16,7 @@
  */
 package de.tum.in.jbdd;
 
+import de.tum.in.jbdd.collections.Cube;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
@@ -95,6 +96,13 @@ public interface BddSetFactory {
      * variableMapping(v)}; variables that do not exist here yet are created.
      */
     BddSet adopt(BddSet set, IntUnaryOperator variableMapping);
+
+    /**
+     * The diagram below {@code roots} as one {@link Dag}, root {@code i} being {@code roots.get(i)} and its values
+     * {@code true} and {@code false}. With {@code shareComplements}, a function whose complement came earlier in the
+     * walk is a {@link Dag.Kind#COMPLEMENT} entry of it.
+     */
+    Dag<Boolean> dag(List<? extends BddSet> roots, boolean shareComplements);
 
     /** {@link #adopt(BddSet, IntUnaryOperator)} with every variable read as itself. */
     default BddSet adopt(BddSet set) {

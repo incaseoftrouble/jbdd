@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import de.tum.in.jbdd.collections.BitSets;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.HashSet;

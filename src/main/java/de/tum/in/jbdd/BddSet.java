@@ -16,6 +16,7 @@
  */
 package de.tum.in.jbdd;
 
+import de.tum.in.jbdd.collections.Cube;
 import java.math.BigInteger;
 import java.util.BitSet;
 import java.util.List;
@@ -200,6 +201,11 @@ public interface BddSet {
      * @see BinaryDecisionDiagram#shortestPath(int)
      */
     Optional<Cube> shortestPath();
+
+    /** This set's diagram as a {@link Dag}, without complement sharing - see {@link BddSetFactory#dag}. */
+    default Dag<Boolean> dag() {
+        return factory().dag(List.of(this), false);
+    }
 
     /** Like {@link #forEachPath}, stopping at the first path {@code predicate} accepts; whether one did. */
     boolean anyPathMatches(Predicate<? super Cube> predicate);

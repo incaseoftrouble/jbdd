@@ -16,6 +16,7 @@
  */
 package de.tum.in.jbdd;
 
+import de.tum.in.jbdd.collections.Cube;
 import java.util.BitSet;
 import java.util.Map;
 import java.util.OptionalInt;
@@ -194,6 +195,9 @@ public interface BddMap<V> {
      * @see MtBdd#split(int, BitSet)
      */
     BddMap<BddMap<V>> split(BitSet splitVariables, Values<BddMap<V>> destination);
+
+    /** This map's diagram as a {@link Dag} with one root, its {@link Dag.Kind#VALUE} entries holding its values. */
+    Dag<V> dag();
 
     /**
      * {@link #split(BitSet, Values)} with every residual map passed through {@code residual} on its way into

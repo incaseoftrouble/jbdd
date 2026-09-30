@@ -94,6 +94,30 @@ final class Util {
         return count == toProtect.length ? toProtect : Arrays.copyOf(toProtect, count);
     }
 
+    /** The index of {@code key} in the ascending {@code array}, which contains it. */
+    static int indexOfSorted(int[] array, int key) {
+        int low = 0;
+        int high = array.length - 1;
+        // A binary search down to a range below this length, which a linear scan then beats.
+        while (high - low >= 32) {
+            int middle = (low + high) >>> 1;
+            int value = array[middle];
+            if (value < key) {
+                low = middle + 1;
+            } else if (value > key) {
+                high = middle - 1;
+            } else {
+                return middle;
+            }
+        }
+        for (int index = low; index <= high; index++) {
+            if (array[index] == key) {
+                return index;
+            }
+        }
+        throw new IllegalArgumentException(key + " not in array");
+    }
+
     static double ratio(long value, long total) {
         return total == 0 ? 0.0 : value / (double) total;
     }
