@@ -20,13 +20,14 @@ import static de.tum.in.jbdd.BooleanBase.TWO;
 import static de.tum.in.jbdd.Preconditions.checkState;
 import static java.math.BigInteger.ZERO;
 
+import de.tum.in.jbdd.collections.BitSets;
+import de.tum.in.jbdd.collections.Cube;
+import de.tum.in.jbdd.collections.IntIntHashMap;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
-import java.util.Collections;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -35,7 +36,6 @@ import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.IntPredicate;
 import java.util.function.IntUnaryOperator;
-import java.util.function.Supplier;
 import java.util.stream.IntStream;
 import org.jspecify.annotations.Nullable;
 
@@ -44,10 +44,22 @@ import org.jspecify.annotations.Nullable;
  *  - In a generic MTBDD we have no commutativity and neutral elements, hence much more "base case" branching is required
  */
 @SuppressWarnings({"PMD", "AssignmentToMethodParameter", "AssertWithSideEffects"})
-public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
-    private static final int INVERT_ARRAY_DOMAIN_THRESHOLD = 32;
-    private static final int INITIAL_VALUE_CAPACITY = 1024;
+public class MtBddImpl implements MtBdd, StatisticsSource {
+    /** {@link #agreement}'s predicate: raw terminal equality, which within one numbering is value
+     * equality. Fixed, so its cache never needs an init. */
+    private static final MtBddBinaryPredicate EQUALITY = MtBddBinaryPredicate.equality();
 
+    private static final int INVERT_ARRAY_DOMAIN_THRESHOLD = 64;
+    private static final int INITIAL_VALUE_CAPACITY = 1024;
+    /* How many values may be allocated between collections before one is forced, and how far that grows
+     * when forcing it turns out to free nothing - see shouldCollectForValues. */
+    private static final int INITIAL_VALUE_COLLECTION_THRESHOLD = 1 << 12;
+    private static final int MAXIMUM_VALUE_COLLECTION_THRESHOLD = 1 << 24;
+
+    /* The variable order and everything else shared with the companion BDD, reordering included. */
+    private final DdContextImpl context;
+    /* Direct, not through the context: decisionLevel and makeFunction go through it on every node. */
+    private final DdVariableOrderImpl order;
     private final BddImpl bdd;
     private final MtBddTable table;
     private final MtBddCache cache;
@@ -55,13 +67,22 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     private static final byte MAXIMUM_REFERENCE_COUNT = Byte.MAX_VALUE;
     // Convert to sparse bit set?
     private final BitSet allocatedValues = new BitSet();
-    private final NodeLifecycleObserverGroup<NodeLifecycleObserver> observers = new NodeLifecycleObserverGroup<>();
+    private int valuesAllocatedSinceCollection = 0;
+    private int valueCollectionThreshold = INITIAL_VALUE_COLLECTION_THRESHOLD;
+    private long createdNodesAtCollection = 0L;
+    private boolean collectingForValues = false;
+    /** How often values alone, with no node allocation to trigger one, forced a collection. */
+    private int valueTriggeredCollectionCount = 0;
+
+    private final ObserverGroup<NodeTableObserver> observers = new ObserverGroup<>();
     private final ProtectionTracker protectionTracker;
     private final ConcurrentAccessGuard accessGuard = new ConcurrentAccessGuard();
 
-    MtBddImpl(BddImpl bdd) {
-        this.bdd = bdd;
-        this.table = new MtBddTable(this, bdd.configuration().mtbddInitialSize());
+    MtBddImpl(DdContextImpl context) {
+        this.context = context;
+        this.order = context.variableOrder();
+        this.bdd = context.bdd();
+        this.table = new MtBddTable(this, context.configuration().mtbddInitialSize());
         this.cache = new MtBddCache(this, bdd);
         this.valueReferenceCounts = new byte[INITIAL_VALUE_CAPACITY];
         this.protectionTracker = bdd.protectionTracker();
@@ -69,25 +90,27 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
 
         // Strongly: these two hooks are owned by this MTBDD, nothing else holds them - see
         // NodeLifecycleObserverGroup#registerStrongly.
-        observers.registerStrongly(new NodeLifecycleObserver() {
+        observers.registerStrongly(new NodeTableObserver() {
             @Override
-            public void afterGc(int reclaimedNodes, BitSet reclaimedValues) {
-                cache.onMultiTerminalNodesInvalidated(reclaimedNodes);
+            public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
+                cache.onMultiTerminalNodesInvalidated(reclaimedNodes, reclaimedValues);
             }
 
             @Override
-            public void afterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
-                cache.tableSizeChanged(invalidatedNodes);
+            public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+                cache.tableSizeChanged(invalidatedNodes, reclaimedValues);
             }
         });
-        bdd.registerOwnedObserver(new NodeLifecycleObserver() {
+        // As the BDD's.
+        order.registerOwnedObserver(cache);
+        bdd.registerOwnedObserver(new NodeTableObserver() {
             @Override
-            public void afterGc(int reclaimedNodes, BitSet reclaimedValues) {
+            public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
                 cache.onBooleanNodesInvalidated(reclaimedNodes);
             }
 
             @Override
-            public void afterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
+            public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
                 cache.onBooleanNodesInvalidated(invalidatedNodes);
             }
         });
@@ -97,7 +120,13 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         return cache;
     }
 
-    void invalidateCache() {
+    @Override
+    public String treeToString(int function) {
+        return table.treeToString(function);
+    }
+
+    @Override
+    public void invalidateCache() {
         cache.invalidate();
     }
 
@@ -105,29 +134,46 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         return protectionTracker;
     }
 
-    void registerObserver(NodeLifecycleObserver observer) {
+    void registerObserver(NodeTableObserver observer) {
         observers.register(observer);
     }
 
     void notifyBeforeGc() {
-        observers.dispatch(NodeLifecycleObserver::beforeGc);
+        observers.dispatch(observer -> observer.beforeGc(this));
     }
 
     void notifyAfterGc(int reclaimedNodes, BitSet reclaimedValues) {
-        observers.dispatch(observer -> observer.afterGc(reclaimedNodes, reclaimedValues));
+        valuesCollected(reclaimedValues);
+        observers.dispatch(observer -> observer.afterGc(this, reclaimedNodes, reclaimedValues));
     }
 
     void notifyAfterTableGrow(int reclaimedNodes, BitSet reclaimedValues) {
-        observers.dispatch(observer -> observer.afterTableGrowth(reclaimedNodes, reclaimedValues));
+        valuesCollected(reclaimedValues);
+        observers.dispatch(observer -> observer.afterTableGrowth(this, reclaimedNodes, reclaimedValues));
     }
 
-    public int forceGc() {
+    private void valuesCollected(BitSet reclaimedValues) {
+        if (collectingForValues) {
+            /* Forcing one and freeing nothing means the values are genuinely live. Trying again at the
+             * same count would make a workload holding many of them pay a full mark every threshold
+             * allocations, so back off; a collection that did free some puts it back. */
+            valueCollectionThreshold = reclaimedValues.isEmpty()
+                    ? Math.min(valueCollectionThreshold * 2, MAXIMUM_VALUE_COLLECTION_THRESHOLD)
+                    : INITIAL_VALUE_COLLECTION_THRESHOLD;
+        }
+        valuesAllocatedSinceCollection = 0;
+        createdNodesAtCollection = table.createdNodeCount();
+    }
+
+    @Override
+    public int gc() {
         assert accessGuard.acquire();
         notifyBeforeGc();
         table.markAllReferencedNodes();
-        BitSet reclaimedValues = table.invalidateUnmarkedAndUnreferencedLeaves();
+        // Before reclaimUnmarkedNodes, whose closing assertion checks the leaf marks too.
+        BitSet reclaimedValues = table.clearUnreferencedLeaves();
         int reclaimedNodes = table.reclaimUnmarkedNodes();
-        assert table().isNoneMarked();
+        assert !Assertions.COSTLY_ASSERTIONS || table().isNoneMarked();
         notifyAfterGc(reclaimedNodes, reclaimedValues);
         assert accessGuard.release();
         return reclaimedNodes;
@@ -144,7 +190,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
 
     @Override
     public int numberOfVariables() {
-        return bdd.numberOfVariables();
+        return order.numberOfVariables();
     }
 
     private static int valueToConstantFunction(int value) {
@@ -202,6 +248,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         if (value < valueReferenceCounts.length) {
             return;
         }
+        assert value < Integer.MAX_VALUE / 2 : String.format("Value %d is too large to keep counts for", value);
         int newSize = valueReferenceCounts.length * 2;
         while (newSize <= value) {
             newSize *= 2;
@@ -283,6 +330,15 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         return table.variable(function);
     }
 
+    int decisionLevel(int function) {
+        assert isValidNonConstantFunction(function);
+        return order.levelOfVariable(table.variable(function));
+    }
+
+    int decisionLevelOrMax(int function) {
+        return isConstant(function) ? Integer.MAX_VALUE : decisionLevel(function);
+    }
+
     @Override
     public int size(int function) {
         assert isValidFunction(function);
@@ -305,6 +361,29 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         return table;
     }
 
+    boolean isReordered() {
+        return order.isExplicitOrder();
+    }
+
+    DdContextImpl context() {
+        return context;
+    }
+
+    @Override
+    public DdVariableOrderImpl variableOrder() {
+        return order;
+    }
+
+    @Override
+    public int levelOfVariable(int variable) {
+        return order.levelOfVariable(variable);
+    }
+
+    @Override
+    public int variableAtLevel(int level) {
+        return order.variableAtLevel(level);
+    }
+
     private boolean isValidConstant(int function) {
         return function < 0 && allocatedValues.get(constantFunctionToValue(function));
     }
@@ -323,13 +402,29 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     @Override
     public int highOf(int function) {
         assert isValidNonConstantFunction(function);
-        return table.high(function);
+        return high(function);
     }
 
     @Override
     public int lowOf(int function) {
         assert isValidNonConstantFunction(function);
-        return table.low(function);
+        return low(function);
+    }
+
+    int high(int function) {
+        return table.highUnchecked(function);
+    }
+
+    int low(int function) {
+        return table.lowUnchecked(function);
+    }
+
+    int highIf(int function, boolean decides) {
+        return decides ? table.highUnchecked(function) : function;
+    }
+
+    int lowIf(int function, boolean decides) {
+        return decides ? table.lowUnchecked(function) : function;
     }
 
     @Override
@@ -338,7 +433,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         int currentNode = function;
         while (!isConstant(currentNode)) {
             assert table.isValidDecisionNode(currentNode);
-            currentNode = assignment[decisionVariable(currentNode)] ? table.high(currentNode) : table.low(currentNode);
+            currentNode = assignment[decisionVariable(currentNode)] ? high(currentNode) : low(currentNode);
         }
         return constantFunctionToValue(currentNode);
     }
@@ -349,36 +444,113 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         int currentNode = function;
         while (!isConstant(currentNode)) {
             assert table.isValidDecisionNode(currentNode);
-            currentNode =
-                    assignment.get(decisionVariable(currentNode)) ? table.high(currentNode) : table.low(currentNode);
+            currentNode = assignment.get(decisionVariable(currentNode)) ? high(currentNode) : low(currentNode);
         }
         return constantFunctionToValue(currentNode);
     }
 
     @Override
     public int of(int value) {
-        assert value >= 0;
         assert accessGuard.acquire();
-        // TODO Heuristically trigger GC if too many values are allocated.
-        allocatedValues.set(value);
+        int function = constant(value);
         assert accessGuard.release();
-        return valueToConstantFunction(value);
+        return function;
+    }
+
+    private int constant(int value) {
+        assert value >= 0;
+        int function = valueToConstantFunction(value);
+        if (!allocatedValues.get(value)) {
+            allocatedValues.set(value);
+            valuesAllocatedSinceCollection += 1;
+            if (shouldCollectForValues()) {
+                collectForValues(function);
+            }
+        }
+        return function;
+    }
+
+    /**
+     * Values are the one thing that can pile up without the node table noticing: allocating a node is what
+     * eventually reaches {@code ensureCapacity}, and a workload producing many values while building few
+     * nodes never gets there. Hence the comparison against node creation rather than an absolute count -
+     * where nodes are being made, the table's own trigger is already doing this job, and this one stays
+     * out of the way. Two loads and a compare, on a path that runs once per genuinely new value.
+     */
+    private boolean shouldCollectForValues() {
+        return valuesAllocatedSinceCollection >= valueCollectionThreshold
+                && table.createdNodeCount() - createdNodesAtCollection < valuesAllocatedSinceCollection
+                && context.configuration().useGarbageCollection();
+    }
+
+    private void collectForValues(int function) {
+        // The value being handed out is not referenced yet and sits under no node, so the mark would not
+        // reach it - the work stack is what carries a bare terminal through a collection.
+        table.pushToWorkStack(function);
+        collectingForValues = true;
+        valueTriggeredCollectionCount += 1;
+        gc();
+        collectingForValues = false;
+        table.popFromWorkStack();
     }
 
     @Override
     public int of(int variable, int trueChild, int falseChild) {
-        assert 0 <= variable && variable < numberOfVariables() : "Variable " + variable + " does not exist";
+        assert 0 <= variable && variable < numberOfVariables() : String.format("Variable %d does not exist", variable);
         assert isValidFunction(trueChild) && isValidFunction(falseChild);
         assert accessGuard.acquire();
+        assert table.workStacksEmpty();
         table.pushToWorkStack(trueChild, falseChild);
-        int result = makeFunction(variable, falseChild, trueChild);
+        int result = trueChild == falseChild ? falseChild : table.makeNode(variable, falseChild, trueChild);
         table.popFromWorkStack(2);
+        assert table.workStacksEmpty();
         assert accessGuard.release();
         return result;
     }
 
-    int makeFunction(int variable, int lowFunction, int highFunction) {
-        return lowFunction == highFunction ? lowFunction : table.makeNode(variable, lowFunction, highFunction);
+    private boolean decidesOn(int function, int level) {
+        return !isConstant(function) && decisionLevel(function) == level;
+    }
+
+    void rewriteLevelAfterSwap(int[] nodes, int count, int level, int variable) {
+        // See BddImpl's implementation for details, it's the same recursion
+        int rewriteCount = 0;
+        for (int index = 0; index < count; index++) {
+            int node = nodes[index];
+            if (decidesOn(low(node), level) || decidesOn(high(node), level)) {
+                nodes[rewriteCount] = node;
+                rewriteCount += 1;
+                table.rewriteHideAndUnlink(node);
+            } else {
+                // Neither child mentions the variable moving up, so this node just descends a level.
+                table.addToVariableList(node, table.variable(node));
+            }
+        }
+
+        for (int index = 0; index < rewriteCount; index++) {
+            int node = nodes[index];
+            int lowFunction = low(node);
+            int highFunction = high(node);
+            boolean lowDecides = decidesOn(lowFunction, level);
+            boolean highDecides = decidesOn(highFunction, level);
+
+            int lowLow = lowDecides ? low(lowFunction) : lowFunction;
+            int lowHigh = lowDecides ? high(lowFunction) : lowFunction;
+            int highLow = highDecides ? low(highFunction) : highFunction;
+            int highHigh = highDecides ? high(highFunction) : highFunction;
+
+            int newLow = table.pushToWorkStack(makeFunction(level + 1, lowLow, highLow));
+            int newHigh = makeFunction(level + 1, lowHigh, highHigh);
+            table.popFromWorkStack();
+            table.rewriteNode(node, variable, newLow, newHigh);
+        }
+    }
+
+    int makeFunction(int level, int lowFunction, int highFunction) {
+        if (lowFunction == highFunction) {
+            return lowFunction;
+        }
+        return table.makeNode(order.variableAtLevel(level), lowFunction, highFunction);
     }
 
     @Override
@@ -402,8 +574,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
             return predicate.test(constantFunctionToValue(node));
         }
         return !table.markNodeIfUnmarked(node)
-                || (allValuesMatchRecursive(table.low(node), predicate)
-                        && allValuesMatchRecursive(table.high(node), predicate));
+                || (allValuesMatchRecursive(low(node), predicate) && allValuesMatchRecursive(high(node), predicate));
     }
 
     @Override
@@ -427,8 +598,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
             return predicate.test(constantFunctionToValue(node));
         }
         return table.markNodeIfUnmarked(node)
-                && (anyValueMatchesRecursive(table.low(node), predicate)
-                        || anyValueMatchesRecursive(table.high(node), predicate));
+                && (anyValueMatchesRecursive(low(node), predicate) || anyValueMatchesRecursive(high(node), predicate));
     }
 
     @Override
@@ -468,26 +638,25 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     }
 
     @Override
-    public void forEachPath(int function, PathConsumer action) {
+    public void forEachPath(int function, PathValueConsumer action) {
         assert accessGuard.acquire();
-        ValuedIterator<BinaryPath> iterator = pathIterator(function);
-        while (iterator.hasNext()) {
-            BinaryPath path = iterator.next();
-            action.accept(path, iterator.value());
+        for (ValuedCursor<Cube> cursor = pathCursor(function); cursor.valid(); cursor.advance()) {
+            action.accept(cursor.current(), cursor.value());
         }
         assert accessGuard.release();
     }
 
     @Override
-    public ValuedIterator<BinaryPath> pathIterator(int function) {
+    public ValuedCursor<Cube> pathCursor(int function) {
         assert isValidFunction(function);
 
         if (isConstant(function)) {
             // The single, entirely unconstrained path.
             BitSet empty = BitSets.of();
-            return new SingletonValuedIterator<>(new BinaryPath(empty, empty), constantFunctionToValue(function));
+            return new ValuedCursor.SingletonValuedCursor<>(
+                    Cube.ofUnsafe(empty, empty), constantFunctionToValue(function));
         }
-        return new PathIterator(this, function);
+        return new PathCursor(this, function);
     }
 
     @Override
@@ -506,11 +675,11 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         if (isConstant(function)) {
             return values == null || values.test(constantFunctionToValue(function));
         }
-        int low = table.low(function);
+        int low = low(function);
         if (canReachMatch(low, values) && anyAssigmentRecursive(low, values, assignment)) {
             return true;
         }
-        int high = table.high(function);
+        int high = high(function);
         if (canReachMatch(high, values) && anyAssigmentRecursive(high, values, assignment)) {
             assignment.set(decisionVariable(function));
             return true;
@@ -529,7 +698,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         if (cache.lookupNoValueMatches(node)) {
             return false;
         }
-        boolean result = canReachMatch(table.low(node), values) || canReachMatch(table.high(node), values);
+        boolean result = canReachMatch(low(node), values) || canReachMatch(high(node), values);
         if (!result) {
             cache.markNoValueMatches(node);
         }
@@ -546,10 +715,10 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
 
         assert accessGuard.acquire();
         cache.initCount(values);
-        int variable = decisionVariable(function);
+        int level = decisionLevel(function);
         BigInteger satisfyingBelow = countSatisfyingAssignmentsRecursive(function, values);
         assert accessGuard.release();
-        return TWO.pow(variable).multiply(satisfyingBelow);
+        return TWO.pow(level).multiply(satisfyingBelow);
     }
 
     @Override
@@ -565,46 +734,45 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         }
         int hash = cache.lookupHash();
 
-        int nodeVar = table.variable(node);
-        BigInteger lowCount = doCountSatisfyingAssignments(table.low(node), nodeVar, values);
-        BigInteger highCount = doCountSatisfyingAssignments(table.high(node), nodeVar, values);
+        int nodeLevel = decisionLevel(node);
+        BigInteger lowCount = doCountSatisfyingAssignments(low(node), nodeLevel, values);
+        BigInteger highCount = doCountSatisfyingAssignments(high(node), nodeLevel, values);
         BigInteger result = lowCount.add(highCount);
         cache.putCount(hash, node, result);
         return result;
     }
 
-    private BigInteger doCountSatisfyingAssignments(int function, int previousVar, IntPredicate values) {
+    private BigInteger doCountSatisfyingAssignments(int function, int previousLevel, IntPredicate values) {
         if (isConstant(function)) {
             return values.test(constantFunctionToValue(function))
-                    ? TWO.pow(numberOfVariables() - previousVar - 1)
+                    ? TWO.pow(numberOfVariables() - previousLevel - 1)
                     : ZERO;
         }
-        BigInteger multiplier = TWO.pow(decisionVariable(function) - previousVar - 1);
+        BigInteger multiplier = TWO.pow(decisionLevel(function) - previousLevel - 1);
         return multiplier.multiply(countSatisfyingAssignmentsRecursive(function, values));
     }
 
     @Override
-    public ValuedIterator<BitSet> assignmentIterator(int function, @Nullable IntPredicate values) {
+    public ValuedCursor<BitSet> assignmentCursor(int function, @Nullable IntPredicate values) {
         assert isValidFunction(function);
 
         BitSet support = new BitSet(numberOfVariables());
         support.set(0, numberOfVariables());
-        return assignmentIterator(function, values, support);
+        return assignmentCursor(function, values, support);
     }
 
-    // See BddImpl#forEachSolution: the MtBdd default (see MtBdd#forEachSolution) delegates to
-    // assignmentIterator(...).forEachRemaining(action), which would leave the guard released while action runs.
-    // Override it here so the whole traversal is guarded, consistent with the other forEach* methods.
     @Override
     public void forEachSolution(int function, @Nullable IntPredicate values, Consumer<? super BitSet> action) {
         assert isValidFunction(function);
         assert accessGuard.acquire();
-        assignmentIterator(function, values).forEachRemaining(action);
+        for (ValuedCursor<BitSet> cursor = assignmentCursor(function, values); cursor.valid(); cursor.advance()) {
+            action.accept(cursor.current());
+        }
         assert accessGuard.release();
     }
 
     @Override
-    public ValuedIterator<BitSet> assignmentIterator(int function, @Nullable IntPredicate values, BitSet support) {
+    public ValuedCursor<BitSet> assignmentCursor(int function, @Nullable IntPredicate values, BitSet support) {
         assert isValidFunction(function);
         assert BitSets.isSubset(support(function), support);
 
@@ -612,11 +780,15 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
             int value = constantFunctionToValue(function);
             // Every assignment yields the same value, so the whole power set is (or is not) a solution.
             return (values == null || values.test(value))
-                    ? new ConstantValuedIterator<>(BitSets.powerSetIterator(support), value)
-                    : new ConstantValuedIterator<>(Collections.emptyIterator(), value);
+                    ? new ValuedCursor.ConstantValuedCursor<>(Cursors.powerSet(support), value)
+                    : new ValuedCursor.ConstantValuedCursor<>(Cursors.empty(), value);
         }
         cache.initAnyValueMatches(values);
-        return new AssignmentIterator(this, function, values, support);
+        if (!canReachMatch(function, values)) {
+            // Nothing matches anywhere, so there is nothing to walk - and no value to ever report.
+            return ValuedCursor.emptyValued();
+        }
+        return new AssignmentCursor(this, function, values, support);
     }
 
     @Override
@@ -639,21 +811,13 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         return new MtBddOperations.Apply(this, operator, true);
     }
 
-    /**
-     * Shared implementation for both the ordinary, ephemeral-cache-backed {@code apply}/{@code applySimplify}
-     * and {@link MtBddOperations}, which supplies its own persistent caches instead so that
-     * {@code cache.initApply}'s reuse-detection - which would otherwise invalidate the whole cache on every
-     * call with a different operator - can be skipped entirely: a registered applier's operator never
-     * changes. Either both caches are supplied or neither is; a registered applier without a simplify cache
-     * (the plain {@link #registerApply}) may only be invoked with a {@code TRUE} domain.
-     */
     int apply(
             int function1,
             int function2,
             int bddDomain,
             MtBddBinaryOperator operator,
-            MtBddCache.@Nullable BinaryToIntCache registeredApplyCache,
-            MtBddCache.@Nullable ApplySimplifyCache registeredApplySimplifyCache) {
+            MtBddCache.@Nullable BinaryCache registeredApplyCache,
+            MtBddCache.@Nullable TernaryCache registeredApplySimplifyCache) {
         assert isValidFunction(function1) && isValidFunction(function2);
         assert bdd.isValidFunction(bddDomain);
 
@@ -666,8 +830,8 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         assert accessGuard.acquire();
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
 
-        MtBddCache.BinaryToIntCache applyCache = registeredApplyCache;
-        MtBddCache.ApplySimplifyCache applySimplifyCache = registeredApplySimplifyCache;
+        MtBddCache.BinaryCache applyCache = registeredApplyCache;
+        MtBddCache.TernaryCache applySimplifyCache = registeredApplySimplifyCache;
         if (applyCache == null) {
             cache.initApply(operator);
             applyCache = cache.applyCache();
@@ -689,20 +853,14 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         return result;
     }
 
-    /**
-     * The apply recursion, with {@code simplify} integrated directly (most of the code path is shared, as in
-     * {@link BddImpl}'s {@code computeComposeSimplify}). The classic {@code apply} is the {@code bddDomain ==
-     * TRUE} special case: every domain-driven branch below is then inert and the plain, binary-keyed
-     * {@code applyCache} is used instead of the ternary one.
-     */
     private int computeApply(
             int function1,
             int function2,
             int bddDomain,
             MtBddBinaryOperator operator,
-            MtBddCache.BinaryToIntCache applyCache,
-            MtBddCache.@Nullable ApplySimplifyCache applySimplifyCache) {
-        assert bddDomain != bdd.falseFunction();
+            MtBddCache.BinaryCache applyCache,
+            MtBddCache.@Nullable TernaryCache applySimplifyCache) {
+        assert bddDomain != bdd.falseFunction() : "Constrain is undefined for an empty domain";
         boolean universeDomain = bddDomain == bdd.trueFunction();
         assert universeDomain || applySimplifyCache != null;
 
@@ -735,34 +893,26 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
             int functionSwap = function1;
             function1 = function2;
             function2 = functionSwap;
-            constant1 = isConstant(function1);
-            constant2 = isConstant(function2);
         }
 
-        int lookup;
-        int hash;
-        if (universeDomain) {
-            lookup = applyCache.lookup(function1, function2);
-            hash = applyCache.lookupHash();
-        } else {
-            lookup = applySimplifyCache.lookup(function1, function2, bddDomain);
-            hash = applySimplifyCache.lookupHash();
-        }
+        int lookup = universeDomain
+                ? applyCache.lookup(function1, function2)
+                : applySimplifyCache.lookup(function1, function2, bddDomain);
         if (lookup != placeholder()) {
             return lookup;
         }
+        int hash = universeDomain ? applyCache.lookupHash() : applySimplifyCache.lookupHash();
 
-        // To simplify branching, use MAX_VALUE as a sentinel for "this side has no variable left"
-        int variable1 = constant1 ? Integer.MAX_VALUE : decisionVariable(function1);
-        int variable2 = constant2 ? Integer.MAX_VALUE : decisionVariable(function2);
-        int variable = Math.min(variable1, variable2);
-        assert variable != Integer.MAX_VALUE : "Two constants are handled above";
-        int domainVariable = universeDomain ? Integer.MAX_VALUE : bdd.decisionVariable(bddDomain);
+        int level1 = decisionLevelOrMax(function1);
+        int level2 = decisionLevelOrMax(function2);
+        int level = Math.min(level1, level2);
+        assert level != Integer.MAX_VALUE : "Two constants are handled above";
+        int domainLevel = universeDomain ? Integer.MAX_VALUE : bdd.decisionLevel(bddDomain);
 
         int result;
-        if (domainVariable < variable) {
-            int domainLow = bdd.lowOf(bddDomain);
-            int domainHigh = bdd.highOf(bddDomain);
+        if (domainLevel < level) {
+            int domainLow = bdd.low(bddDomain);
+            int domainHigh = bdd.high(bddDomain);
             if (domainLow == bdd.falseFunction()) {
                 result = computeApply(function1, function2, domainHigh, operator, applyCache, applySimplifyCache);
             } else if (domainHigh == bdd.falseFunction()) {
@@ -773,17 +923,17 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
                 bdd.table().popFromWorkStack();
             }
         } else {
-            int low1 = variable1 == variable ? table.low(function1) : function1;
-            int high1 = variable1 == variable ? table.high(function1) : function1;
-            int low2 = variable2 == variable ? table.low(function2) : function2;
-            int high2 = variable2 == variable ? table.high(function2) : function2;
+            int low1 = lowIf(function1, level1 == level);
+            int high1 = highIf(function1, level1 == level);
+            int low2 = lowIf(function2, level2 == level);
+            int high2 = highIf(function2, level2 == level);
 
-            boolean domainTestsVariable = domainVariable == variable;
-            int lowDomain = domainTestsVariable ? bdd.lowOf(bddDomain) : bddDomain;
-            int highDomain = domainTestsVariable ? bdd.highOf(bddDomain) : bddDomain;
+            boolean domainTestsVariable = domainLevel == level;
+            int lowDomain = bdd.lowIf(bddDomain, domainTestsVariable);
+            int highDomain = bdd.highIf(bddDomain, domainTestsVariable);
 
             if (lowDomain == bdd.falseFunction()) {
-                // The domain forces this variable, so only one branch is constrained - drop the node.
+                // The domain forces this level, so only one branch is constrained - drop the node.
                 result = computeApply(high1, high2, highDomain, operator, applyCache, applySimplifyCache);
             } else if (highDomain == bdd.falseFunction()) {
                 result = computeApply(low1, low2, lowDomain, operator, applyCache, applySimplifyCache);
@@ -792,7 +942,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
                         computeApply(low1, low2, lowDomain, operator, applyCache, applySimplifyCache));
                 int high = table.pushToWorkStack(
                         computeApply(high1, high2, highDomain, operator, applyCache, applySimplifyCache));
-                result = makeFunction(variable, low, high);
+                result = makeFunction(level, low, high);
                 table.popFromWorkStack(2);
             }
         }
@@ -807,11 +957,30 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
 
     @Override
     public int map(int function, IntUnaryOperator map) {
-        return mapSimplify(function, map, bdd.trueFunction());
+        return map(function, bdd.trueFunction(), map, null, null);
     }
 
     @Override
     public int mapSimplify(int function, IntUnaryOperator map, int bddDomain) {
+        return map(function, bddDomain, map, null, null);
+    }
+
+    @Override
+    public RegisteredOperation.Unary registerMap(IntUnaryOperator map) {
+        return new MtBddOperations.Mapper(this, map, false);
+    }
+
+    @Override
+    public RegisteredOperation.Binary registerMapSimplify(IntUnaryOperator map) {
+        return new MtBddOperations.Mapper(this, map, true);
+    }
+
+    int map(
+            int function,
+            int bddDomain,
+            IntUnaryOperator map,
+            MtBddCache.@Nullable UnaryCache registeredMapCache,
+            MtBddCache.@Nullable BinaryCache registeredMapSimplifyCache) {
         assert isValidFunction(function);
         assert bdd.isValidFunction(bddDomain);
 
@@ -822,11 +991,20 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         assert accessGuard.acquire();
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
 
-        cache.initMap(map);
+        MtBddCache.UnaryCache mapCache = registeredMapCache;
+        MtBddCache.BinaryCache mapSimplifyCache = registeredMapSimplifyCache;
+        if (mapCache == null) {
+            cache.initMap(map);
+            mapCache = cache.mapCache();
+            mapSimplifyCache = cache.mapSimplifyCache();
+        }
+        assert bddDomain == bdd.trueFunction() || mapSimplifyCache != null
+                : "A domain-carrying map must be registered through registerMapSimplify";
+
         table.pushToWorkStack(function);
         NodeTable bddTable = bdd.table();
         bddTable.pushToWorkStack(bddDomain);
-        int result = computeMap(function, bddDomain, map);
+        int result = computeMap(function, bddDomain, map, mapCache, mapSimplifyCache);
         bddTable.popFromWorkStack();
         table.popFromWorkStack();
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
@@ -835,58 +1013,63 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     }
 
     /** The unary counterpart of {@link #computeApply}; see there for the domain handling. */
-    private int computeMap(int function, int bddDomain, IntUnaryOperator map) {
+    private int computeMap(
+            int function,
+            int bddDomain,
+            IntUnaryOperator map,
+            MtBddCache.UnaryCache mapCache,
+            MtBddCache.@Nullable BinaryCache mapSimplifyCache) {
         assert bddDomain != bdd.falseFunction();
+        boolean universeDomain = bddDomain == bdd.trueFunction();
+        assert universeDomain || mapSimplifyCache != null;
 
         if (isConstant(function)) {
             return of(map.applyAsInt(constantFunctionToValue(function)));
         }
 
-        int lookup = bddDomain == bdd.trueFunction()
-                ? cache.lookupMap(function)
-                : cache.lookupMapSimplify(function, bddDomain);
+        int lookup = universeDomain ? mapCache.lookup(function) : mapSimplifyCache.lookup(function, bddDomain);
         if (lookup != placeholder()) {
             return lookup;
         }
-        int hash = cache.lookupHash();
+        int hash = universeDomain ? mapCache.lookupHash() : mapSimplifyCache.lookupHash();
 
-        int variable = decisionVariable(function);
-        int domainVariable = bddDomain == bdd.trueFunction() ? Integer.MAX_VALUE : bdd.decisionVariable(bddDomain);
+        int level = decisionLevel(function);
+        int domainLevel = universeDomain ? Integer.MAX_VALUE : bdd.decisionLevel(bddDomain);
 
         int result;
-        if (domainVariable < variable) {
-            int domainLow = bdd.lowOf(bddDomain);
-            int domainHigh = bdd.highOf(bddDomain);
+        if (domainLevel < level) {
+            int domainLow = bdd.low(bddDomain);
+            int domainHigh = bdd.high(bddDomain);
             if (domainLow == bdd.falseFunction()) {
-                result = computeMap(function, domainHigh, map);
+                result = computeMap(function, domainHigh, map, mapCache, mapSimplifyCache);
             } else if (domainHigh == bdd.falseFunction()) {
-                result = computeMap(function, domainLow, map);
+                result = computeMap(function, domainLow, map, mapCache, mapSimplifyCache);
             } else {
                 int widenedDomain = bdd.table().pushToWorkStack(bdd.computeOr(domainLow, domainHigh));
-                result = computeMap(function, widenedDomain, map);
+                result = computeMap(function, widenedDomain, map, mapCache, mapSimplifyCache);
                 bdd.table().popFromWorkStack();
             }
         } else {
-            boolean domainTestsVariable = domainVariable == variable;
-            int lowDomain = domainTestsVariable ? bdd.lowOf(bddDomain) : bddDomain;
-            int highDomain = domainTestsVariable ? bdd.highOf(bddDomain) : bddDomain;
+            int lowDomain = bdd.lowIf(bddDomain, domainLevel == level);
+            int highDomain = bdd.highIf(bddDomain, domainLevel == level);
 
             if (lowDomain == bdd.falseFunction()) {
-                result = computeMap(table.high(function), highDomain, map);
+                result = computeMap(high(function), highDomain, map, mapCache, mapSimplifyCache);
             } else if (highDomain == bdd.falseFunction()) {
-                result = computeMap(table.low(function), lowDomain, map);
+                result = computeMap(low(function), lowDomain, map, mapCache, mapSimplifyCache);
             } else {
-                int low = table.pushToWorkStack(computeMap(table.low(function), lowDomain, map));
-                int high = table.pushToWorkStack(computeMap(table.high(function), highDomain, map));
-                result = makeFunction(variable, low, high);
+                int low = table.pushToWorkStack(computeMap(low(function), lowDomain, map, mapCache, mapSimplifyCache));
+                int high =
+                        table.pushToWorkStack(computeMap(high(function), highDomain, map, mapCache, mapSimplifyCache));
+                result = makeFunction(level, low, high);
                 table.popFromWorkStack(2);
             }
         }
 
-        if (bddDomain == bdd.trueFunction()) {
-            cache.putMap(hash, function, result);
+        if (universeDomain) {
+            mapCache.put(hash, function, result);
         } else {
-            cache.putMapSimplify(hash, function, bddDomain, result);
+            mapSimplifyCache.put(hash, function, bddDomain, result);
         }
         return result;
     }
@@ -920,11 +1103,11 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         }
         int[] copy = Arrays.copyOf(functions, functions.length);
         if (operator.commutative) {
-            // No cache to canonicalize against yet (see MtBddNaryOperator's javadoc) - sorting is still
-            // cheap and harmless, and future-proofs this the moment computeNaryApply gets one.
+            // Canonicalize for caching
             Arrays.sort(copy);
         }
         int[] values = new int[functions.length];
+        cache.initNaryApply(operator);
         int result = computeNaryApply(copy, values, operator, 0, new DepthPool<>(() -> new int[functions.length]));
         table.popFromWorkStack(functions.length);
         assert table.workStacksEmpty();
@@ -962,43 +1145,55 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
             }
         }
 
-        int variable = minVariable(functions);
-        if (variable == Integer.MAX_VALUE) {
+        int level = minLevel(functions);
+        if (level == Integer.MAX_VALUE) {
             for (int i = 0; i < functions.length; i++) {
                 values[i] = constantFunctionToValue(functions[i]);
             }
             return of(operator.applyAsInt(values));
         }
 
+        // Without a memo the recursion walks every combination of paths, which sharing makes exponential.
+        int lookup = cache.lookupNaryApply(functions);
+        if (lookup != placeholder()) {
+            return lookup;
+        }
+        int hash = cache.lookupHash();
+        // The operand array is rewritten in place below, so the cache needs one of its own.
+        // TODO Copying is costly; can we do it better? Write in a DepthPool?
+        //   The array only needs to survive until the cache put
+        int[] key = Arrays.copyOf(functions, functions.length);
+
         int[] highFunctions = highPool.get(depth);
-        splitByVariable(functions, highFunctions, variable);
+        splitByLevel(functions, highFunctions, level);
 
         int low = table.pushToWorkStack(computeNaryApply(functions, values, operator, depth + 1, highPool));
         int high = table.pushToWorkStack(computeNaryApply(highFunctions, values, operator, depth + 1, highPool));
-        int result = makeFunction(variable, low, high);
+        int result = makeFunction(level, low, high);
         table.popFromWorkStack(2);
+        cache.putNaryApply(hash, key, result);
         return result;
     }
 
-    private int minVariable(int... functions) {
-        int variable = Integer.MAX_VALUE;
+    private int minLevel(int[] functions) {
+        int level = Integer.MAX_VALUE;
         for (int function : functions) {
             if (!isConstant(function)) {
-                int functionVariable = decisionVariable(function);
-                if (functionVariable < variable) {
-                    variable = functionVariable;
+                int functionLevel = decisionLevel(function);
+                if (functionLevel < level) {
+                    level = functionLevel;
                 }
             }
         }
-        return variable;
+        return level;
     }
 
-    private void splitByVariable(int[] functions, int[] highFunctions, int variable) {
+    private void splitByLevel(int[] functions, int[] highFunctions, int level) {
         for (int i = 0; i < functions.length; i++) {
             int function = functions[i];
-            if (!isConstant(function) && decisionVariable(function) == variable) {
-                functions[i] = table.low(function);
-                highFunctions[i] = table.high(function);
+            if (!isConstant(function) && decisionLevel(function) == level) {
+                functions[i] = low(function);
+                highFunctions[i] = high(function);
             } else {
                 highFunctions[i] = function;
             }
@@ -1007,107 +1202,167 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
 
     @Override
     public int agreement(int mtbddFunction1, int mtbddFunction2) {
+        return applyBoolean(mtbddFunction1, mtbddFunction2, EQUALITY, cache.agreementCache());
+    }
+
+    @Override
+    public int applyBoolean(int mtbddFunction1, int mtbddFunction2, MtBddBinaryPredicate predicate) {
+        assert isValidFunction(mtbddFunction1) && isValidFunction(mtbddFunction2);
+        cache.initApplyBoolean(predicate);
+        return applyBoolean(mtbddFunction1, mtbddFunction2, predicate, cache.applyBooleanCache());
+    }
+
+    @Override
+    public boolean allMatch(int mtbddFunction1, int mtbddFunction2, MtBddBinaryPredicate predicate) {
         assert isValidFunction(mtbddFunction1) && isValidFunction(mtbddFunction2);
         assert accessGuard.acquire();
-        assert bdd.table().workStacksEmpty();
-        int result = agreementRecursive(mtbddFunction1, mtbddFunction2);
-        assert bdd.table().workStacksEmpty();
+        cache.initAllMatch(predicate);
+        boolean result = allMatchRecursive(mtbddFunction1, mtbddFunction2, predicate, cache.allMatchCache());
         assert accessGuard.release();
         return result;
     }
 
-    private int agreementRecursive(int mtbddNode1, int mtbddNode2) {
-        if (mtbddNode1 == mtbddNode2) {
-            return bdd.trueFunction();
+    // applyBooleanRecursive's shape, but nothing is built, so nothing needs protecting either.
+    private boolean allMatchRecursive(
+            int mtbddNode1,
+            int mtbddNode2,
+            MtBddBinaryPredicate predicate,
+            MtBddCache.BinaryToBooleanCache matchCache) {
+        if (predicate.reflexive && mtbddNode1 == mtbddNode2) {
+            return true;
         }
 
-        boolean constant1 = isConstant(mtbddNode1);
-        boolean constant2 = isConstant(mtbddNode2);
-        if (constant1 && constant2) {
-            boolean agree = constantFunctionToValue(mtbddNode1) == constantFunctionToValue(mtbddNode2);
-            return agree ? bdd.trueFunction() : bdd.falseFunction();
+        if (isConstant(mtbddNode1) && isConstant(mtbddNode2)) {
+            return predicate.test(constantFunctionToValue(mtbddNode1), constantFunctionToValue(mtbddNode2));
         }
 
-        if (mtbddNode1 > mtbddNode2) {
+        if (predicate.symmetric && mtbddNode1 > mtbddNode2) {
             int nodeSwap = mtbddNode1;
             mtbddNode1 = mtbddNode2;
             mtbddNode2 = nodeSwap;
-            constant1 = isConstant(mtbddNode1);
-            constant2 = isConstant(mtbddNode2);
         }
 
-        int lookup = cache.lookupAgreement(mtbddNode1, mtbddNode2);
+        int lookup = matchCache.lookup(mtbddNode1, mtbddNode2);
+        if (lookup != MtBddCache.BinaryToBooleanCache.MISS) {
+            return lookup == 1;
+        }
+        int hash = matchCache.lookupHash();
+
+        int level1 = decisionLevelOrMax(mtbddNode1);
+        int level2 = decisionLevelOrMax(mtbddNode2);
+        int level = Math.min(level1, level2);
+        int mtbddLow1 = lowIf(mtbddNode1, level1 == level);
+        int mtbddHigh1 = highIf(mtbddNode1, level1 == level);
+        int mtbddLow2 = lowIf(mtbddNode2, level2 == level);
+        int mtbddHigh2 = highIf(mtbddNode2, level2 == level);
+
+        boolean result = allMatchRecursive(mtbddLow1, mtbddLow2, predicate, matchCache)
+                && allMatchRecursive(mtbddHigh1, mtbddHigh2, predicate, matchCache);
+        matchCache.put(hash, mtbddNode1, mtbddNode2, result);
+        return result;
+    }
+
+    @Override
+    public RegisteredOperation.Binary registerApplyBoolean(MtBddBinaryPredicate predicate) {
+        return new MtBddOperations.ApplyBoolean(this, predicate);
+    }
+
+    int applyBoolean(
+            int mtbddFunction1,
+            int mtbddFunction2,
+            MtBddBinaryPredicate predicate,
+            MtBddCache.BinaryCache booleanCache) {
+        assert isValidFunction(mtbddFunction1) && isValidFunction(mtbddFunction2);
+        assert accessGuard.acquire();
+        assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
+        int result = applyBooleanRecursive(mtbddFunction1, mtbddFunction2, predicate, booleanCache);
+        assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
+        assert accessGuard.release();
+        return result;
+    }
+
+    private int applyBooleanRecursive(
+            int mtbddNode1, int mtbddNode2, MtBddBinaryPredicate predicate, MtBddCache.BinaryCache booleanCache) {
+        if (predicate.reflexive && mtbddNode1 == mtbddNode2) {
+            return bdd.trueFunction();
+        }
+
+        if (isConstant(mtbddNode1) && isConstant(mtbddNode2)) {
+            boolean holds = predicate.test(constantFunctionToValue(mtbddNode1), constantFunctionToValue(mtbddNode2));
+            return holds ? bdd.trueFunction() : bdd.falseFunction();
+        }
+
+        // A pair and its mirror image have the same answer under a symmetric predicate, so order them
+        // and let the two share one cache entry.
+        if (predicate.symmetric && mtbddNode1 > mtbddNode2) {
+            int nodeSwap = mtbddNode1;
+            mtbddNode1 = mtbddNode2;
+            mtbddNode2 = nodeSwap;
+        }
+
+        int lookup = cache.lookupBinaryToBdd(booleanCache, mtbddNode1, mtbddNode2);
         if (lookup != bdd.placeholder()) {
             return lookup;
         }
         int hash = cache.lookupHash();
 
-        int variable;
-        int mtbddLow1;
-        int mtbddHigh1;
-        int mtbddLow2;
-        int mtbddHigh2;
-        if (constant1) {
-            variable = decisionVariable(mtbddNode2);
-            mtbddLow1 = mtbddNode1;
-            mtbddHigh1 = mtbddNode1;
-            mtbddLow2 = table.low(mtbddNode2);
-            mtbddHigh2 = table.high(mtbddNode2);
-        } else if (constant2) {
-            variable = decisionVariable(mtbddNode1);
-            mtbddLow1 = table.low(mtbddNode1);
-            mtbddHigh1 = table.high(mtbddNode1);
-            mtbddLow2 = mtbddNode2;
-            mtbddHigh2 = mtbddNode2;
-        } else {
-            int variable1 = decisionVariable(mtbddNode1);
-            int variable2 = decisionVariable(mtbddNode2);
-            variable = Math.min(variable1, variable2);
-            mtbddLow1 = variable1 == variable ? table.low(mtbddNode1) : mtbddNode1;
-            mtbddHigh1 = variable1 == variable ? table.high(mtbddNode1) : mtbddNode1;
-            mtbddLow2 = variable2 == variable ? table.low(mtbddNode2) : mtbddNode2;
-            mtbddHigh2 = variable2 == variable ? table.high(mtbddNode2) : mtbddNode2;
-        }
+        int level1 = decisionLevelOrMax(mtbddNode1);
+        int level2 = decisionLevelOrMax(mtbddNode2);
+        int level = Math.min(level1, level2);
+        int mtbddLow1 = lowIf(mtbddNode1, level1 == level);
+        int mtbddHigh1 = highIf(mtbddNode1, level1 == level);
+        int mtbddLow2 = lowIf(mtbddNode2, level2 == level);
+        int mtbddHigh2 = highIf(mtbddNode2, level2 == level);
 
         NodeTable bddTable = bdd.table();
-        int bddLow = bddTable.pushToWorkStack(agreementRecursive(mtbddLow1, mtbddLow2));
-        int bddHigh = bddTable.pushToWorkStack(agreementRecursive(mtbddHigh1, mtbddHigh2));
-        int bddResult = bdd.makeFunction(variable, bddLow, bddHigh);
+        int bddLow = bddTable.pushToWorkStack(applyBooleanRecursive(mtbddLow1, mtbddLow2, predicate, booleanCache));
+        int bddHigh = bddTable.pushToWorkStack(applyBooleanRecursive(mtbddHigh1, mtbddHigh2, predicate, booleanCache));
+        int bddResult = bdd.makeFunction(level, bddLow, bddHigh);
         bddTable.popFromWorkStack(2);
-        cache.putAgreement(hash, mtbddNode1, mtbddNode2, bddResult);
+        cache.putBinaryToBdd(booleanCache, hash, mtbddNode1, mtbddNode2, bddResult);
         return bddResult;
     }
 
     @Override
     public int mapBoolean(int mtbddFunction, IntPredicate values) {
         assert isValidFunction(mtbddFunction);
+        cache.initMapBoolean(values);
+        return mapBoolean(mtbddFunction, values, cache.mapBooleanCache());
+    }
+
+    @Override
+    public RegisteredOperation.Unary registerMapBoolean(IntPredicate values) {
+        return new MtBddOperations.MapBoolean(this, values);
+    }
+
+    int mapBoolean(int mtbddFunction, IntPredicate values, MtBddCache.UnaryCache mapBooleanCache) {
+        assert isValidFunction(mtbddFunction);
         assert accessGuard.acquire();
         assert bdd.table().workStacksEmpty();
-        cache.initMapBoolean(values);
-        int result = mapBooleanRecursive(mtbddFunction, values);
+        int result = mapBooleanRecursive(mtbddFunction, values, mapBooleanCache);
         assert bdd.table().workStacksEmpty();
         assert accessGuard.release();
         return result;
     }
 
-    private int mapBooleanRecursive(int mtbddNode, IntPredicate values) {
+    private int mapBooleanRecursive(int mtbddNode, IntPredicate values, MtBddCache.UnaryCache mapBooleanCache) {
         if (isConstant(mtbddNode)) {
             return values.test(constantFunctionToValue(mtbddNode)) ? bdd.trueFunction() : bdd.falseFunction();
         }
 
-        int lookup = cache.lookupMapBoolean(mtbddNode);
+        int lookup = mapBooleanCache.lookup(mtbddNode);
         if (lookup != bdd.placeholder()) {
             return lookup;
         }
-        int hash = cache.lookupHash();
+        int hash = mapBooleanCache.lookupHash();
 
-        int variable = decisionVariable(mtbddNode);
+        int level = decisionLevel(mtbddNode);
         NodeTable bddTable = bdd.table();
-        int bddLow = bddTable.pushToWorkStack(mapBooleanRecursive(table.low(mtbddNode), values));
-        int bddHigh = bddTable.pushToWorkStack(mapBooleanRecursive(table.high(mtbddNode), values));
-        int bddResult = bdd.makeFunction(variable, bddLow, bddHigh);
+        int bddLow = bddTable.pushToWorkStack(mapBooleanRecursive(low(mtbddNode), values, mapBooleanCache));
+        int bddHigh = bddTable.pushToWorkStack(mapBooleanRecursive(high(mtbddNode), values, mapBooleanCache));
+        int bddResult = bdd.makeFunction(level, bddLow, bddHigh);
         bddTable.popFromWorkStack(2);
-        cache.putMapBoolean(hash, mtbddNode, bddResult);
+        mapBooleanCache.put(hash, mtbddNode, bddResult);
         return bddResult;
     }
 
@@ -1140,32 +1395,18 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         }
         int hash = cache.lookupHash();
 
-        int bddVariable = bdd.decisionVariable(bddNode);
-        int variable = isConstant(mtbddNode) ? bddVariable : Math.min(bddVariable, decisionVariable(mtbddNode));
+        int bddLevel = bdd.decisionLevel(bddNode);
+        int mtbddLevel = decisionLevelOrMax(mtbddNode);
+        int level = Math.min(bddLevel, mtbddLevel);
 
-        int mtbddLow;
-        int mtbddHigh;
-        if (!isConstant(mtbddNode) && decisionVariable(mtbddNode) == variable) {
-            mtbddLow = table.low(mtbddNode);
-            mtbddHigh = table.high(mtbddNode);
-        } else {
-            mtbddLow = mtbddNode;
-            mtbddHigh = mtbddNode;
-        }
-
-        int bddLow;
-        int bddHigh;
-        if (bddVariable == variable) {
-            bddLow = bdd.lowOf(bddNode);
-            bddHigh = bdd.highOf(bddNode);
-        } else {
-            bddLow = bddNode;
-            bddHigh = bddNode;
-        }
+        int mtbddLow = lowIf(mtbddNode, mtbddLevel == level);
+        int mtbddHigh = highIf(mtbddNode, mtbddLevel == level);
+        int bddLow = bdd.lowIf(bddNode, bddLevel == level);
+        int bddHigh = bdd.highIf(bddNode, bddLevel == level);
 
         int low = table.pushToWorkStack(updateRecursive(mtbddLow, bddLow, value));
         int high = table.pushToWorkStack(updateRecursive(mtbddHigh, bddHigh, value));
-        int result = makeFunction(variable, low, high);
+        int result = makeFunction(level, low, high);
         table.popFromWorkStack(2);
         cache.putUpdate(hash, mtbddNode, bddNode, value, result);
         return result;
@@ -1191,7 +1432,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
 
         assert accessGuard.acquire();
         BddImpl.ComposeAnalysis analysis = bdd.analyzeCompose(bddVariableMapping);
-        if (analysis.highestReplacedVariable == -1) {
+        if (analysis.maxReplacedLevel == -1) {
             int result = simplify(mtbddFunction, bddDomain);
             assert accessGuard.release();
             return result;
@@ -1199,9 +1440,6 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
 
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
 
-        // Plain compose builds no Bdd nodes at all (ifThenElseRecursive only reads the replacements), but
-        // narrowing a domain does - so from here on the replacement array needs the same Bdd-side
-        // protection BddImpl#composeSimplify gives it. A registered composer references them instead.
         NodeTable bddTable = bdd.table();
         int bddWorkStackCount = 0;
         if (bddDomain != bdd.trueFunction()) {
@@ -1214,12 +1452,12 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
             }
         }
 
-        cache.initCompose(bddVariableMapping, analysis.highestReplacedVariable);
+        cache.initCompose(bddVariableMapping);
         int result = composeGeneral(
                 mtbddFunction,
                 bddDomain,
                 bddVariableMapping,
-                analysis.highestReplacedVariable,
+                analysis.maxReplacedLevel,
                 cache.composeCache(),
                 cache.composeSimplifyCache());
         bddTable.popFromWorkStack(bddWorkStackCount);
@@ -1232,47 +1470,39 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     public RegisteredOperation.Unary registerCompose(int[] bddVariableMapping) {
         int[] resolved = bddVariableMapping.clone();
         BddImpl.ComposeAnalysis analysis = bdd.analyzeCompose(resolved);
-        if (analysis.highestReplacedVariable == -1) {
-            return function -> function;
+        if (analysis.maxReplacedLevel == -1) {
+            return RegisteredOperation.identity();
         }
         if (analysis.isRestrict) {
-            BitSet restrictSupport = analysis.restrictSupport;
-            BitSet restrictValues = analysis.restrictValues;
-            return function -> restrict(function, restrictSupport, restrictValues);
+            Cube restriction = analysis.restriction;
+            return function -> restrict(function, restriction);
         }
         return new MtBddOperations.Compose(
-                this, resolved, analysis.highestReplacedVariable, Util.protectNodes(bdd, resolved), false);
+                this, resolved, analysis.maxReplacedLevel, Util.protectNodes(bdd, resolved), false);
     }
 
     @Override
     public RegisteredOperation.Binary registerComposeSimplify(int[] bddVariableMapping) {
         int[] resolved = bddVariableMapping.clone();
         BddImpl.ComposeAnalysis analysis = bdd.analyzeCompose(resolved);
-        if (analysis.highestReplacedVariable == -1) {
+        if (analysis.maxReplacedLevel == -1) {
             return this::simplify;
         }
         if (analysis.isRestrict) {
-            BitSet restrictSupport = analysis.restrictSupport;
-            BitSet restrictValues = analysis.restrictValues;
-            return (function, domain) -> simplify(restrict(function, restrictSupport, restrictValues), domain);
+            Cube restriction = analysis.restriction;
+            return (function, domain) -> simplify(restrict(function, restriction), domain);
         }
         return new MtBddOperations.Compose(
-                this, resolved, analysis.highestReplacedVariable, Util.protectNodes(bdd, resolved), true);
+                this, resolved, analysis.maxReplacedLevel, Util.protectNodes(bdd, resolved), true);
     }
 
-    /**
-     * The general (non-identity, non-constant) compose/composeSimplify recursion, shared by the ordinary
-     * path and {@link MtBddOperations}. Guards {@code mtbddFunction} and {@code bddDomain} for the call's
-     * duration; the caller is responsible both for having already ruled out an empty {@code bddDomain} and
-     * for protecting {@code bddVariableMapping}'s own (Bdd-side) nodes for as long as needed.
-     */
     int composeGeneral(
             int mtbddFunction,
             int bddDomain,
             int[] bddVariableMapping,
-            int highestReplacedVariable,
-            MtBddCache.UnaryToIntCache composeCache,
-            MtBddCache.@Nullable MtbddBddToIntCache composeSimplifyCache) {
+            int maxReplacedLevel,
+            MtBddCache.UnaryCache composeCache,
+            MtBddCache.@Nullable BinaryCache composeSimplifyCache) {
         assert bddDomain != bdd.falseFunction();
         assert bddDomain == bdd.trueFunction() || composeSimplifyCache != null;
 
@@ -1280,33 +1510,31 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         NodeTable bddTable = bdd.table();
         bddTable.pushToWorkStack(bddDomain);
         int result = composeRecursive(
-                mtbddFunction,
-                bddVariableMapping,
-                highestReplacedVariable,
-                bddDomain,
-                composeCache,
-                composeSimplifyCache);
+                mtbddFunction, bddVariableMapping, maxReplacedLevel, bddDomain, composeCache, composeSimplifyCache);
         bddTable.popFromWorkStack();
         table.popFromWorkStack();
         assert table.workStacksEmpty();
         return result;
     }
 
-    // simplify is integrated directly due to most code paths being shared - see BddImpl#computeComposeSimplify
+    // simplify is integrated directly due to most code paths being shared
     private int composeRecursive(
             int mtbddNode,
             int[] bddVariableMapping,
-            int highestReplacedVariable,
+            int maxReplacedLevel,
             int bddDomain,
-            MtBddCache.UnaryToIntCache composeCache,
-            MtBddCache.@Nullable MtbddBddToIntCache composeSimplifyCache) {
+            MtBddCache.UnaryCache composeCache,
+            MtBddCache.@Nullable BinaryCache composeSimplifyCache) {
         assert bddDomain != bdd.falseFunction();
 
         if (isConstant(mtbddNode)) {
             return mtbddNode;
         }
-        int variable = decisionVariable(mtbddNode);
-        if (variable > highestReplacedVariable) {
+        /* Two different things, and compose needs both: the level orders the descent against the domain,
+         * while bddVariableMapping is indexed by the variable itself. */
+        int nodeVariable = decisionVariable(mtbddNode);
+        int level = levelOfVariable(nodeVariable);
+        if (level > maxReplacedLevel) {
             // Nothing left to replace below here, but the domain may still simplify what remains.
             return computeSimplify(mtbddNode, bddDomain);
         }
@@ -1318,94 +1546,89 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         if (lookup != placeholder()) {
             return lookup;
         }
-        int hash = domainIsTrue ? composeCache.lookupHash : composeSimplifyCache.lookupHash;
+        int hash = domainIsTrue ? composeCache.lookupHash() : composeSimplifyCache.lookupHash();
 
-        int domainVariable = domainIsTrue ? Integer.MAX_VALUE : bdd.decisionVariable(bddDomain);
-        int domainLow = domainVariable <= variable ? bdd.lowOf(bddDomain) : bddDomain;
-        int domainHigh = domainVariable <= variable ? bdd.highOf(bddDomain) : bddDomain;
+        int domainLevel = domainIsTrue ? Integer.MAX_VALUE : bdd.decisionLevel(bddDomain);
+        int domainLow = bdd.lowIf(bddDomain, domainLevel <= level);
+        int domainHigh = bdd.highIf(bddDomain, domainLevel <= level);
 
         int result;
-        if (domainVariable < variable) {
+        if (domainLevel < level) {
             if (domainLow == bdd.falseFunction()) {
                 result = composeRecursive(
                         mtbddNode,
                         bddVariableMapping,
-                        highestReplacedVariable,
+                        maxReplacedLevel,
                         domainHigh,
                         composeCache,
                         composeSimplifyCache);
             } else if (domainHigh == bdd.falseFunction()) {
                 result = composeRecursive(
-                        mtbddNode,
-                        bddVariableMapping,
-                        highestReplacedVariable,
-                        domainLow,
-                        composeCache,
-                        composeSimplifyCache);
+                        mtbddNode, bddVariableMapping, maxReplacedLevel, domainLow, composeCache, composeSimplifyCache);
             } else {
                 int widenedDomain = bdd.table().pushToWorkStack(bdd.computeOr(domainLow, domainHigh));
                 result = composeRecursive(
                         mtbddNode,
                         bddVariableMapping,
-                        highestReplacedVariable,
+                        maxReplacedLevel,
                         widenedDomain,
                         composeCache,
                         composeSimplifyCache);
                 bdd.table().popFromWorkStack();
             }
         } else {
-            int bddReplacement = bddVariableMapping[variable];
+            int bddReplacement = nodeVariable < bddVariableMapping.length
+                    ? bddVariableMapping[nodeVariable]
+                    : bdd.variableFunction(nodeVariable);
             if (bddReplacement == bdd.trueFunction()) {
                 result = composeRecursive(
-                        table.high(mtbddNode),
+                        high(mtbddNode),
                         bddVariableMapping,
-                        highestReplacedVariable,
+                        maxReplacedLevel,
                         bddDomain,
                         composeCache,
                         composeSimplifyCache);
             } else if (bddReplacement == bdd.falseFunction()) {
                 result = composeRecursive(
-                        table.low(mtbddNode),
+                        low(mtbddNode),
                         bddVariableMapping,
-                        highestReplacedVariable,
+                        maxReplacedLevel,
                         bddDomain,
                         composeCache,
                         composeSimplifyCache);
             } else {
-                // The domain constrains the *composed* function, so its cofactor w.r.t. this variable only
-                // describes the branch we are descending into if the variable maps to itself.
-                boolean aligned = domainVariable == variable && bddReplacement == bdd.variableFunction(variable);
+                boolean aligned = domainLevel == level && bddReplacement == bdd.variableFunction(nodeVariable);
                 int lowDomain = aligned ? domainLow : bddDomain;
                 int highDomain = aligned ? domainHigh : bddDomain;
 
                 if (lowDomain == bdd.falseFunction()) {
                     result = composeRecursive(
-                            table.high(mtbddNode),
+                            high(mtbddNode),
                             bddVariableMapping,
-                            highestReplacedVariable,
+                            maxReplacedLevel,
                             highDomain,
                             composeCache,
                             composeSimplifyCache);
                 } else if (highDomain == bdd.falseFunction()) {
                     result = composeRecursive(
-                            table.low(mtbddNode),
+                            low(mtbddNode),
                             bddVariableMapping,
-                            highestReplacedVariable,
+                            maxReplacedLevel,
                             lowDomain,
                             composeCache,
                             composeSimplifyCache);
                 } else {
                     int low = table.pushToWorkStack(composeRecursive(
-                            table.low(mtbddNode),
+                            low(mtbddNode),
                             bddVariableMapping,
-                            highestReplacedVariable,
+                            maxReplacedLevel,
                             lowDomain,
                             composeCache,
                             composeSimplifyCache));
                     int high = table.pushToWorkStack(composeRecursive(
-                            table.high(mtbddNode),
+                            high(mtbddNode),
                             bddVariableMapping,
-                            highestReplacedVariable,
+                            maxReplacedLevel,
                             highDomain,
                             composeCache,
                             composeSimplifyCache));
@@ -1424,33 +1647,46 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     }
 
     @Override
-    public int restrict(int mtbddFunction, BitSet restrictedVariables, BitSet restrictedVariableValues) {
+    public int restrict(int mtbddFunction, Cube restriction) {
         assert isValidFunction(mtbddFunction);
 
-        if (restrictedVariables.isEmpty() || isConstant(mtbddFunction)) {
+        if (restriction.isEmpty() || isConstant(mtbddFunction)) {
             return mtbddFunction;
         }
 
+        int current = mtbddFunction;
+        while (!isConstant(current) && restriction.supportUnsafe().get(decisionVariable(current))) {
+            current = restriction.assignmentUnsafe().get(decisionVariable(current)) ? high(current) : low(current);
+        }
+        if (isConstant(current)) {
+            return current;
+        }
+        int maxRestrictedLevel = bdd.maxLevel(restriction.supportUnsafe());
+        if (decisionLevel(current) > maxRestrictedLevel) {
+            return current;
+        }
         assert accessGuard.acquire();
-        int highestRestrictedVariable = restrictedVariables.length() - 1;
-        cache.initRestrict(restrictedVariables, restrictedVariableValues);
         assert table.workStacksEmpty();
-        table.pushToWorkStack(mtbddFunction);
-        int result = restrictRecursive(
-                mtbddFunction, restrictedVariables, restrictedVariableValues, highestRestrictedVariable);
+        // TODO Unclear if this (and the BDD parallel) really is beneficial for caching as the decent depth
+        //  probably depends on the structure of the current argument
+        Cube remaining = order.literalsBelow(restriction, decisionLevel(current));
+        cache.initRestrict(remaining);
+        table.pushToWorkStack(current);
+        int result = restrictRecursive(current, remaining, maxRestrictedLevel);
         table.popFromWorkStack();
         assert table.workStacksEmpty();
         assert accessGuard.release();
         return result;
     }
 
-    private int restrictRecursive(
-            int mtbddNode, BitSet restrictedVariables, BitSet restrictedVariableValues, int highestRestrictedVariable) {
+    private int restrictRecursive(int mtbddNode, Cube restriction, int maxRestrictedLevel) {
         if (isConstant(mtbddNode)) {
             return mtbddNode;
         }
-        int variable = decisionVariable(mtbddNode);
-        if (variable > highestRestrictedVariable) {
+        // The level orders the descent and is what makeFunction wants; the cube is indexed by the variable.
+        int nodeVariable = decisionVariable(mtbddNode);
+        int level = levelOfVariable(nodeVariable);
+        if (level > maxRestrictedLevel) {
             return mtbddNode;
         }
 
@@ -1461,19 +1697,79 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         int hash = cache.lookupHash();
 
         int result;
-        if (restrictedVariables.get(variable)) {
-            int child = restrictedVariableValues.get(variable) ? table.high(mtbddNode) : table.low(mtbddNode);
-            result = restrictRecursive(child, restrictedVariables, restrictedVariableValues, highestRestrictedVariable);
+        if (restriction.supportUnsafe().get(nodeVariable)) {
+            int child = restriction.assignmentUnsafe().get(nodeVariable) ? high(mtbddNode) : low(mtbddNode);
+            result = restrictRecursive(child, restriction, maxRestrictedLevel);
         } else {
-            int low = table.pushToWorkStack(restrictRecursive(
-                    table.low(mtbddNode), restrictedVariables, restrictedVariableValues, highestRestrictedVariable));
-            int high = table.pushToWorkStack(restrictRecursive(
-                    table.high(mtbddNode), restrictedVariables, restrictedVariableValues, highestRestrictedVariable));
-            result = makeFunction(variable, low, high);
+            int low = table.pushToWorkStack(restrictRecursive(low(mtbddNode), restriction, maxRestrictedLevel));
+            int high = table.pushToWorkStack(restrictRecursive(high(mtbddNode), restriction, maxRestrictedLevel));
+            result = makeFunction(level, low, high);
             table.popFromWorkStack(2);
         }
         cache.putRestrict(hash, mtbddNode, result);
         return result;
+    }
+
+    @Override
+    public int adopt(
+            MultiTerminalDecisionDiagram source,
+            int function,
+            IntUnaryOperator variableMapping,
+            IntUnaryOperator valueMapping) {
+        if (!(source instanceof MtBddImpl)) {
+            throw new IllegalArgumentException("Can only adopt from " + MtBddImpl.class.getSimpleName());
+        }
+        MtBddImpl mtBddSource = (MtBddImpl) source;
+        assert mtBddSource.isValidFunction(function);
+
+        assert accessGuard.acquire();
+        assert table.workStacksEmpty();
+        // Adopting from this diagram itself, the source must survive the collections the rebuilding may cause.
+        boolean fromItself = mtBddSource == this;
+        if (fromItself) {
+            table.pushToWorkStack(function);
+        }
+        // Every rebuilt node sits on the work stack until the end, so no collection in between invalidates the memo.
+        IntIntHashMap adopted = new IntIntHashMap();
+        int result = adoptRecursive(mtBddSource, function, variableMapping, valueMapping, adopted);
+        table.popFromWorkStack(adopted.size() + (fromItself ? 1 : 0));
+        assert table.workStacksEmpty();
+        assert accessGuard.release();
+        return result;
+    }
+
+    /* One memo entry per source node, terminals included, so valueMapping runs once per value. A node whose mapped
+     * variable lies above both rebuilt children is a single node here; otherwise the if-then-else restructures. */
+    private int adoptRecursive(
+            MtBddImpl source,
+            int function,
+            IntUnaryOperator variableMapping,
+            IntUnaryOperator valueMapping,
+            IntIntHashMap adopted) {
+        int rebuilt = adopted.get(function, NodeTable.PLACEHOLDER);
+        if (rebuilt != NodeTable.PLACEHOLDER) {
+            return rebuilt;
+        }
+        if (function < 0) {
+            rebuilt = constant(valueMapping.applyAsInt(constantFunctionToValue(function)));
+        } else {
+            MtBddTable sourceTable = source.table;
+            int high =
+                    adoptRecursive(source, sourceTable.highUnchecked(function), variableMapping, valueMapping, adopted);
+            int low =
+                    adoptRecursive(source, sourceTable.lowUnchecked(function), variableMapping, valueMapping, adopted);
+            int variable = variableMapping.applyAsInt(sourceTable.variable(function));
+            if (variable < 0 || variable >= numberOfVariables()) {
+                throw new IllegalArgumentException(String.format("Variable %d does not exist", variable));
+            }
+            int level = levelOfVariable(variable);
+            rebuilt = level < decisionLevelOrMax(high) && level < decisionLevelOrMax(low)
+                    ? makeFunction(level, low, high)
+                    : ifThenElseRecursive(bdd.variableFunction(variable), high, low);
+        }
+        table.pushToWorkStack(rebuilt);
+        adopted.put(function, rebuilt);
+        return rebuilt;
     }
 
     @Override
@@ -1508,35 +1804,34 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         }
         int hash = cache.lookupHash();
 
-        // To simply branching, use MAX_VALUE as a sentinel
-        int bddVariable = bdd.decisionVariable(bddNode);
-        int thenVariable = isConstant(mtbddThenNode) ? Integer.MAX_VALUE : decisionVariable(mtbddThenNode);
-        int elseVariable = isConstant(mtbddElseNode) ? Integer.MAX_VALUE : decisionVariable(mtbddElseNode);
-        int variable = Math.min(bddVariable, Math.min(thenVariable, elseVariable));
+        int bddLevel = bdd.decisionLevel(bddNode);
+        int thenLevel = decisionLevelOrMax(mtbddThenNode);
+        int elseLevel = decisionLevelOrMax(mtbddElseNode);
+        int level = Math.min(bddLevel, Math.min(thenLevel, elseLevel));
 
-        int bddLow = bddVariable == variable ? bdd.lowOf(bddNode) : bddNode;
-        int bddHigh = bddVariable == variable ? bdd.highOf(bddNode) : bddNode;
-        int mtbddThenLow = thenVariable == variable ? table.low(mtbddThenNode) : mtbddThenNode;
-        int mtbddThenHigh = thenVariable == variable ? table.high(mtbddThenNode) : mtbddThenNode;
-        int mtbddElseLow = elseVariable == variable ? table.low(mtbddElseNode) : mtbddElseNode;
-        int mtbddElseHigh = elseVariable == variable ? table.high(mtbddElseNode) : mtbddElseNode;
+        int bddLow = bdd.lowIf(bddNode, bddLevel == level);
+        int bddHigh = bdd.highIf(bddNode, bddLevel == level);
+        int mtbddThenLow = lowIf(mtbddThenNode, thenLevel == level);
+        int mtbddThenHigh = highIf(mtbddThenNode, thenLevel == level);
+        int mtbddElseLow = lowIf(mtbddElseNode, elseLevel == level);
+        int mtbddElseHigh = highIf(mtbddElseNode, elseLevel == level);
 
         int low = table.pushToWorkStack(ifThenElseRecursive(bddLow, mtbddThenLow, mtbddElseLow));
         int high = table.pushToWorkStack(ifThenElseRecursive(bddHigh, mtbddThenHigh, mtbddElseHigh));
-        int result = makeFunction(variable, low, high);
+        int result = makeFunction(level, low, high);
         table.popFromWorkStack(2);
         cache.putIfThenElse(hash, bddNode, mtbddThenNode, mtbddElseNode, result);
         return result;
     }
 
     @Override
-    public MtBdd.Inverse invert(int mtbddFunction) {
+    public MultiTerminalDecisionDiagram.Inverse invert(int mtbddFunction) {
         assert isValidFunction(mtbddFunction);
         assert accessGuard.acquire();
         assert bdd.table().workStacksEmpty();
 
         int domainSize = allocatedValues.length();
-        MtBdd.Inverse result;
+        MultiTerminalDecisionDiagram.Inverse result;
         int falseFunction = bdd.falseFunction();
         if (domainSize <= INVERT_ARRAY_DOMAIN_THRESHOLD) {
             BitSet values = new BitSet(domainSize);
@@ -1551,11 +1846,11 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
                             : falseFunction,
                     values);
         } else {
-            Map<Integer, Integer> bddFunctions = invertRecursive(mtbddFunction, 0, new DepthPool<>(HashMap::new));
+            IntIntHashMap bddFunctions = invertRecursive(mtbddFunction, 0, new DepthPool<>(IntIntHashMap::new));
             bdd.table().popFromWorkStack(bddFunctions.size());
             BitSet values = new BitSet();
-            bddFunctions.keySet().forEach(values::set);
-            result = new FunctionInverse(mtbddFunction, v -> bddFunctions.getOrDefault(v, falseFunction), values);
+            bddFunctions.forEach((value, bddFunction) -> values.set(value));
+            result = new FunctionInverse(mtbddFunction, v -> bddFunctions.get(v, falseFunction), values);
         }
 
         assert bdd.table().workStacksEmpty();
@@ -1563,19 +1858,18 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         return result;
     }
 
-    private Map<Integer, Integer> invertRecursive(
-            int mtbddNode, int depth, DepthPool<Map<Integer, Integer>> highLeafPool) {
+    private IntIntHashMap invertRecursive(int mtbddNode, int depth, DepthPool<IntIntHashMap> highLeafPool) {
         if (isConstant(mtbddNode)) {
-            Map<Integer, Integer> result = new HashMap<>();
+            IntIntHashMap result = new IntIntHashMap();
             result.put(constantFunctionToValue(mtbddNode), bdd.table().pushToWorkStack(bdd.trueFunction()));
             return result;
         }
 
-        int variable = decisionVariable(mtbddNode);
-        Map<Integer, Integer> mtbddLowMap = invertRecursive(table.low(mtbddNode), depth + 1, highLeafPool);
+        int level = decisionLevel(mtbddNode);
+        IntIntHashMap mtbddLowMap = invertRecursive(low(mtbddNode), depth + 1, highLeafPool);
 
-        int highChild = table.high(mtbddNode);
-        Map<Integer, Integer> mtbddHighMap;
+        int highChild = high(mtbddNode);
+        IntIntHashMap mtbddHighMap;
         if (isConstant(highChild)) {
             mtbddHighMap = highLeafPool.get(depth);
             mtbddHighMap.clear();
@@ -1587,18 +1881,13 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         int lowCount = mtbddLowMap.size();
         int highCount = mtbddHighMap.size();
 
-        for (Map.Entry<Integer, Integer> entry : mtbddLowMap.entrySet()) {
-            int value = entry.getKey();
-            int bddLow = entry.getValue();
-            int bddHigh = mtbddHighMap.getOrDefault(value, bdd.falseFunction());
-            int bddResult = bdd.table().pushToWorkStack(bdd.makeFunction(variable, bddLow, bddHigh));
-            entry.setValue(bddResult);
-        }
+        mtbddLowMap.replaceAll((value, bddLow) -> bdd.table()
+                .pushToWorkStack(bdd.makeFunction(level, bddLow, mtbddHighMap.get(value, bdd.falseFunction()))));
         mtbddHighMap.forEach((value, bddHigh) -> mtbddLowMap.computeIfAbsent(
-                value, k -> bdd.table().pushToWorkStack(bdd.makeFunction(variable, bdd.falseFunction(), bddHigh))));
+                value, k -> bdd.table().pushToWorkStack(bdd.makeFunction(level, bdd.falseFunction(), bddHigh))));
 
         bdd.table().popFromWorkStack(lowCount + highCount + mtbddLowMap.size());
-        mtbddLowMap.values().forEach(bdd.table()::pushToWorkStack);
+        mtbddLowMap.forEach((value, bddFunction) -> bdd.table().pushToWorkStack(bddFunction));
         return mtbddLowMap;
     }
 
@@ -1614,10 +1903,10 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
             return result;
         }
 
-        int variable = decisionVariable(mtbddNode);
-        int[] lowArray = invertRecursiveArray(table.low(mtbddNode), domainSize, values, depth + 1, highLeafPool);
+        int level = decisionLevel(mtbddNode);
+        int[] lowArray = invertRecursiveArray(low(mtbddNode), domainSize, values, depth + 1, highLeafPool);
 
-        int highChild = table.high(mtbddNode);
+        int highChild = high(mtbddNode);
         int[] highArray;
         if (isConstant(highChild)) {
             highArray = highLeafPool.get(depth);
@@ -1650,7 +1939,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
             } else {
                 bddHigh = bdd.falseFunction();
             }
-            int bddResult = bddTable.pushToWorkStack(bdd.makeFunction(variable, bddLow, bddHigh));
+            int bddResult = bddTable.pushToWorkStack(bdd.makeFunction(level, bddLow, bddHigh));
             lowArray[value] = bddResult;
             count++;
         }
@@ -1671,10 +1960,10 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         assert table.workStacksEmpty();
 
         cache.initSplit();
-        int highestSplitVariable = splitVariables.length() - 1;
+        int maxSplitLevel = bdd.maxLevel(splitVariables);
         SplitBijection bijection = new SplitBijection(table);
         table.pushToWorkStack(mtbddFunction);
-        int mtbddG = splitRecursive(mtbddFunction, splitVariables, highestSplitVariable, bijection);
+        int mtbddG = splitRecursive(mtbddFunction, splitVariables, maxSplitLevel, bijection);
         table.popFromWorkStack();
         table.popFromSecondaryWorkStack(bijection.size());
         assert table.workStacksEmpty();
@@ -1710,28 +1999,31 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         // relabeler on intermediate nodes, which is tough to determine
 
         cache.initSplit();
-        int highestSplitVariable = splitVariables.length() - 1;
+        int maxSplitLevel = bdd.maxLevel(splitVariables);
         SplitBijection bijection = new SplitBijection(table);
         table.pushToWorkStack(mtbddFunction);
-        int mtbddG = splitRecursive(mtbddFunction, splitVariables, highestSplitVariable, bijection);
+        int mtbddG = splitRecursive(mtbddFunction, splitVariables, maxSplitLevel, bijection);
         table.popFromWorkStack();
 
         table.pushToWorkStack(mtbddG);
         // Relabel every residual up front, once per distinct residual - which is what this method
         // promises. Doing it inside the map callback instead would call the relabeler once per *edge*
         // into a constant, since computeMap short-circuits constants before its cache lookup; a relabeler
-        // with side effects (the interesting case - see BddMapFactory#split) would then see the same
+        // with side effects (the interesting case - see BddMap#split) would then see the same
         // sub-function twice.
         int residualCount = bijection.size();
         int[] relabeledResiduals = new int[residualCount];
         for (int index = 0; index < residualCount; index++) {
             relabeledResiduals[index] = relabeler.applyAsInt(bijection.getFunction(index));
+            // Handed out before any node holds it, so protected until computeMap has built it in. Every one is a
+            // terminal of the result, so this keeps nothing alive the result would not, and a terminal is no node.
+            table.pushToWorkStack(of(relabeledResiduals[index]));
         }
 
         IntUnaryOperator combined = value -> relabeledResiduals[value];
         cache.initMap(combined);
-        int result = computeMap(mtbddG, bdd.trueFunction(), combined);
-        table.popFromWorkStack();
+        int result = computeMap(mtbddG, bdd.trueFunction(), combined, cache.mapCache(), cache.mapSimplifyCache());
+        table.popFromWorkStack(residualCount + 1);
 
         table.popFromSecondaryWorkStack(bijection.size());
         assert table.workStacksEmpty();
@@ -1739,14 +2031,143 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         return result;
     }
 
-    private int splitRecursive(
-            int mtbddNode, BitSet splitVariables, int highestSplitVariable, SplitBijection bijection) {
+    @Override
+    public FunctionToFunctionMap splitBdd(int bddFunction, BitSet splitVariables) {
+        assert bdd.isValidFunction(bddFunction);
+        assert accessGuard.acquire();
+        assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
+
+        SplitBijection residuals = new SplitBijection(bdd.table());
+        int mtbddG = splitBdd(bddFunction, splitVariables, residuals);
+        bdd.table().popFromSecondaryWorkStack(residuals.size());
+        assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
+        assert accessGuard.release();
+
+        BitSet indices = new BitSet();
+        indices.set(0, residuals.size());
+        return new FunctionToFunctionMap() {
+            @Override
+            public int function() {
+                return mtbddG;
+            }
+
+            @Override
+            public int functionFor(int value) {
+                return residuals.getFunction(value);
+            }
+
+            @Override
+            public BitSet codomain() {
+                return indices;
+            }
+        };
+    }
+
+    // splitBdd with the residuals relabeled, as splitRelabeled does for split.
+    int splitBddRelabeled(int bddFunction, BitSet splitVariables, IntUnaryOperator relabeler) {
+        assert bdd.isValidFunction(bddFunction);
+        assert accessGuard.acquire();
+        assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
+
+        SplitBijection residuals = new SplitBijection(bdd.table());
+        int mtbddG = table.pushToWorkStack(splitBdd(bddFunction, splitVariables, residuals));
+        // As in splitRelabeled: once per distinct residual, up front.
+        int[] relabeledResiduals = new int[residuals.size()];
+        for (int index = 0; index < relabeledResiduals.length; index++) {
+            relabeledResiduals[index] = relabeler.applyAsInt(residuals.getFunction(index));
+            table.pushToWorkStack(of(relabeledResiduals[index]));
+        }
+        IntUnaryOperator combined = value -> relabeledResiduals[value];
+        cache.initMap(combined);
+        int result = computeMap(mtbddG, bdd.trueFunction(), combined, cache.mapCache(), cache.mapSimplifyCache());
+        table.popFromWorkStack(relabeledResiduals.length + 1);
+
+        bdd.table().popFromSecondaryWorkStack(residuals.size());
+        assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
+        assert accessGuard.release();
+        return result;
+    }
+
+    // The residuals are BDD functions, interned on the BDD's secondary work stack for the whole call.
+    private int splitBdd(int bddFunction, BitSet splitVariables, SplitBijection residuals) {
+        cache.initSplitBdd();
+        bdd.table().pushToWorkStack(bddFunction);
+        int result = splitBddRecursive(bddFunction, splitVariables, bdd.maxLevel(splitVariables), residuals);
+        bdd.table().popFromWorkStack();
+        return result;
+    }
+
+    private int splitBddRecursive(int bddFunction, BitSet splitVariables, int maxSplitLevel, SplitBijection residuals) {
+        int level = bdd.decisionLevelOrMax(bddFunction);
+        if (level > maxSplitLevel) {
+            return of(residuals.intern(bddFunction));
+        }
+
+        int lookup = cache.lookupSplitBdd(bddFunction);
+        if (lookup != placeholder()) {
+            return lookup;
+        }
+        int hash = cache.lookupHash();
+
+        int low = table.pushToWorkStack(
+                splitBddRecursive(bdd.low(bddFunction), splitVariables, maxSplitLevel, residuals));
+        int high = table.pushToWorkStack(
+                splitBddRecursive(bdd.high(bddFunction), splitVariables, maxSplitLevel, residuals));
+        int result = splitVariables.get(bdd.decisionVariable(bddFunction))
+                ? makeFunction(level, low, high)
+                : splitBddCombineRecursive(low, high, level, residuals);
+        table.popFromWorkStack(2);
+        cache.putSplitBdd(hash, bddFunction, result);
+        return result;
+    }
+
+    // splitCombineRecursive's shape, building the residual on the BDD side.
+    private int splitBddCombineRecursive(int lowFragment, int highFragment, int level, SplitBijection residuals) {
+        if (lowFragment == highFragment) {
+            return lowFragment;
+        }
+
+        int lookup = cache.lookupSplitBddCombine(lowFragment, highFragment, level);
+        if (lookup != placeholder()) {
+            return lookup;
+        }
+        int hash = cache.lookupHash();
+
+        int result;
+        if (isConstant(lowFragment) && isConstant(highFragment)) {
+            int lowResidual = residuals.getFunction(constantFunctionToValue(lowFragment));
+            int highResidual = residuals.getFunction(constantFunctionToValue(highFragment));
+            result = of(residuals.intern(bdd.makeFunction(level, lowResidual, highResidual)));
+        } else {
+            int lowLevel = decisionLevelOrMax(lowFragment);
+            int highLevel = decisionLevelOrMax(highFragment);
+            int splitLevel = Math.min(lowLevel, highLevel);
+
+            int low = table.pushToWorkStack(splitBddCombineRecursive(
+                    lowIf(lowFragment, lowLevel == splitLevel),
+                    lowIf(highFragment, highLevel == splitLevel),
+                    level,
+                    residuals));
+            int high = table.pushToWorkStack(splitBddCombineRecursive(
+                    highIf(lowFragment, lowLevel == splitLevel),
+                    highIf(highFragment, highLevel == splitLevel),
+                    level,
+                    residuals));
+            result = makeFunction(splitLevel, low, high);
+            table.popFromWorkStack(2);
+        }
+        cache.putSplitBddCombine(hash, lowFragment, highFragment, level, result);
+        return result;
+    }
+
+    private int splitRecursive(int mtbddNode, BitSet splitVariables, int maxSplitLevel, SplitBijection bijection) {
         if (isConstant(mtbddNode)) {
             return of(bijection.intern(mtbddNode));
         }
 
-        int variable = decisionVariable(mtbddNode);
-        if (variable > highestSplitVariable) {
+        int nodeVariable = decisionVariable(mtbddNode);
+        int level = levelOfVariable(nodeVariable);
+        if (level > maxSplitLevel) {
             return of(bijection.intern(mtbddNode));
         }
 
@@ -1756,25 +2177,23 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         }
         int hash = cache.lookupHash();
 
-        int low = table.pushToWorkStack(
-                splitRecursive(table.low(mtbddNode), splitVariables, highestSplitVariable, bijection));
-        int high = table.pushToWorkStack(
-                splitRecursive(table.high(mtbddNode), splitVariables, highestSplitVariable, bijection));
+        int low = table.pushToWorkStack(splitRecursive(low(mtbddNode), splitVariables, maxSplitLevel, bijection));
+        int high = table.pushToWorkStack(splitRecursive(high(mtbddNode), splitVariables, maxSplitLevel, bijection));
 
-        int result = splitVariables.get(variable)
-                ? makeFunction(variable, low, high)
-                : splitCombineRecursive(low, high, variable, bijection);
+        int result = splitVariables.get(nodeVariable)
+                ? makeFunction(level, low, high)
+                : splitCombineRecursive(low, high, level, bijection);
         table.popFromWorkStack(2);
         cache.putSplit(hash, mtbddNode, result);
         return result;
     }
 
-    private int splitCombineRecursive(int lowFragment, int highFragment, int variable, SplitBijection bijection) {
+    private int splitCombineRecursive(int lowFragment, int highFragment, int level, SplitBijection bijection) {
         if (lowFragment == highFragment) {
             return lowFragment;
         }
 
-        int lookup = cache.lookupSplitCombine(lowFragment, highFragment, variable);
+        int lookup = cache.lookupSplitCombine(lowFragment, highFragment, level);
         if (lookup != placeholder()) {
             return lookup;
         }
@@ -1784,24 +2203,24 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         if (isConstant(lowFragment) && isConstant(highFragment)) {
             int lowH = bijection.getFunction(constantFunctionToValue(lowFragment));
             int highH = bijection.getFunction(constantFunctionToValue(highFragment));
-            int newH = makeFunction(variable, lowH, highH);
+            int newH = makeFunction(level, lowH, highH);
             result = of(bijection.intern(newH));
         } else {
-            int lowVariable = isConstant(lowFragment) ? Integer.MAX_VALUE : decisionVariable(lowFragment);
-            int highVariable = isConstant(highFragment) ? Integer.MAX_VALUE : decisionVariable(highFragment);
-            int splitVariable = Math.min(lowVariable, highVariable);
+            int lowLevel = decisionLevelOrMax(lowFragment);
+            int highLevel = decisionLevelOrMax(highFragment);
+            int splitLevel = Math.min(lowLevel, highLevel);
 
-            int lowLow = lowVariable == splitVariable ? table.low(lowFragment) : lowFragment;
-            int lowHigh = lowVariable == splitVariable ? table.high(lowFragment) : lowFragment;
-            int highLow = highVariable == splitVariable ? table.low(highFragment) : highFragment;
-            int highHigh = highVariable == splitVariable ? table.high(highFragment) : highFragment;
+            int lowLow = lowIf(lowFragment, lowLevel == splitLevel);
+            int lowHigh = highIf(lowFragment, lowLevel == splitLevel);
+            int highLow = lowIf(highFragment, highLevel == splitLevel);
+            int highHigh = highIf(highFragment, highLevel == splitLevel);
 
-            int low = table.pushToWorkStack(splitCombineRecursive(lowLow, highLow, variable, bijection));
-            int high = table.pushToWorkStack(splitCombineRecursive(lowHigh, highHigh, variable, bijection));
-            result = makeFunction(splitVariable, low, high);
+            int low = table.pushToWorkStack(splitCombineRecursive(lowLow, highLow, level, bijection));
+            int high = table.pushToWorkStack(splitCombineRecursive(lowHigh, highHigh, level, bijection));
+            result = makeFunction(splitLevel, low, high);
             table.popFromWorkStack(2);
         }
-        cache.putSplitCombine(hash, lowFragment, highFragment, variable, result);
+        cache.putSplitCombine(hash, lowFragment, highFragment, level, result);
         return result;
     }
 
@@ -1810,7 +2229,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     }
 
     private static final class SplitBijection {
-        private final Map<Integer, Integer> functionToValue = new HashMap<>();
+        private final IntIntHashMap functionToValue = new IntIntHashMap();
         private final IntArrayList valueToFunction = new IntArrayList();
         private final NodeTable table;
 
@@ -1831,30 +2250,6 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
 
         int size() {
             return valueToFunction.size();
-        }
-    }
-
-    private static final class IntArrayList {
-        private int[] values = new int[8];
-        private int size = 0;
-
-        int add(int value) {
-            if (size == values.length) {
-                values = Arrays.copyOf(values, values.length * 2);
-            }
-            int index = size;
-            values[index] = value;
-            size += 1;
-            return index;
-        }
-
-        int get(int index) {
-            assert index >= 0 && index < size;
-            return values[index];
-        }
-
-        int size() {
-            return size;
         }
     }
 
@@ -1923,8 +2318,8 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
 
     private int cartesianProductRecursive(
             int[] functions, int[] values, int depth, DepthPool<int[]> highPool, IntTupleBijection bijection) {
-        int variable = minVariable(functions);
-        if (variable == Integer.MAX_VALUE) {
+        int level = minLevel(functions);
+        if (level == Integer.MAX_VALUE) {
             for (int i = 0; i < functions.length; i++) {
                 values[i] = constantFunctionToValue(functions[i]);
             }
@@ -1937,17 +2332,17 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         }
         int hash = cache.lookupHash();
 
-        // These are modified in place so we need to copy for caching; we have to see whether caching actually helps
-        // more than this hurts
+        // TODO Measure whether caching here pays for the copy this forces
+        // The operand array is rewritten in place below, so the cache needs one of its own.
         int[] key = Arrays.copyOf(functions, functions.length);
 
         int[] highFunctions = highPool.get(depth);
-        splitByVariable(functions, highFunctions, variable);
+        splitByLevel(functions, highFunctions, level);
 
         int low = table.pushToWorkStack(cartesianProductRecursive(functions, values, depth + 1, highPool, bijection));
         int high =
                 table.pushToWorkStack(cartesianProductRecursive(highFunctions, values, depth + 1, highPool, bijection));
-        int result = makeFunction(variable, low, high);
+        int result = makeFunction(level, low, high);
         table.popFromWorkStack(2);
         cache.putCartesianProduct(hash, key, result);
         return result;
@@ -1978,28 +2373,6 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         }
     }
 
-    private static final class DepthPool<V> {
-        private final Supplier<V> factory;
-        private @Nullable Object[] layers = new Object[8];
-
-        DepthPool(Supplier<V> factory) {
-            this.factory = factory;
-        }
-
-        @SuppressWarnings("unchecked")
-        V get(int depth) {
-            if (depth >= layers.length) {
-                layers = Arrays.copyOf(layers, Math.max(depth + 1, layers.length * 2));
-            }
-            V value = (V) layers[depth];
-            if (value == null) {
-                value = factory.get();
-                layers[depth] = value;
-            }
-            return value;
-        }
-    }
-
     @Override
     public int constrain(int mtbddFunction, int bddDomain) {
         assert isValidFunction(mtbddFunction);
@@ -2025,7 +2398,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
             return of(anyLeafValue(mtbddFunction));
         }
 
-        // Note this deliberately does not pre-reduce bddDomain via Bdd#simplificationDomain: the recursion
+        // Deliberately does not pre-reduce bddDomain via Bdd#simplificationDomain: the recursion
         // already performs that quantification lazily, and doing it eagerly only pays when amortized over
         // many calls against the same domain. A caller with a large, reused care set should hoist it.
         return constrainSimplify(mtbddFunction, bddDomain, false);
@@ -2046,12 +2419,6 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         return result;
     }
 
-    /**
-     * {@link #simplify} without the entry-point bookkeeping, for the {@code xxxSimplify} recursions to
-     * finish off a sub-result they have stopped descending into. Requires {@code mtbddNode} and
-     * {@code bddDomain} to be protected by the caller, and {@code bddDomain} to be non-empty; a
-     * {@code TRUE} domain returns {@code mtbddNode} unchanged.
-     */
     private int computeSimplify(int mtbddNode, int bddDomain) {
         return constrainSimplifyRecursive(mtbddNode, bddDomain, false);
     }
@@ -2068,25 +2435,26 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         }
         int hash = cache.lookupHash();
 
-        int mtbddVariable = decisionVariable(mtbddNode);
-        int bddVariable = bdd.decisionVariable(bddDomain);
-        int variable = Math.min(mtbddVariable, bddVariable);
+        int mtbddLevel = decisionLevel(mtbddNode);
+        int bddLevel = bdd.decisionLevel(bddDomain);
+        int level = Math.min(mtbddLevel, bddLevel);
 
-        int mtbddLow = mtbddVariable == variable ? table.low(mtbddNode) : mtbddNode;
-        int mtbddHigh = mtbddVariable == variable ? table.high(mtbddNode) : mtbddNode;
-        int bddLow = bddVariable == variable ? bdd.lowOf(bddDomain) : bddDomain;
-        int bddHigh = bddVariable == variable ? bdd.highOf(bddDomain) : bddDomain;
+        int mtbddLow = lowIf(mtbddNode, mtbddLevel == level);
+        int mtbddHigh = highIf(mtbddNode, mtbddLevel == level);
+        boolean bddDecides = bddLevel == level;
+        int bddLow = bdd.lowIf(bddDomain, bddDecides);
+        int bddHigh = bdd.highIf(bddDomain, bddDecides);
 
         int result;
-        if (bddLow == bdd.falseFunction()) {
+        if (bddDecides && bddLow == bdd.falseFunction()) {
             result = constrainSimplifyRecursive(mtbddHigh, bddHigh, constrain);
-        } else if (bddHigh == bdd.falseFunction()) {
+        } else if (bddDecides && bddHigh == bdd.falseFunction()) {
             result = constrainSimplifyRecursive(mtbddLow, bddLow, constrain);
-        } else if (bddVariable < mtbddVariable) {
+        } else if (bddLevel < mtbddLevel) {
             if (constrain) {
                 int low = table.pushToWorkStack(constrainSimplifyRecursive(mtbddNode, bddLow, true));
                 int high = table.pushToWorkStack(constrainSimplifyRecursive(mtbddNode, bddHigh, true));
-                result = makeFunction(variable, low, high);
+                result = makeFunction(level, low, high);
                 table.popFromWorkStack(2);
             } else {
                 int widenedDomain = bdd.table().pushToWorkStack(bdd.computeOr(bddLow, bddHigh));
@@ -2096,7 +2464,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         } else {
             int low = table.pushToWorkStack(constrainSimplifyRecursive(mtbddLow, bddLow, constrain));
             int high = table.pushToWorkStack(constrainSimplifyRecursive(mtbddHigh, bddHigh, constrain));
-            result = makeFunction(variable, low, high);
+            result = makeFunction(level, low, high);
             table.popFromWorkStack(2);
         }
 
@@ -2111,7 +2479,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
     private int anyLeafValue(int mtbddNode) {
         int node = mtbddNode;
         while (!isConstant(node)) {
-            node = table.low(node);
+            node = low(node);
         }
         return constantFunctionToValue(node);
     }
@@ -2128,351 +2496,304 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         Map<String, Object> statistics = new HashMap<>(table.statistics("mtbdd_"));
         statistics.putAll(cache.statistics());
         statistics.put("mtbdd_allocated_values", allocatedValues.cardinality());
+        statistics.put("mtbdd_value_triggered_collections", valueTriggeredCollectionCount);
         assert accessGuard.release();
-        return DecisionDiagram.prefixStatistics(bdd.configuration().name(), statistics);
-    }
-
-    /** A {@link ValuedIterator} over a fixed, unconstrained single element - the constant-function case. */
-    private static final class SingletonValuedIterator<E> implements ValuedIterator<E> {
-        private final E element;
-        private final int value;
-        private boolean hasNext = true;
-
-        SingletonValuedIterator(E element, int value) {
-            this.element = element;
-            this.value = value;
-        }
-
-        @Override
-        public boolean hasNext() {
-            return hasNext;
-        }
-
-        @Override
-        public E next() {
-            if (!hasNext) {
-                throw new NoSuchElementException("No next element");
-            }
-            hasNext = false;
-            return element;
-        }
-
-        @Override
-        public int value() {
-            return value;
-        }
+        return Util.prefixStatistics(bdd.configuration().name(), statistics);
     }
 
     /**
-     * A {@link ValuedIterator} over an existing iterator whose elements all yield the same value - used for
-     * a constant function, where the value does not depend on the assignment at all.
+     * The traversal both iterators run on: it walks the paths of a function, one at a time, in the order
+     * the diagram is laid out in, and reports the terminal each one reaches.
+     *
+     * <p>Not a {@link Cursor} itself: it hands nothing out, it only moves. {@link #advance()} steps it on,
+     * and the state it exposes describes where it now is. The cursors below differ only in what they make
+     * of that state, which is why the descent and the backtracking live here and nowhere else. It is a
+     * final class held in fields of its own type, so nothing here is dispatched virtually.
+     *
+     * <p>Unlike a {@code Bdd}, there is no {@code FALSE} to prune against: every decision node's high
+     * branch is a genuine alternative. A {@code values} predicate takes that role when the caller only
+     * wants paths reaching certain terminals - {@code null} keeps every path.
      */
-    private static final class ConstantValuedIterator<E> implements ValuedIterator<E> {
-        private final Iterator<E> iterator;
-        private final int value;
-
-        ConstantValuedIterator(Iterator<E> iterator, int value) {
-            this.iterator = iterator;
-            this.value = value;
-        }
-
-        @Override
-        public boolean hasNext() {
-            return iterator.hasNext();
-        }
-
-        @Override
-        public E next() {
-            return iterator.next();
-        }
-
-        @Override
-        public int value() {
-            return value;
-        }
-    }
-
-    private static final class PathIterator implements ValuedIterator<BinaryPath> {
-        private static final int NON_PATH_NODE = NodeTable.PLACEHOLDER;
-
-        private final MtBddImpl mtbdd;
-        private final int[] path;
-        private final BitSet pathSupport;
-        private final BitSet assignment;
-        private final BinaryPath currentPath;
-
-        private boolean firstRun = true;
-        private int highestSwitchableVariable = 0;
-        private int leafNodeVariable;
-        private boolean hasNextPath;
-        private final int rootVariable;
-        private int currentValue = -1;
-
-        PathIterator(MtBddImpl mtbdd, int function) {
-            assert mtbdd.isValidNonConstantFunction(function);
-
-            this.mtbdd = mtbdd;
-            int variableCount = mtbdd.numberOfVariables();
-            this.path = new int[variableCount];
-            this.pathSupport = new BitSet(variableCount);
-            this.assignment = new BitSet(variableCount);
-            this.currentPath = new BinaryPath(assignment, pathSupport);
-
-            rootVariable = mtbdd.decisionVariable(function);
-
-            Arrays.fill(path, NON_PATH_NODE);
-            path[rootVariable] = function;
-            pathSupport.set(rootVariable);
-
-            leafNodeVariable = 0;
-            hasNextPath = true;
-        }
-
-        @Override
-        public int value() {
-            assert !firstRun : "value() is only defined after the first next()";
-            return currentValue;
-        }
-
-        @Override
-        public boolean hasNext() {
-            return hasNextPath;
-        }
-
-        @Override
-        public BinaryPath next() {
-            assert IntStream.range(0, mtbdd.numberOfVariables())
-                    .allMatch(i -> pathSupport.get(i) || path[i] == NON_PATH_NODE);
-
-            int currentNode;
-            if (firstRun) {
-                firstRun = false;
-                currentNode = path[rootVariable];
-            } else {
-                assert hasNextPath : "Expected another path after " + assignment;
-
-                // Backtrack until we find a node whose high branch we haven't taken yet.
-                currentNode = path[leafNodeVariable];
-                int branchVar = leafNodeVariable;
-
-                while (assignment.get(branchVar)) {
-                    branchVar = pathSupport.previousSetBit(branchVar - 1);
-                    if (branchVar == -1) {
-                        throw new NoSuchElementException("No next element");
-                    }
-                    currentNode = path[branchVar];
-                }
-                assert !assignment.get(branchVar);
-                assert leafNodeVariable >= highestSwitchableVariable;
-                assert mtbdd.decisionVariable(currentNode) == branchVar;
-                assert pathSupport.get(branchVar);
-
-                // currentNode is the shallowest node we can still switch to high; do so and descend anew.
-                assignment.clear(branchVar + 1, leafNodeVariable + 1);
-                Arrays.fill(path, branchVar + 1, leafNodeVariable + 1, NON_PATH_NODE);
-                pathSupport.clear(branchVar + 1, leafNodeVariable + 1);
-
-                assignment.set(branchVar);
-                assert path[branchVar] == currentNode;
-                currentNode = mtbdd.table.high(currentNode);
-                leafNodeVariable = branchVar;
-
-                // We just consumed the recorded switch candidate, if any - clear it.
-                if (highestSwitchableVariable == leafNodeVariable) {
-                    highestSwitchableVariable = -1;
-                }
-            }
-
-            hasNextPath = highestSwitchableVariable > -1 && highestSwitchableVariable < leafNodeVariable;
-
-            while (!mtbdd.isConstant(currentNode)) {
-                leafNodeVariable = mtbdd.decisionVariable(currentNode);
-                path[leafNodeVariable] = currentNode;
-                pathSupport.set(leafNodeVariable);
-
-                // Every decision node's high branch is a genuine, always-reachable alternative (no FALSE
-                // to prune here) - the first one found on this descent, unless one is already recorded,
-                // becomes the next backtracking target.
-                if (!hasNextPath) {
-                    hasNextPath = true;
-                    highestSwitchableVariable = leafNodeVariable;
-                }
-                currentNode = mtbdd.table.low(currentNode);
-            }
-            currentValue = constantFunctionToValue(currentNode);
-
-            return currentPath;
-        }
-    }
-
-    private static final class AssignmentIterator implements ValuedIterator<BitSet> {
+    private static final class PathWalk {
         private static final int NON_PATH_NODE = NodeTable.PLACEHOLDER;
 
         private final MtBddImpl mtbdd;
         private final @Nullable IntPredicate values;
-        private final BitSet support;
         private final int[] path;
-        private final BitSet assignment;
-        private boolean firstRun = true;
-        private int highestSwitchableVariable = 0;
-        private int leafNodeVariable;
-        private boolean hasNextPath;
-        private boolean hasNextAssignment;
-        private final int rootVariable;
-        private int currentValue = -1;
+        private final BitSet levelAssignment;
+        private final BitSet pathSupportLevels;
+        private final int rootLevel;
+        private boolean onPath;
+        private int leafNodeLevel;
+        private int pathValue = -1;
 
-        AssignmentIterator(MtBddImpl mtbdd, int function, @Nullable IntPredicate values, BitSet support) {
-            assert !mtbdd.isConstant(function);
+        PathWalk(MtBddImpl mtbdd, int function, @Nullable IntPredicate values) {
+            assert mtbdd.isValidNonConstantFunction(function);
+            assert values == null || mtbdd.canReachMatch(function, values);
 
+            int variableCount = mtbdd.numberOfVariables();
             this.mtbdd = mtbdd;
             this.values = values;
-            this.support = support;
-            this.path = new int[mtbdd.numberOfVariables()];
-            this.assignment = new BitSet(mtbdd.numberOfVariables());
-
-            if (!mtbdd.canReachMatch(function, values)) {
-                // No solution exists at all - leave the iterator in an immediately-exhausted state.
-                rootVariable = -1;
-                hasNextPath = false;
-                hasNextAssignment = false;
-                return;
-            }
-
-            rootVariable = mtbdd.decisionVariable(function);
-            assert support.get(rootVariable);
+            this.path = new int[variableCount];
+            this.levelAssignment = new BitSet(variableCount);
+            this.pathSupportLevels = new BitSet(variableCount);
+            this.rootLevel = mtbdd.decisionLevel(function);
 
             Arrays.fill(path, NON_PATH_NODE);
-            path[rootVariable] = function;
+            path[rootLevel] = function;
+            pathSupportLevels.set(rootLevel);
+            this.leafNodeLevel = 0;
+            /* Positioned on the first path right away, so there is no "have we started yet" state to
+             * carry: whoever holds the cursor asks onPath(), and advance() only ever means "the next
+             * one". The constructor already checked the root can reach a match, so this lands. */
+            descend(path[rootLevel]);
+            this.onPath = true;
+        }
 
-            leafNodeVariable = 0;
-            hasNextPath = true;
-            hasNextAssignment = true;
+        /** The levels the current path fixes. */
+        BitSet pathSupportLevels() {
+            return pathSupportLevels;
+        }
+
+        /**
+         * The values the current path fixes those levels to. Also the working set an assignment iterator
+         * adds the levels the path leaves free to - they are disjoint from the path's own by construction,
+         * and a path switch only ever clears a range it has already counted back down to zero.
+         */
+        BitSet levelAssignment() {
+            return levelAssignment;
+        }
+
+        /** The terminal the current path reaches. Only the path decides it. */
+        int pathValue() {
+            return pathValue;
+        }
+
+        int rootFunction() {
+            return path[rootLevel];
+        }
+
+        /** Whether the cursor is on a path: false once the enumeration is over. */
+        boolean onPath() {
+            return onPath;
+        }
+
+        /** Moves to the next path. Returns {@code false} when there are none left. */
+        boolean advance() {
+            assert IntStream.range(0, path.length)
+                    .allMatch(i -> pathSupportLevels.get(i) == (path[i] != NON_PATH_NODE));
+
+            // Backtrack to a node whose high branch we have not taken yet and which can still reach a match.
+            int currentNode = path[leafNodeLevel];
+            int branchLevel = leafNodeLevel;
+
+            while (levelAssignment.get(branchLevel) || !canReach(mtbdd.table.high(currentNode))) {
+                branchLevel = pathSupportLevels.previousSetBit(branchLevel - 1);
+                if (branchLevel == -1) {
+                    onPath = false;
+                    return false;
+                }
+                currentNode = path[branchLevel];
+            }
+            assert mtbdd.decisionLevel(currentNode) == branchLevel;
+            assert path[branchLevel] == currentNode;
+
+            // Switch it to high and descend anew, retracting everything the old path had below it.
+            levelAssignment.clear(branchLevel + 1, leafNodeLevel + 1);
+            Arrays.fill(path, branchLevel + 1, leafNodeLevel + 1, NON_PATH_NODE);
+            pathSupportLevels.clear(branchLevel + 1, leafNodeLevel + 1);
+            levelAssignment.set(branchLevel);
+            leafNodeLevel = branchLevel;
+
+            int high = mtbdd.table.high(currentNode);
+            assert canReach(high);
+            descend(high);
+            return true;
+        }
+
+        /** Descends preferring the low branch wherever it can still reach a match. */
+        private void descend(int startNode) {
+            int currentNode = startNode;
+            while (!mtbdd.isConstant(currentNode)) {
+                leafNodeLevel = mtbdd.decisionLevel(currentNode);
+                path[leafNodeLevel] = currentNode;
+                pathSupportLevels.set(leafNodeLevel);
+
+                int low = mtbdd.table.low(currentNode);
+                if (canReach(low)) {
+                    currentNode = low;
+                } else {
+                    levelAssignment.set(leafNodeLevel);
+                    currentNode = mtbdd.table.high(currentNode);
+                }
+            }
+            pathValue = constantFunctionToValue(currentNode);
+            assert values == null || values.test(pathValue);
+        }
+
+        private boolean canReach(int node) {
+            return values == null || mtbdd.canReachMatch(node, values);
+        }
+    }
+
+    /** A caller's support, as the levels the walk works in. */
+    private static BitSet levelsOf(MtBddImpl mtbdd, BitSet variables) {
+        BitSet levels = new BitSet(mtbdd.numberOfVariables());
+        BitSets.map(variables, levels, mtbdd::levelOfVariable);
+        return levels;
+    }
+
+    /**
+     * Walks the paths of a function together with the terminal each one reaches.
+     *
+     * <p>Hands out its own working path, so nothing is copied per element - see {@link Cursor}. The one
+     * exception is a diagram that has been reordered, where the walk is by level and the caller wants
+     * variables, and a translation buffer is unavoidable.
+     */
+    private static final class PathCursor implements ValuedCursor<Cube> {
+        private final MtBddImpl mtbdd;
+        private final PathWalk path;
+        /** Only on a reordered diagram, where the walk is by level and the caller wants variables. */
+        private final @Nullable Cube translated;
+        /** What {@link #current()} hands out: the translation buffer, or the walk's own sets wrapped. */
+        private final Cube current;
+
+        private boolean valid;
+
+        PathCursor(MtBddImpl mtbdd, int function) {
+            int variableCount = mtbdd.numberOfVariables();
+            this.mtbdd = mtbdd;
+            this.path = new PathWalk(mtbdd, function, null);
+            this.valid = path.onPath();
+            this.translated =
+                    mtbdd.isReordered() ? Cube.ofUnsafe(new BitSet(variableCount), new BitSet(variableCount)) : null;
+            this.current =
+                    translated == null ? Cube.ofUnsafe(path.levelAssignment(), path.pathSupportLevels()) : translated;
+            if (valid) {
+                translate();
+            }
+        }
+
+        @Override
+        public boolean valid() {
+            return valid;
+        }
+
+        @Override
+        public Cube current() {
+            assert valid; // current() is only defined while the cursor is valid
+            return current;
         }
 
         @Override
         public int value() {
-            assert currentValue >= 0 : "value() is only defined after the first next()";
-            return currentValue;
+            assert valid; // value() is only defined while the cursor is valid
+            return path.pathValue();
         }
 
         @Override
-        public boolean hasNext() {
-            assert !hasNextPath || hasNextAssignment;
-            return hasNextAssignment;
+        public boolean advance() {
+            if (!valid) {
+                return false;
+            }
+            valid = path.advance();
+            if (valid) {
+                translate();
+            }
+            return valid;
+        }
+
+        private void translate() {
+            if (translated != null) {
+                BitSets.map(path.levelAssignment(), translated.assignmentUnsafe(), mtbdd::variableAtLevel);
+                BitSets.map(path.pathSupportLevels(), translated.supportUnsafe(), mtbdd::variableAtLevel);
+            }
+        }
+    }
+
+    /**
+     * Walks the assignments whose terminal matches, together with that terminal: every path the predicate
+     * admits, and for each of them every way of filling in the support variables it leaves free. Only the
+     * path decides the terminal, so {@link #value()} stays put across those.
+     */
+    private static final class AssignmentCursor implements ValuedCursor<BitSet> {
+        private final MtBddImpl mtbdd;
+        private final PathWalk path;
+        private final BitSet supportLevels;
+        /** The support levels the current path leaves free; see BddImpl's solution cursor. */
+        private final BitSet freeLevels;
+
+        private final @Nullable BitSet translated;
+        private boolean valid;
+
+        AssignmentCursor(MtBddImpl mtbdd, int function, @Nullable IntPredicate values, BitSet supportLevels) {
+            assert !mtbdd.isConstant(function);
+            assert mtbdd.canReachMatch(function, values) : "The empty walk is the factory's business";
+            assert supportLevels.get(mtbdd.decisionVariable(function));
+
+            int variableCount = mtbdd.numberOfVariables();
+            this.mtbdd = mtbdd;
+            boolean translating = mtbdd.isReordered();
+            this.supportLevels = translating ? levelsOf(mtbdd, supportLevels) : supportLevels;
+            this.freeLevels = new BitSet(variableCount);
+            this.translated = translating ? new BitSet(variableCount) : null;
+            this.path = new PathWalk(mtbdd, function, values);
+            this.valid = path.onPath();
+            if (valid) {
+                refreshFreeLevels();
+                translate();
+            }
         }
 
         @Override
-        public BitSet next() {
-            assert IntStream.range(0, mtbdd.numberOfVariables())
-                    .allMatch(i -> support.get(i) || path[i] == NON_PATH_NODE);
+        public boolean valid() {
+            return valid;
+        }
 
-            int currentNode;
-            if (firstRun) {
-                firstRun = false;
-                currentNode = path[rootVariable];
-            } else {
-                // Try to advance any non-path ("don't care") support variable, treating them as a binary
-                // counter: flip the lowest 0-bit to 1 (done), or clear a 1-bit and carry into the next one.
-                boolean clearedAny = false;
-                for (int var = support.nextSetBit(0); var >= 0; var = support.nextSetBit(var + 1)) {
-                    if (path[var] == NON_PATH_NODE) {
-                        if (assignment.get(var)) {
-                            assignment.clear(var);
-                            clearedAny = true;
-                        } else {
-                            assignment.set(var);
-                            if (hasNextPath || clearedAny) {
-                                hasNextAssignment = true;
-                            } else {
-                                hasNextAssignment = false;
-                                for (int i = support.nextSetBit(var + 1); i >= 0; i = support.nextSetBit(i + 1)) {
-                                    if (path[i] == NON_PATH_NODE && !assignment.get(i)) {
-                                        hasNextAssignment = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            assert values == null || values.test(mtbdd.evaluate(path[rootVariable], assignment));
-                            return assignment;
-                        }
-                    }
-                }
+        @Override
+        public BitSet current() {
+            assert valid; // current() is only defined while the cursor is valid
+            return translated == null ? path.levelAssignment() : translated;
+        }
 
-                // All don't-cares for the current path are exhausted - backtrack through the path until we
-                // find a node whose high branch we haven't taken yet and which can still reach a match.
-                assert hasNextPath : "Expected another path after " + assignment;
+        @Override
+        public int value() {
+            assert valid; // value() is only defined while the cursor is valid
+            return path.pathValue();
+        }
 
-                currentNode = path[leafNodeVariable];
-                int branchVar = leafNodeVariable;
-
-                while (assignment.get(branchVar) || !mtbdd.canReachMatch(mtbdd.table.high(currentNode), values)) {
-                    do {
-                        branchVar = support.previousSetBit(branchVar - 1);
-                        if (branchVar == -1) {
-                            throw new NoSuchElementException("No next element");
-                        }
-                    } while (path[branchVar] == NON_PATH_NODE);
-                    currentNode = path[branchVar];
-                }
-                assert !assignment.get(branchVar);
-                assert leafNodeVariable >= highestSwitchableVariable;
-                assert mtbdd.decisionVariable(currentNode) == branchVar;
-
-                // currentNode is the lowest node we can still switch to high; do so and descend anew.
-                assignment.clear(branchVar + 1, leafNodeVariable + 1);
-                Arrays.fill(path, branchVar + 1, leafNodeVariable + 1, NON_PATH_NODE);
-
-                assignment.set(branchVar);
-                assert path[branchVar] == currentNode;
-                currentNode = mtbdd.table.high(currentNode);
-                assert mtbdd.canReachMatch(currentNode, values);
-                leafNodeVariable = branchVar;
-
-                // We just consumed the recorded switch candidate, if any - clear it.
-                if (highestSwitchableVariable == leafNodeVariable) {
-                    highestSwitchableVariable = -1;
-                }
+        @Override
+        public boolean advance() {
+            if (!valid) {
+                return false;
             }
 
-            // currentNode's valuation was just flipped to 1, or we're in the initial state - descend,
-            // preferring the low (0) branch for lexicographic ascending order, tracking the shallowest
-            // still-open alternative (highestSwitchableVariable) for future backtracking.
-            hasNextPath = highestSwitchableVariable > -1 && highestSwitchableVariable < leafNodeVariable;
-
-            while (!mtbdd.isConstant(currentNode)) {
-                leafNodeVariable = mtbdd.decisionVariable(currentNode);
-                path[leafNodeVariable] = currentNode;
-                assert support.get(leafNodeVariable);
-
-                int low = mtbdd.table.low(currentNode);
-                if (!mtbdd.canReachMatch(low, values)) {
-                    assignment.set(leafNodeVariable);
-                    currentNode = mtbdd.table.high(currentNode);
-                } else {
-                    if (!hasNextPath && mtbdd.canReachMatch(mtbdd.table.high(currentNode), values)) {
-                        hasNextPath = true;
-                        highestSwitchableVariable = leafNodeVariable;
-                    }
-                    currentNode = low;
-                }
+            /* Binary addition over the support levels the current path leaves free: every combination of
+             * them extends this path to an assignment, all reaching the same terminal. Carrying past the
+             * last one leaves them at zero and moves the path on. */
+            if (BitSets.increment(path.levelAssignment(), freeLevels)) {
+                translate();
+                return true;
             }
-            assert values == null || values.test(constantFunctionToValue(currentNode));
-            assert values == null || values.test(mtbdd.evaluate(path[rootVariable], assignment));
-            // Only the path determines the value; the don't-care advancement above returns without
-            // descending, so it deliberately leaves this untouched.
-            currentValue = constantFunctionToValue(currentNode);
-
-            // If any support variable is still off-path, this leaf alone yields more than one solution
-            // (the don't-care powerset), so there is always a next assignment regardless of hasNextPath.
-            for (int i = support.nextSetBit(0); i >= 0; i = support.nextSetBit(i + 1)) {
-                if (path[i] == NON_PATH_NODE) {
-                    assert !assignment.get(i);
-                    hasNextAssignment = true;
-                    return assignment;
-                }
+            if (!path.advance()) {
+                valid = false;
+                return false;
             }
-            hasNextAssignment = hasNextPath;
-            return assignment;
+            refreshFreeLevels();
+            translate();
+            return true;
+        }
+
+        private void refreshFreeLevels() {
+            BitSets.difference(freeLevels, supportLevels, path.pathSupportLevels());
+        }
+
+        /** By level internally, by variable on the way out - see BddImpl's cursors. */
+        private void translate() {
+            if (translated != null) {
+                BitSets.map(path.levelAssignment(), translated, mtbdd::variableAtLevel);
+            }
+            assert mtbdd.evaluate(path.rootFunction(), current()) == path.pathValue();
         }
     }
 
@@ -2483,6 +2804,13 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         MtBddTable(MtBddImpl mtbdd, int initialSize) {
             super(initialSize);
             this.mtbdd = mtbdd;
+        }
+
+        @Override
+        protected int levelOfVariable(int variable) {
+            // The MTBDD shares its companion BDD's variable order; that is what lets a cross-table
+            // recursion expand on a single topmost variable.
+            return mtbdd.bdd().levelOfVariable(variable);
         }
 
         @Override
@@ -2512,15 +2840,15 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         }
 
         @Override
-        protected boolean recurseIsAllMarkedBelow(int node, boolean includeLeafs) {
+        protected boolean recurseIsAllMarkedBelow(int node, boolean includeLeaves) {
             int low = low(node);
             int high = high(node);
-            return ((!includeLeafs && mtbdd.isConstant(low))
+            return ((!includeLeaves && mtbdd.isConstant(low))
                             || isMarkedConstant(low)
-                            || doIsAllMarkedBelow(low, includeLeafs))
-                    && ((!includeLeafs && mtbdd.isConstant(high))
+                            || doIsAllMarkedBelow(low, includeLeaves))
+                    && ((!includeLeaves && mtbdd.isConstant(high))
                             || isMarkedConstant(high)
-                            || doIsAllMarkedBelow(high, includeLeafs));
+                            || doIsAllMarkedBelow(high, includeLeaves));
         }
 
         @Override
@@ -2599,16 +2927,7 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         }
 
         @Override
-        protected BitSet sweepManagedLeaves() {
-            return invalidateUnmarkedAndUnreferencedLeaves();
-        }
-
-        @Override
-        protected boolean checkOwner() {
-            return mtbdd.check();
-        }
-
-        BitSet invalidateUnmarkedAndUnreferencedLeaves() {
+        protected BitSet clearUnreferencedLeaves() {
             assert BitSets.isSubset(markedValues, mtbdd.allocatedValues);
             BitSet freed = BitSets.copyOf(mtbdd.allocatedValues);
             mtbdd.allocatedValues.andNot(markedValues);
@@ -2627,12 +2946,17 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         }
 
         @Override
+        protected boolean checkOwner() {
+            return mtbdd.check();
+        }
+
+        @Override
         protected boolean anyManagedLeafMarked() {
             return !markedValues.isEmpty();
         }
 
         @Override
-        protected void unmarkAllManagedLeafs() {
+        protected void unmarkAllManagedLeaves() {
             markedValues.clear();
         }
 
@@ -2652,7 +2976,8 @@ public class MtBddImpl implements MtBdd, NodeBasedDecisionDiagram {
         }
     }
 
-    boolean check() {
+    @Override
+    public boolean check() {
         table.check();
 
         for (int value = 0; value < valueReferenceCounts.length; value++) {

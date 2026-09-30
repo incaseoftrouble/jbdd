@@ -19,8 +19,12 @@ package de.tum.in.jbdd;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.core.Is.is;
+import static org.junit.jupiter.api.Assertions.assertThrowsExactly;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.google.common.collect.Lists;
+import de.tum.in.jbdd.collections.BitSets;
+import de.tum.in.jbdd.collections.Cube;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
@@ -36,7 +40,6 @@ import org.junit.jupiter.api.Test;
 /**
  * A collection of simple tests for the BDD class.
  */
-@SuppressWarnings("UseOfClone")
 class BddTest {
     private static final BddConfiguration config =
             ImmutableBddConfiguration.builder().build();
@@ -63,7 +66,7 @@ class BddTest {
 
     @Test
     void testDeadNodeCounter() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new DdContextImpl(config).bdd();
         NodeTable table = bdd.table();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
@@ -76,24 +79,24 @@ class BddTest {
 
     @Test
     void testGarbageCollection() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int v3 = bdd.createVariable();
 
-        bdd.forceGc(); // make sure there is room for it
+        bdd.gc(); // make sure there is room for it
         int and = bdd.and(v3, v2);
         int or = bdd.reference(bdd.or(and, v1));
-        assertThat(bdd.forceGc(), is(0));
+        assertThat(bdd.gc(), is(0));
         bdd.dereference(or);
 
-        assertThat(bdd.forceGc(), is(2));
-        bdd.forceGc(); // should free `and` and `or`
+        assertThat(bdd.gc(), is(2));
+        bdd.gc(); // should free `and` and `or`
     }
 
     @Test
     void testDeMorgan() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int notV1 = bdd.reference(bdd.not(v1));
@@ -107,7 +110,7 @@ class BddTest {
 
     @Test
     void testXorIdentity() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int notV1 = bdd.not(v1);
@@ -126,7 +129,7 @@ class BddTest {
 
     @Test
     void testEquivalenceIdentity() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new DdContextImpl(config).bdd();
         NodeTable table = bdd.table();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
@@ -140,7 +143,7 @@ class BddTest {
 
     @Test
     void testNodeCountBelow() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new DdContextImpl(config).bdd();
         NodeTable table = bdd.table();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
@@ -167,7 +170,7 @@ class BddTest {
 
     @Test
     void testCountSatisfyingAssignments() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         bdd.createVariable();
@@ -183,10 +186,108 @@ class BddTest {
         assertThat(bdd.countSatisfyingAssignments(equivalence).longValueExact(), is(8L));
     }
 
+    @Test
+    void testSatisfyingFractionDoesNotDependOnTheVariableCount() {
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int v1 = bdd.createVariable();
+        int v2 = bdd.createVariable();
+        int and = bdd.reference(bdd.and(v1, v2));
+        int equivalence = bdd.reference(bdd.equivalence(v1, v2));
+
+        assertThat(bdd.satisfyingFraction(bdd.falseFunction()), is(0.0d));
+        assertThat(bdd.satisfyingFraction(bdd.trueFunction()), is(1.0d));
+        assertThat(bdd.satisfyingFraction(v1), is(0.5d));
+        assertThat(bdd.satisfyingFraction(and), is(0.25d));
+        assertThat(bdd.satisfyingFraction(bdd.not(and)), is(0.75d));
+        assertThat(bdd.satisfyingFraction(equivalence), is(0.5d));
+
+        bdd.createVariables(5);
+        assertThat(bdd.satisfyingFraction(and), is(0.25d));
+        bdd.gc();
+        assertThat(bdd.satisfyingFraction(and), is(0.25d));
+        List<BitSet> reversed = new ArrayList<>();
+        for (int variable = bdd.numberOfVariables() - 1; variable >= 0; variable--) {
+            BitSet block = new BitSet();
+            block.set(variable);
+            reversed.add(block);
+        }
+        bdd.variableOrder().reorderTo(reversed);
+        assertThat(bdd.satisfyingFraction(and), is(0.25d));
+        assertThat(bdd.satisfyingFraction(bdd.not(equivalence)), is(0.5d));
+    }
+
+    @Test
+    void testSatisfyingFractionKeepsSmallComplementsPrecise() {
+        // The conjunction of negated literals is stored as the complement of the disjunction, whose fraction is
+        // 1 - 2^-200, i.e. 1.0 as a double: deriving the conjunction's as 1 - x would give 0.
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int variables = 200;
+        int[] nodes = bdd.createVariables(variables);
+        int disjunction = bdd.falseFunction();
+        for (int node : nodes) {
+            disjunction = bdd.updateWith(bdd.or(disjunction, node), disjunction);
+        }
+        int conjunction = bdd.not(disjunction);
+        assertThat(bdd.isPositive(conjunction), is(false));
+
+        assertThat(bdd.satisfyingFraction(conjunction), is(Math.scalb(1.0d, -variables)));
+        assertThat(bdd.satisfyingFraction(disjunction), is(1.0d));
+        assertThat(bdd.satisfyingFraction(bdd.and(bdd.not(nodes[0]), bdd.not(nodes[1]))), is(0.25d));
+    }
+
+    @Test
+    void testSatisfyingFractionInCountsATinyDomainExactly() {
+        // A cube over 1100 variables is 2^-1100 of all assignments, below any double: the probabilities within it
+        // are still plain.
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int[] nodes = bdd.createVariables(1102);
+        int domain = bdd.trueFunction();
+        for (int i = 2; i < nodes.length; i++) {
+            domain = bdd.updateWith(bdd.and(domain, nodes[i]), domain);
+        }
+        assertThat(bdd.satisfyingFraction(domain), is(0.0d));
+
+        int function = bdd.reference(bdd.and(nodes[0], nodes[1]));
+        assertThat(bdd.satisfyingFractionIn(function, domain), is(0.25d));
+        assertThat(bdd.satisfyingFractionIn(bdd.not(function), domain), is(0.75d));
+        assertThat(bdd.satisfyingFractionIn(nodes[5], domain), is(1.0d));
+        assertThat(bdd.satisfyingFractionIn(bdd.not(nodes[5]), domain), is(0.0d));
+        assertThrowsExactly(
+                IllegalArgumentException.class, () -> bdd.satisfyingFractionIn(function, bdd.falseFunction()));
+    }
+
+    @Test
+    void testSatisfyingFractionInATinyDomain() {
+        // A domain of 3 * 2^-1502 of all assignments, far below what a double holds: x_0 .. x_1499 all true, and
+        // one of x_1500, x_1501. Deciding the pinned variables at either end of the order.
+        for (boolean pinnedFirst : new boolean[] {true, false}) {
+            BddImpl bdd = new DdContextImpl(config).bdd();
+            int[] variables = bdd.createVariables(1502);
+            int offset = pinnedFirst ? 0 : 2;
+            int pinned = bdd.reference(bdd.trueFunction());
+            for (int index = 0; index < 1500; index++) {
+                pinned = bdd.updateWith(bdd.and(pinned, variables[offset + index]), pinned);
+            }
+            int first = variables[pinnedFirst ? 1500 : 0];
+            int second = variables[pinnedFirst ? 1501 : 1];
+            int domain = bdd.reference(bdd.and(pinned, bdd.reference(bdd.or(first, second))));
+            int both = bdd.reference(bdd.and(first, second));
+
+            assertThat(bdd.satisfyingFraction(domain), is(0.0d));
+            assertThat(bdd.satisfyingFractionIn(both, domain), is(1.0d / 3.0d));
+            assertThat(bdd.satisfyingFractionIn(bdd.not(both), domain), is(2.0d / 3.0d));
+            assertThat(bdd.satisfyingFractionIn(first, domain), is(2.0d / 3.0d));
+            assertThat(bdd.satisfyingFractionIn(bdd.trueFunction(), domain), is(1.0d));
+            assertThat(bdd.satisfyingFractionIn(domain, domain), is(1.0d));
+            assertThat(bdd.satisfyingFractionIn(bdd.not(domain), domain), is(0.0d));
+            assertThat(bdd.satisfyingFractionIn(bdd.falseFunction(), domain), is(0.0d));
+        }
+    }
+
     @SuppressWarnings("ReuseOfLocalVariable")
     @Test
     void testCompose() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int nv1 = bdd.not(v1);
         int v2 = bdd.createVariable();
@@ -210,9 +311,107 @@ class BddTest {
         bdd.dereference(composition);
     }
 
+    /**
+     * Replacements depending on variables the function tests above the replaced ones: {@code f = (a_0 | ... |
+     * a_n-1) | (o1 & o2)} with {@code o1 -> OR_i (a_i xor x_i)}, {@code o2 -> OR_i (a_i xor y_i)}, the a above
+     * o1, o2 above the x and y. The result is {@code (OR a) | ((OR x) & (OR y))}, linear; composing o1 & o2 without
+     * the path (where every a is false) builds the conjunction of the replacements, exponential in this order.
+     */
+    @Test
+    void testComposeCarriesThePathToTheReplacements() {
+        int n = 14;
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int[] a = bdd.createVariables(n);
+        int o1 = bdd.createVariable();
+        int o2 = bdd.createVariable();
+        int[] x = bdd.createVariables(n);
+        int[] y = bdd.createVariables(n);
+
+        int anyA = bdd.reference(bdd.falseFunction());
+        int anyX = bdd.reference(bdd.falseFunction());
+        int anyY = bdd.reference(bdd.falseFunction());
+        int g1 = bdd.reference(bdd.falseFunction());
+        int g2 = bdd.reference(bdd.falseFunction());
+        for (int i = 0; i < n; i++) {
+            anyA = bdd.updateWith(bdd.or(anyA, a[i]), anyA);
+            anyX = bdd.updateWith(bdd.or(anyX, x[i]), anyX);
+            anyY = bdd.updateWith(bdd.or(anyY, y[i]), anyY);
+            g1 = bdd.updateWith(bdd.or(g1, bdd.xor(a[i], x[i])), g1);
+            g2 = bdd.updateWith(bdd.or(g2, bdd.xor(a[i], y[i])), g2);
+        }
+        int f = bdd.reference(bdd.or(anyA, bdd.and(o1, o2)));
+        int expected = bdd.reference(bdd.or(anyA, bdd.and(anyX, anyY)));
+
+        int[] mapping = new int[3 * n + 2];
+        Arrays.fill(mapping, bdd.placeholder());
+        mapping[bdd.decisionVariable(o1)] = g1;
+        mapping[bdd.decisionVariable(o2)] = g2;
+
+        long before = bdd.table().createdNodeCount();
+        assertThat(bdd.compose(f, mapping), is(expected));
+        assertThat(bdd.table().createdNodeCount() - before < 100L * n, is(true));
+
+        RegisteredOperation.Unary registered = bdd.registerCompose(mapping);
+        before = bdd.table().createdNodeCount();
+        assertThat(registered.applyAsInt(f), is(expected));
+        assertThat(bdd.table().createdNodeCount() - before < 100L * n, is(true));
+        registered.release();
+    }
+
+    @Test
+    void testComposeAlongThePathDropsAMappingWhoseReplacementWasRecycled() {
+        // As RegressionTests#testComposeCacheDropsAMappingWhoseReplacementWasRecycled, with a replacement reading
+        // v2, which the function decides above v7: the composition restricts the replacement along the path, and
+        // entries keyed on it must not answer an equal-looking mapping whose replacement id now names another
+        // function.
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int[] v = bdd.createVariables(8);
+        int function =
+                bdd.reference(bdd.and(new int[] {bdd.xor(v[0], v[3]), bdd.xor(v[4], v[5]), bdd.xor(v[2], v[6]), v[7]}));
+        int replacement = bdd.reference(bdd.and(v[1], v[2]));
+        int[] mapping = new int[8];
+        Arrays.fill(mapping, bdd.placeholder());
+        mapping[7] = replacement;
+        int stale = bdd.reference(bdd.compose(function, mapping.clone()));
+
+        bdd.dereference(replacement);
+        bdd.gc();
+        assertThat(bdd.isValidFunction(replacement), is(false));
+        for (long mask = 1; mask < 1L << 8 && !bdd.isValidFunction(replacement); mask++) {
+            bdd.reference(bdd.of(Cube.negative(BitSet.valueOf(new long[] {mask}))));
+        }
+        assumeTrue(bdd.isValidFunction(replacement), "The freed id was never handed out again");
+
+        int high = bdd.reference(bdd.restrict(function, Cube.literal(7, true)));
+        int low = bdd.reference(bdd.restrict(function, Cube.literal(7, false)));
+        int expected = bdd.reference(bdd.ifThenElse(replacement, high, low));
+        assumeTrue(expected != stale);
+        assertThat(bdd.compose(function, mapping.clone()), is(expected));
+    }
+
+    @Test
+    void testRegisteredExistsMatchesTheDirectCall() {
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int[] v = bdd.createVariables(3);
+        int f = bdd.reference(bdd.and(bdd.or(v[0], v[1]), bdd.xor(v[1], v[2])));
+
+        BitSet quantified = buildBitSet("010");
+        RegisteredOperation.Unary exists = bdd.registerExists(quantified);
+        assertThat(exists.applyAsInt(f), is(bdd.exists(f, quantified)));
+        // Invoked twice, the private cache is now warm - the answer must not change.
+        assertThat(exists.applyAsInt(f), is(bdd.exists(f, quantified)));
+        // The set is read at registration, so changing it afterwards must not be noticed.
+        quantified.set(0);
+        assertThat(exists.applyAsInt(f), is(bdd.exists(f, buildBitSet("010"))));
+
+        assertThat(bdd.registerExists(new BitSet()).applyAsInt(f), is(f));
+        assertThat(bdd.registerExists(buildBitSet("111")).applyAsInt(f), is(bdd.trueFunction()));
+        assertThat(bdd.check(), is(true));
+    }
+
     @Test
     void testIfThenElse() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int v1andv2 = bdd.and(v1, v2);
@@ -228,7 +427,7 @@ class BddTest {
 
     @Test
     void testMember() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
 
@@ -251,20 +450,20 @@ class BddTest {
 
     @Test
     void testMinimalSolutionsForConstants() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new DdContextImpl(config).bdd();
 
         List<BitSet> falseSolutions = Lists.newArrayList();
-        bdd.forEachPath(bdd.falseFunction(), path -> falseSolutions.add(BitSets.copyOf(path.assignment)));
+        bdd.forEachPath(bdd.falseFunction(), path -> falseSolutions.add(BitSets.copyOf(path.assignmentUnsafe())));
         assertThat(falseSolutions, is(Collections.emptyList()));
 
         List<BitSet> trueSolutions = Lists.newArrayList();
-        bdd.forEachPath(bdd.trueFunction(), path -> trueSolutions.add(BitSets.copyOf(path.assignment)));
+        bdd.forEachPath(bdd.trueFunction(), path -> trueSolutions.add(BitSets.copyOf(path.assignmentUnsafe())));
         assertThat(trueSolutions, is(Collections.singletonList(new BitSet(0))));
     }
 
     @Test
     void testSupport() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new DdContextImpl(config).bdd();
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int v3 = bdd.createVariable();
@@ -311,43 +510,47 @@ class BddTest {
 
     @Test
     void testWorkStack() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new DdContextImpl(config).bdd();
         NodeTable table = bdd.table();
 
         int v1 = bdd.createVariable();
         int v2 = bdd.createVariable();
         int temporaryNode = table.pushToWorkStack(bdd.and(v1, v2));
-        bdd.forceGc();
+        bdd.gc();
         assertThat(bdd.isValidFunction(temporaryNode), is(true));
         table.popFromWorkStack();
-        bdd.forceGc();
+        bdd.gc();
         assertThat(bdd.isValidFunction(temporaryNode), is(false));
     }
 
     @Test
-    void testUniverseIterator() {
-        BddImpl bdd = new BddImpl(config);
+    void testUniverseCursor() {
+        BddImpl bdd = new DdContextImpl(config).bdd();
         bdd.createVariables(5);
         Set<BitSet> solutions = new HashSet<>();
-        bdd.solutionIterator(bdd.trueFunction()).forEachRemaining(val -> solutions.add((BitSet) val.clone()));
+        for (Cursor<BitSet> cursor = bdd.solutionCursor(bdd.trueFunction()); cursor.valid(); cursor.advance()) {
+            solutions.add(BitSets.copyOf(cursor.current()));
+        }
         assertThat(solutions.size(), is(1 << 5));
     }
 
     @Test
-    void testConjunctionIterator() {
-        BddImpl bdd = new BddImpl(config);
+    void testConjunctionCursor() {
+        BddImpl bdd = new DdContextImpl(config).bdd();
         bdd.createVariables(5);
         BitSet conjunction = new BitSet(5);
         conjunction.set(0, 5);
-        bdd.solutionIterator(bdd.conjunction(conjunction));
+        bdd.solutionCursor(bdd.conjunction(conjunction));
         Set<BitSet> solutions = new HashSet<>();
-        bdd.solutionIterator(bdd.trueFunction()).forEachRemaining(val -> solutions.add((BitSet) val.clone()));
+        for (Cursor<BitSet> cursor = bdd.solutionCursor(bdd.trueFunction()); cursor.valid(); cursor.advance()) {
+            solutions.add(BitSets.copyOf(cursor.current()));
+        }
         assertThat(solutions.size(), is(1 << 5));
     }
 
     @Test
     void testConcurrentAccessChecked() throws InterruptedException {
-        Bdd bdd = new BddImpl(config);
+        Bdd bdd = new DdContextImpl(config).bdd();
         bdd.createVariables(2);
         int node = bdd.reference(bdd.disjunction(0, 1));
 
@@ -356,6 +559,7 @@ class BddTest {
         AtomicBoolean otherThreadRejected = new AtomicBoolean(false);
 
         Thread other = new Thread(() -> {
+            //noinspection ErrorNotRethrown
             try {
                 holdingGuard.await();
                 bdd.implies(bdd.trueFunction(), bdd.falseFunction());
@@ -384,7 +588,7 @@ class BddTest {
 
     @Test
     void testDeadNodeApproximation() {
-        BddImpl bdd = new BddImpl(config);
+        BddImpl bdd = new DdContextImpl(config).bdd();
         NodeTable table = bdd.table();
 
         int v1 = bdd.createVariable();
@@ -393,16 +597,16 @@ class BddTest {
         int or = bdd.reference(bdd.implication(bdd.and(v1, v2), v3));
         int ite = bdd.reference(bdd.ifThenElse(v2, v3, bdd.trueFunction()));
 
-        bdd.forceGc();
+        bdd.gc();
         bdd.dereference(ite);
         assertThat(table.approximateDeadNodeCount(), is(1));
         assertThat(bdd.isValidFunction(ite), is(true));
-        int freed = bdd.forceGc();
+        int freed = bdd.gc();
         assertThat(freed, is(0));
         assertThat(table.approximateDeadNodeCount(), is(0));
         bdd.dereference(or);
         assertThat(table.approximateDeadNodeCount(), is(1));
-        bdd.forceGc();
+        bdd.gc();
         assertThat(bdd.isValidFunction(ite), is(false));
         assertThat(table.referencedNodeCount(), is(3));
     }

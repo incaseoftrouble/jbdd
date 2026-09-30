@@ -18,13 +18,15 @@ package de.tum.in.jbdd;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import de.tum.in.jbdd.io.DimacsReader;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.StringReader;
 import org.junit.jupiter.api.Test;
 
 class DimacsReaderTest {
-    private static int load(Bdd bdd, String dimacs) throws IOException, DimacsReader.InvalidFormatException {
+    private static int load(BinaryDecisionDiagram bdd, String dimacs)
+            throws IOException, DimacsReader.InvalidFormatException {
         try (BufferedReader reader = new BufferedReader(new StringReader(dimacs))) {
             return DimacsReader.loadDimacs(bdd, reader);
         }

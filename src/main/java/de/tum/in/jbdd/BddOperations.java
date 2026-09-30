@@ -18,52 +18,108 @@ package de.tum.in.jbdd;
 
 import java.util.Arrays;
 import java.util.BitSet;
-import org.jspecify.annotations.Nullable;
 
 final class BddOperations {
     private BddOperations() {}
 
-    static final class Compose extends ProtectedOperation
-            implements RegisteredOperation.Unary, RegisteredOperation.Binary, NodeLifecycleObserver {
+    // TODO Registerable restrict?
+
+    static final class Exists implements RegisteredOperation.Unary, NodeTableObserver, VariableOrderObserver {
         private final BddImpl bdd;
-        private final int[] variableMapping;
-        private final int highestReplacedVariable;
-        private final BooleanCache.UnaryToIntCache composeCache;
+        private final BitSet quantifiedVariables;
+        private BitSet quantifiedLevels;
+        private final BooleanCache.UnaryToIntCache existsCache;
 
-        /**
-         * Only allocated for {@code registerComposeSimplify}. A plain registered compose is always invoked
-         * with a {@code TRUE} domain, and {@code computeComposeSimplify} keeps it {@code TRUE} all the way
-         * down when there is no cache to key domain-carrying entries on - it gives up narrowing the domain
-         * to the current branch condition, which is the only thing that would introduce one.
-         */
-        private final BooleanCache.@Nullable BinaryToIntCache composeSimplifyCache;
-
-        @SuppressWarnings("AssignmentOrReturnOfFieldWithMutableType")
-        Compose(
-                BddImpl bdd,
-                int[] resolvedMapping,
-                int highestReplacedVariable,
-                int[] protectedNodes,
-                boolean withSimplify) {
-            super(bdd.protectionTracker(), () -> bdd.dereference(protectedNodes));
-            assert Arrays.stream(protectedNodes).allMatch(bdd::nodeIsReferenced);
+        Exists(BddImpl bdd, BitSet quantifiedVariables) {
             this.bdd = bdd;
-            this.variableMapping = resolvedMapping;
-            this.highestReplacedVariable = highestReplacedVariable;
-            this.composeCache = new BooleanCache.UnaryToIntCache(bdd);
-            this.composeSimplifyCache = withSimplify ? new BooleanCache.BinaryToIntCache(bdd) : null;
+            this.quantifiedVariables = quantifiedVariables;
+            this.quantifiedLevels = bdd.variablesToLevels(quantifiedVariables);
+            this.existsCache = new BooleanCache.UnaryToIntCache(bdd);
             bdd.registerObserver(this);
-            growToTableFloor(); // size caches for the table as it stands now, not just future grows
+            bdd.variableOrder().registerObserver(this);
+            growToTableFloor();
         }
 
         private void growToTableFloor() {
             BddConfiguration configuration = bdd.configuration();
-            int floor = bdd.tableSize()
-                    / (configuration.cacheEphemeralMultiplier() * configuration.registeredOperationDivider());
-            composeCache.grow(floor);
-            if (composeSimplifyCache != null) {
-                composeSimplifyCache.grow(floor);
+            existsCache.grow(bdd.tableSize()
+                    / (configuration.cacheEphemeralMultiplier() * configuration.registeredOperationDivider()));
+        }
+
+        @Override
+        public void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, BitSet movedVariables) {
+            // quantifiedVariables is by variable, so the by-level set has to be rebuilt - unless none of
+            // them is among the ones that moved, in which case every one of their levels is what it was.
+            if (movedVariables.intersects(quantifiedVariables)) {
+                quantifiedLevels = bdd.variablesToLevels(quantifiedVariables);
             }
+            assert quantifiedLevels.equals(bdd.variablesToLevels(quantifiedVariables));
+
+            // see BooleanCache#orderChanged
+            existsCache.invalidate();
+        }
+
+        @Override
+        public void variablesInserted(int level, int count) {
+            quantifiedLevels = bdd.variablesToLevels(quantifiedVariables);
+            // Every entry in the cache does not involve the new variable, so we can keep it
+        }
+
+        @Override
+        public int applyAsInt(int function) {
+            assert bdd.isValidFunction(function);
+
+            if (bdd.isConstant(function)) {
+                return function;
+            }
+            if (quantifiedVariables.cardinality() == bdd.numberOfVariables()) {
+                return bdd.trueFunction();
+            }
+            int result = bdd.existsGeneral(function, quantifiedLevels, existsCache);
+            existsCache.growOnUsage();
+            return result;
+        }
+
+        @Override
+        public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
+            pruneInvalidNodes(reclaimedNodes);
+        }
+
+        @Override
+        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            pruneInvalidNodes(invalidatedNodes);
+            growToTableFloor();
+        }
+
+        private void pruneInvalidNodes(int invalidatedNodes) {
+            if (bdd.isReordering()) {
+                // See BooleanCache#onBddNodesInvalidated.
+                existsCache.invalidate();
+                return;
+            }
+            if (invalidatedNodes == 0) {
+                return;
+            }
+            boolean preserve = bdd.configuration().useCachePreserve() && invalidatedNodes < bdd.tableSize() / 2;
+            existsCache.clearInvalidNodes(preserve);
+        }
+    }
+
+    /**
+     * A composition bound to its mapping. It holds no cache of its own: the composition's cache is keyed on its
+     * whole context (BddImpl#composeJoint), so the handle only resolves and protects the mapping once.
+     */
+    static final class Compose extends ProtectedOperation
+            implements RegisteredOperation.Unary, RegisteredOperation.Binary {
+        private final BddImpl bdd;
+        private final int[] variableMapping;
+
+        @SuppressWarnings("AssignmentOrReturnOfFieldWithMutableType")
+        Compose(BddImpl bdd, int[] resolvedMapping, int[] protectedNodes) {
+            super(bdd.protectionTracker(), () -> bdd.dereference(protectedNodes));
+            assert Arrays.stream(protectedNodes).allMatch(bdd::nodeIsReferenced);
+            this.bdd = bdd;
+            this.variableMapping = resolvedMapping;
         }
 
         @Override
@@ -82,35 +138,7 @@ final class BddOperations {
             if (domain == bdd.falseFunction()) {
                 return bdd.falseFunction();
             }
-            assert domain == bdd.trueFunction() || composeSimplifyCache != null
-                    : "A domain-carrying compose must be registered through registerComposeSimplify";
-            int result = bdd.composeGeneral(
-                    function, domain, variableMapping, highestReplacedVariable, composeCache, composeSimplifyCache);
-            composeCache.growOnUsage();
-            if (composeSimplifyCache != null) {
-                composeSimplifyCache.growOnUsage();
-            }
-            return result;
-        }
-
-        @Override
-        public void afterGc(int reclaimedNodes, BitSet reclaimedValues) {
-            if (isReleased()) {
-                return;
-            }
-            boolean preserve = bdd.configuration().useCachePreserve() && reclaimedNodes < bdd.tableSize() / 2;
-            composeCache.clearInvalidNodes(preserve);
-            if (composeSimplifyCache != null) {
-                composeSimplifyCache.clearInvalidNodes(preserve);
-            }
-        }
-
-        @Override
-        public void afterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
-            if (isReleased()) {
-                return;
-            }
-            growToTableFloor();
+            return bdd.computeCompose(function, domain, variableMapping);
         }
     }
 }

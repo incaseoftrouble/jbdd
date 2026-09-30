@@ -16,23 +16,14 @@
  */
 package de.tum.in.jbdd;
 
-public interface BddContext {
-    static BddContext create() {
-        return create(ImmutableBddConfiguration.builder().build());
-    }
+import java.util.Map;
 
-    static BddContext create(BddConfiguration configuration) {
-        return new BddContextImpl(configuration);
-    }
-
-    /** Like {@link #create()}, with {@code variables} many variables already declared. */
-    static BddContext create(BddConfiguration configuration, int variables) {
-        return new BddContextImpl(configuration, variables);
-    }
-
-    /** The unique {@link BddSetFactory}. */
-    BddSetFactory bddSets();
-
-    /** A fresh {@link BddMapFactory}. */
-    <V> BddMapFactory<V> bddMaps();
+/**
+ * Reports the statistics of one structure. Not the public way to ask - that is {@link DdContext} for a
+ * BDD/MTBDD pair and {@link Mdd} for an MDD, both of which report a complete key space. This is what those
+ * are assembled from, and what {@link Util#registerForCleanupStatistics} logs.
+ */
+@FunctionalInterface
+interface StatisticsSource {
+    Map<String, Object> statistics();
 }

@@ -33,6 +33,6 @@ abstract class ProtectedOperation implements RegisteredOperation {
     }
 
     final void checkNotReleased() {
-        assert !isReleased() : "This operation has been released and can no longer be used";
+        assert !isReleased(); // a released operation can no longer be used
     }
 }

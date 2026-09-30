@@ -19,14 +19,26 @@ package de.tum.in.jbdd;
 import java.util.function.IntBinaryOperator;
 import java.util.function.IntUnaryOperator;
 
+/**
+ * An operation with its parameters bound in advance. Binding states that this operation is going to be
+ * repeated, which an implementation is free to exploit and equally free to ignore - so it promises nothing,
+ * but costs little either. Worth doing wherever a workload applies one operation over and over.
+ */
 public interface RegisteredOperation {
     /**
      * Releases this operation's resources, if it holds any. After releasing, the operation cannot be used further.
      * However, this is not necessarily checked under all circumstances. This is an opportunistic operation and
-     * not required by the caller.
+     * not required by the caller - simply dropping the operation does the same, just later.
      */
     default void release() {
         // Default: nothing to release.
+    }
+
+    /**
+     * The operation returning its operand unchanged.
+     */
+    static Unary identity() {
+        return Identity.INSTANCE;
     }
 
     @FunctionalInterface
@@ -35,12 +47,31 @@ public interface RegisteredOperation {
     @FunctionalInterface
     interface Binary extends RegisteredOperation, IntBinaryOperator {}
 
-    /**
-     * A three-argument operation. There is no JDK functional interface for this shape, so it declares its
-     * own {@code applyAsInt}, mirroring {@link IntBinaryOperator}'s naming.
-     */
     @FunctionalInterface
     interface Ternary extends RegisteredOperation {
         int applyAsInt(int operand1, int operand2, int operand3);
+    }
+
+    /** The single instance behind {@link #identity()}; an enum so that it stays one. */
+    enum Identity implements Unary {
+        INSTANCE;
+
+        @Override
+        public int applyAsInt(int operand) {
+            return operand;
+        }
+    }
+
+    class Forwarding<V extends RegisteredOperation> implements RegisteredOperation {
+        protected final V operation;
+
+        public Forwarding(V operation) {
+            this.operation = operation;
+        }
+
+        @Override
+        public void release() {
+            operation.release();
+        }
     }
 }

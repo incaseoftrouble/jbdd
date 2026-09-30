@@ -14,7 +14,7 @@
  * You should have received a copy of the GNU General Public License
  * along with JBDD. If not, see <http://www.gnu.org/licenses/>.
  */
-package de.tum.in.jbdd;
+package de.tum.in.jbdd.collections;
 
 import java.util.Arrays;
 import java.util.BitSet;
@@ -25,6 +25,7 @@ import java.util.Objects;
 import java.util.function.IntConsumer;
 import java.util.function.IntPredicate;
 import java.util.function.IntSupplier;
+import java.util.function.IntUnaryOperator;
 import java.util.function.ToIntFunction;
 import java.util.stream.IntStream;
 
@@ -75,6 +76,12 @@ public final class BitSets {
     public static BitSet of(IntStream values) {
         BitSet set = new BitSet();
         values.forEach(set::set);
+        return set;
+    }
+
+    public static BitSet range(int from, int to) {
+        BitSet set = new BitSet(to);
+        set.set(from, to);
         return set;
     }
 
@@ -147,10 +154,65 @@ public final class BitSets {
         return new PowerIterator(size);
     }
 
+    public static BitSet map(BitSet source, IntUnaryOperator mapping) {
+        BitSet target = new BitSet(source.length());
+        map(source, target, mapping);
+        return target;
+    }
+
+    /**
+     * Replaces {@code target} with the image of every set bit of {@code source} under {@code mapping} -
+     * how a walk that works by level hands out something indexed by variable, and the other way round.
+     */
+    public static void map(BitSet source, BitSet target, IntUnaryOperator mapping) {
+        target.clear();
+        for (int index = source.nextSetBit(0); index >= 0; index = source.nextSetBit(index + 1)) {
+            target.set(mapping.applyAsInt(index));
+        }
+    }
+
+    /** Replaces {@code target} with the elements of {@code from} that are not in {@code minus}. */
+    public static void difference(BitSet target, BitSet from, BitSet minus) {
+        target.clear();
+        target.or(from);
+        target.andNot(minus);
+    }
+
+    /**
+     * Counts {@code number} up by one over the bits in {@code positions}, read as a binary number with the
+     * lowest position least significant. Every other bit is left alone.
+     *
+     * @return Whether it counted up. {@code false} means it wrapped, and every position is clear again.
+     */
+    public static boolean increment(BitSet number, BitSet positions) {
+        for (int index = positions.nextSetBit(0); index >= 0; index = positions.nextSetBit(index + 1)) {
+            if (number.get(index)) {
+                number.clear(index);
+            } else {
+                number.set(index);
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static void forEach(BitSet bitSet, IntConsumer action) {
         for (int i = bitSet.nextSetBit(0); i >= 0; i = bitSet.nextSetBit(i + 1)) {
             action.accept(i);
         }
+    }
+
+    public static void forEachWithIndex(BitSet bitSet, BitSetIndexConsumer action) {
+        int index = 0;
+        for (int i = bitSet.nextSetBit(0); i >= 0; i = bitSet.nextSetBit(i + 1)) {
+            action.accept(i, index);
+            index += 1;
+        }
+    }
+
+    @FunctionalInterface
+    public interface BitSetIndexConsumer {
+        void accept(int value, int index);
     }
 
     public static boolean anyMatch(BitSet bitSet, IntPredicate predicate) {

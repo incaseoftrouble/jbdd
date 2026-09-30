@@ -16,44 +16,49 @@
  */
 package de.tum.in.jbdd;
 
+import java.util.function.BiFunction;
 import java.util.function.BinaryOperator;
 import org.jspecify.annotations.Nullable;
 
 public final class BddMapBinaryOperator<V> implements BinaryOperator<V> {
-    final BinaryOperator<V> op;
+    final BiFunction<? super V, ? super V, ? extends V> op;
     final boolean commutative;
     final @Nullable V neutral;
     final @Nullable V absorbing;
 
     private BddMapBinaryOperator(
-            BinaryOperator<V> op, boolean commutative, @Nullable V neutral, @Nullable V absorbing) {
+            BiFunction<? super V, ? super V, ? extends V> op,
+            boolean commutative,
+            @Nullable V neutral,
+            @Nullable V absorbing) {
         this.op = op;
         this.commutative = commutative;
         this.neutral = neutral;
         this.absorbing = absorbing;
     }
 
-    public static <V> BddMapBinaryOperator<V> of(BinaryOperator<V> op) {
+    public static <V> BddMapBinaryOperator<V> of(BiFunction<? super V, ? super V, ? extends V> op) {
         return new BddMapBinaryOperator<>(op, false, null, null);
     }
 
-    public static <V> BddMapBinaryOperator<V> commutative(BinaryOperator<V> op) {
+    public static <V> BddMapBinaryOperator<V> commutative(BiFunction<? super V, ? super V, ? extends V> op) {
         return new BddMapBinaryOperator<>(op, true, null, null);
     }
 
     @SuppressWarnings("PMD.UseDiamondOperator")
-    public static <V> BddMapBinaryOperator<V> monoid(BinaryOperator<V> op, V neutral) {
+    public static <V> BddMapBinaryOperator<V> monoid(BiFunction<? super V, ? super V, ? extends V> op, V neutral) {
         //noinspection Convert2Diamond
         return new BddMapBinaryOperator<V>(op, true, neutral, null);
     }
 
     @SuppressWarnings("PMD.UseDiamondOperator")
-    public static <V> BddMapBinaryOperator<V> absorbing(BinaryOperator<V> op, V absorbing) {
+    public static <V> BddMapBinaryOperator<V> absorbing(BiFunction<? super V, ? super V, ? extends V> op, V absorbing) {
         //noinspection Convert2Diamond
         return new BddMapBinaryOperator<V>(op, true, null, absorbing);
     }
 
-    public static <V> BddMapBinaryOperator<V> monoid(BinaryOperator<V> op, V neutral, V absorbing) {
+    public static <V> BddMapBinaryOperator<V> monoid(
+            BiFunction<? super V, ? super V, ? extends V> op, V neutral, V absorbing) {
         return new BddMapBinaryOperator<>(op, true, neutral, absorbing);
     }
 

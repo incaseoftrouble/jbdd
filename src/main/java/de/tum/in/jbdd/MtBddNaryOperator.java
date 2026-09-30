@@ -22,19 +22,13 @@ import java.util.function.ToIntFunction;
 
 /**
  * The n-ary counterpart of {@link MtBddBinaryOperator}. {@code commutative} means invariant under any
- * permutation of the operand array - {@code computeNaryApply} has no operation cache yet to canonicalize
- * argument order against (unlike binary {@code computeApply}), so this doesn't help lookups today, but it
- * still lets the array be sorted once up front (cheap, O(n log n) on typically-small n) so that a future
- * cache keyed on the array gets the same benefit binary apply already has. {@code neutral} generalizes to
+ * permutation of the operand array, allowing for canonicalisation. {@code neutral} generalizes to
  * "all-but-one of the operands are constant-equal to {@code neutral}" - the survivor (or {@code of(neutral)}
  * if there is no survivor) is returned unchanged, exactly like the binary case's single "other operand."
  * {@code absorbing} generalizes to "any operand is constant-equal to {@code absorbing}."
  *
  * <p>The arity is fixed at construction, which lets the degenerate arities be materialized right here as
- * {@link Unary} / {@link Binary} instead of being rebuilt inside every {@code apply} call. {@code MtBddImpl}
- * unwraps those and dispatches to its unary/binary implementations - the ones that have an operation cache -
- * and since the adapter now belongs to the operator, a caller reusing one operator instance keeps that
- * cache warm across calls (it is ephemeral on operator <em>identity</em>).</p>
+ * {@link Unary} / {@link Binary} instead of being rebuilt inside every {@code apply} call.</p>
  */
 public class MtBddNaryOperator implements ToIntFunction<int[]> {
     private static final int NONE = -1;

@@ -24,7 +24,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @SuppressWarnings("AssertWithSideEffects")
-public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>, NodeBasedDecisionDiagram {
+public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>, NodeBasedDd, StatisticsSource {
     private static final BitSet NO_VALUES = new BitSet(0);
 
     static final BigInteger TWO = BigInteger.ONE.add(BigInteger.ONE);
@@ -32,7 +32,7 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
     static final int TRUE = Integer.MAX_VALUE;
     static final int FALSE = complement(TRUE);
 
-    private final NodeLifecycleObserverGroup<NodeLifecycleObserver> observers = new NodeLifecycleObserverGroup<>();
+    private final ObserverGroup<NodeTableObserver> observers = new ObserverGroup<>();
     private final ProtectionTracker protectionTracker = new ProtectionTracker();
     final ConcurrentAccessGuard accessGuard = new ConcurrentAccessGuard();
 
@@ -40,14 +40,14 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
         observers.registerStrongly(protectionTracker);
         // Strongly: this hook is owned by the diagram, nothing else holds it - see
         // NodeLifecycleObserverGroup#registerStrongly.
-        observers.registerStrongly(new NodeLifecycleObserver() {
+        observers.registerStrongly(new NodeTableObserver() {
             @Override
-            public void afterGc(int reclaimedNodes, BitSet reclaimedValues) {
+            public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
                 cache().onBddNodesInvalidated(reclaimedNodes);
             }
 
             @Override
-            public void afterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
+            public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
                 cache().tableSizeChanged(invalidatedNodes);
             }
         });
@@ -63,22 +63,43 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
         return table().size();
     }
 
-    boolean check() {
+    @Override
+    public boolean check() {
         return table().check();
     }
 
-    @SuppressWarnings({"ClassReferencesSubclass", "InstanceofThis"})
+    /** See {@link DdVariableOrderImpl#isReordering()}; false for a diagram that has no order. */
+    boolean isReordering() {
+        return false;
+    }
+
+    /** The key-space prefix of this diagram's table, keeping the two disjoint within one context. */
+    abstract String statisticsPrefix();
+
     @Override
     public Map<String, Object> statistics() {
         assert accessGuard.acquire();
-        Map<String, Object> statistics = Stream.concat(
-                        table().statistics((this instanceof BddImpl) ? "bdd_" : "mdd_").entrySet().stream(),
-                        cache().statistics().entrySet().stream())
+        Map<String, Object> statistics = Stream.of(
+                        table().statistics(statisticsPrefix()).entrySet().stream(),
+                        cache().statistics().entrySet().stream(),
+                        ownStatistics().entrySet().stream())
+                .flatMap(stream -> stream)
                 .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
         assert accessGuard.release();
-        return DecisionDiagram.prefixStatistics(configuration().name(), statistics);
+        return Util.prefixStatistics(configuration().name(), statistics);
     }
 
+    /** Whatever the concrete diagram wants to report beyond its table's and its caches'. */
+    Map<String, Object> ownStatistics() {
+        return Map.of();
+    }
+
+    @Override
+    public String treeToString(int function) {
+        return table().treeToString(function);
+    }
+
+    @Override
     public void invalidateCache() {
         // Mainly available for testing
         cache().invalidate();
@@ -88,33 +109,34 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
         return protectionTracker;
     }
 
-    void registerObserver(NodeLifecycleObserver observer) {
+    void registerObserver(NodeTableObserver observer) {
         observers.register(observer);
     }
 
-    /** Registers an observer owned by this diagram, see {@link NodeLifecycleObserverGroup#registerStrongly}. */
-    void registerOwnedObserver(NodeLifecycleObserver observer) {
+    /** Registers an observer owned by this diagram, see {@link ObserverGroup#registerStrongly}. */
+    void registerOwnedObserver(NodeTableObserver observer) {
         observers.registerStrongly(observer);
     }
 
     void notifyBeforeGc() {
-        observers.dispatch(NodeLifecycleObserver::beforeGc);
+        observers.dispatch(observer -> observer.beforeGc(this));
     }
 
     void notifyAfterGc(int reclaimedNodes) {
-        observers.dispatch(observer -> observer.afterGc(reclaimedNodes, NO_VALUES));
+        observers.dispatch(observer -> observer.afterGc(this, reclaimedNodes, NO_VALUES));
     }
 
     void notifyAfterTableGrow(int reclaimedNodes) {
-        observers.dispatch(observer -> observer.afterTableGrowth(reclaimedNodes, NO_VALUES));
+        observers.dispatch(observer -> observer.afterTableGrowth(this, reclaimedNodes, NO_VALUES));
     }
 
-    public int forceGc() {
+    @Override
+    public int gc() {
         assert accessGuard.acquire();
         notifyBeforeGc();
         table().markAllReferencedNodes();
         int reclaimedNodes = table().reclaimUnmarkedNodes();
-        assert table().isNoneMarked();
+        assert !Assertions.COSTLY_ASSERTIONS || table().isNoneMarked();
         notifyAfterGc(reclaimedNodes);
         assert accessGuard.release();
         return reclaimedNodes;
@@ -150,6 +172,18 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
         table().dereferenceNode(positive);
         assert accessGuard.release();
         return function;
+    }
+
+    /** Saturates the node of {@code function}: it is never collected, and reference counting leaves it alone. */
+    void pin(int function) {
+        assert isValidFunction(function);
+        int positive = positive(function);
+        if (positive == TRUE) {
+            return;
+        }
+        assert accessGuard.acquire();
+        table().saturateNode(positive);
+        assert accessGuard.release();
     }
 
     @Override

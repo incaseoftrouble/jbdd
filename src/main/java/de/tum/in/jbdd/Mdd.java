@@ -1,6 +1,6 @@
 /*
  * This file is part of JBDD (https://github.com/incaseoftrouble/jbdd).
- * Copyright (c) 2017-2023 Tobias Meggendorfer.
+ * Copyright (c) 2026 Tobias Meggendorfer.
  *
  * JBDD is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,12 +16,11 @@
  */
 package de.tum.in.jbdd;
 
-public interface Mdd extends BooleanTerminalDecisionDiagram<int[], int[]>, NodeBasedDecisionDiagram {
-    int declareVariable(int domain);
+import java.util.Map;
 
-    int makeVariableFunction(int variable, boolean[] values);
-
-    int follow(int function, int value);
-
-    int restrict(int function, int[] values);
+/**
+ * The implementation of a {@link MultiValuedDecisionDiagram} actually provided by this library.
+ */
+public interface Mdd extends MultiValuedDecisionDiagram, NodeBasedDd {
+    Map<String, Object> statistics();
 }

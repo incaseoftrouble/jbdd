@@ -33,7 +33,8 @@ public class BddState {
     @Param({"false"})
     private boolean emulateMdd;
 
-    private Bdd bdd;
+    @SuppressWarnings("NullAway.Init")
+    private BinaryDecisionDiagram bdd;
 
     @SuppressWarnings("NumericCastThatLosesPrecision")
     @Setup(Level.Iteration)
@@ -45,10 +46,10 @@ public class BddState {
                 .cacheEphemeralMultiplier((int) (BddConfiguration.DEFAULT_CACHE_EPHEMERAL_MULTIPLIER * cacheSizeFactor))
                 .useCachePreserve(preserveCache)
                 .build();
-        bdd = emulateMdd ? new MddAsTestBdd(new MddImpl(configuration)) : BddFactory.buildBdd(configuration);
+        bdd = emulateMdd ? new MddAsBinaryDd(new MddImpl(configuration)) : BddFactory.buildBdd(configuration);
     }
 
-    public Bdd bdd() {
+    public BinaryDecisionDiagram bdd() {
         return bdd;
     }
 }

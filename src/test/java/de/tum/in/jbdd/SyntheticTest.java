@@ -31,9 +31,25 @@ class SyntheticTest {
         {9, 352}
     };
 
+    /* The boards grow exponentially, so the largest one alone dominates this test and scaling its size
+     * proportionally would not do anything useful - the bound moves in whole boards instead. */
+    private static int maxBoardSize() {
+        double scale = TestProfile.scale();
+        if (scale < 0.5) {
+            return 7;
+        }
+        return scale < 0.9 ? 8 : 9;
+    }
+
     @Test
     void testQueens() {
+        int maxBoardSize = maxBoardSize();
+
         for (int[] pair : nQueensPairs) {
+            if (pair[0] > maxBoardSize) {
+                continue;
+            }
+
             Bdd bdd = BddFactory.buildBdd();
             assertThat(
                     bdd.countSatisfyingAssignments(BddBuilder.makeQueens(bdd, pair[0]))

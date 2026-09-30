@@ -16,24 +16,33 @@
  */
 package de.tum.in.jbdd;
 
-import com.google.common.collect.Iterators;
+import de.tum.in.jbdd.collections.BitSets;
+import de.tum.in.jbdd.collections.Cube;
+import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.BitSet;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.IntConsumer;
+import java.util.function.IntUnaryOperator;
 import java.util.function.Predicate;
 
-class MddAsTestBdd implements TestBdd {
+class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     private final MddImpl mdd;
     private static final int TRUE = 1;
     private static final int FALSE = 0;
 
-    MddAsTestBdd(MddImpl mdd) {
+    MddAsBinaryDd(MddImpl mdd) {
         this.mdd = mdd;
+    }
+
+    @Override
+    public String toString() {
+        String name = mdd.configuration().name();
+        return name.isEmpty() ? "mdd" : name;
     }
 
     @Override
@@ -84,6 +93,11 @@ class MddAsTestBdd implements TestBdd {
     @Override
     public int nodeCount() {
         return mdd.nodeCount();
+    }
+
+    @Override
+    public int gc() {
+        return mdd.gc();
     }
 
     @Override
@@ -155,11 +169,6 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public boolean isValidNonConstantFunction(int function) {
-        return mdd.isValidNonConstantFunction(function);
-    }
-
-    @Override
     public boolean evaluate(int function, boolean[] assignment) {
         int[] values = new int[assignment.length];
         Arrays.setAll(values, i -> assignment[i] ? TRUE : FALSE);
@@ -214,9 +223,45 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public Iterator<BitSet> solutionIterator(int function) {
+    public double satisfyingFraction(int function) {
+        // The exact reference: 2^-n is a finite decimal, so only the conversion rounds.
+        return new BigDecimal(countSatisfyingAssignments(function))
+                .multiply(BigDecimal.valueOf(5, 1).pow(numberOfVariables()))
+                .doubleValue();
+    }
+
+    @Override
+    public double satisfyingFractionIn(int function, int domain) {
+        if (domain == falseFunction()) {
+            throw new IllegalArgumentException("Empty domain");
+        }
+        return Util.quotient(countSatisfyingAssignmentsIn(function, domain), countSatisfyingAssignments(domain));
+    }
+
+    /** Presents a cursor's elements as something else, without copying or stepping anything itself. */
+    private static <F, T> Cursor<T> map(Cursor<F> cursor, Function<? super F, ? extends T> function) {
+        return new Cursor<>() {
+            @Override
+            public boolean valid() {
+                return cursor.valid();
+            }
+
+            @Override
+            public T current() {
+                return function.apply(cursor.current());
+            }
+
+            @Override
+            public boolean advance() {
+                return cursor.advance();
+            }
+        };
+    }
+
+    @Override
+    public Cursor<BitSet> solutionCursor(int function) {
         BitSet set = new BitSet(mdd.numberOfVariables());
-        return Iterators.transform(mdd.solutionIterator(function), a -> {
+        return map(mdd.solutionCursor(function), a -> {
             //noinspection DataFlowIssue
             for (int i = 0; i < a.length; i++) {
                 assert a[i] == TRUE || a[i] == FALSE;
@@ -227,9 +272,9 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public Iterator<BitSet> solutionIterator(int function, BitSet support) {
+    public Cursor<BitSet> solutionCursor(int function, BitSet support) {
         BitSet set = new BitSet(mdd.numberOfVariables());
-        return Iterators.transform(mdd.solutionIterator(function, support), a -> {
+        return map(mdd.solutionCursor(function, support), a -> {
             //noinspection DataFlowIssue
             for (int i = 0; i < a.length; i++) {
                 assert a[i] == TRUE || a[i] == FALSE;
@@ -240,9 +285,9 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public Iterator<BitSet> solutionIteratorIn(int function, int domain) {
+    public Cursor<BitSet> solutionCursorIn(int function, int domain) {
         BitSet set = new BitSet(mdd.numberOfVariables());
-        return Iterators.transform(mdd.solutionIteratorIn(function, domain), a -> {
+        return map(mdd.solutionCursorIn(function, domain), a -> {
             for (int i = 0; i < a.length; i++) {
                 assert a[i] == TRUE || a[i] == FALSE;
                 set.set(i, a[i] == TRUE);
@@ -252,9 +297,9 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public Iterator<BitSet> solutionIteratorIn(int function, int domain, BitSet support) {
+    public Cursor<BitSet> solutionCursorIn(int function, int domain, BitSet support) {
         BitSet set = new BitSet(mdd.numberOfVariables());
-        return Iterators.transform(mdd.solutionIteratorIn(function, domain, support), a -> {
+        return map(mdd.solutionCursorIn(function, domain, support), a -> {
             for (int i = 0; i < a.length; i++) {
                 assert a[i] == TRUE || a[i] == FALSE;
                 set.set(i, a[i] == TRUE);
@@ -264,10 +309,30 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public Iterator<BinaryPath> pathIterator(int function) {
+    public void forEachSolutionIn(int function, int domain, Consumer<? super BitSet> action) {
+        BitSet set = new BitSet(mdd.numberOfVariables());
+        mdd.forEachSolutionIn(function, domain, a -> action.accept(toSolution(a, set)));
+    }
+
+    @Override
+    public void forEachSolutionIn(int function, int domain, BitSet support, Consumer<? super BitSet> action) {
+        BitSet set = new BitSet(mdd.numberOfVariables());
+        mdd.forEachSolutionIn(function, domain, support, a -> action.accept(toSolution(a, set)));
+    }
+
+    private static BitSet toSolution(int[] assignment, BitSet set) {
+        for (int i = 0; i < assignment.length; i++) {
+            assert assignment[i] == TRUE || assignment[i] == FALSE;
+            set.set(i, assignment[i] == TRUE);
+        }
+        return set;
+    }
+
+    @Override
+    public Cursor<Cube> pathCursor(int function) {
         BitSet assignment = new BitSet(mdd.numberOfVariables());
         BitSet support = new BitSet(mdd.numberOfVariables());
-        return Iterators.transform(mdd.pathIterator(function), a -> {
+        return map(mdd.pathCursor(function), a -> {
             //noinspection DataFlowIssue
             for (int i = 0; i < a.length; i++) {
                 assert a[i] == TRUE || a[i] == FALSE || a[i] == -1;
@@ -279,23 +344,23 @@ class MddAsTestBdd implements TestBdd {
                     assignment.set(i, a[i] == TRUE);
                 }
             }
-            return new BinaryPath(assignment, support);
+            return Cube.ofUnsafe(assignment, support);
         });
     }
 
     @Override
-    public void forEachPath(int function, Consumer<? super BinaryPath> action) {
+    public void forEachPath(int function, Consumer<? super Cube> action) {
         BitSet everything = new BitSet();
         everything.set(0, mdd.numberOfVariables());
         forEachPartialPath(function, everything, action);
     }
 
     @Override
-    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super BinaryPath> action) {
+    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super Cube> action) {
         int variables = mdd.numberOfVariables();
         BitSet values = new BitSet(variables);
         BitSet support = new BitSet(variables);
-        BinaryPath bddPath = new BinaryPath(values, support);
+        Cube bddPath = Cube.ofUnsafe(values, support);
         mdd.forEachPartialPath(function, relevantSet, path -> {
             for (int var = 0; var < path.length; var++) {
                 assert path[var] == -1 || path[var] == TRUE || path[var] == FALSE;
@@ -314,11 +379,11 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public boolean anyPathMatches(int function, Predicate<? super BinaryPath> predicate) {
+    public boolean anyPathMatches(int function, Predicate<? super Cube> predicate) {
         int variables = mdd.numberOfVariables();
         BitSet values = new BitSet(variables);
         BitSet support = new BitSet(variables);
-        BinaryPath bddPath = new BinaryPath(values, support);
+        Cube bddPath = Cube.ofUnsafe(values, support);
         return mdd.anyPathMatches(function, path -> {
             for (int var = 0; var < path.length; var++) {
                 assert path[var] == -1 || path[var] == TRUE || path[var] == FALSE;
@@ -425,12 +490,18 @@ class MddAsTestBdd implements TestBdd {
     @Override
     public RegisteredOperation.Unary registerCompose(int[] variableMapping) {
         // Registered compose is tied to a real BddImpl; this adapter has none to bind to.
-        throw new UnsupportedOperationException("registerCompose is not supported on an MDD-backed TestBdd");
+        throw new UnsupportedOperationException("registerCompose is not supported on an MDD-backed BinaryDd");
     }
 
     @Override
     public RegisteredOperation.Binary registerComposeSimplify(int[] variableMapping) {
-        throw new UnsupportedOperationException("registerComposeSimplify is not supported on an MDD-backed TestBdd");
+        throw new UnsupportedOperationException("registerComposeSimplify is not supported on an MDD-backed BinaryDd");
+    }
+
+    @Override
+    public RegisteredOperation.Unary registerExists(BitSet quantifiedVariables) {
+        // As registerCompose: the registered form lives on BddImpl, which this adapter does not have.
+        throw new UnsupportedOperationException("registerExists is not supported on an MDD-backed BinaryDd");
     }
 
     @Override
@@ -462,7 +533,7 @@ class MddAsTestBdd implements TestBdd {
         int result = falseFunction();
         while (iterator.hasNext()) {
             var assigment = iterator.next();
-            int restrict = mdd.reference(restrict(base, replaced, assigment));
+            int restrict = mdd.reference(restrict(base, Cube.of(assigment, replaced)));
 
             int assignment = trueFunction();
             for (int var = replaced.nextSetBit(0); var >= 0; var = replaced.nextSetBit(var + 1)) {
@@ -479,11 +550,16 @@ class MddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public int restrict(int function, BitSet restrictedVariables, BitSet restrictedVariableValues) {
+    public int adopt(BinaryDecisionDiagram source, int function, IntUnaryOperator variableMapping) {
+        return BddUtil.adopt(this, source, function, variableMapping);
+    }
+
+    @Override
+    public int restrict(int function, Cube cube) {
         int[] restriction = new int[mdd.numberOfVariables()];
         for (int var = 0; var < restriction.length; var++) {
-            if (restrictedVariables.get(var)) {
-                restriction[var] = restrictedVariableValues.get(var) ? TRUE : FALSE;
+            if (cube.fixes(var)) {
+                restriction[var] = cube.value(var) ? TRUE : FALSE;
             } else {
                 restriction[var] = -1;
             }

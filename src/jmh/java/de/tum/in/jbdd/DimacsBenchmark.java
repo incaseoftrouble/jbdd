@@ -16,6 +16,7 @@
  */
 package de.tum.in.jbdd;
 
+import de.tum.in.jbdd.io.DimacsReader;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -42,9 +43,11 @@ public class DimacsBenchmark extends BaseBddBenchmark {
 
     @State(Scope.Benchmark)
     public static class DimacsState extends BddState {
+        @SuppressWarnings("NullAway.Init")
         @Param({"flat30-1", "flat30-2", "flat30-3", "uf20-01", "uf20-02", "uf20-03"})
         private String fileName;
 
+        @SuppressWarnings("NullAway.Init")
         private String content;
 
         @Setup(Level.Trial)
@@ -68,7 +71,7 @@ public class DimacsBenchmark extends BaseBddBenchmark {
     @Benchmark
     public static void benchmarkDimacs(DimacsState state, Blackhole bh)
             throws IOException, DimacsReader.InvalidFormatException {
-        Bdd bdd = state.bdd();
+        BinaryDecisionDiagram bdd = state.bdd();
         int node = DimacsReader.loadDimacs(bdd, state.reader());
         bh.consume(node == bdd.falseFunction());
     }

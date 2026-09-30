@@ -28,12 +28,25 @@ public abstract class CacheBase {
     private static final double USAGE_GROWTH_LOAD_FACTOR = 0.75;
     private static final int USAGE_GROWTH_FACTOR = 2;
     private static final int MINIMUM_SIZE = 16;
+    // The written bins are recorded while at most size / WRITTEN_FRACTION: resetting that many scattered bins is still
+    // cheaper than filling the whole array.
+    private static final int WRITTEN_FRACTION = 32;
+    private static final int[] NO_BINS = new int[0];
 
     int size = 0;
     CacheStatistics statistics = new CacheStatistics();
     private final BooleanSupplier cacheDependenciesValid;
     private int desiredSize = 0;
     private boolean cacheInvalid = true;
+
+    /*
+     * The bins written since the last clear, as long as there are few (writtenCount >= 0), so that a clear resets just
+     * those: most clears come from a cache that is invalidated per call or per parameter and has since seen a small
+     * call, leaving a large array almost empty. -1 once there were more writes than the record holds, or entries were
+     * moved by a growth - the next clear is then a full one.
+     */
+    private int[] written = NO_BINS;
+    private int writtenCount = 0;
 
     CacheBase() {
         this(() -> true);
@@ -53,6 +66,22 @@ public abstract class CacheBase {
         return Util.mod(hash, size());
     }
 
+    /** The bin a put of {@code hash} writes: counts the put and records the bin for the next clear. */
+    final int putBin(int hash) {
+        statistics.put();
+        int bin = binIndex(hash);
+        int count = writtenCount;
+        if (count >= 0) {
+            if (count < written.length) {
+                written[count] = bin;
+                writtenCount = count + 1;
+            } else {
+                writtenCount = -1;
+            }
+        }
+        return bin;
+    }
+
     protected abstract boolean isValid(int binStart);
 
     /**
@@ -60,15 +89,14 @@ public abstract class CacheBase {
      * worthwhile.
      */
     protected void prune(boolean attemptPruning, IntPredicate validityCheck) {
-        if (cacheInvalid || !cacheDependenciesValid.getAsBoolean()) {
-            cacheInvalid = true;
+        if (cacheInvalid) {
             return;
         }
         if (statistics.putCountSinceClear() == 0) {
             assert isEmpty();
             return;
         }
-        if (!attemptPruning || statistics.putCountSinceClear() < size() / 4) {
+        if (!attemptPruning || !cacheDependenciesValid.getAsBoolean() || statistics.putCountSinceClear() < size() / 4) {
             cacheInvalid = true;
             return;
         }
@@ -101,12 +129,18 @@ public abstract class CacheBase {
             // Also takes care of emptying the cache
             growToSize();
         } else if (cacheInvalid) {
-            doClear();
+            if (writtenCount >= 0) {
+                doClear(written, writtenCount);
+                statistics.sparseClear();
+            } else {
+                doClear();
+            }
+            writtenCount = 0;
             statistics.clear();
             cacheInvalid = false;
             assert isEmpty();
         }
-        assert allEntriesValid();
+        assert !Assertions.COSTLY_ASSERTIONS || allEntriesValid();
         assert !cacheInvalid;
     }
 
@@ -119,6 +153,9 @@ public abstract class CacheBase {
         boolean preserve = !cacheInvalid && useCachePreserve() && statistics.putCountSinceClear() > size / 8;
         doGrowToSize(newSize, preserve);
         size = newSize;
+        written = newSize / WRITTEN_FRACTION == 0 ? NO_BINS : new int[newSize / WRITTEN_FRACTION];
+        // A preserving growth rehashed the entries to bins nobody recorded.
+        writtenCount = preserve ? -1 : 0;
         if (!preserve) {
             statistics.clear();
             assert isEmpty();
@@ -131,6 +168,9 @@ public abstract class CacheBase {
     protected abstract boolean useCachePreserve();
 
     protected abstract void doClear();
+
+    /** Empties the first {@code count} bins of {@code bins}, which hold every bin written since the last clear. */
+    protected abstract void doClear(int[] bins, int count);
 
     protected abstract void doGrowToSize(int newSize, boolean preserve);
 
@@ -169,6 +209,8 @@ public abstract class CacheBase {
 
         final int binSize;
         int[] cache = EMPTY_INT_ARRAY;
+        // The hash of the last lookup, for the put that follows a miss.
+        int lookupHash = 0;
 
         IntKeys(int keyCount, int binSize) {
             this(keyCount, binSize, () -> true);
@@ -179,6 +221,128 @@ public abstract class CacheBase {
             assert 0 < keyCount && keyCount <= binSize;
             this.keyCount = keyCount;
             this.binSize = binSize;
+        }
+
+        int lookupHash() {
+            return lookupHash;
+        }
+
+        /*
+         * The lookups and puts every int-keyed cache shares, by key count: a lookup finds the bin holding the keys
+         * (counting the hit) or -1 (counting the miss) and keeps the hash for the put; a put writes the keys and
+         * returns the bin, for the cache to store its result - in the bin after the keys, or in an array of its own.
+         */
+
+        final int findBin(int key) {
+            ensureValid();
+            int hash = HashUtil.hash(key);
+            lookupHash = hash;
+            int bin = binIndex(hash);
+            int binStart = binSize * bin;
+            if (key == cache[binStart]) {
+                return hit(bin, binStart);
+            }
+            statistics.miss();
+            return -1;
+        }
+
+        final int findBin(int key1, int key2) {
+            ensureValid();
+            int hash = HashUtil.hash(key1, key2);
+            lookupHash = hash;
+            int bin = binIndex(hash);
+            int binStart = binSize * bin;
+            if (key1 == cache[binStart] && key2 == cache[binStart + 1]) {
+                return hit(bin, binStart);
+            }
+            statistics.miss();
+            return -1;
+        }
+
+        final int findBin(int key1, int key2, int key3) {
+            ensureValid();
+            int hash = HashUtil.hash(key1, key2, key3);
+            lookupHash = hash;
+            int bin = binIndex(hash);
+            int binStart = binSize * bin;
+            if (key1 == cache[binStart] && key2 == cache[binStart + 1] && key3 == cache[binStart + 2]) {
+                return hit(bin, binStart);
+            }
+            statistics.miss();
+            return -1;
+        }
+
+        final int findBin(int key1, int key2, int key3, int key4) {
+            ensureValid();
+            int hash = HashUtil.hash(key1, key2, key3, key4);
+            lookupHash = hash;
+            int bin = binIndex(hash);
+            int binStart = binSize * bin;
+            if (key1 == cache[binStart]
+                    && key2 == cache[binStart + 1]
+                    && key3 == cache[binStart + 2]
+                    && key4 == cache[binStart + 3]) {
+                return hit(bin, binStart);
+            }
+            statistics.miss();
+            return -1;
+        }
+
+        private int hit(int bin, int binStart) {
+            assert isValid(binStart);
+            statistics.hit();
+            return bin;
+        }
+
+        final int storeKeys(int hash, int key) {
+            ensureValid();
+            assert hash == HashUtil.hash(key);
+            int bin = putBin(hash);
+            cache[binSize * bin] = key;
+            return bin;
+        }
+
+        final int storeKeys(int hash, int key1, int key2) {
+            ensureValid();
+            assert hash == HashUtil.hash(key1, key2);
+            int bin = putBin(hash);
+            int binStart = binSize * bin;
+            cache[binStart] = key1;
+            cache[binStart + 1] = key2;
+            return bin;
+        }
+
+        final int storeKeys(int hash, int key1, int key2, int key3) {
+            ensureValid();
+            assert hash == HashUtil.hash(key1, key2, key3);
+            int bin = putBin(hash);
+            int binStart = binSize * bin;
+            cache[binStart] = key1;
+            cache[binStart + 1] = key2;
+            cache[binStart + 2] = key3;
+            return bin;
+        }
+
+        final int storeKeys(int hash, int key1, int key2, int key3, int key4) {
+            ensureValid();
+            assert hash == HashUtil.hash(key1, key2, key3, key4);
+            int bin = putBin(hash);
+            int binStart = binSize * bin;
+            cache[binStart] = key1;
+            cache[binStart + 1] = key2;
+            cache[binStart + 2] = key3;
+            cache[binStart + 3] = key4;
+            return bin;
+        }
+
+        /** For a cache keeping an int result after the keys: the result in {@code bin}, a placeholder for -1. */
+        final int resultIn(int bin) {
+            return bin < 0 ? NodeTable.PLACEHOLDER : cache[binSize * bin + keyCount];
+        }
+
+        final void storeResult(int bin, int result) {
+            assert binSize == keyCount + 1;
+            cache[binSize * bin + keyCount] = result;
         }
 
         @Override
@@ -223,6 +387,13 @@ public abstract class CacheBase {
                 for (int i = 0; i < cache.length; i += binSize) {
                     cache[i] = NodeTable.PLACEHOLDER;
                 }
+            }
+        }
+
+        @Override
+        protected void doClear(int[] bins, int count) {
+            for (int i = 0; i < count; i++) {
+                cache[bins[i] * binSize] = NodeTable.PLACEHOLDER;
             }
         }
 
@@ -348,6 +519,13 @@ public abstract class CacheBase {
         }
 
         @Override
+        protected void doClear(int[] bins, int count) {
+            for (int i = 0; i < count; i++) {
+                cache[bins[i]] = null;
+            }
+        }
+
+        @Override
         protected void doGrowToSize(int newSize, boolean preserve) {
             V[] newCache = newArray(newSize);
             growInto(newSize, newCache, preserve);
@@ -386,6 +564,30 @@ public abstract class CacheBase {
                 }
             }
             return pruned;
+        }
+    }
+
+    /** A mini BitSet implementation */
+    static final class Bits {
+        // Bin b is bit b (modulo 64) of word b >>> WORD_SHIFT.
+        private static final int WORD_SHIFT = Integer.numberOfTrailingZeros(Long.SIZE);
+
+        private final long[] words;
+
+        Bits(int bins) {
+            words = new long[(bins + Long.SIZE - 1) >>> WORD_SHIFT];
+        }
+
+        boolean get(int bin) {
+            return (words[bin >>> WORD_SHIFT] & (1L << bin)) != 0;
+        }
+
+        void set(int bin, boolean value) {
+            if (value) {
+                words[bin >>> WORD_SHIFT] |= 1L << bin;
+            } else {
+                words[bin >>> WORD_SHIFT] &= ~(1L << bin);
+            }
         }
     }
 }

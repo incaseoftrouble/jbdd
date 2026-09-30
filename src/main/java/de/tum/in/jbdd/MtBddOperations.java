@@ -16,64 +16,63 @@
  */
 package de.tum.in.jbdd;
 
+import static de.tum.in.jbdd.MtBddCache.Slot.BDD;
+import static de.tum.in.jbdd.MtBddCache.Slot.MTBDD;
+
 import java.util.Arrays;
 import java.util.BitSet;
+import java.util.function.IntPredicate;
+import java.util.function.IntUnaryOperator;
 import org.jspecify.annotations.Nullable;
 
 /**
  * Every {@code MtBdd}-side {@link RegisteredOperation} implementation, gathered here (rather than one file
  * each) because they share almost all of their structure with each other, and with {@link BddOperations}:
  * {@link MtBdd#registerCompose} canonicalizes its mapping and picks between the identity fast path (a
- * lambda) and the general, cache-owning {@link Compose}; {@link MtBdd#registerApply}'s operator is a pure
- * function over terminal values, so its {@link Apply} needs no node protection at all - unlike
- * {@link Compose}, whose replacement array is {@code Bdd}-side even though the composed function is an
- * MTBDD.
+ * lambda) and the general, cache-owning {@link Compose}; the other four bind a pure function over terminal
+ * values ({@link Apply}, {@link Mapper}, {@link MapBoolean}, {@link ApplyBoolean}) and so need no node
+ * protection at all - unlike {@link Compose}, whose replacement array is {@code Bdd}-side even though the
+ * composed function is an MTBDD.
  */
 final class MtBddOperations {
     private MtBddOperations() {}
 
-    /**
-     * A simplify-capable registered operation additionally keys its cache on a {@code Bdd} domain, so it has
-     * to be pruned when <em>either</em> table collects - hence the registration with both diagrams, and
-     * hence this shared heuristic: the {@code afterGc} callbacks are indistinguishable once both are
-     * registered, so the (purely advisory) "is it worth preserving entries" decision is taken against
-     * whichever table is larger.
-     */
-    private static boolean preserveOnGc(MtBddImpl mtbdd, int reclaimedNodes) {
-        return mtbdd.bddImpl().configuration().useCachePreserve()
-                && reclaimedNodes < Math.max(mtbdd.tableSize(), mtbdd.bddImpl().tableSize()) / 2;
+    private static boolean preserveEntries(MtBddImpl mtbdd, boolean mtbddOrigin, int invalidatedNodes) {
+        int tableSize = mtbddOrigin ? mtbdd.tableSize() : mtbdd.bddImpl().tableSize();
+        return mtbdd.bddImpl().configuration().useCachePreserve() && invalidatedNodes < tableSize / 2;
     }
 
     static final class Compose extends ProtectedOperation
-            implements RegisteredOperation.Unary, RegisteredOperation.Binary, NodeLifecycleObserver {
+            implements RegisteredOperation.Unary, RegisteredOperation.Binary, NodeTableObserver, VariableOrderObserver {
         private final MtBddImpl mtbdd;
         private final int[] bddVariableMapping;
-        private final int highestReplacedVariable;
-        private final MtBddCache.UnaryToIntCache composeCache;
-
-        /**
-         * Only allocated for {@code registerComposeSimplify} - see {@link BddOperations.Compose}'s field of
-         * the same name for why a plain registered compose never needs one.
-         */
-        private final MtBddCache.@Nullable MtbddBddToIntCache composeSimplifyCache;
+        private int maxReplacedLevel;
+        private final MtBddCache.UnaryCache composeCache;
+        private final MtBddCache.@Nullable BinaryCache composeSimplifyCache;
 
         Compose(
                 MtBddImpl mtbdd,
                 int[] resolvedMapping,
-                int highestReplacedVariable,
+                int maxReplacedLevel,
                 int[] protectedNodes,
                 boolean withSimplify) {
-            super(mtbdd.protectionTracker(), () -> mtbdd.dereference(protectedNodes));
-            assert Arrays.stream(protectedNodes).allMatch(mtbdd::nodeIsReferenced);
+            /* The replacements are the *companion BDD's* functions, so that is where they were referenced
+             * (MtBddImpl#registerCompose) and where they have to be released. The tracker is shared - see
+             * MtBddImpl's constructor - so either diagram's GC drains it. */
+            super(mtbdd.protectionTracker(), () -> mtbdd.bddImpl().dereference(protectedNodes));
+            assert Arrays.stream(protectedNodes).allMatch(mtbdd.bddImpl()::nodeIsReferenced);
             this.mtbdd = mtbdd;
             this.bddVariableMapping = resolvedMapping;
-            this.highestReplacedVariable = highestReplacedVariable;
-            this.composeCache = new MtBddCache.UnaryToIntCache(mtbdd, mtbdd.bddImpl());
-            this.composeSimplifyCache = withSimplify ? new MtBddCache.MtbddBddToIntCache(mtbdd, mtbdd.bddImpl()) : null;
+            this.maxReplacedLevel = maxReplacedLevel;
+            this.composeCache = new MtBddCache.UnaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, MTBDD);
+            this.composeSimplifyCache =
+                    withSimplify ? new MtBddCache.BinaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, BDD, MTBDD) : null;
             mtbdd.registerObserver(this);
             if (withSimplify) {
                 mtbdd.bddImpl().registerObserver(this);
             }
+            /* Once, not once per table it registers with: the order tells each listener a single time. */
+            mtbdd.variableOrder().registerObserver(this);
             growToTableFloor();
         }
 
@@ -85,6 +84,23 @@ final class MtBddOperations {
             if (composeSimplifyCache != null) {
                 composeSimplifyCache.grow(floor);
             }
+        }
+
+        @Override
+        public void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, BitSet movedVariables) {
+            // As BddOperations.Compose: the cut-off it holds is a level, and its caches used the old one.
+            maxReplacedLevel = mtbdd.bddImpl().maxReplacedLevel(bddVariableMapping);
+            // see BooleanCache#orderChanged
+            invalidateCaches();
+        }
+
+        @Override
+        public void variablesInserted(int level, int count) {
+            // See BddOperations.Compose: only the bound moves, every comparison against it is preserved.
+            if (maxReplacedLevel >= level) {
+                maxReplacedLevel += count;
+            }
+            assert maxReplacedLevel == mtbdd.bddImpl().maxReplacedLevel(bddVariableMapping);
         }
 
         @Override
@@ -106,12 +122,7 @@ final class MtBddOperations {
             assert bddDomain == mtbdd.bdd().trueFunction() || composeSimplifyCache != null
                     : "A domain-carrying compose must be registered through registerComposeSimplify";
             int result = mtbdd.composeGeneral(
-                    mtbddFunction,
-                    bddDomain,
-                    bddVariableMapping,
-                    highestReplacedVariable,
-                    composeCache,
-                    composeSimplifyCache);
+                    mtbddFunction, bddDomain, bddVariableMapping, maxReplacedLevel, composeCache, composeSimplifyCache);
             composeCache.growOnUsage();
             if (composeSimplifyCache != null) {
                 composeSimplifyCache.growOnUsage();
@@ -120,45 +131,288 @@ final class MtBddOperations {
         }
 
         @Override
-        public void afterGc(int reclaimedNodes, BitSet reclaimedValues) {
+        public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
             if (isReleased()) {
                 return;
             }
-            boolean preserve = preserveOnGc(mtbdd, reclaimedNodes);
-            composeCache.clearInvalidMtbddNodes(preserve);
-            if (composeSimplifyCache != null) {
-                composeSimplifyCache.clearInvalidMtbddNodes(preserve);
-                composeSimplifyCache.clearInvalidBddNodes(preserve);
-            }
+            pruneInvalidNodes(origin, reclaimedNodes, reclaimedValues);
         }
 
         @Override
-        public void afterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
+        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
             if (isReleased()) {
                 return;
             }
-            growToTableFloor();
+            pruneInvalidNodes(origin, invalidatedNodes, reclaimedValues);
+            //noinspection ObjectEquality
+            if (origin == mtbdd) { // NOPMD
+                growToTableFloor();
+            }
+        }
+
+        private void invalidateCaches() {
+            composeCache.invalidate();
+            if (composeSimplifyCache != null) {
+                composeSimplifyCache.invalidate();
+            }
+        }
+
+        @SuppressWarnings({"PMD.CompareObjectsWithEquals", "ObjectEquality"})
+        private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            if (mtbdd.variableOrder().isReordering()) {
+                // See BooleanCache#onBddNodesInvalidated.
+                invalidateCaches();
+                return;
+            }
+            if (invalidatedNodes == 0 && reclaimedValues.isEmpty()) {
+                return;
+            }
+            boolean mtbddOrigin = origin == mtbdd;
+            boolean preserve = preserveEntries(mtbdd, mtbddOrigin, invalidatedNodes);
+            if (mtbddOrigin) {
+                composeCache.clearInvalidMtbddNodes(preserve);
+                if (composeSimplifyCache != null) {
+                    composeSimplifyCache.clearInvalidMtbddNodes(preserve);
+                }
+            } else {
+                assert composeSimplifyCache != null : "Registered with the Bdd only when simplify-capable";
+                composeSimplifyCache.clearInvalidBddNodes(preserve);
+            }
         }
     }
 
-    static final class Apply implements RegisteredOperation.Binary, RegisteredOperation.Ternary, NodeLifecycleObserver {
+    static final class Mapper implements RegisteredOperation.Unary, RegisteredOperation.Binary, NodeTableObserver {
         private final MtBddImpl mtbdd;
-        private final MtBddBinaryOperator operator;
-        private final MtBddCache.BinaryToIntCache applyCache;
+        private final IntUnaryOperator operator;
+        private final MtBddCache.UnaryCache mapCache;
 
-        /** Only allocated for {@code registerApplySimplify}; see {@link Compose#composeSimplifyCache}. */
-        private final MtBddCache.@Nullable ApplySimplifyCache applySimplifyCache;
+        /** Only allocated for {@code registerMapSimplify}; see {@link Compose#composeSimplifyCache}. */
+        private final MtBddCache.@Nullable BinaryCache mapSimplifyCache;
 
-        Apply(MtBddImpl mtbdd, MtBddBinaryOperator operator, boolean withSimplify) {
+        Mapper(MtBddImpl mtbdd, IntUnaryOperator operator, boolean withSimplify) {
             this.mtbdd = mtbdd;
             this.operator = operator;
-            this.applyCache = new MtBddCache.BinaryToIntCache(mtbdd, mtbdd.bddImpl());
-            this.applySimplifyCache = withSimplify ? new MtBddCache.ApplySimplifyCache(mtbdd, mtbdd.bddImpl()) : null;
+            this.mapCache = new MtBddCache.UnaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, MTBDD);
+            this.mapSimplifyCache =
+                    withSimplify ? new MtBddCache.BinaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, BDD, MTBDD) : null;
             mtbdd.registerObserver(this);
             if (withSimplify) {
                 mtbdd.bddImpl().registerObserver(this);
             }
-            growToTableFloor(); // size the cache for the table as it stands now, not just future grows
+            growToTableFloor();
+        }
+
+        private void growToTableFloor() {
+            BddConfiguration configuration = mtbdd.bddImpl().configuration();
+            int floor = mtbdd.tableSize()
+                    / (configuration.mtbddCacheEphemeralMultiplier() * configuration.registeredOperationDivider());
+            mapCache.grow(floor);
+            if (mapSimplifyCache != null) {
+                mapSimplifyCache.grow(floor);
+            }
+        }
+
+        @Override
+        public int applyAsInt(int function) {
+            return applyAsInt(function, mtbdd.bdd().trueFunction());
+        }
+
+        @Override
+        public int applyAsInt(int function, int bddDomain) {
+            assert bddDomain == mtbdd.bdd().trueFunction()
+                            || bddDomain == mtbdd.bdd().falseFunction()
+                            || mapSimplifyCache != null
+                    : "A domain-carrying map must be registered through registerMapSimplify";
+            int result = mtbdd.map(function, bddDomain, operator, mapCache, mapSimplifyCache);
+            mapCache.growOnUsage();
+            if (mapSimplifyCache != null) {
+                mapSimplifyCache.growOnUsage();
+            }
+            return result;
+        }
+
+        @Override
+        public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
+            pruneInvalidNodes(origin, reclaimedNodes, reclaimedValues);
+        }
+
+        @Override
+        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            pruneInvalidNodes(origin, invalidatedNodes, reclaimedValues);
+            if (origin == mtbdd) { // NOPMD
+                growToTableFloor();
+            }
+        }
+
+        @SuppressWarnings({"PMD.CompareObjectsWithEquals", "ObjectEquality"})
+        private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            if (mtbdd.variableOrder().isReordering()) {
+                // See BooleanCache#onBddNodesInvalidated.
+                mapCache.invalidate();
+                if (mapSimplifyCache != null) {
+                    mapSimplifyCache.invalidate();
+                }
+                return;
+            }
+            if (invalidatedNodes == 0 && reclaimedValues.isEmpty()) {
+                return;
+            }
+            boolean mtbddOrigin = origin == mtbdd;
+            boolean preserve = preserveEntries(mtbdd, mtbddOrigin, invalidatedNodes);
+            if (mtbddOrigin) {
+                mapCache.clearInvalidMtbddNodes(preserve);
+                if (mapSimplifyCache != null) {
+                    mapSimplifyCache.clearInvalidMtbddNodes(preserve);
+                }
+            } else {
+                assert mapSimplifyCache != null : "Registered with the Bdd only when simplify-capable";
+                mapSimplifyCache.clearInvalidBddNodes(preserve);
+            }
+        }
+    }
+
+    /**
+     * {@code mapBoolean} and {@code applyBoolean} both fold terminals into a bit, so their results are
+     * {@code Bdd} functions and every entry straddles the two tables - which is why, unlike {@link Apply},
+     * these two always observe the {@code Bdd} as well, not only in their simplifying form.
+     */
+    static final class MapBoolean implements RegisteredOperation.Unary, NodeTableObserver {
+        private final MtBddImpl mtbdd;
+        private final IntPredicate values;
+        private final MtBddCache.UnaryCache mapBooleanCache;
+
+        MapBoolean(MtBddImpl mtbdd, IntPredicate values) {
+            this.mtbdd = mtbdd;
+            this.values = values;
+            this.mapBooleanCache = new MtBddCache.UnaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, BDD);
+            mtbdd.registerObserver(this);
+            mtbdd.bddImpl().registerObserver(this);
+            growToTableFloor();
+        }
+
+        private void growToTableFloor() {
+            BddConfiguration configuration = mtbdd.bddImpl().configuration();
+            mapBooleanCache.grow(mtbdd.tableSize()
+                    / (configuration.mtbddCacheEphemeralMultiplier() * configuration.registeredOperationDivider()));
+        }
+
+        @Override
+        public int applyAsInt(int function) {
+            int result = mtbdd.mapBoolean(function, values, mapBooleanCache);
+            mapBooleanCache.growOnUsage();
+            return result;
+        }
+
+        @Override
+        public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
+            pruneInvalidNodes(origin, reclaimedNodes, reclaimedValues);
+        }
+
+        @Override
+        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            pruneInvalidNodes(origin, invalidatedNodes, reclaimedValues);
+            if (origin == mtbdd) { // NOPMD
+                growToTableFloor();
+            }
+        }
+
+        @SuppressWarnings({"PMD.CompareObjectsWithEquals", "ObjectEquality"})
+        private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            if (mtbdd.variableOrder().isReordering()) {
+                // See BooleanCache#onBddNodesInvalidated.
+                mapBooleanCache.invalidate();
+                return;
+            }
+            if (invalidatedNodes == 0 && reclaimedValues.isEmpty()) {
+                return;
+            }
+            boolean mtbddOrigin = origin == mtbdd;
+            boolean preserve = preserveEntries(mtbdd, mtbddOrigin, invalidatedNodes);
+            if (mtbddOrigin) {
+                mapBooleanCache.clearInvalidMtbddNodes(preserve);
+            } else {
+                mapBooleanCache.clearInvalidBddNodes(preserve);
+            }
+        }
+    }
+
+    static final class ApplyBoolean implements RegisteredOperation.Binary, NodeTableObserver {
+        private final MtBddImpl mtbdd;
+        private final MtBddBinaryPredicate predicate;
+        private final MtBddCache.BinaryCache applyBooleanCache;
+
+        ApplyBoolean(MtBddImpl mtbdd, MtBddBinaryPredicate predicate) {
+            this.mtbdd = mtbdd;
+            this.predicate = predicate;
+            this.applyBooleanCache = new MtBddCache.BinaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, MTBDD, BDD);
+            mtbdd.registerObserver(this);
+            mtbdd.bddImpl().registerObserver(this);
+            growToTableFloor();
+        }
+
+        private void growToTableFloor() {
+            BddConfiguration configuration = mtbdd.bddImpl().configuration();
+            applyBooleanCache.grow(mtbdd.tableSize()
+                    / (configuration.mtbddCacheEphemeralMultiplier() * configuration.registeredOperationDivider()));
+        }
+
+        @Override
+        public int applyAsInt(int function1, int function2) {
+            int result = mtbdd.applyBoolean(function1, function2, predicate, applyBooleanCache);
+            applyBooleanCache.growOnUsage();
+            return result;
+        }
+
+        @Override
+        public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
+            pruneInvalidNodes(origin, reclaimedNodes, reclaimedValues);
+        }
+
+        @Override
+        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            pruneInvalidNodes(origin, invalidatedNodes, reclaimedValues);
+            if (origin == mtbdd) { // NOPMD
+                growToTableFloor();
+            }
+        }
+
+        @SuppressWarnings({"PMD.CompareObjectsWithEquals", "ObjectEquality"})
+        private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            if (mtbdd.variableOrder().isReordering()) {
+                // See BooleanCache#onBddNodesInvalidated.
+                applyBooleanCache.invalidate();
+                return;
+            }
+            if (invalidatedNodes == 0 && reclaimedValues.isEmpty()) {
+                return;
+            }
+            boolean mtbddOrigin = origin == mtbdd;
+            boolean preserve = preserveEntries(mtbdd, mtbddOrigin, invalidatedNodes);
+            if (mtbddOrigin) {
+                applyBooleanCache.clearInvalidMtbddNodes(preserve);
+            } else {
+                applyBooleanCache.clearInvalidBddNodes(preserve);
+            }
+        }
+    }
+
+    static final class Apply implements RegisteredOperation.Binary, RegisteredOperation.Ternary, NodeTableObserver {
+        private final MtBddImpl mtbdd;
+        private final MtBddBinaryOperator operator;
+        private final MtBddCache.BinaryCache applyCache;
+        private final MtBddCache.@Nullable TernaryCache applySimplifyCache;
+
+        Apply(MtBddImpl mtbdd, MtBddBinaryOperator operator, boolean withSimplify) {
+            this.mtbdd = mtbdd;
+            this.operator = operator;
+            this.applyCache = new MtBddCache.BinaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, MTBDD, MTBDD);
+            this.applySimplifyCache =
+                    withSimplify ? new MtBddCache.TernaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, MTBDD, BDD, MTBDD) : null;
+            mtbdd.registerObserver(this);
+            if (withSimplify) {
+                mtbdd.bddImpl().registerObserver(this);
+            }
+            growToTableFloor();
         }
 
         private void growToTableFloor() {
@@ -191,18 +445,42 @@ final class MtBddOperations {
         }
 
         @Override
-        public void afterGc(int reclaimedNodes, BitSet reclaimedValues) {
-            boolean preserve = preserveOnGc(mtbdd, reclaimedNodes);
-            applyCache.clearInvalidMtbddNodes(preserve);
-            if (applySimplifyCache != null) {
-                applySimplifyCache.clearInvalidMtbddNodes(preserve);
-                applySimplifyCache.clearInvalidBddNodes(preserve);
-            }
+        public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
+            pruneInvalidNodes(origin, reclaimedNodes, reclaimedValues);
         }
 
         @Override
-        public void afterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
-            growToTableFloor();
+        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            pruneInvalidNodes(origin, invalidatedNodes, reclaimedValues);
+            if (origin == mtbdd) { // NOPMD
+                growToTableFloor();
+            }
+        }
+
+        @SuppressWarnings({"PMD.CompareObjectsWithEquals", "ObjectEquality"})
+        private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            if (mtbdd.variableOrder().isReordering()) {
+                // See BooleanCache#onBddNodesInvalidated.
+                applyCache.invalidate();
+                if (applySimplifyCache != null) {
+                    applySimplifyCache.invalidate();
+                }
+                return;
+            }
+            if (invalidatedNodes == 0 && reclaimedValues.isEmpty()) {
+                return;
+            }
+            boolean mtbddOrigin = origin == mtbdd;
+            boolean preserve = preserveEntries(mtbdd, mtbddOrigin, invalidatedNodes);
+            if (mtbddOrigin) {
+                applyCache.clearInvalidMtbddNodes(preserve);
+                if (applySimplifyCache != null) {
+                    applySimplifyCache.clearInvalidMtbddNodes(preserve);
+                }
+            } else {
+                assert applySimplifyCache != null;
+                applySimplifyCache.clearInvalidBddNodes(preserve);
+            }
         }
     }
 }

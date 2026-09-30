@@ -16,18 +16,28 @@
  */
 package de.tum.in.jbdd;
 
-import java.util.BitSet;
+import java.util.Arrays;
+import java.util.function.Supplier;
+import org.jspecify.annotations.Nullable;
 
-interface NodeLifecycleObserver {
-    default void beforeGc() {
-        // Default: nothing to release ahead of time.
+final class DepthPool<V> {
+    private final Supplier<V> factory;
+    private @Nullable Object[] layers = new Object[8];
+
+    DepthPool(Supplier<V> factory) {
+        this.factory = factory;
     }
 
-    default void afterGc(int reclaimedNodes, BitSet reclaimedValues) {
-        // Default: nothing depends on which nodes/values were reclaimed.
-    }
-
-    default void afterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
-        // Default: nothing depends on the table's size.
+    @SuppressWarnings("unchecked")
+    V get(int depth) {
+        if (depth >= layers.length) {
+            layers = Arrays.copyOf(layers, Math.max(depth + 1, layers.length * 2));
+        }
+        V value = (V) layers[depth];
+        if (value == null) {
+            value = factory.get();
+            layers[depth] = value;
+        }
+        return value;
     }
 }

@@ -73,25 +73,44 @@ spotless {
   }
 }
 
+val requestedTaskNames = gradle.startParameter.taskNames
+
+fun isRequested(task: String) = requestedTaskNames.any { it == task || it.endsWith(":$task") }
+
+jmh {
+  if (isRequested("jmhRandom")) {
+    includes.add("RandomBenchmark*")
+    warmupIterations = 5
+    iterations = 15
+  }
+  if (isRequested("jmhSynthetic")) {
+    includes.add("SyntheticBenchmark*")
+  }
+  if (isRequested("jmhDimacs")) {
+    includes.add("DimacsBenchmark*")
+  }
+  if (isRequested("jmhEnumeration")) {
+    includes.add("EnumerationBenchmark*")
+  }
+}
+
 tasks.register<Task>("jmhRandom") {
   description = "Run randomized benchmarks"
-  doFirst {
-    jmh.includes.add("RandomBenchmark*")
-    jmh.warmupIterations = 5
-    jmh.iterations = 15
-  }
   finalizedBy("jmh")
 }
 
 tasks.register<Task>("jmhSynthetic") {
   description = "Run synthetic benchmarks"
-  doFirst { jmh.includes.add("SyntheticBenchmark*") }
   finalizedBy("jmh")
 }
 
 tasks.register<Task>("jmhDimacs") {
   description = "Run DIMACS benchmarks"
-  doFirst { jmh.includes.add("DimacsBenchmark*") }
+  finalizedBy("jmh")
+}
+
+tasks.register<Task>("jmhEnumeration") {
+  description = "Run solution/path enumeration benchmarks"
   finalizedBy("jmh")
 }
 
@@ -122,10 +141,26 @@ dependencies {
   jmhAnnotationProcessor("org.openjdk.jmh:jmh-generator-annprocess:1.37")
 }
 
-tasks.test {
+fun Test.jbddTest(defaultScale: String) {
   useJUnitPlatform()
   minHeapSize = "2g"
-  maxHeapSize = "16g"
+  maxHeapSize = "8g"
+  systemProperty("jbdd.test.scale", project.findProperty("jbdd.test.scale") ?: defaultScale)
+  // JBDD's own tests audit whole tables and caches, not just the entry at hand (Assertions).
+  systemProperty("JBDD_COSTLY_ASSERTIONS", "true")
+}
+
+tasks.test { jbddTest("1.0") }
+
+val testSourceSet = the<SourceSetContainer>()["test"]
+
+tasks.register<Test>("testSmall") {
+  description = "Run the test suite with the generated theory suites scaled down"
+  group = "verification"
+
+  testClassesDirs = testSourceSet.output.classesDirs
+  classpath = testSourceSet.runtimeClasspath
+  jbddTest("0.05")
 }
 
 nullaway {

@@ -16,11 +16,15 @@
  */
 package de.tum.in.jbdd;
 
+import de.tum.in.jbdd.collections.Cube;
+import java.util.ArrayList;
 import java.util.BitSet;
-import java.util.Map;
+import java.util.List;
+import java.util.function.IntFunction;
+import java.util.function.IntUnaryOperator;
 
-/** Obtained from {@link BddContext#bddSets()} - there's no standalone way to build one, since every
- * {@code BddSetFactory} needs a {@link Bdd} to share (see {@link BddContext}). */
+/** Obtained from {@link BinaryFactoryContext#bddSets()} - there's no standalone way to build one,
+ * since every {@code BddSetFactory} needs a {@link Bdd} to share (see {@link DdContext}). */
 public interface BddSetFactory {
     /** The empty set. */
     BddSet empty();
@@ -34,18 +38,32 @@ public interface BddSetFactory {
     /** {@link #universe()} if {@code true}, {@link #empty()} otherwise. */
     BddSet of(boolean booleanConstant);
 
-    /** The single-element set containing {@code valuation} restricted to {@code support}. */
-    BddSet of(BitSet valuation, BitSet support);
+    /** The valuations in {@code cube}: those agreeing with it on its support. */
+    BddSet of(Cube cube);
 
-    /** The union of the single-element sets ({@link #of(BitSet, BitSet)}) given by {@code valuations}. */
+    /**
+     * The set of {@code expression}, a propositional expression of the caller's own type that JBDD reads through
+     * {@code structure}.
+     */
+    <E> BddSet of(E expression, ExpressionStructure<E> structure);
+
+    /** The union of the cubes fixing {@code support} as each of {@code valuations} assigns it. */
     default BddSet of(Iterable<BitSet> valuations, BitSet support) {
+        List<Cube> cubes = new ArrayList<>();
+        valuations.forEach(valuation -> cubes.add(Cube.of(valuation, support)));
+        return union(cubes);
+    }
+
+    /** The valuations in any of {@code cubes}. */
+    default BddSet union(Iterable<Cube> cubes) {
         BddSet result = empty();
-        for (BitSet valuation : valuations) {
-            result = result.union(of(valuation, support));
+        for (Cube cube : cubes) {
+            result = result.union(of(cube));
         }
         return result;
     }
 
+    /** The union of {@code sets}. */
     default BddSet union(BddSet... sets) {
         if (sets.length == 0) {
             return empty();
@@ -57,6 +75,7 @@ public interface BddSetFactory {
         return set;
     }
 
+    /** The intersection of {@code sets}. */
     default BddSet intersection(BddSet... sets) {
         if (sets.length == 0) {
             return universe();
@@ -68,5 +87,49 @@ public interface BddSetFactory {
         return set;
     }
 
-    Map<String, Object> statistics();
+    /** The valuations that are in {@code then} where {@code condition} holds and in {@code otherwise}
+     * elsewhere - one recursion rather than the union of two intersections. */
+    BddSet ifThenElse(BddSet condition, BddSet then, BddSet otherwise);
+
+    /**
+     * {@code set}, typically of another context, rebuilt here with each variable {@code v} of it read as {@code
+     * variableMapping(v)}; variables that do not exist here yet are created.
+     */
+    BddSet adopt(BddSet set, IntUnaryOperator variableMapping);
+
+    /**
+     * The diagram below {@code roots} as one {@link Dag}, root {@code i} being {@code roots.get(i)} and its values
+     * {@code true} and {@code false}. With {@code shareComplements}, a function whose complement came earlier in the
+     * walk is a {@link Dag.Kind#COMPLEMENT} entry of it.
+     */
+    Dag<Boolean> dag(List<? extends BddSet> roots, boolean shareComplements);
+
+    /** {@link #adopt(BddSet, IntUnaryOperator)} with every variable read as itself. */
+    default BddSet adopt(BddSet set) {
+        return adopt(set, IntUnaryOperator.identity());
+    }
+
+    /**
+     * Keeps {@code set}'s diagram in the table for the rest of the factory's life, whether or not anything
+     * still names it.
+     */
+    void pin(BddSet set);
+
+    /**
+     * Binds {@code quantifiedVariables} once - see {@link BddSet.Quantifier}. The set is read here and may
+     * be changed afterwards.
+     */
+    BddSet.Quantifier registerExists(BitSet quantifiedVariables);
+
+    /**
+     * Binds {@code mapping} over {@code replacedVariables} once - see {@link BddSet.VariableReplacer}. The
+     * handle replaces exactly those variables and leaves every other one alone.
+     */
+    BddSet.VariableReplacer registerReplaceVariables(BitSet replacedVariables, IntFunction<BddSet> mapping);
+
+    /**
+     * Binds {@code mapping} over {@code relabeledVariables} once - see {@link BddSet.VariableReplacer} and
+     * {@link #registerReplaceVariables}, whose contract this shares.
+     */
+    BddSet.VariableReplacer registerRelabelVariables(BitSet relabeledVariables, IntUnaryOperator mapping);
 }

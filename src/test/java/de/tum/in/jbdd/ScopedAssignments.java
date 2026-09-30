@@ -16,6 +16,7 @@
  */
 package de.tum.in.jbdd;
 
+import de.tum.in.jbdd.collections.BitSets;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Iterator;

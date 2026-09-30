@@ -16,13 +16,17 @@
  */
 package de.tum.in.jbdd;
 
+import de.tum.in.jbdd.collections.Cube;
 import java.math.BigInteger;
 import java.util.BitSet;
-import java.util.Iterator;
+import java.util.List;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.function.Consumer;
 import java.util.function.IntFunction;
 import java.util.function.IntUnaryOperator;
+import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 
 /**
  * Symbolic representation of a {@code Set<BitSet>}. Deliberately exposes no operation that assumes or
@@ -83,11 +87,32 @@ public interface BddSet {
     /** Projects out {@code quantifiedVariables}, i.e. an element remains iff some value for them exists. */
     BddSet exists(BitSet quantifiedVariables);
 
+    /** Universally quantifies {@code quantifiedVariables}, i.e. an element remains iff it does for every value of them. */
+    BddSet forall(BitSet quantifiedVariables);
+
     /** Elements in exactly one of this set and {@code other}. */
     BddSet symmetricDifference(BddSet other);
 
     /** Elements of this set that are not in {@code other}. */
     BddSet difference(BddSet other);
+
+    /**
+     * This set with every variable of the {@code restriction} fixed to its value there, so the result no longer
+     * depends on them.
+     *
+     * @see BinaryDecisionDiagram#restrict(int, Cube)
+     */
+    BddSet restrict(Cube restriction);
+
+    /** Agrees with this set on {@code domain}; unspecified (but canonical) elsewhere.
+     *
+     * @see BooleanTerminalDecisionDiagram#constrain(int, int) */
+    BddSet constrain(BddSet domain);
+
+    /** Agrees with this set on {@code domain}; unspecified elsewhere.
+     *
+     * @see BooleanTerminalDecisionDiagram#simplify(int, int) */
+    BddSet simplify(BddSet domain);
 
     /** Renames variables per {@code mapping}. */
     BddSet relabelVariables(IntUnaryOperator mapping);
@@ -95,19 +120,129 @@ public interface BddSet {
     /** Like {@link #relabelVariables}, but replaces each variable by an arbitrary set instead of another variable. */
     BddSet replaceVariables(IntFunction<BddSet> mapping);
 
-    /** The variables this set actually depends on. */
+    /**
+     * The variable this set's outermost decision is taken on, or empty if it is constant. Together with
+     * {@link #high()} and {@link #low()} this is the Shannon decomposition, which is what a structural
+     * recursion over a set needs and the only thing of the representation it is told.
+     */
+    OptionalInt decisionVariable();
+
+    /** This set with {@link #decisionVariable()} true. The set must not be constant. */
+    BddSet high();
+
+    /** This set with {@link #decisionVariable()} false. The set must not be constant. */
+    BddSet low();
+
+    /**
+     * A cover of this set by implicants, cubes whose union is exactly this set.
+     *
+     * @see BinaryDecisionDiagram#implicants(int)
+     */
+    List<Cube> implicants();
+
+    /**
+     * All prime implicants of this set, independent of the variable order.
+     *
+     * @see BinaryDecisionDiagram#primeImplicants(int)
+     */
+    List<Cube> primeImplicants();
+
+    /**
+     * Splits this set into a map over just {@code splitVariables}, whose value at each of their valuations is
+     * what this set restricts to there - a set over the remaining variables. Its {@link BddMap#inverse()}
+     * partitions the valuations of {@code splitVariables} by residual. {@code destination} must belong to
+     * this set's context.
+     *
+     * @see BddMap#split(BitSet, Values)
+     */
+    BddMap<BddSet> split(BitSet splitVariables, Values<BddSet> destination);
+
+    /** The variables this set actually depends on. Cached and handed out as-is, so callers must not modify it. */
     BitSet support();
 
     /** The variables actually consulted by {@link #contains(BitSet)} at {@code valuation} - a witness for
      * that specific valuation, possibly much smaller than {@link #support()}. */
     BitSet supportAt(BitSet valuation);
 
-    /** Iterates elements, treating every variable outside {@code support} as "don't care" (doubling the count). */
-    Iterator<BitSet> iterator(BitSet support);
+    /** Walks elements, treating every variable outside {@code support} as "don't care" (doubling the count). */
+    Cursor<BitSet> cursor(BitSet support);
 
-    /** Counts elements the same way {@link #iterator(BitSet)} does. */
+    /** Counts elements the same way {@link #cursor(BitSet)} does. */
     BigInteger size(BitSet support);
+
+    /**
+     * The fraction of all valuations in this set, independent of how many variables exist. Best-effort, see {@link
+     * BinaryDecisionDiagram#satisfyingFraction(int)}.
+     */
+    double satisfyingFraction();
+
+    /**
+     * The probability that a valuation drawn uniformly at random from {@code domain} is in this set. Best-effort, see
+     * {@link BinaryDecisionDiagram#satisfyingFractionIn(int, int)}.
+     *
+     * @throws IllegalArgumentException if {@code domain} is empty
+     */
+    double satisfyingFractionIn(BddSet domain);
 
     /** Calls {@code consumer} once per element, treating variables outside {@code support} as "don't care". */
     void forEach(BitSet support, Consumer<? super BitSet> consumer);
+
+    /**
+     * Calls {@code action} once per path of the diagram to a true leaf, read as the cube fixing
+     * {@link Cube#support()} to {@link Cube#assignment()}. The cubes are disjoint and their union
+     * is this set; which cubes come out depends on the variable order. The path handed out is the walk's
+     * working state - see {@link Cursor}.
+     */
+    void forEachPath(Consumer<? super Cube> action);
+
+    /**
+     * The shortest of the {@link #forEachPath paths}, the first of them in that order; empty for the empty set.
+     *
+     * @see BinaryDecisionDiagram#shortestPath(int)
+     */
+    Optional<Cube> shortestPath();
+
+    /** This set's diagram as a {@link Dag}, without complement sharing - see {@link BddSetFactory#dag}. */
+    default Dag<Boolean> dag() {
+        return factory().dag(List.of(this), false);
+    }
+
+    /** Like {@link #forEachPath}, stopping at the first path {@code predicate} accepts; whether one did. */
+    boolean anyPathMatches(Predicate<? super Cube> predicate);
+
+    /**
+     * A pre-built {@link BddSet#exists(BitSet)} over a fixed variable set, created by
+     * {@link BddSetFactory#registerExists} - see {@link RegisteredOperation} for when to prefer one.
+     */
+    @FunctionalInterface
+    interface Quantifier extends UnaryOperator<BddSet>, RegisteredOperation {
+        @Override
+        BddSet apply(BddSet set);
+    }
+
+    /**
+     * A pre-built {@link BddSet#replaceVariables(IntFunction)} or
+     * {@link BddSet#relabelVariables(IntUnaryOperator)}, created by
+     * {@link BddSetFactory#registerReplaceVariables} / {@link BddSetFactory#registerRelabelVariables}.
+     */
+    @FunctionalInterface
+    interface VariableReplacer extends UnaryOperator<BddSet>, RegisteredOperation {
+        /** The replacement that changes nothing. */
+        static VariableReplacer identity() {
+            return IdentityReplacer.INSTANCE;
+        }
+
+        @Override
+        BddSet apply(BddSet set);
+
+        /** The single instance behind {@link #identity()}; an enum so that it stays one. */
+        enum IdentityReplacer implements VariableReplacer {
+            INSTANCE;
+
+            @Override
+            public BddSet apply(BddSet set) {
+                return set;
+            }
+        }
+    }
 }

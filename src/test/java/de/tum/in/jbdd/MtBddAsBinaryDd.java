@@ -16,6 +16,9 @@
  */
 package de.tum.in.jbdd;
 
+import de.tum.in.jbdd.collections.BitSets;
+import de.tum.in.jbdd.collections.Cube;
+import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.BitSet;
@@ -25,13 +28,15 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
+import java.util.function.IntUnaryOperator;
 import java.util.function.Predicate;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Emulates a {@link Bdd} on top of an {@link MtBddImpl}, restricting the MTBDD's terminal values to
  * {@code 0} (false) and {@code 1} (true). This lets {@link BddTheories} exercise MtBddImpl's own
  * operations (apply/map/restrict/compose/mapBoolean/...) through the same boolean-algebra property
- * tests used for {@link BddImpl} and {@link MddImpl}, in the spirit of {@link MddAsTestBdd}.
+ * tests used for {@link BddImpl} and {@link MddImpl}, in the spirit of {@link MddAsBinaryDd}.
  *
  * <p>Unlike MDD (whose terminals are already boolean, {@code true}/{@code false}, independent of each
  * variable's domain size), MtBdd's terminals are arbitrary caller-chosen values with no built-in boolean
@@ -46,13 +51,13 @@ import java.util.function.Predicate;
  * result - see {@link #exists}, {@link #conjunction}, {@link #disjunction}, {@link #ifThenElse} and
  * {@link #compose} for that pattern.</p>
  */
-class MtBddAsTestBdd implements TestBdd {
+class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
     private static final int TRUE = 1;
     private static final int FALSE = 0;
 
     private final MtBddImpl mt;
 
-    MtBddAsTestBdd(MtBddImpl mt) {
+    MtBddAsBinaryDd(MtBddImpl mt) {
         this.mt = mt;
     }
 
@@ -104,6 +109,11 @@ class MtBddAsTestBdd implements TestBdd {
     @Override
     public int nodeCount() {
         return mt.nodeCount();
+    }
+
+    @Override
+    public int gc() {
+        return mt.gc();
     }
 
     @Override
@@ -164,6 +174,37 @@ class MtBddAsTestBdd implements TestBdd {
         return mt.of(variableNumber, mt.of(TRUE), mt.of(FALSE));
     }
 
+    /* The MTBDD shares its companion BDD's variable order, so reordering through either moves the nodes
+     * of both - which is exactly what makes this adapter worth reordering: it puts MTBDD enumeration,
+     * apply and compose under a non-identity order, which nothing else does. */
+
+    @Override
+    public int levelOfVariable(int variable) {
+        return mt.levelOfVariable(variable);
+    }
+
+    @Override
+    public int variableAtLevel(int level) {
+        return mt.variableAtLevel(level);
+    }
+
+    @Override
+    public DdVariableOrder variableOrder() {
+        return mt.variableOrder();
+    }
+
+    /* Not an override any more - the order-placing creation is the context's, and hands back a Bdd
+     * function; this adapter's currency is MTBDD functions, so the tests go through here. */
+    int createVariableAtLevel(int level) {
+        // As createVariable(), but placed: MtBdd#createVariableAtLevel hands back the companion BDD's
+        // function, and this adapter's currency is MTBDD functions.
+        int variableNode = mt.context().createVariableAtLevel(level);
+        int variable = mt.bdd().decisionVariable(variableNode);
+        int variableFunction = variableFunction(variable);
+        mt.table().saturateNode(mt.nodeFor(variableFunction));
+        return variableFunction;
+    }
+
     @Override
     public int decisionVariable(int function) {
         return mt.decisionVariable(function);
@@ -172,11 +213,6 @@ class MtBddAsTestBdd implements TestBdd {
     @Override
     public boolean isValidFunction(int function) {
         return mt.isValidFunction(function);
-    }
-
-    @Override
-    public boolean isValidNonConstantFunction(int function) {
-        return mt.isValidNonConstantFunction(function);
     }
 
     @Override
@@ -215,34 +251,72 @@ class MtBddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public Iterator<BitSet> solutionIterator(int function) {
-        return mt.assignmentIterator(function, v -> v != FALSE);
+    public double satisfyingFraction(int function) {
+        // The exact reference: 2^-n is a finite decimal, so only the conversion rounds.
+        return new BigDecimal(countSatisfyingAssignments(function))
+                .multiply(BigDecimal.valueOf(5, 1).pow(numberOfVariables()))
+                .doubleValue();
     }
 
     @Override
-    public Iterator<BitSet> solutionIterator(int function, BitSet support) {
-        return mt.assignmentIterator(function, v -> v != FALSE, support);
+    public double satisfyingFractionIn(int function, int domain) {
+        if (domain == falseFunction()) {
+            throw new IllegalArgumentException("Empty domain");
+        }
+        return Util.quotient(countSatisfyingAssignmentsIn(function, domain), countSatisfyingAssignments(domain));
     }
 
     @Override
-    public Iterator<BitSet> solutionIteratorIn(int function, int domain) {
-        return mt.assignmentIterator(and(function, domain), v -> v != FALSE);
+    public Cursor<BitSet> solutionCursor(int function) {
+        return mt.assignmentCursor(function, v -> v != FALSE);
     }
 
     @Override
-    public Iterator<BitSet> solutionIteratorIn(int function, int domain, BitSet support) {
-        return mt.assignmentIterator(and(function, domain), v -> v != FALSE, support);
+    public Cursor<BitSet> solutionCursor(int function, BitSet support) {
+        return mt.assignmentCursor(function, v -> v != FALSE, support);
     }
 
     @Override
-    public Iterator<BinaryPath> pathIterator(int function) {
-        List<BinaryPath> paths = new ArrayList<>();
+    public Cursor<BitSet> solutionCursorIn(int function, int domain) {
+        return mt.assignmentCursor(and(function, domain), v -> v != FALSE);
+    }
+
+    @Override
+    public Cursor<BitSet> solutionCursorIn(int function, int domain, BitSet support) {
+        return mt.assignmentCursor(and(function, domain), v -> v != FALSE, support);
+    }
+
+    @Override
+    public Cursor<Cube> pathCursor(int function) {
+        List<Cube> paths = new ArrayList<>();
         forEachPath(function, path -> paths.add(path.copy()));
-        return paths.iterator();
+        Iterator<Cube> iterator = paths.iterator();
+        // A collected list, so this one really does own each element it hands out.
+        return new Cursor<>() {
+            private @Nullable Cube current = iterator.hasNext() ? iterator.next() : null;
+
+            @Override
+            public boolean valid() {
+                return current != null;
+            }
+
+            @Override
+            public Cube current() {
+                Cube path = current;
+                assert path != null;
+                return path;
+            }
+
+            @Override
+            public boolean advance() {
+                current = iterator.hasNext() ? iterator.next() : null;
+                return current != null;
+            }
+        };
     }
 
     @Override
-    public void forEachPath(int function, Consumer<? super BinaryPath> action) {
+    public void forEachPath(int function, Consumer<? super Cube> action) {
         mt.forEachPath(function, (path, terminal) -> {
             if (terminal == TRUE) {
                 action.accept(path);
@@ -251,27 +325,33 @@ class MtBddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super BinaryPath> action) {
+    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super Cube> action) {
         if (function == falseFunction()) {
             return;
         }
         if (function == trueFunction() || relevantSet.isEmpty()) {
-            action.accept(new BinaryPath(new BitSet(0), new BitSet(0)));
+            action.accept(Cube.ofUnsafe(new BitSet(0), new BitSet(0)));
             return;
         }
-        int highestVariable = relevantSet.length() - 1;
-        BinaryPath path = new BinaryPath(new BitSet(highestVariable + 1), new BitSet(highestVariable + 1));
-        forEachPathRecursive(function, relevantSet, highestVariable, path, action);
+        /* By level, not by variable: the cut-off is "the walk is past everything relevant", which is a
+         * statement about the order. The two coincide only until something reorders. */
+        int maxRelevantLevel = -1;
+        for (int v = relevantSet.nextSetBit(0); v >= 0; v = relevantSet.nextSetBit(v + 1)) {
+            maxRelevantLevel = Math.max(maxRelevantLevel, mt.levelOfVariable(v));
+        }
+        int variables = mt.numberOfVariables();
+        Cube path = Cube.ofUnsafe(new BitSet(variables), new BitSet(variables));
+        forEachPathRecursive(function, relevantSet, maxRelevantLevel, path, action);
     }
 
     private void forEachPathRecursive(
-            int node, BitSet relevantSet, int depthLimit, BinaryPath path, Consumer<? super BinaryPath> action) {
+            int node, BitSet relevantSet, int depthLimit, Cube path, Consumer<? super Cube> action) {
         if (node == trueFunction()) {
             action.accept(path);
             return;
         }
         int variable = mt.decisionVariable(node);
-        if (variable > depthLimit) {
+        if (mt.levelOfVariable(variable) > depthLimit) {
             // There must exist at least one satisfying completion beyond depthLimit.
             action.accept(path);
             return;
@@ -282,39 +362,39 @@ class MtBddAsTestBdd implements TestBdd {
         boolean relevant = relevantSet.get(variable);
 
         if (relevant) {
-            path.support.set(variable);
+            path.supportUnsafe().set(variable);
         }
         if (low != falseFunction()) {
             forEachPathRecursive(low, relevantSet, depthLimit, path, action);
         }
         if (high != falseFunction()) {
             if (relevant) {
-                path.assignment.set(variable);
+                path.assignmentUnsafe().set(variable);
                 forEachPathRecursive(high, relevantSet, depthLimit, path, action);
-                path.assignment.clear(variable);
+                path.assignmentUnsafe().clear(variable);
             } else {
                 forEachPathRecursive(high, relevantSet, depthLimit, path, action);
             }
         }
         if (relevant) {
-            path.support.clear(variable);
+            path.supportUnsafe().clear(variable);
         }
     }
 
     @Override
-    public boolean anyPathMatches(int function, Predicate<? super BinaryPath> predicate) {
+    public boolean anyPathMatches(int function, Predicate<? super Cube> predicate) {
         if (function == falseFunction()) {
             return false;
         }
         if (function == trueFunction()) {
-            return predicate.test(new BinaryPath(new BitSet(0), new BitSet(0)));
+            return predicate.test(Cube.ofUnsafe(new BitSet(0), new BitSet(0)));
         }
         int numberOfVariables = mt.numberOfVariables();
-        BinaryPath path = new BinaryPath(new BitSet(numberOfVariables), new BitSet(numberOfVariables));
+        Cube path = Cube.ofUnsafe(new BitSet(numberOfVariables), new BitSet(numberOfVariables));
         return anyPathMatchesRecursive(function, path, predicate);
     }
 
-    private boolean anyPathMatchesRecursive(int node, BinaryPath path, Predicate<? super BinaryPath> predicate) {
+    private boolean anyPathMatchesRecursive(int node, Cube path, Predicate<? super Cube> predicate) {
         if (node == trueFunction()) {
             return predicate.test(path);
         }
@@ -322,18 +402,18 @@ class MtBddAsTestBdd implements TestBdd {
         int low = mt.lowOf(node);
         int high = mt.highOf(node);
 
-        path.support.set(variable);
+        path.supportUnsafe().set(variable);
         if (low != falseFunction() && anyPathMatchesRecursive(low, path, predicate)) {
-            path.support.clear(variable);
+            path.supportUnsafe().clear(variable);
             return true;
         }
         boolean matched = false;
         if (high != falseFunction()) {
-            path.assignment.set(variable);
+            path.assignmentUnsafe().set(variable);
             matched = anyPathMatchesRecursive(high, path, predicate);
-            path.assignment.clear(variable);
+            path.assignmentUnsafe().clear(variable);
         }
-        path.support.clear(variable);
+        path.supportUnsafe().clear(variable);
         return matched;
     }
 
@@ -442,7 +522,7 @@ class MtBddAsTestBdd implements TestBdd {
         Iterator<BitSet> iterator = BitSets.powerSetIterator(quantifiedVariables);
         while (iterator.hasNext()) {
             BitSet assignment = iterator.next();
-            int restricted = mt.reference(mt.restrict(function, quantifiedVariables, assignment));
+            int restricted = mt.reference(mt.restrict(function, Cube.of(assignment, quantifiedVariables)));
             result = mt.consume(or(result, restricted), result, restricted);
         }
         mt.dereference(result);
@@ -472,12 +552,19 @@ class MtBddAsTestBdd implements TestBdd {
     public RegisteredOperation.Unary registerCompose(int[] variableMapping) {
         // Registered compose is tied to a real BddImpl's own compose; this adapter routes compose through
         // the MTBDD engine instead (see #compose below), which has no equivalent registered form (yet).
-        throw new UnsupportedOperationException("registerCompose is not supported on an MTBDD-backed TestBdd");
+        throw new UnsupportedOperationException("registerCompose is not supported on an MTBDD-backed BinaryDd");
     }
 
     @Override
     public RegisteredOperation.Binary registerComposeSimplify(int[] variableMapping) {
-        throw new UnsupportedOperationException("registerComposeSimplify is not supported on an MTBDD-backed TestBdd");
+        throw new UnsupportedOperationException("registerComposeSimplify is not supported on an MTBDD-backed BinaryDd");
+    }
+
+    @Override
+    public RegisteredOperation.Unary registerExists(BitSet quantifiedVariables) {
+        // As registerCompose: this adapter quantifies through the MTBDD engine (see #exists), which has
+        // no equivalent registered form.
+        throw new UnsupportedOperationException("registerExists is not supported on an MTBDD-backed BinaryDd");
     }
 
     @Override
@@ -499,8 +586,13 @@ class MtBddAsTestBdd implements TestBdd {
     }
 
     @Override
-    public int restrict(int function, BitSet restrictedVariables, BitSet restrictedVariableValues) {
-        return mt.restrict(function, restrictedVariables, restrictedVariableValues);
+    public int adopt(BinaryDecisionDiagram source, int function, IntUnaryOperator variableMapping) {
+        return BddUtil.adopt(this, source, function, variableMapping);
+    }
+
+    @Override
+    public int restrict(int function, Cube restriction) {
+        return mt.restrict(function, restriction);
     }
 
     @Override
@@ -526,6 +618,12 @@ class MtBddAsTestBdd implements TestBdd {
     @Override
     public Map<String, Object> statistics() {
         return mt.statistics();
+    }
+
+    @Override
+    public String toString() {
+        String name = mt.bddImpl().configuration().name();
+        return name.isEmpty() ? "mtbdd" : name;
     }
 
     @Override

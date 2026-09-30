@@ -16,8 +16,13 @@
  */
 package de.tum.in.jbdd;
 
+import static de.tum.in.jbdd.MtBddCache.Slot.BDD;
+import static de.tum.in.jbdd.MtBddCache.Slot.MTBDD;
+import static de.tum.in.jbdd.MtBddCache.Slot.PLAIN;
 import static java.util.Map.entry;
 
+import de.tum.in.jbdd.collections.BitSets;
+import de.tum.in.jbdd.collections.Cube;
 import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.BitSet;
@@ -27,6 +32,7 @@ import java.util.Map;
 import java.util.function.BooleanSupplier;
 import java.util.function.IntPredicate;
 import java.util.function.IntUnaryOperator;
+import java.util.stream.IntStream;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -43,7 +49,7 @@ import org.jspecify.annotations.Nullable;
  * {@code initMapBoolean}.
  */
 @SuppressWarnings({"PMD.TooManyFields", "PMD.CouplingBetweenObjects"})
-final class MtBddCache {
+final class MtBddCache implements VariableOrderObserver {
     private static final int[] EMPTY_INT_ARRAY = new int[0];
     private static final Object[] EMPTY_OBJECT_ARRAY = new Object[0];
 
@@ -53,35 +59,44 @@ final class MtBddCache {
     private int applyReuseCount = 0;
     private int mapReuseCount = 0;
     private int mapBooleanReuseCount = 0;
+    private int applyBooleanReuseCount = 0;
+    private int allMatchReuseCount = 0;
     private int composeReuseCount = 0;
     private int restrictReuseCount = 0;
     private int reachesMatchReuseCount = 0;
     private int countReuseCount = 0;
 
-    private final BinaryToIntCache applyCache;
-    private final ApplySimplifyCache applySimplifyCache;
+    private final BinaryCache applyCache;
+    private final TernaryCache applySimplifyCache;
     private @Nullable MtBddBinaryOperator currentApplyOp;
-    private final UnaryToIntCache mapCache;
-    private final MtbddBddToIntCache mapSimplifyCache;
+    private final UnaryCache mapCache;
+    private final BinaryCache mapSimplifyCache;
     private @Nullable IntUnaryOperator currentMapOp;
-    private final UnaryToBddCache mapBooleanCache;
+    private final UnaryCache mapBooleanCache;
     private @Nullable IntPredicate currentMapBooleanPredicate;
-    private final BinaryToBddCache agreementCache;
-    private final MtbddBddToIntCache simplifyCache;
-    private final MtbddBddToIntCache constrainCache;
-    private final UpdateCache updateCache;
-    private final IfThenElseCache ifThenElseCache;
-    private final UnaryToIntCache composeCache;
-    private final MtbddBddToIntCache composeSimplifyCache;
+    private final BinaryCache agreementCache;
+    private final BinaryCache applyBooleanCache;
+    private @Nullable MtBddBinaryPredicate currentApplyBooleanPredicate;
+    private final BinaryToBooleanCache allMatchCache;
+    private @Nullable MtBddBinaryPredicate currentAllMatchPredicate;
+    private final BinaryCache simplifyCache;
+    private final BinaryCache constrainCache;
+    private final TernaryCache updateCache;
+    private final TernaryCache ifThenElseCache;
+    private final UnaryCache composeCache;
+    private final BinaryCache composeSimplifyCache;
     private int[] composeArray = EMPTY_INT_ARRAY;
-    private final UnaryToIntCache restrictCache;
-    private BitSet restrictVariables = new BitSet(0);
-    private BitSet restrictValues = new BitSet(0);
+    private final UnaryCache restrictCache;
+    private Cube restriction = Cube.empty();
     private final BitSet noValueMatchesCache = new BitSet();
     private @Nullable IntPredicate currentAnyValueMatches;
-    private final UnaryToIntCache splitCache;
-    private final SplitCombineCache splitCombineCache;
+    private final UnaryCache splitCache;
+    private final TernaryCache splitCombineCache;
+    private final UnaryCache splitBddCache;
+    private final TernaryCache splitBddCombineCache;
     private final MtbddNodesToIntCache cartesianProductCache;
+    private final MtbddNodesToIntCache naryApplyCache;
+    private @Nullable MtBddNaryOperator currentNaryApplyOp;
     private final UnaryToObjectCache<BigInteger> satisfactionCache;
     private @Nullable IntPredicate currentCountPredicate;
 
@@ -94,20 +109,25 @@ final class MtBddCache {
         this.bdd = bdd;
         this.lookupHash = -1;
 
-        applyCache = new BinaryToIntCache(mtbdd, bdd);
-        applySimplifyCache = new ApplySimplifyCache(mtbdd, bdd);
-        mapCache = new UnaryToIntCache(mtbdd, bdd);
-        mapSimplifyCache = new MtbddBddToIntCache(mtbdd, bdd);
-        mapBooleanCache = new UnaryToBddCache(mtbdd, bdd);
-        agreementCache = new BinaryToBddCache(mtbdd, bdd);
-        simplifyCache = new MtbddBddToIntCache(mtbdd, bdd);
-        constrainCache = new MtbddBddToIntCache(mtbdd, bdd);
-        updateCache = new UpdateCache(mtbdd, bdd);
-        ifThenElseCache = new IfThenElseCache(mtbdd, bdd);
-        restrictCache = new UnaryToIntCache(mtbdd, bdd);
-        splitCache = new UnaryToIntCache(mtbdd, bdd);
-        splitCombineCache = new SplitCombineCache(mtbdd, bdd);
+        applyCache = new BinaryCache(mtbdd, bdd, MTBDD, MTBDD, MTBDD);
+        applySimplifyCache = new TernaryCache(mtbdd, bdd, MTBDD, MTBDD, BDD, MTBDD);
+        mapCache = new UnaryCache(mtbdd, bdd, MTBDD, MTBDD);
+        mapSimplifyCache = new BinaryCache(mtbdd, bdd, MTBDD, BDD, MTBDD);
+        mapBooleanCache = new UnaryCache(mtbdd, bdd, MTBDD, BDD);
+        agreementCache = new BinaryCache(mtbdd, bdd, MTBDD, MTBDD, BDD);
+        applyBooleanCache = new BinaryCache(mtbdd, bdd, MTBDD, MTBDD, BDD);
+        allMatchCache = new BinaryToBooleanCache(mtbdd, bdd);
+        simplifyCache = new BinaryCache(mtbdd, bdd, MTBDD, BDD, MTBDD);
+        constrainCache = new BinaryCache(mtbdd, bdd, MTBDD, BDD, MTBDD);
+        updateCache = new TernaryCache(mtbdd, bdd, MTBDD, BDD, PLAIN, MTBDD);
+        ifThenElseCache = new TernaryCache(mtbdd, bdd, BDD, MTBDD, MTBDD, MTBDD);
+        restrictCache = new UnaryCache(mtbdd, bdd, MTBDD, MTBDD);
+        splitCache = new UnaryCache(mtbdd, bdd, MTBDD, MTBDD);
+        splitCombineCache = new TernaryCache(mtbdd, bdd, MTBDD, MTBDD, PLAIN, MTBDD);
+        splitBddCache = new UnaryCache(mtbdd, bdd, BDD, MTBDD);
+        splitBddCombineCache = new TernaryCache(mtbdd, bdd, MTBDD, MTBDD, PLAIN, MTBDD);
         cartesianProductCache = new MtbddNodesToIntCache(mtbdd, bdd);
+        naryApplyCache = new MtbddNodesToIntCache(mtbdd, bdd);
         satisfactionCache = new UnaryToObjectCache<>(mtbdd, bdd);
 
         // Like BooleanCache's own composeValid: composeArray holds Bdd function ids the caller supplies,
@@ -124,8 +144,8 @@ final class MtBddCache {
             }
             return true;
         };
-        composeCache = new UnaryToIntCache(mtbdd, bdd, composeValid);
-        composeSimplifyCache = new MtbddBddToIntCache(mtbdd, bdd, composeValid);
+        composeCache = new UnaryCache(mtbdd, bdd, composeValid, MTBDD, MTBDD);
+        composeSimplifyCache = new BinaryCache(mtbdd, bdd, composeValid, MTBDD, BDD, MTBDD);
 
         caches = Map.ofEntries(
                 entry("apply", applyCache),
@@ -135,6 +155,8 @@ final class MtBddCache {
                 entry("compose_simplify", composeSimplifyCache),
                 entry("map_boolean", mapBooleanCache),
                 entry("agreement", agreementCache),
+                entry("apply_boolean", applyBooleanCache),
+                entry("all_match", allMatchCache),
                 entry("simplify", simplifyCache),
                 entry("constrain", constrainCache),
                 entry("update", updateCache),
@@ -143,29 +165,40 @@ final class MtBddCache {
                 entry("restrict", restrictCache),
                 entry("split", splitCache),
                 entry("split_combine", splitCombineCache),
+                entry("split_bdd", splitBddCache),
+                entry("split_bdd_combine", splitBddCombineCache),
                 entry("cartesian_product", cartesianProductCache),
+                entry("nary_apply", naryApplyCache),
                 entry("count", satisfactionCache));
 
-        tableSizeChanged(0);
-
-        if (bdd.configuration().logStatisticsOnShutdown()) {
-            Util.registerForCleanupStatistics(mtbdd, bdd.configuration().name());
-        }
+        tableSizeChanged(0, BitSets.of());
     }
 
-    BinaryToIntCache applyCache() {
+    BinaryCache applyCache() {
         return applyCache;
     }
 
-    ApplySimplifyCache applySimplifyCache() {
+    TernaryCache applySimplifyCache() {
         return applySimplifyCache;
     }
 
-    UnaryToIntCache composeCache() {
+    UnaryCache mapCache() {
+        return mapCache;
+    }
+
+    BinaryCache mapSimplifyCache() {
+        return mapSimplifyCache;
+    }
+
+    UnaryCache mapBooleanCache() {
+        return mapBooleanCache;
+    }
+
+    UnaryCache composeCache() {
         return composeCache;
     }
 
-    MtbddBddToIntCache composeSimplifyCache() {
+    BinaryCache composeSimplifyCache() {
         return composeSimplifyCache;
     }
 
@@ -175,8 +208,8 @@ final class MtBddCache {
 
     // Size and invalidation
 
-    void tableSizeChanged(int reclaimedNodes) {
-        onMultiTerminalNodesInvalidated(reclaimedNodes);
+    void tableSizeChanged(int reclaimedNodes, BitSet reclaimedValues) {
+        onMultiTerminalNodesInvalidated(reclaimedNodes, reclaimedValues);
 
         BddConfiguration configuration = bdd.configuration();
         int size = mtbdd.tableSize();
@@ -194,9 +227,12 @@ final class MtBddCache {
         updateCache.grow(ternarySize);
         ifThenElseCache.grow(ternarySize);
         splitCombineCache.grow(ternarySize);
+        splitBddCombineCache.grow(ternarySize);
 
         int ephemeralSize = size / configuration.mtbddCacheEphemeralMultiplier();
         applyCache.grow(ephemeralSize);
+        applyBooleanCache.grow(ephemeralSize);
+        allMatchCache.grow(ephemeralSize);
         applySimplifyCache.grow(ephemeralSize);
         mapCache.grow(ephemeralSize);
         mapSimplifyCache.grow(ephemeralSize);
@@ -204,7 +240,9 @@ final class MtBddCache {
         composeSimplifyCache.grow(ephemeralSize);
         restrictCache.grow(ephemeralSize);
         splitCache.grow(ephemeralSize);
+        splitBddCache.grow(ephemeralSize);
         cartesianProductCache.grow(ephemeralSize);
+        naryApplyCache.grow(ephemeralSize);
     }
 
     void variablesChanged() {
@@ -222,6 +260,21 @@ final class MtBddCache {
         restrictCache.grow(ephemeralSize);
     }
 
+    /**
+     * @see BooleanCache#orderChanged
+     */
+    @Override
+    public void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, BitSet movedVariables) {
+        // see BooleanCache#orderChanged
+        invalidate();
+    }
+
+    @Override
+    public void variablesInserted(int level, int count) {
+        // As BooleanCache's: nothing moved, but the count did.
+        variablesChanged();
+    }
+
     private Collection<MtbddCacheStorage> caches() {
         return caches.values();
     }
@@ -234,6 +287,11 @@ final class MtBddCache {
     }
 
     void onBooleanNodesInvalidated(int invalidatedNodes) {
+        if (bdd.isReordering()) {
+            // See BooleanCache#onBddNodesInvalidated.
+            invalidate();
+            return;
+        }
         if (invalidatedNodes == 0) {
             return;
         }
@@ -244,8 +302,13 @@ final class MtBddCache {
         }
     }
 
-    void onMultiTerminalNodesInvalidated(int invalidatedNodes) {
-        if (invalidatedNodes == 0) {
+    void onMultiTerminalNodesInvalidated(int invalidatedNodes, BitSet reclaimedValues) {
+        if (bdd.isReordering()) {
+            // See BooleanCache#onBddNodesInvalidated.
+            invalidate();
+            return;
+        }
+        if (invalidatedNodes == 0 && reclaimedValues.isEmpty()) {
             return;
         }
         boolean preserve = bdd.configuration().useCachePreserve() && invalidatedNodes < mtbdd.tableSize() / 2;
@@ -277,6 +340,24 @@ final class MtBddCache {
         mapSimplifyCache.invalidate();
     }
 
+    void initApplyBoolean(MtBddBinaryPredicate predicate) {
+        if (predicate.equals(currentApplyBooleanPredicate)) {
+            applyBooleanReuseCount += 1;
+            return;
+        }
+        currentApplyBooleanPredicate = predicate;
+        applyBooleanCache.invalidate();
+    }
+
+    void initAllMatch(MtBddBinaryPredicate predicate) {
+        if (predicate.equals(currentAllMatchPredicate)) {
+            allMatchReuseCount += 1;
+            return;
+        }
+        currentAllMatchPredicate = predicate;
+        allMatchCache.invalidate();
+    }
+
     void initMapBoolean(IntPredicate predicate) {
         if (predicate.equals(currentMapBooleanPredicate)) {
             mapBooleanReuseCount += 1;
@@ -286,27 +367,45 @@ final class MtBddCache {
         mapBooleanCache.invalidate();
     }
 
-    void initCompose(int[] replacements, int highestReplacement) {
-        if (composeArray.length - 1 == highestReplacement) {
-            int mismatch = Arrays.mismatch(composeArray, replacements);
-            if (mismatch == -1 || mismatch > highestReplacement) {
-                composeReuseCount += 1;
-                return;
-            }
+    /**
+     * Points the compose caches at {@code replacements}, keeping their contents only if that mapping is
+     * the one they were filled under.
+     *
+     * <p>Sameness is judged on the whole resolved mapping, not on a prefix of it. Truncating to what the
+     * recursion can reach would have to be by <em>index</em>, and the cut-off available here is a
+     * <em>level</em> - the same thing only while nothing has reordered. Once they part company a replaced
+     * variable can have a small level and a large index, so its entry falls outside the prefix: a differing
+     * mapping compares equal and the cache is reused for it, and the dependency check below never looks at
+     * that replacement, so the cache is not invalidated when it dies. Both give wrong answers rather than
+     * stale ones. One copy of an array at most as long as the variable count is the price of not having to
+     * reason about that; the cut-off stays a level, but only where it belongs, as the recursion's own bound.
+     *
+     * <p>Matching contents is still not enough on its own. The entries are function ids the caller supplies,
+     * and an ephemeral compose protects them only for the duration of one call, so between two calls a
+     * replacement can be collected and its slot handed to an unrelated function - the new mapping then
+     * compares equal while denoting something else, and validity cannot see it, a recycled id being a
+     * perfectly valid function. So {@link #onBooleanNodesInvalidated} forgets the mapping whenever an id
+     * came free, which is precisely when that can happen; the empty array is a sound sentinel because a
+     * mapping that replaces nothing never gets here.
+     */
+    void initCompose(int[] replacements) {
+        assert replacements.length > 0 : "A mapping replacing nothing must not reach the compose caches";
+        if (Arrays.equals(composeArray, replacements)) {
+            composeReuseCount += 1;
+            return;
         }
-        this.composeArray = Arrays.copyOf(replacements, highestReplacement + 1);
+        this.composeArray = replacements.clone();
         composeCache.invalidate();
         composeSimplifyCache.invalidate();
     }
 
-    void initRestrict(BitSet restrictedVariables, BitSet restrictedVariableValues) {
-        if (restrictedVariables.equals(this.restrictVariables)
-                && restrictedVariableValues.equals(this.restrictValues)) {
+    void initRestrict(Cube restriction) {
+        if (restriction.equals(this.restriction)) {
             restrictReuseCount += 1;
             return;
         }
-        this.restrictVariables = BitSets.copyOf(restrictedVariables);
-        this.restrictValues = BitSets.copyOf(restrictedVariableValues);
+        // A copy: the caller's cube may be a walk's working state.
+        this.restriction = restriction.copy();
         restrictCache.invalidate();
     }
 
@@ -342,6 +441,19 @@ final class MtBddCache {
         cartesianProductCache.invalidate();
     }
 
+    void initNaryApply(MtBddNaryOperator op) {
+        if (op.equals(currentNaryApplyOp)) {
+            return;
+        }
+        currentNaryApplyOp = op;
+        naryApplyCache.invalidate();
+    }
+
+    void initSplitBdd() {
+        splitBddCache.invalidate();
+        splitBddCombineCache.invalidate();
+    }
+
     void initSplit() {
         splitCache.invalidate();
         splitCombineCache.invalidate();
@@ -358,39 +470,28 @@ final class MtBddCache {
 
     // Lookup
 
-    int lookupApply(int function1, int function2) {
+    BinaryCache agreementCache() {
+        return agreementCache;
+    }
+
+    BinaryCache applyBooleanCache() {
+        return applyBooleanCache;
+    }
+
+    BinaryToBooleanCache allMatchCache() {
+        return allMatchCache;
+    }
+
+    int lookupBinaryToBdd(BinaryCache cache, int function1, int function2) {
         assert mtbdd.isValidFunction(function1) && mtbdd.isValidFunction(function2);
-        int result = applyCache.lookup(function1, function2);
-        lookupHash = applyCache.lookupHash();
+        int result = cache.lookup(function1, function2);
+        lookupHash = cache.lookupHash();
         return result;
     }
 
-    int lookupMap(int function) {
-        assert mtbdd.isValidFunction(function);
-        int result = mapCache.lookup(function);
-        lookupHash = mapCache.lookupHash();
-        return result;
-    }
-
-    int lookupMapSimplify(int function, int domain) {
-        assert mtbdd.isValidFunction(function) && bdd.isValidFunction(domain);
-        int result = mapSimplifyCache.lookup(function, domain);
-        lookupHash = mapSimplifyCache.lookupHash();
-        return result;
-    }
-
-    int lookupMapBoolean(int function) {
-        assert mtbdd.isValidFunction(function);
-        int result = mapBooleanCache.lookup(function);
-        lookupHash = mapBooleanCache.lookupHash();
-        return result;
-    }
-
-    int lookupAgreement(int function1, int function2) {
-        assert mtbdd.isValidFunction(function1) && mtbdd.isValidFunction(function2);
-        int result = agreementCache.lookup(function1, function2);
-        lookupHash = agreementCache.lookupHash();
-        return result;
+    void putBinaryToBdd(BinaryCache cache, int hash, int function1, int function2, int result) {
+        assert mtbdd.isValidFunction(function1) && mtbdd.isValidFunction(function2) && bdd.isValidFunction(result);
+        cache.put(hash, function1, function2, result);
     }
 
     int lookupSimplify(int function, int domain) {
@@ -421,13 +522,6 @@ final class MtBddCache {
         return result;
     }
 
-    int lookupCompose(int function) {
-        assert mtbdd.isValidFunction(function);
-        int result = composeCache.lookup(function);
-        lookupHash = composeCache.lookupHash();
-        return result;
-    }
-
     int lookupRestrict(int function) {
         assert mtbdd.isValidFunction(function);
         int result = restrictCache.lookup(function);
@@ -447,11 +541,48 @@ final class MtBddCache {
         return result;
     }
 
+    int lookupSplitBdd(int bddFunction) {
+        assert bdd.isValidNonConstantFunction(bddFunction);
+        int result = splitBddCache.lookup(bddFunction);
+        lookupHash = splitBddCache.lookupHash();
+        return result;
+    }
+
+    void putSplitBdd(int hash, int bddFunction, int result) {
+        assert bdd.isValidNonConstantFunction(bddFunction) && mtbdd.isValidFunction(result);
+        splitBddCache.put(hash, bddFunction, result);
+    }
+
+    int lookupSplitBddCombine(int lowFragment, int highFragment, int level) {
+        assert mtbdd.isValidFunction(lowFragment) && mtbdd.isValidFunction(highFragment);
+        int result = splitBddCombineCache.lookup(lowFragment, highFragment, level);
+        lookupHash = splitBddCombineCache.lookupHash();
+        return result;
+    }
+
+    void putSplitBddCombine(int hash, int lowFragment, int highFragment, int level, int result) {
+        assert mtbdd.isValidFunction(lowFragment) && mtbdd.isValidFunction(highFragment);
+        splitBddCombineCache.put(hash, lowFragment, highFragment, level, result);
+    }
+
     int lookupSplitCombine(int lowFragment, int highFragment, int variable) {
         assert mtbdd.isValidFunction(lowFragment) && mtbdd.isValidFunction(highFragment);
         int result = splitCombineCache.lookup(lowFragment, highFragment, variable);
         lookupHash = splitCombineCache.lookupHash();
         return result;
+    }
+
+    int lookupNaryApply(int[] functions) {
+        assert Arrays.stream(functions).allMatch(mtbdd::isValidFunction);
+        int result = naryApplyCache.lookup(functions);
+        lookupHash = naryApplyCache.lookupHash();
+        return result;
+    }
+
+    // Retains functions as the key, as putCartesianProduct does.
+    void putNaryApply(int hash, int[] functions, int result) {
+        assert Arrays.stream(functions).allMatch(mtbdd::isValidFunction) && mtbdd.isValidFunction(result);
+        naryApplyCache.put(hash, functions, result);
     }
 
     int lookupCartesianProduct(int[] functions) {
@@ -470,31 +601,6 @@ final class MtBddCache {
     }
 
     // Put
-
-    void putApply(int hash, int function1, int function2, int result) {
-        assert mtbdd.isValidFunction(function1) && mtbdd.isValidFunction(function2) && mtbdd.isValidFunction(result);
-        applyCache.put(hash, function1, function2, result);
-    }
-
-    void putMap(int hash, int function, int result) {
-        assert mtbdd.isValidFunction(function) && mtbdd.isValidFunction(result);
-        mapCache.put(hash, function, result);
-    }
-
-    void putMapSimplify(int hash, int function, int domain, int result) {
-        assert mtbdd.isValidFunction(function) && bdd.isValidFunction(domain) && mtbdd.isValidFunction(result);
-        mapSimplifyCache.put(hash, function, domain, result);
-    }
-
-    void putMapBoolean(int hash, int function, int result) {
-        assert mtbdd.isValidFunction(function) && bdd.isValidFunction(result);
-        mapBooleanCache.put(hash, function, result);
-    }
-
-    void putAgreement(int hash, int function1, int function2, int result) {
-        assert mtbdd.isValidFunction(function1) && mtbdd.isValidFunction(function2) && bdd.isValidFunction(result);
-        agreementCache.put(hash, function1, function2, result);
-    }
 
     void putSimplify(int hash, int function, int domain, int result) {
         assert mtbdd.isValidFunction(function) && bdd.isValidFunction(domain) && mtbdd.isValidFunction(result);
@@ -517,11 +623,6 @@ final class MtBddCache {
                 && mtbdd.isValidFunction(mtbddElse)
                 && mtbdd.isValidFunction(result);
         ifThenElseCache.put(hash, bddIf, mtbddThen, mtbddElse, result);
-    }
-
-    void putCompose(int hash, int function, int result) {
-        assert mtbdd.isValidFunction(function) && mtbdd.isValidFunction(result);
-        composeCache.put(hash, function, result);
     }
 
     void putRestrict(int hash, int function, int result) {
@@ -569,6 +670,8 @@ final class MtBddCache {
         statistics.put("mtbdd_cache_apply_reuse_count", String.valueOf(applyReuseCount));
         statistics.put("mtbdd_cache_map_reuse_count", String.valueOf(mapReuseCount));
         statistics.put("mtbdd_cache_map_boolean_reuse_count", String.valueOf(mapBooleanReuseCount));
+        statistics.put("mtbdd_cache_apply_boolean_reuse_count", String.valueOf(applyBooleanReuseCount));
+        statistics.put("mtbdd_cache_all_match_reuse_count", String.valueOf(allMatchReuseCount));
         statistics.put("mtbdd_cache_compose_reuse_count", String.valueOf(composeReuseCount));
         statistics.put("mtbdd_cache_restrict_reuse_count", String.valueOf(restrictReuseCount));
         statistics.put("mtbdd_cache_reaches_match_reuse_count", String.valueOf(reachesMatchReuseCount));
@@ -586,25 +689,36 @@ final class MtBddCache {
         Map<String, Object> statistics(String name);
     }
 
+    /** What a slot of a bin holds - it decides which collection can make the entry stale. */
+    enum Slot {
+        MTBDD,
+        BDD,
+        /** A plain number, such as a variable or a value index: never stale. */
+        PLAIN
+    }
+
+    /**
+     * The int-keyed caches over both diagrams: which slots of a bin (keys, then the result if it is kept in the bin)
+     * hold nodes of which diagram is all that tells them apart, and it decides the validity checks.
+     */
     abstract static class IntCache extends CacheBase.IntKeys implements MtbddCacheStorage {
         final MtBddImpl mtbdd;
         final BddImpl bdd;
-        int lookupHash;
+        private final int[] bddSlots;
+        private final int[] mtbddSlots;
 
-        IntCache(MtBddImpl mtbdd, BddImpl bdd, int keyCount, int binSize) {
-            super(keyCount, binSize);
+        IntCache(MtBddImpl mtbdd, BddImpl bdd, int keyCount, BooleanSupplier cacheDependenciesValid, Slot... slots) {
+            super(keyCount, slots.length, cacheDependenciesValid);
             this.mtbdd = mtbdd;
             this.bdd = bdd;
+            this.bddSlots = slotsOf(slots, BDD);
+            this.mtbddSlots = slotsOf(slots, MTBDD);
         }
 
-        IntCache(MtBddImpl mtbdd, BddImpl bdd, int keyCount, int binSize, BooleanSupplier cacheDependenciesValid) {
-            super(keyCount, binSize, cacheDependenciesValid);
-            this.mtbdd = mtbdd;
-            this.bdd = bdd;
-        }
-
-        int lookupHash() {
-            return lookupHash;
+        private static int[] slotsOf(Slot[] slots, Slot kind) {
+            return IntStream.range(0, slots.length)
+                    .filter(i -> slots[i] == kind)
+                    .toArray();
         }
 
         @Override
@@ -613,10 +727,24 @@ final class MtBddCache {
         }
 
         /** Checks only this entry's {@code Bdd}-side slots (key and/or result); {@code true} if none. */
-        protected abstract boolean isValidBdd(int binStart);
+        protected boolean isValidBdd(int binStart) {
+            for (int slot : bddSlots) {
+                if (!bdd.isValidFunction(cache[binStart + slot])) {
+                    return false;
+                }
+            }
+            return true;
+        }
 
-        /** Checks only this entry's {@code MtBddImpl}-side slots (key and/or result); always at least one. */
-        protected abstract boolean isValidMtbdd(int binStart);
+        /** Checks only this entry's {@code MtBddImpl}-side slots (key and/or result). */
+        protected boolean isValidMtbdd(int binStart) {
+            for (int slot : mtbddSlots) {
+                if (!mtbdd.isValidFunction(cache[binStart + slot])) {
+                    return false;
+                }
+            }
+            return true;
+        }
 
         @Override
         protected boolean useCachePreserve() {
@@ -634,380 +762,95 @@ final class MtBddCache {
         }
     }
 
-    static final class BinaryToIntCache extends IntCache {
-        BinaryToIntCache(MtBddImpl mtbdd, BddImpl bdd) {
-            super(mtbdd, bdd, 2, 3);
+    /** One key to an int result kept in the bin, e.g. MTBDD to MTBDD ({@code map}) or to BDD ({@code mapBoolean}). */
+    static final class UnaryCache extends IntCache {
+        UnaryCache(MtBddImpl mtbdd, BddImpl bdd, Slot key, Slot result) {
+            this(mtbdd, bdd, () -> true, key, result);
+        }
+
+        UnaryCache(MtBddImpl mtbdd, BddImpl bdd, BooleanSupplier cacheDependenciesValid, Slot key, Slot result) {
+            super(mtbdd, bdd, 1, cacheDependenciesValid, key, result);
+        }
+
+        int lookup(int key) {
+            return resultIn(findBin(key));
+        }
+
+        void put(int hash, int key, int result) {
+            storeResult(storeKeys(hash, key), result);
+        }
+    }
+
+    /** Two keys to an int result kept in the bin, e.g. {@code apply} or {@code simplify}. */
+    static final class BinaryCache extends IntCache {
+        BinaryCache(MtBddImpl mtbdd, BddImpl bdd, Slot key1, Slot key2, Slot result) {
+            this(mtbdd, bdd, () -> true, key1, key2, result);
+        }
+
+        BinaryCache(
+                MtBddImpl mtbdd,
+                BddImpl bdd,
+                BooleanSupplier cacheDependenciesValid,
+                Slot key1,
+                Slot key2,
+                Slot result) {
+            super(mtbdd, bdd, 2, cacheDependenciesValid, key1, key2, result);
+        }
+
+        int lookup(int key1, int key2) {
+            return resultIn(findBin(key1, key2));
+        }
+
+        void put(int hash, int key1, int key2, int result) {
+            storeResult(storeKeys(hash, key1, key2), result);
+        }
+    }
+
+    /** Three keys to an int result kept in the bin, e.g. {@code ifThenElse} or {@code update}. */
+    static final class TernaryCache extends IntCache {
+        TernaryCache(MtBddImpl mtbdd, BddImpl bdd, Slot key1, Slot key2, Slot key3, Slot result) {
+            super(mtbdd, bdd, 3, () -> true, key1, key2, key3, result);
+        }
+
+        int lookup(int key1, int key2, int key3) {
+            return resultIn(findBin(key1, key2, key3));
+        }
+
+        void put(int hash, int key1, int key2, int key3, int result) {
+            storeResult(storeKeys(hash, key1, key2, key3), result);
+        }
+    }
+
+    /** Two MTBDD keys to a bit - an answer, not a function, so only the keys can go stale. */
+    static final class BinaryToBooleanCache extends IntCache {
+        static final int MISS = -1;
+
+        private Bits values = new Bits(0);
+
+        BinaryToBooleanCache(MtBddImpl mtbdd, BddImpl bdd) {
+            super(mtbdd, bdd, 2, () -> true, MTBDD, MTBDD);
         }
 
         @Override
-        protected boolean isValidBdd(int binStart) {
-            return true;
+        protected void growInto(int newSize, int[] newCache, boolean preserve) {
+            Bits newValues = new Bits(newSize);
+            if (preserve) {
+                rehashInto(newSize, newCache, (oldBin, newBin) -> newValues.set(newBin, values.get(oldBin)));
+            }
+            this.values = newValues;
         }
 
-        @Override
-        protected boolean isValidMtbdd(int binStart) {
-            return mtbdd.isValidFunction(cache[binStart])
-                    && mtbdd.isValidFunction(cache[binStart + 1])
-                    && mtbdd.isValidFunction(cache[binStart + 2]);
-        }
-
+        /** {@link #MISS}, or the cached bit as 1 or 0. */
         int lookup(int function1, int function2) {
-            ensureValid();
-            int hash = HashUtil.hash(function1, function2);
-            lookupHash = hash;
-            int binStart = binSize * binIndex(hash);
-            if (function1 == cache[binStart] && function2 == cache[binStart + 1]) {
-                statistics.hit();
-                return cache[binStart + 2];
+            int bin = findBin(function1, function2);
+            if (bin < 0) {
+                return MISS;
             }
-            statistics.miss();
-            return mtbdd.placeholder();
+            return values.get(bin) ? 1 : 0;
         }
 
-        void put(int hash, int function1, int function2, int result) {
-            ensureValid();
-            assert hash == HashUtil.hash(function1, function2);
-            statistics.put();
-            int binStart = binSize * binIndex(hash);
-            cache[binStart] = function1;
-            cache[binStart + 1] = function2;
-            cache[binStart + 2] = result;
-        }
-    }
-
-    static final class UnaryToIntCache extends IntCache {
-        UnaryToIntCache(MtBddImpl mtbdd, BddImpl bdd) {
-            super(mtbdd, bdd, 1, 2);
-        }
-
-        UnaryToIntCache(MtBddImpl mtbdd, BddImpl bdd, BooleanSupplier cacheDependenciesValid) {
-            super(mtbdd, bdd, 1, 2, cacheDependenciesValid);
-        }
-
-        @Override
-        protected boolean isValidBdd(int binStart) {
-            return true;
-        }
-
-        @Override
-        protected boolean isValidMtbdd(int binStart) {
-            return mtbdd.isValidFunction(cache[binStart]) && mtbdd.isValidFunction(cache[binStart + 1]);
-        }
-
-        int lookup(int function) {
-            ensureValid();
-            int hash = HashUtil.hash(function);
-            lookupHash = hash;
-            int binStart = binSize * binIndex(hash);
-            if (function == cache[binStart]) {
-                statistics.hit();
-                return cache[binStart + 1];
-            }
-            statistics.miss();
-            return mtbdd.placeholder();
-        }
-
-        void put(int hash, int function, int result) {
-            ensureValid();
-            assert hash == HashUtil.hash(function);
-            statistics.put();
-            int binStart = binSize * binIndex(hash);
-            cache[binStart] = function;
-            cache[binStart + 1] = result;
-        }
-    }
-
-    static final class UnaryToBddCache extends IntCache {
-        UnaryToBddCache(MtBddImpl mtbdd, BddImpl bdd) {
-            super(mtbdd, bdd, 1, 2);
-        }
-
-        @Override
-        protected boolean isValidBdd(int binStart) {
-            return bdd.isValidFunction(cache[binStart + 1]);
-        }
-
-        @Override
-        protected boolean isValidMtbdd(int binStart) {
-            return mtbdd.isValidFunction(cache[binStart]);
-        }
-
-        int lookup(int function) {
-            ensureValid();
-            int hash = HashUtil.hash(function);
-            lookupHash = hash;
-            int binStart = binSize * binIndex(hash);
-            if (function == cache[binStart]) {
-                statistics.hit();
-                return cache[binStart + 1];
-            }
-            statistics.miss();
-            return bdd.placeholder();
-        }
-
-        void put(int hash, int function, int result) {
-            ensureValid();
-            assert hash == HashUtil.hash(function);
-            statistics.put();
-            int binStart = binSize * binIndex(hash);
-            cache[binStart] = function;
-            cache[binStart + 1] = result;
-        }
-    }
-
-    static final class BinaryToBddCache extends IntCache {
-        BinaryToBddCache(MtBddImpl mtbdd, BddImpl bdd) {
-            super(mtbdd, bdd, 2, 3);
-        }
-
-        @Override
-        protected boolean isValidBdd(int binStart) {
-            return bdd.isValidFunction(cache[binStart + 2]);
-        }
-
-        @Override
-        protected boolean isValidMtbdd(int binStart) {
-            return mtbdd.isValidFunction(cache[binStart]) && mtbdd.isValidFunction(cache[binStart + 1]);
-        }
-
-        int lookup(int function1, int function2) {
-            ensureValid();
-            int hash = HashUtil.hash(function1, function2);
-            lookupHash = hash;
-            int binStart = binSize * binIndex(hash);
-            if (function1 == cache[binStart] && function2 == cache[binStart + 1]) {
-                statistics.hit();
-                return cache[binStart + 2];
-            }
-            statistics.miss();
-            return bdd.placeholder();
-        }
-
-        void put(int hash, int function1, int function2, int result) {
-            ensureValid();
-            assert hash == HashUtil.hash(function1, function2);
-            statistics.put();
-            int binStart = binSize * binIndex(hash);
-            cache[binStart] = function1;
-            cache[binStart + 1] = function2;
-            cache[binStart + 2] = result;
-        }
-    }
-
-    static final class MtbddBddToIntCache extends IntCache {
-        MtbddBddToIntCache(MtBddImpl mtbdd, BddImpl bdd) {
-            super(mtbdd, bdd, 2, 3);
-        }
-
-        MtbddBddToIntCache(MtBddImpl mtbdd, BddImpl bdd, BooleanSupplier cacheDependenciesValid) {
-            super(mtbdd, bdd, 2, 3, cacheDependenciesValid);
-        }
-
-        @Override
-        protected boolean isValidBdd(int binStart) {
-            return bdd.isValidFunction(cache[binStart + 1]);
-        }
-
-        @Override
-        protected boolean isValidMtbdd(int binStart) {
-            return mtbdd.isValidFunction(cache[binStart]) && mtbdd.isValidFunction(cache[binStart + 2]);
-        }
-
-        int lookup(int function, int domain) {
-            ensureValid();
-            int hash = HashUtil.hash(function, domain);
-            lookupHash = hash;
-            int binStart = binSize * binIndex(hash);
-            if (function == cache[binStart] && domain == cache[binStart + 1]) {
-                statistics.hit();
-                return cache[binStart + 2];
-            }
-            statistics.miss();
-            return mtbdd.placeholder();
-        }
-
-        void put(int hash, int function, int domain, int result) {
-            ensureValid();
-            assert hash == HashUtil.hash(function, domain);
-            statistics.put();
-            int binStart = binSize * binIndex(hash);
-            cache[binStart] = function;
-            cache[binStart + 1] = domain;
-            cache[binStart + 2] = result;
-        }
-    }
-
-    /**
-     * {@code (mtbdd function, mtbdd function, bdd domain) -> mtbdd function}, for {@code applySimplify}.
-     * Same shape as {@link UpdateCache}, but with the {@code Bdd}-side key in the third rather than the
-     * second slot - which is exactly what the two validity checks below are keyed on, so the two cannot be
-     * merged.
-     */
-    static final class ApplySimplifyCache extends IntCache {
-        ApplySimplifyCache(MtBddImpl mtbdd, BddImpl bdd) {
-            super(mtbdd, bdd, 3, 4);
-        }
-
-        @Override
-        protected boolean isValidBdd(int binStart) {
-            return bdd.isValidFunction(cache[binStart + 2]);
-        }
-
-        @Override
-        protected boolean isValidMtbdd(int binStart) {
-            return mtbdd.isValidFunction(cache[binStart])
-                    && mtbdd.isValidFunction(cache[binStart + 1])
-                    && mtbdd.isValidFunction(cache[binStart + 3]);
-        }
-
-        int lookup(int function1, int function2, int domain) {
-            ensureValid();
-            int hash = HashUtil.hash(function1, function2, domain);
-            lookupHash = hash;
-            int binStart = binSize * binIndex(hash);
-            if (function1 == cache[binStart] && function2 == cache[binStart + 1] && domain == cache[binStart + 2]) {
-                statistics.hit();
-                return cache[binStart + 3];
-            }
-            statistics.miss();
-            return mtbdd.placeholder();
-        }
-
-        void put(int hash, int function1, int function2, int domain, int result) {
-            ensureValid();
-            assert hash == HashUtil.hash(function1, function2, domain);
-            statistics.put();
-            int binStart = binSize * binIndex(hash);
-            cache[binStart] = function1;
-            cache[binStart + 1] = function2;
-            cache[binStart + 2] = domain;
-            cache[binStart + 3] = result;
-        }
-    }
-
-    static final class UpdateCache extends IntCache {
-        UpdateCache(MtBddImpl mtbdd, BddImpl bdd) {
-            super(mtbdd, bdd, 3, 4);
-        }
-
-        @Override
-        protected boolean isValidBdd(int binStart) {
-            return bdd.isValidFunction(cache[binStart + 1]);
-        }
-
-        @Override
-        protected boolean isValidMtbdd(int binStart) {
-            return mtbdd.isValidFunction(cache[binStart]) && mtbdd.isValidFunction(cache[binStart + 3]);
-        }
-
-        int lookup(int function, int bddAssignments, int value) {
-            ensureValid();
-            int hash = HashUtil.hash(function, bddAssignments, value);
-            lookupHash = hash;
-            int binStart = binSize * binIndex(hash);
-            if (function == cache[binStart] && bddAssignments == cache[binStart + 1] && value == cache[binStart + 2]) {
-                statistics.hit();
-                return cache[binStart + 3];
-            }
-            statistics.miss();
-            return mtbdd.placeholder();
-        }
-
-        void put(int hash, int function, int bddAssignments, int value, int result) {
-            ensureValid();
-            assert hash == HashUtil.hash(function, bddAssignments, value);
-            statistics.put();
-            int binStart = binSize * binIndex(hash);
-            cache[binStart] = function;
-            cache[binStart + 1] = bddAssignments;
-            cache[binStart + 2] = value;
-            cache[binStart + 3] = result;
-        }
-    }
-
-    static final class SplitCombineCache extends IntCache {
-        SplitCombineCache(MtBddImpl mtbdd, BddImpl bdd) {
-            super(mtbdd, bdd, 3, 4);
-        }
-
-        @Override
-        protected boolean isValidBdd(int binStart) {
-            return true;
-        }
-
-        @Override
-        protected boolean isValidMtbdd(int binStart) {
-            return mtbdd.isValidFunction(cache[binStart])
-                    && mtbdd.isValidFunction(cache[binStart + 1])
-                    && mtbdd.isValidFunction(cache[binStart + 3]);
-        }
-
-        int lookup(int lowFragment, int highFragment, int variable) {
-            ensureValid();
-            int hash = HashUtil.hash(lowFragment, highFragment, variable);
-            lookupHash = hash;
-            int binStart = binSize * binIndex(hash);
-            if (lowFragment == cache[binStart]
-                    && highFragment == cache[binStart + 1]
-                    && variable == cache[binStart + 2]) {
-                statistics.hit();
-                return cache[binStart + 3];
-            }
-            statistics.miss();
-            return mtbdd.placeholder();
-        }
-
-        void put(int hash, int lowFragment, int highFragment, int variable, int result) {
-            ensureValid();
-            assert hash == HashUtil.hash(lowFragment, highFragment, variable);
-            statistics.put();
-            int binStart = binSize * binIndex(hash);
-            cache[binStart] = lowFragment;
-            cache[binStart + 1] = highFragment;
-            cache[binStart + 2] = variable;
-            cache[binStart + 3] = result;
-        }
-    }
-
-    static final class IfThenElseCache extends IntCache {
-        IfThenElseCache(MtBddImpl mtbdd, BddImpl bdd) {
-            super(mtbdd, bdd, 3, 4);
-        }
-
-        @Override
-        protected boolean isValidBdd(int binStart) {
-            return bdd.isValidFunction(cache[binStart]);
-        }
-
-        @Override
-        protected boolean isValidMtbdd(int binStart) {
-            return mtbdd.isValidFunction(cache[binStart + 1])
-                    && mtbdd.isValidFunction(cache[binStart + 2])
-                    && mtbdd.isValidFunction(cache[binStart + 3]);
-        }
-
-        int lookup(int bddIf, int mtbddThen, int mtbddElse) {
-            ensureValid();
-            int hash = HashUtil.hash(bddIf, mtbddThen, mtbddElse);
-            lookupHash = hash;
-            int binStart = binSize * binIndex(hash);
-            if (bddIf == cache[binStart] && mtbddThen == cache[binStart + 1] && mtbddElse == cache[binStart + 2]) {
-                statistics.hit();
-                return cache[binStart + 3];
-            }
-            statistics.miss();
-            return mtbdd.placeholder();
-        }
-
-        void put(int hash, int bddIf, int mtbddThen, int mtbddElse, int result) {
-            ensureValid();
-            assert hash == HashUtil.hash(bddIf, mtbddThen, mtbddElse);
-            statistics.put();
-            int binStart = binSize * binIndex(hash);
-            cache[binStart] = bddIf;
-            cache[binStart + 1] = mtbddThen;
-            cache[binStart + 2] = mtbddElse;
-            cache[binStart + 3] = result;
+        void put(int hash, int function1, int function2, boolean result) {
+            values.set(storeKeys(hash, function1, function2), result);
         }
     }
 
@@ -1016,17 +859,7 @@ final class MtBddCache {
         private Object[] values = EMPTY_OBJECT_ARRAY;
 
         UnaryToObjectCache(MtBddImpl mtbdd, BddImpl bdd) {
-            super(mtbdd, bdd, 1, 1);
-        }
-
-        @Override
-        protected boolean isValidBdd(int binStart) {
-            return true;
-        }
-
-        @Override
-        protected boolean isValidMtbdd(int binStart) {
-            return mtbdd.isValidFunction(cache[binStart]);
+            super(mtbdd, bdd, 1, () -> true, MTBDD);
         }
 
         @Override
@@ -1042,27 +875,12 @@ final class MtBddCache {
 
         @Nullable
         V lookup(int function) {
-            ensureValid();
-            int hash = HashUtil.hash(function);
-            lookupHash = hash;
-            int binIndex = binIndex(hash);
-            int binStart = binSize * binIndex;
-            if (function == cache[binStart]) {
-                statistics.hit();
-                return (V) values[binIndex];
-            }
-            statistics.miss();
-            return null;
+            int bin = findBin(function);
+            return bin < 0 ? null : (V) values[bin];
         }
 
         void put(int hash, int function, V result) {
-            ensureValid();
-            assert hash == HashUtil.hash(function);
-            statistics.put();
-            int binIndex = binIndex(hash);
-            int binStart = binSize * binIndex;
-            cache[binStart] = function;
-            values[binIndex] = result;
+            values[storeKeys(hash, function)] = result;
         }
     }
 
@@ -1140,6 +958,7 @@ final class MtBddCache {
             lookupHash = hash;
             int index = binIndex(hash);
             if (Arrays.equals(key, cache[index])) {
+                assert isValid(index);
                 statistics.hit();
                 return values[index];
             }
@@ -1150,8 +969,7 @@ final class MtBddCache {
         void put(int hash, int[] key, int result) {
             ensureValid();
             assert hash == Arrays.hashCode(key);
-            statistics.put();
-            int index = binIndex(hash);
+            int index = putBin(hash);
             cache[index] = key;
             values[index] = result;
         }

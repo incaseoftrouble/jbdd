@@ -17,15 +17,19 @@
 package de.tum.in.jbdd;
 
 import java.util.BitSet;
-import java.util.Map;
 import java.util.function.IntConsumer;
-import java.util.stream.Collectors;
 
 /**
  * Generic interface for (binary) decision diagrams, i.e. a data structure that represents functions mapping
  * from boolean assignments to some domain through a tree-like structure. Each function is represented by an
  * (opaque) integer. A (reduced) decision diagram ensures that two functions are equal exactly if their
  * identifiers are equal.
+ *
+ * <p><b>Variables, not positions.</b> Every {@code int} naming a variable here - in a support set, an
+ * assignment, a compose mapping, a quantified set - is the variable itself, and stays that variable for
+ * the life of the diagram. Reordering never renumbers anything; it only moves variables around, and where
+ * a variable currently sits is visible solely through {@link ReorderableDd#levelOfVariable}. Nothing
+ * else in this API exposes an ordering position, which is exactly why that interface is separate.
  */
 public interface DecisionDiagram {
     /**
@@ -186,33 +190,6 @@ public interface DecisionDiagram {
      * @see #forEachSupportVariable(int, IntConsumer)
      */
     void forEachSupportVariableFiltered(int function, BitSet filter, IntConsumer action);
-
-    /**
-     * Returns the number of decision nodes used to represent this function in the decision diagram
-     */
-    int size(int function);
-
-    /**
-     * Returns a map containing some statistics about the Bdd. The content of this map
-     * may change and is only intended as a snapshot. The values of the map are primitives.
-     */
-    Map<String, Object> statistics();
-
-    static String formatStatistics(Map<String, Object> statistics) {
-        return statistics.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .map(e -> String.format("%s=%s", e.getKey(), e.getValue()))
-                .collect(Collectors.joining("\n"));
-    }
-
-    static Map<String, Object> prefixStatistics(String name, Map<String, Object> statistics) {
-        if (name.isEmpty()) {
-            return statistics;
-        }
-        return statistics.entrySet().stream()
-                .collect(Collectors.toUnmodifiableMap(
-                        e -> String.format("%s_%s", name, e.getKey()), Map.Entry::getValue));
-    }
 
     /**
      * A wrapper class to guard some function in an area where exceptions can occur. It increases

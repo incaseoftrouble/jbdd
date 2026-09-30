@@ -14,8 +14,9 @@
  * You should have received a copy of the GNU General Public License
  * along with JBDD. If not, see <http://www.gnu.org/licenses/>.
  */
-package de.tum.in.jbdd;
+package de.tum.in.jbdd.io;
 
+import de.tum.in.jbdd.BinaryDecisionDiagram;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.util.regex.Pattern;
@@ -42,7 +43,8 @@ public final class DimacsReader {
         }
     }
 
-    public static int loadDimacs(Bdd bdd, BufferedReader reader) throws IOException, InvalidFormatException {
+    public static int loadDimacs(BinaryDecisionDiagram bdd, BufferedReader reader)
+            throws IOException, InvalidFormatException {
         String header = nextLine(reader);
         if (header == null) {
             throw new InvalidFormatException("Stream is empty");
