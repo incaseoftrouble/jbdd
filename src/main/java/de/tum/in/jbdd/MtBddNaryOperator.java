@@ -132,9 +132,19 @@ public class MtBddNaryOperator implements ToIntFunction<int[]> {
     /** A two-operand operator, i.e. a plain {@link MtBddBinaryOperator} carrying the same properties. */
     static final class Binary extends MtBddNaryOperator implements IntBinaryOperator {
         private final int[] operands = new int[2];
+        // This operator with its properties, built once: the binary apply caches on the operator's identity.
+        private final MtBddBinaryOperator operator;
 
         private Binary(ToIntFunction<int[]> op, boolean commutative, int neutral, int absorbing) {
             super(2, op, commutative, neutral, absorbing);
+            this.operator = commutative
+                    ? MtBddBinaryOperator.monoid(this, neutral, absorbing)
+                    : MtBddBinaryOperator.of(this, neutral, absorbing);
+        }
+
+        /** This operator as a {@link MtBddBinaryOperator} carrying the same properties. */
+        MtBddBinaryOperator asBinary() {
+            return operator;
         }
 
         @Override

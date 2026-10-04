@@ -1211,4 +1211,26 @@ class RegressionTests {
             mt.dereference(mapRestricted);
         }
     }
+
+    @Test
+    void testNaryApplyOfTwoOperandsKeepsTheDeclaredProperties() {
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        bdd.createVariables(2);
+        MtBddImpl mt = bdd.mtbdd();
+        int function = mt.reference(mt.of(0, mt.of(1), mt.of(2)));
+        int[] calls = new int[1];
+        MtBddNaryOperator sum = MtBddNaryOperator.monoid(
+                2,
+                values -> {
+                    calls[0]++;
+                    return values[0] + values[1];
+                },
+                0,
+                1000);
+        // The neutral operand is dropped without a visit, and the absorbing one ends the apply at once.
+        assertEquals(function, mt.apply(new int[] {function, mt.of(0)}, sum));
+        assertEquals(function, mt.apply(new int[] {mt.of(0), function}, sum));
+        assertEquals(mt.of(1000), mt.apply(new int[] {function, mt.of(1000)}, sum));
+        assertEquals(0, calls[0]);
+    }
 }

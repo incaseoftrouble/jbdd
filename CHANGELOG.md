@@ -34,6 +34,7 @@
   * A `NatSet` equals other `NatSet`s only and hashes by its words; `boxed()` is a `Set<Integer>` view with `Set`'s equality and hash code
 * The API takes and returns `NatSet` where it took and returned `java.util.BitSet`; a fresh result is a `MutableNatSet`, a cached one (`BddSet.support()`) an immutable `NatSet`
 * Node tables under memory pressure: a JVM collection (at most once per table size) before memory decides against growing, no growth by less than an eighth, a table that cannot grow collects again only after using half of what it freed, and `OutOfMemoryError` once a collection leaves under a twentieth free - instead of a full mark every few allocations
+* The n-ary MTBDD `apply` over two operands keeps the operator's neutral and absorbing values
 * Removed `BddConfiguration.logStatisticsOnShutdown()`: its output went through `java.util.logging`, whose own shutdown hook resets the handlers first, so nothing was ever printed - read `DdContext.statistics()` from a shutdown hook of your own instead
 * Packages: `Cube`, `Cursor`, `NatSets`, the maps and `NatSet` live in `de.tum.in.jbdd.collections`, `DimacsReader` in `de.tum.in.jbdd.io`; `Cube.ofUnsafe` checks its arguments by assertion only
   * `BddUtil`: what is computed from a `BinaryDecisionDiagram`'s public operations alone - `implicants`, `primeImplicants`, `shortestPath` and a generic `adopt` - as static methods rather than interface defaults

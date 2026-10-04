@@ -1096,7 +1096,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             return result;
         }
         if (operator instanceof MtBddNaryOperator.Binary) {
-            int result = this.apply(functions[0], functions[1], (MtBddNaryOperator.Binary) operator);
+            int result = this.apply(functions[0], functions[1], ((MtBddNaryOperator.Binary) operator).asBinary());
             assert accessGuard.release();
             return result;
         }
