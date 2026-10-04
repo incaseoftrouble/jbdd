@@ -210,6 +210,31 @@ final class NatSetUtil {
         return 0;
     }
 
+    /** The number of elements below {@code element} in {@code words}, which hold {@code size} elements. */
+    static int wordsRank(long[] words, int size, int element) {
+        if (element <= 0) {
+            return 0;
+        }
+        int wordIndex = element >>> WORD_SHIFT;
+        if (wordIndex >= words.length) {
+            return size;
+        }
+        long below = (1L << element) - 1;
+        // Counting from the nearer end: what lies above the element is the rest of the size.
+        if (wordIndex <= words.length >>> 1) {
+            int count = Long.bitCount(words[wordIndex] & below);
+            for (int index = 0; index < wordIndex; index++) {
+                count += Long.bitCount(words[index]);
+            }
+            return count;
+        }
+        int above = Long.bitCount(words[wordIndex] & ~below);
+        for (int index = wordIndex + 1; index < words.length; index++) {
+            above += Long.bitCount(words[index]);
+        }
+        return size - above;
+    }
+
     static int wordsCount(long[] words) {
         int count = 0;
         for (long word : words) {

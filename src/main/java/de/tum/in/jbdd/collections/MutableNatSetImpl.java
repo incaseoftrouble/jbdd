@@ -308,6 +308,14 @@ final class MutableNatSetImpl implements MutableNatSet {
         return NatSetUtil.wordsLength(current);
     }
 
+    @Override
+    public int rank(int element) {
+        long[] current = words;
+        return current == null
+                ? NatSetUtil.arrayLowerBound(elements, size, element)
+                : NatSetUtil.wordsRank(current, size, element);
+    }
+
     // Iteration
 
     @Override

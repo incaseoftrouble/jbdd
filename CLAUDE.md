@@ -290,7 +290,10 @@ Collections independent of decision diagrams, public for users too; nothing here
   their indices (murmur3's finalizer), built on the fly in array mode, so both classes and representations
   agree - `Set`'s sum of the elements would put all subsets of `[0, 21)` into 211 buckets. `toString` is
   `Set`'s; `NatSet.ORDER` orders by size, then lexicographically. `subSet(from, to)` is the elements in a range,
-  `slice(from, to)` the same re-based at 0 (`BitSet.get(from, to)`); `MutableNatSet.freezeAndClear()` hands a built set's
+  `slice(from, to)` the same re-based at 0 (`BitSet.get(from, to)`), `rank(element)` the number of elements below
+  one without building that subset (a binary search of the array; the words' popcounts from the nearer end, the far
+  side being the size less the rest): 1 to 6 ns and nothing allocated on `jmhNatSet`'s shapes, where
+  `subSet(0, element).size()` takes 6.5 to 16.5 ns and 12 to 53 bytes; `MutableNatSet.freezeAndClear()` hands a built set's
   store to a set that never changes and leaves the mutable one empty. `shifted(amount)` and
   `MutableNatSet.shift(amount)` move every element, dropping those that would turn negative (a word-wise shift
   with carry, or an add per array element; in place, the array stays an array). `MutableNatSet` has

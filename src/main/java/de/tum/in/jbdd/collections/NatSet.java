@@ -135,6 +135,12 @@ public interface NatSet {
     /** One more than the largest element, {@code 0} if empty - as {@link BitSet#length()}. */
     int length();
 
+    /**
+     * The number of elements less than {@code element}: {@code subSet(0, element).size()}, i.e. the index
+     * {@code element} has in ascending order - {@code 0} for a negative {@code element}.
+     */
+    int rank(int element);
+
     /** Hands each element to {@code action}, in ascending order: the fastest way over all elements. */
     void forEach(IntConsumer action);
 

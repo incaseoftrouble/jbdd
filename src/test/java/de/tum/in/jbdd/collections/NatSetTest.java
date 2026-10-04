@@ -121,6 +121,7 @@ class NatSetTest {
             assertEquals(reference.nextSetBit(index), set.nextSetBit(index));
             assertEquals(reference.previousSetBit(index), set.previousSetBit(index));
             assertEquals(reference.nextClearBit(index), set.nextClearBit(index));
+            assertEquals(reference.get(0, index).cardinality(), set.rank(index));
         }
         assertFalse(set.contains(-1));
         assertEquals(-1, set.previousSetBit(-1));
@@ -492,6 +493,52 @@ class NatSetTest {
         assertSame(immutable, immutable.subSet(2, 10));
         assertEquals(NatSet.of(5), immutable.subSet(3, 9));
         assertEquals(NatSet.of(2, 6), immutable.slice(3, 10));
+    }
+
+    @Test
+    void rankCountsTheElementsBelow() {
+        Random random = new Random(7);
+        for (int span : SPANS) {
+            for (int round = 0; round < 100; round++) {
+                BitSet reference = randomBitSet(random, span, random.nextInt(round % 4 == 0 ? 4 : 60));
+                NatSet set = natSet(random, reference);
+                int length = reference.length();
+                int[] probes = {
+                    Integer.MIN_VALUE,
+                    -65,
+                    -1,
+                    0,
+                    1,
+                    63,
+                    64,
+                    65,
+                    128,
+                    length - 1,
+                    length,
+                    length + 1,
+                    length + 64,
+                    span,
+                    Integer.MAX_VALUE,
+                    random.nextInt(span + 1),
+                    random.nextInt(span + 1),
+                    reference.isEmpty() ? 0 : reference.nextSetBit(random.nextInt(length)),
+                };
+                for (int probe : probes) {
+                    int expected = probe <= 0 ? 0 : set.subSet(0, probe).size();
+                    assertEquals(expected, set.rank(probe), () -> set + " rank " + probe);
+                }
+                // Each element's rank is its index.
+                int[] elements = set.toIntArray();
+                for (int index = 0; index < elements.length; index++) {
+                    assertEquals(index, set.rank(elements[index]));
+                }
+                assertEquals(set.size(), set.rank(Integer.MAX_VALUE));
+            }
+        }
+        assertEquals(0, NatSet.of().rank(5));
+        assertEquals(0, MutableNatSet.dense(200).rank(150));
+        assertEquals(0, NatSet.of(3).rank(3));
+        assertEquals(1, NatSet.of(3).rank(4));
     }
 
     @Test

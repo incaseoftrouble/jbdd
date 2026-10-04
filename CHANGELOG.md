@@ -31,6 +31,7 @@
   * `IntIntHashMap` / `IntObjectHashMap`: hash maps keyed by `int` that box nothing - open addressing, every `int` but `Integer.MIN_VALUE` a valid key
   * `NatSet` / `MutableNatSet`: a set of naturals over primitives - a few elements far apart as a sorted array, anything else as words - viewable as a `Set<Integer>` (`boxed()`); `NatSet`'s factories return sets that never change (singletons shared), `MutableNatSet` has `java.util.BitSet`'s mutators; words walked bit by bit (`forEach`, a primitive `iterator()`, `anyMatch`/`allMatch`/`noneMatch`); operands of one representation combined word by word or element by element, without a callback per element or an intermediate copy; a singleton below 64 is a word, arrays kept for sets far apart
   * `NatSet.shifted` / `MutableNatSet.shift`: every element moved by an amount, those that would turn negative dropped
+  * `NatSet.rank`: the number of elements below a given one, without allocating
   * `NatSets`: helpers over `NatSet` - mapped copies and views, `int` encodings, a binary counter (`increment`), a power-set `Cursor`
   * A `NatSet` equals other `NatSet`s only and hashes by its words; `boxed()` is a `Set<Integer>` view with `Set`'s equality and hash code
 * The API takes and returns `NatSet` where it took and returned `java.util.BitSet`; a fresh result is a `MutableNatSet`, a cached one (`BddSet.support()`) an immutable `NatSet`

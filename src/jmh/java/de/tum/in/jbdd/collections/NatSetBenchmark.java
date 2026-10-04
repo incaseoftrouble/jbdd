@@ -203,6 +203,16 @@ public class NatSetBenchmark {
 
     @Benchmark
     @OperationsPerInvocation(POOL)
+    public int rank() {
+        int sum = 0;
+        for (int entry = 0; entry < POOL; entry++) {
+            sum += sets[entry].rank(probes[entry]);
+        }
+        return sum;
+    }
+
+    @Benchmark
+    @OperationsPerInvocation(POOL)
     public int containsAll() {
         int sum = 0;
         for (int entry = 0; entry < POOL; entry++) {
@@ -255,7 +265,6 @@ public class NatSetBenchmark {
         }
     }
 
-    /** Deduplicating edges and states: a hash lookup with an equal key that is another object. */
     @Benchmark
     @OperationsPerInvocation(POOL)
     public int hashLookup() {

@@ -294,6 +294,17 @@ final class ImmutableNatSet implements NatSet {
         return NatSetUtil.wordsLength(current);
     }
 
+    @Override
+    public int rank(int element) {
+        int[] array = elements();
+        if (array != null) {
+            return NatSetUtil.arrayLowerBound(array, size, element);
+        }
+        long[] current = words();
+        assert current != null;
+        return NatSetUtil.wordsRank(current, size, element);
+    }
+
     // Iteration
 
     @Override
