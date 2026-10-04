@@ -1023,8 +1023,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             return result;
         }
         if (analysis.isRestrict) {
-            // TODO Native?
-            int result = simplify(restrict(function, analysis.restriction), domain);
+            int result = restrictSimplify(function, analysis.restriction, domain);
             assert accessGuard.release();
             return result;
         }
@@ -1071,7 +1070,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         }
         if (analysis.isRestrict) {
             Cube restriction = analysis.restriction;
-            return (function, domain) -> simplify(restrict(function, restriction), domain);
+            return (function, domain) -> restrictSimplify(function, restriction, domain);
         }
         return new BddOperations.Compose(this, resolved, Util.protectNodes(this, resolved));
     }
@@ -1534,7 +1533,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         }
 
         BooleanCache.RestrictCubeCache restrictCache = cache.restrictCubeCache();
-        int lookup = restrictCache.lookup(node, restriction, cubeHash);
+        int lookup = restrictCache.lookup(node, TRUE, restriction, cubeHash);
         if (lookup != placeholder()) {
             return complementIf(lookup, func);
         }
@@ -1543,7 +1542,120 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         int high = table.pushToWorkStack(computeRestrict(table.high(node), restriction, cubeHash, maxRestrictedLevel));
         int result = makeFunction(nodeLevel, low, high);
         table.popFromWorkStack(2);
-        restrictCache.put(hash, node, restriction, result);
+        restrictCache.put(hash, node, TRUE, restriction, result);
+        return complementIf(result, func);
+    }
+
+    /**
+     * {@code simplify(restrict(function, restriction), domain)} in one recursion, the domain narrowed on the way
+     * down.
+     */
+    int restrictSimplify(int function, Cube restriction, int domain) {
+        assert isValidFunction(function) && isValidFunction(domain);
+        if (domain == FALSE) {
+            return FALSE;
+        }
+        if (domain == TRUE) {
+            return restrict(function, restriction);
+        }
+        if (restriction.isEmpty()) {
+            return simplify(function, domain);
+        }
+        if (isConstant(function)) {
+            return function;
+        }
+
+        assert accessGuard.acquire();
+        assert table.workStacksEmpty();
+        // A copy: the cube becomes a cache key and may be a walk's working state.
+        Cube cube = restriction.copy();
+        table.pushToWorkStack(function, domain);
+        int result = computeRestrictSimplify(function, cube, cube.hashCode(), maxLevel(cube.support()), domain);
+        table.popFromWorkStack(2);
+        assert table.workStacksEmpty();
+        assert accessGuard.release();
+        return result;
+    }
+
+    /*
+     * computeRestrict with the domain of computeConstrainSimplify carried along: narrowed where it excludes a branch,
+     * widened to its disjunction where it decides above the function - and likewise on a restricted variable, since the
+     * result no longer depends on it and so has to hold for both of the domain's branches there.
+     */
+    private int computeRestrictSimplify(
+            int function, Cube restriction, int cubeHash, int maxRestrictedLevel, int domain) {
+        assert domain != FALSE;
+        if (domain == TRUE) {
+            return computeRestrict(function, restriction, cubeHash, maxRestrictedLevel);
+        }
+        boolean func = isComplementFunction(function);
+        int node = positive(function);
+        if (node == TRUE) {
+            return function;
+        }
+        int nodeVariable = table.variable(node);
+        int nodeLevel = levelOfVariable(nodeVariable);
+        if (nodeLevel > maxRestrictedLevel) {
+            return computeSimplify(function, domain);
+        }
+
+        BooleanCache.RestrictCubeCache restrictCache = cache.restrictCubeCache();
+        int lookup = restrictCache.lookup(node, domain, restriction, cubeHash);
+        if (lookup != placeholder()) {
+            return complementIf(lookup, func);
+        }
+        int hash = restrictCache.lookupHash;
+
+        int domainLevel = decisionLevel(domain);
+        int result;
+        if (domainLevel < nodeLevel) {
+            int domainLow = low(domain);
+            int domainHigh = high(domain);
+            if (domainLow == FALSE) {
+                result = computeRestrictSimplify(node, restriction, cubeHash, maxRestrictedLevel, domainHigh);
+            } else if (domainHigh == FALSE) {
+                result = computeRestrictSimplify(node, restriction, cubeHash, maxRestrictedLevel, domainLow);
+            } else {
+                int widened = table.pushToWorkStack(computeOr(domainLow, domainHigh));
+                result = computeRestrictSimplify(node, restriction, cubeHash, maxRestrictedLevel, widened);
+                table.popFromWorkStack();
+            }
+        } else if (restriction.support().contains(nodeVariable)) {
+            int child = restriction.assignment().contains(nodeVariable) ? table.high(node) : table.low(node);
+            if (domainLevel == nodeLevel) {
+                int domainLow = low(domain);
+                int domainHigh = high(domain);
+                if (domainLow == FALSE) {
+                    result = computeRestrictSimplify(child, restriction, cubeHash, maxRestrictedLevel, domainHigh);
+                } else if (domainHigh == FALSE) {
+                    result = computeRestrictSimplify(child, restriction, cubeHash, maxRestrictedLevel, domainLow);
+                } else {
+                    int widened = table.pushToWorkStack(computeOr(domainLow, domainHigh));
+                    result = computeRestrictSimplify(child, restriction, cubeHash, maxRestrictedLevel, widened);
+                    table.popFromWorkStack();
+                }
+            } else {
+                result = computeRestrictSimplify(child, restriction, cubeHash, maxRestrictedLevel, domain);
+            }
+        } else {
+            boolean domainDecides = domainLevel == nodeLevel;
+            int domainLow = lowIf(domain, domainDecides);
+            int domainHigh = highIf(domain, domainDecides);
+            if (domainLow == FALSE) {
+                result = computeRestrictSimplify(
+                        table.high(node), restriction, cubeHash, maxRestrictedLevel, domainHigh);
+            } else if (domainHigh == FALSE) {
+                result = computeRestrictSimplify(table.low(node), restriction, cubeHash, maxRestrictedLevel, domainLow);
+            } else {
+                int low = table.pushToWorkStack(
+                        computeRestrictSimplify(table.low(node), restriction, cubeHash, maxRestrictedLevel, domainLow));
+                int high = table.pushToWorkStack(computeRestrictSimplify(
+                        table.high(node), restriction, cubeHash, maxRestrictedLevel, domainHigh));
+                result = makeFunction(nodeLevel, low, high);
+                table.popFromWorkStack(2);
+            }
+        }
+        restrictCache.put(hash, node, domain, restriction, result);
         return complementIf(result, func);
     }
 

@@ -829,20 +829,28 @@ final class BooleanCache implements VariableOrderObserver {
         }
     }
 
-    /** A node restricted by a cube. The cube is never changed once it is a key. */
+    /**
+     * A node restricted by a cube within a domain ({@code TRUE} for a plain restriction). The cube is never changed
+     * once it is a key.
+     */
     static final class RestrictKey {
         final int node;
+        final int domain;
         final Cube cube;
         final int hash;
 
-        RestrictKey(int node, Cube cube, int hash) {
+        RestrictKey(int node, int domain, Cube cube, int hash) {
             this.node = node;
+            this.domain = domain;
             this.cube = cube;
             this.hash = hash;
         }
     }
 
-    /** Restrictions keyed on the node and the whole cube, so entries of different restrictions coexist. */
+    /**
+     * Restrictions keyed on the node, the domain they are simplified within and the whole cube, so entries of
+     * different restrictions coexist.
+     */
     static final class RestrictCubeCache extends CacheBase.ObjectKeys<RestrictKey> {
         private final BooleanBase<?, ?> bdd;
         private int[] values = EMPTY_INT_ARRAY;
@@ -852,14 +860,17 @@ final class BooleanCache implements VariableOrderObserver {
             this.bdd = bdd;
         }
 
-        static int hash(int node, int cubeHash) {
-            return HashUtil.hash(node, cubeHash);
+        static int hash(int node, int domain, int cubeHash) {
+            return HashUtil.hash(node, domain, cubeHash);
         }
 
         @Override
         protected boolean isValid(int binStart) {
             RestrictKey key = cache[binStart];
-            return key != null && bdd.isValidNonConstantFunction(key.node) && bdd.isValidFunction(values[binStart]);
+            return key != null
+                    && bdd.isValidNonConstantFunction(key.node)
+                    && bdd.isValidFunction(key.domain)
+                    && bdd.isValidFunction(values[binStart]);
         }
 
         @Override
@@ -887,13 +898,16 @@ final class BooleanCache implements VariableOrderObserver {
             prune(attemptPruning, this::isValid);
         }
 
-        int lookup(int node, Cube cube, int cubeHash) {
+        int lookup(int node, int domain, Cube cube, int cubeHash) {
             ensureValid();
-            int hash = hash(node, cubeHash);
+            int hash = hash(node, domain, cubeHash);
             lookupHash = hash;
             int index = binIndex(hash);
             RestrictKey key = cache[index];
-            if (key != null && key.node == node && (key.cube == cube || key.cube.equals(cube))) {
+            if (key != null
+                    && key.node == node
+                    && key.domain == domain
+                    && (key.cube == cube || key.cube.equals(cube))) {
                 assert isValid(index);
                 statistics.hit();
                 return values[index];
@@ -902,10 +916,10 @@ final class BooleanCache implements VariableOrderObserver {
             return bdd.placeholder();
         }
 
-        void put(int hash, int node, Cube cube, int result) {
+        void put(int hash, int node, int domain, Cube cube, int result) {
             ensureValid();
             int index = putBin(hash);
-            cache[index] = new RestrictKey(node, cube, hash);
+            cache[index] = new RestrictKey(node, domain, cube, hash);
             values[index] = result;
         }
     }

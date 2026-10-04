@@ -27,9 +27,6 @@ and DIMACS instances here do not stand in for it.
   quantifier collapses, the way `andSimplify` never visits one the domain excludes (§6). It is also the most
   work — a new recursion, a second domain-carrying cache, ephemeral-parameter invalidation for the
   quantified set, and theory coverage against the reference evaluation in both orders (§12).
-- **`BddImpl#composeSimplify` — a native restrict-and-simplify.** `BddImpl.composeSimplify` still materialises
-  `restrict` then `simplify` when the mapping is a restriction; one recursion carrying the domain through the
-  restriction, as `andSimplify` carries it through the conjunction (§6), would never build the intermediate.
 
 ## Needs design
 

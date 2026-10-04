@@ -38,6 +38,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.function.Function;
 import java.util.function.IntBinaryOperator;
 import java.util.function.IntPredicate;
@@ -1269,7 +1270,32 @@ class RegressionTests {
         assertEquals(0, calls[0]);
     }
 
-    private static int randomMddFunction(MddImpl mdd, int[] variables, java.util.Random random, int depth) {
+    private static int randomFunction(BddImpl bdd, int[] v, Random random, int depth) {
+        if (depth == 0) {
+            int variable = v[random.nextInt(v.length)];
+            return random.nextBoolean() ? variable : bdd.not(variable);
+        }
+        int left = bdd.reference(randomFunction(bdd, v, random, depth - 1));
+        int right = bdd.reference(randomFunction(bdd, v, random, depth - 1));
+        int result;
+        switch (random.nextInt(3)) {
+            case 0:
+                result = bdd.and(left, right);
+                break;
+            case 1:
+                result = bdd.or(left, right);
+                break;
+            default:
+                result = bdd.xor(left, right);
+                break;
+        }
+        bdd.reference(result);
+        bdd.dereference(left);
+        bdd.dereference(right);
+        return bdd.dereference(result);
+    }
+
+    private static int randomMddFunction(MddImpl mdd, int[] variables, Random random, int depth) {
         if (depth == 0) {
             return variables[random.nextInt(variables.length)];
         }
@@ -1295,7 +1321,7 @@ class RegressionTests {
             values[(i + 1) % domains[i]] = true;
             variables[i] = mdd.reference(mdd.makeVariableFunction(variable, values));
         }
-        java.util.Random random = new java.util.Random(11);
+        Random random = new Random(11);
         int combinations = 2 * 3 * 2 * 4 * 3;
         for (int round = 0; round < 40; round++) {
             int function = mdd.reference(randomMddFunction(mdd, variables, random, 4));
@@ -1324,6 +1350,46 @@ class RegressionTests {
                     mdd.countSatisfyingAssignmentsIn(function, domain).intValueExact());
             mdd.dereference(function);
             mdd.dereference(domain);
+        }
+    }
+
+    /**
+     * composeSimplify over an all-constant mapping restricts and simplifies in one pass; the domain may name
+     * restricted variables.
+     */
+    @Test
+    void testComposeSimplifyOfARestrictionAgreesOnTheDomain() {
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int[] v = bdd.createVariables(8);
+        Random random = new Random(13);
+        for (int round = 0; round < 30; round++) {
+            int function = bdd.reference(randomFunction(bdd, v, random, 5));
+            int domain = bdd.reference(randomFunction(bdd, v, random, 4));
+            int[] mapping = new int[1 + random.nextInt(8)];
+            Arrays.fill(mapping, bdd.placeholder());
+            for (int i = 0; i < mapping.length; i++) {
+                if (random.nextBoolean()) {
+                    mapping[i] = random.nextBoolean() ? bdd.trueFunction() : bdd.falseFunction();
+                }
+            }
+            int simplified = bdd.reference(bdd.composeSimplify(function, mapping, domain));
+            int composed = bdd.reference(bdd.compose(function, mapping));
+            int registered = bdd.reference(bdd.registerComposeSimplify(mapping).applyAsInt(function, domain));
+            MutableNatSet restricted = MutableNatSet.create();
+            for (int i = 0; i < mapping.length; i++) {
+                if (mapping[i] != bdd.placeholder()) {
+                    restricted.set(i);
+                }
+            }
+            assertFalse(bdd.support(simplified).intersects(restricted), "a restricted variable survived");
+            for (int mask = 0; mask < 1 << 8; mask++) {
+                MutableNatSet assignment = NatSetFixtures.valueOf(mask);
+                if (bdd.evaluate(domain, assignment)) {
+                    assertEquals(bdd.evaluate(composed, assignment), bdd.evaluate(simplified, assignment));
+                    assertEquals(bdd.evaluate(composed, assignment), bdd.evaluate(registered, assignment));
+                }
+            }
+            bdd.dereference(function, domain, simplified, composed, registered);
         }
     }
 }
