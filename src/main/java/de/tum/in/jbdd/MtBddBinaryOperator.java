@@ -19,6 +19,12 @@ package de.tum.in.jbdd;
 import java.util.function.IntBinaryOperator;
 import org.jspecify.annotations.Nullable;
 
+/**
+ * An operator over two terminal values together with the algebraic properties
+ * {@link MultiTerminalDecisionDiagram#apply} may exploit: {@code commutative} lets the operands be ordered before a cache lookup, a {@code neutral} value returns
+ * the other operand unchanged, an {@code absorbing} one ends the recursion. All three are unchecked claims about the
+ * operator, spot-checked under assertions. The {@code applyXxx} overloads of the diagram build these.
+ */
 public final class MtBddBinaryOperator implements IntBinaryOperator {
     private static final int NONE = -1;
 

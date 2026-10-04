@@ -132,11 +132,10 @@ public interface DecisionDiagram {
         return result;
     }
 
-    /**
-     * Indicates whether the given function is GC-managed.
-     */
+    /** Whether {@code function} is kept for good, so that referencing it is a no-op (a variable, a pinned function). */
     boolean isUnmanaged(int function);
 
+    /** Whether {@code function} currently denotes a function of this diagram - checked by assertion elsewhere. */
     boolean isValidFunction(int function);
 
     // Support
@@ -174,6 +173,7 @@ public interface DecisionDiagram {
         forEachSupportVariableFiltered(function, filter, action);
     }
 
+    /** The variables of {@code filter} in the support of {@code function}, a fresh set the caller owns. */
     default MutableNatSet supportFiltered(int function, NatSet filter) {
         MutableNatSet bitSet = MutableNatSet.dense(numberOfVariables());
         forEachSupportVariableFiltered(function, filter, bitSet::set);

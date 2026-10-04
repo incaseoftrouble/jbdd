@@ -20,6 +20,13 @@ import java.util.function.BiFunction;
 import java.util.function.BinaryOperator;
 import org.jspecify.annotations.Nullable;
 
+/**
+ * An operator over two values together with the algebraic properties {@link BddMap#apply(BddMap, BddMapBinaryOperator)}
+ * may exploit - the value-typed counterpart of {@link MtBddBinaryOperator}: {@code commutative} lets the operands be
+ * ordered before a cache lookup, a {@code neutral} value returns the other operand unchanged, an {@code absorbing} one
+ * ends the recursion. The claims are checked under assertions, and only translate to the raw terminals when both maps
+ * share a numbering.
+ */
 public final class BddMapBinaryOperator<V> implements BinaryOperator<V> {
     final BiFunction<? super V, ? super V, ? extends V> op;
     final boolean commutative;
@@ -37,26 +44,38 @@ public final class BddMapBinaryOperator<V> implements BinaryOperator<V> {
         this.absorbing = absorbing;
     }
 
+    /** Claims nothing, which is always safe. */
+    @SuppressWarnings("PMD.UseDiamondOperator")
     public static <V> BddMapBinaryOperator<V> of(BiFunction<? super V, ? super V, ? extends V> op) {
-        return new BddMapBinaryOperator<>(op, false, null, null);
+        //noinspection Convert2Diamond
+        return new BddMapBinaryOperator<V>(op, false, null, null);
     }
 
+    /** Claims {@code op(a, b).equals(op(b, a))}. */
+    @SuppressWarnings("PMD.UseDiamondOperator")
     public static <V> BddMapBinaryOperator<V> commutative(BiFunction<? super V, ? super V, ? extends V> op) {
-        return new BddMapBinaryOperator<>(op, true, null, null);
+        //noinspection Convert2Diamond
+        return new BddMapBinaryOperator<V>(op, true, null, null);
     }
 
+    /** Claims commutativity and {@code neutral} as the neutral value: {@code op(a, neutral).equals(a)}. */
     @SuppressWarnings("PMD.UseDiamondOperator")
     public static <V> BddMapBinaryOperator<V> monoid(BiFunction<? super V, ? super V, ? extends V> op, V neutral) {
         //noinspection Convert2Diamond
         return new BddMapBinaryOperator<V>(op, true, neutral, null);
     }
 
+    /**
+     * Claims commutativity and {@code absorbing} as the absorbing value:
+     * {@code op(a, absorbing).equals(absorbing)}.
+     */
     @SuppressWarnings("PMD.UseDiamondOperator")
     public static <V> BddMapBinaryOperator<V> absorbing(BiFunction<? super V, ? super V, ? extends V> op, V absorbing) {
         //noinspection Convert2Diamond
         return new BddMapBinaryOperator<V>(op, true, null, absorbing);
     }
 
+    /** {@link #monoid(BiFunction, Object)} and {@link #absorbing(BiFunction, Object)} combined. */
     public static <V> BddMapBinaryOperator<V> monoid(
             BiFunction<? super V, ? super V, ? extends V> op, V neutral, V absorbing) {
         return new BddMapBinaryOperator<>(op, true, neutral, absorbing);

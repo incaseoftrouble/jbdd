@@ -60,12 +60,14 @@ public final class NatSets {
         return MutableNatSet.valueOf(bits);
     }
 
+    /** The union, as a set of the caller's own. */
     public static MutableNatSet union(NatSet first, NatSet second) {
         MutableNatSet union = MutableNatSet.copyOf(first);
         union.or(second);
         return union;
     }
 
+    /** The intersection, as a set of the caller's own. */
     public static MutableNatSet intersection(NatSet first, NatSet second) {
         MutableNatSet intersection = MutableNatSet.copyOf(first);
         intersection.and(second);

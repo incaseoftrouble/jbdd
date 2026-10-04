@@ -34,6 +34,7 @@ public interface NodeBasedDd extends DecisionDiagram {
      */
     int nodeReferenceCount(int node);
 
+    /** Whether {@code node} is pinned: referenced beyond counting, so that it is never collected. */
     boolean isSaturatedNode(int node);
 
     /**
@@ -48,6 +49,7 @@ public interface NodeBasedDd extends DecisionDiagram {
      */
     int referencedNodeCount();
 
+    /** The number of nodes reachable from a referenced function - the live size of the diagram. */
     int nodeCount();
 
     /**

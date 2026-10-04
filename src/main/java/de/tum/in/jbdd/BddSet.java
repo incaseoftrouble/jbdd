@@ -64,8 +64,10 @@ public interface BddSet {
     /** The complement, i.e. every valuation not in this set. */
     BddSet complement();
 
+    /** The union of this set and {@code other}. */
     BddSet union(BddSet other);
 
+    /** The union of this set and all {@code bddSets}. */
     default BddSet union(BddSet... bddSets) {
         BddSet result = this;
         for (BddSet bddSet : bddSets) {
@@ -77,8 +79,10 @@ public interface BddSet {
     /** Whether this set and {@code other} share an element. */
     boolean intersects(BddSet other);
 
+    /** The intersection of this set and {@code other}. */
     BddSet intersection(BddSet other);
 
+    /** The intersection of this set and all {@code bddSets}. */
     default BddSet intersection(BddSet... bddSets) {
         BddSet result = this;
         for (BddSet bddSet : bddSets) {

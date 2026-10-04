@@ -37,16 +37,20 @@ public interface RegisteredOperation {
     /**
      * The operation returning its operand unchanged.
      */
+    @SuppressWarnings("ClassReferencesSubclass")
     static Unary identity() {
         return RegisteredOperations.IDENTITY;
     }
 
+    /** A registered operation over one function. */
     @FunctionalInterface
     interface Unary extends RegisteredOperation, IntUnaryOperator {}
 
+    /** A registered operation over two functions. */
     @FunctionalInterface
     interface Binary extends RegisteredOperation, IntBinaryOperator {}
 
+    /** A registered operation over three functions. */
     @FunctionalInterface
     interface Ternary extends RegisteredOperation {
         int applyAsInt(int operand1, int operand2, int operand3);

@@ -74,10 +74,12 @@ public interface NatSet {
         return ImmutableNatSet.valueOf(words);
     }
 
+    /** The set of {@code set}'s bits. */
     static NatSet copyOf(BitSet set) {
         return ImmutableNatSet.copyOf(set);
     }
 
+    /** The set of {@code elements}, all naturals. */
     static NatSet copyOf(Collection<Integer> elements) {
         return ImmutableNatSet.copyOf(elements);
     }
@@ -90,8 +92,10 @@ public interface NatSet {
 
     boolean isEmpty();
 
+    /** Whether every element of {@code other} is in this set. */
     boolean containsAll(NatSet other);
 
+    /** Whether some element is in both sets. */
     boolean intersects(NatSet other);
 
     /** The smallest element, {@code -1} if empty. */

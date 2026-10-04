@@ -175,7 +175,8 @@ DecisionDiagram                     ids, ref counting, support, statistics, Refe
   it needs a "nearest" domain-satisfying value, which an n-valued variable does not have, so `MddImpl` offers
   `simplify` alone.
 
-Implementations (package-private; construct only via factories):
+Implementations (public, like most of the package - visibility here is deliberately open, so a client can build
+on `GcReferenceManager` or `NodeTable`; still, construct the diagrams only through the factories):
 
 - `BooleanBase<S, P>` — shared engine for `BddImpl` and `MddImpl`.
 - `MtBddImpl` — **not** a `BooleanBase`. It *composes* a `BddImpl` (its variable universe) and owns its
@@ -858,10 +859,9 @@ in the diagram rather than a branch on `origin` inside the cache.
   answers as before, since both sides shift by the same rule (`l < L ? l : l + count`). So nothing goes
   stale by the *order* having changed. What moves is a *stored* level, and there is
   exactly one: `MtBddOperations.Compose` holds a `maxReplacedLevel`, shifted by
-  `count` if at or below the insertion point. On an order change they rescan for it instead — skipped
-  when `movedVariables` holds none of the replaced ones, since the maximum is over exactly those, and
-  asserted against the full rescan either way — and drop their own caches. `BddOperations.Exists` rebuilds
-  its by-level quantified set under the same test.
+  `count` if at or below the insertion point. On an order change it rescans for it and drops its own
+  caches. `BddOperations.Exists` rebuilds its by-level quantified set on an order change only when
+  `movedVariables` holds one of the quantified variables, asserting against the full rebuild either way.
   A cut-off that is a level stops being a level once relative order changes. The block form of the
   insertion reports `count` once rather than firing the hook `count` times — the repeated form composes to
   the same shift, but only while every listener does nothing else with the level.
@@ -1062,7 +1062,10 @@ intuitions transfer badly. Two habits follow:
 
 - **Measure; do not reason.** Several plausible optimizations in this codebase measured *slower* and are
   documented as such (appending during the sweep instead of filtering after, keeping cache entries across
-  a swap, caching high edges in the path stack). Anything performance-motivated is backed by `src/jmh`.
+  a swap, caching high edges in the path stack), and others measured nothing: writing `makeNode`'s chain
+  walk out instead of handing `findNode` a capturing predicate (the lambda shows up as frames of its own in
+  a profile, 3% of queens), and `ONE.shiftLeft(k)` for `TWO.pow(k)` in the satisfaction counts - both within
+  the 3% noise of the synthetic, DIMACS and random workloads. Anything performance-motivated is backed by `src/jmh`.
 - **Watch what a change does to inlining, not just to instruction count.** The JIT's inlining budget is in
   *bytecode size*, and that size includes code the JVM may never execute — an assertion counts, so adding
   a message to an `assert` in a tiny method can push it over `MaxInlineSize` (35 bytes, below which it is

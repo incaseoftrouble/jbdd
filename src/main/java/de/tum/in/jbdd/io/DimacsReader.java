@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.util.regex.Pattern;
 import org.jspecify.annotations.Nullable;
 
+/** Reads a formula in DIMACS CNF format into a {@link BinaryDecisionDiagram}. */
 public final class DimacsReader {
     private static final Pattern WHITESPACE = Pattern.compile("[ \t]+");
 
@@ -43,6 +44,12 @@ public final class DimacsReader {
         }
     }
 
+    /**
+     * The function of the CNF formula {@code reader} holds, variable {@code i} of the formula being variable
+     * {@code i - 1} of {@code bdd}, created if missing. The result is not referenced.
+     *
+     * @throws InvalidFormatException if the input is not DIMACS CNF
+     */
     public static int loadDimacs(BinaryDecisionDiagram bdd, BufferedReader reader)
             throws IOException, InvalidFormatException {
         String header = nextLine(reader);
@@ -98,6 +105,7 @@ public final class DimacsReader {
         return expression;
     }
 
+    /** The input was not DIMACS CNF. */
     public static class InvalidFormatException extends Exception {
         public InvalidFormatException(String message) {
             super(message);

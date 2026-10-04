@@ -88,11 +88,8 @@ public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTe
     int constrain(int function, int domain);
 
     /**
-     * Creates a new variable and returns the BDD function representing it. The implementation guarantees that
-     * variables are always allocated sequentially starting from 0, i.e. {@code
-     * getVariable(createVariable()) == numberOfVariables() - 1}.
-     *
-     * @return The node representing the new variable.
+     * Creates a new variable and returns the function representing it. Variables are numbered sequentially from 0,
+     * so the new one is {@code numberOfVariables() - 1}, and it is placed at the bottom of the order.
      */
     int createVariable();
 
@@ -234,6 +231,9 @@ public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTe
      */
     int compose(int function, int[] variableMapping);
 
+    /**
+     * {@code simplify(compose(function, variableMapping), domain)}, possibly in one traversal.
+     */
     default int composeSimplify(int function, int[] variableMapping, int domain) {
         return simplify(compose(function, variableMapping), domain);
     }

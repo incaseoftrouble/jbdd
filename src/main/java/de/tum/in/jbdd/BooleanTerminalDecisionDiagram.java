@@ -55,6 +55,7 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      */
     S satisfyingAssignment(int function);
 
+    /** Any assignment satisfying both {@code function} and {@code domain}, if there is one. */
     Optional<S> satisfyingAssignmentIn(int function, int domain);
 
     /**
@@ -68,6 +69,9 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      */
     BigInteger countSatisfyingAssignments(int function, NatSet support);
 
+    /**
+     * The number of assignments satisfying both {@code function} and {@code domain}.
+     */
     BigInteger countSatisfyingAssignmentsIn(int function, int domain);
 
     /**
@@ -84,16 +88,19 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
         forEachSolutionIn(function, trueFunction(), action);
     }
 
+    /** As {@link #forEachSolution(int, Consumer)}, distinguishing only the variables of {@code support}. */
     default void forEachSolution(int function, NatSet support, Consumer<? super S> action) {
         forEachSolutionIn(function, trueFunction(), support, action);
     }
 
+    /** As {@link #forEachSolution(int, Consumer)}, over the solutions that also satisfy {@code domain}. */
     default void forEachSolutionIn(int function, int domain, Consumer<? super S> action) {
         MutableNatSet support = MutableNatSet.dense(numberOfVariables());
         support.set(0, numberOfVariables());
         forEachSolutionIn(function, domain, support, action);
     }
 
+    /** As {@link #forEachSolutionIn(int, int, Consumer)}, distinguishing only the variables of {@code support}. */
     default void forEachSolutionIn(int function, int domain, NatSet support, Consumer<? super S> action) {
         solutionCursorIn(function, domain, support).forEachRemaining(action);
     }
@@ -124,22 +131,23 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
     Cursor<P> pathCursor(int function);
 
     /**
-     * Executes the given {@code action} for all <em>minimal</em> solutions of the given boolean {@code function}.
+     * Calls {@code action} once per path of {@code function} to a true leaf, in lexicographic ascending order: a
+     * partial assignment fixing only the variables decided along it, which every completion satisfies.
      *
-     * <p>The solutions are generated in lexicographic ascending order.</p>
-     *
-     * <p><b>Note:</b> The passed bit set is modified in-place. If all solutions should be gathered
-     * into a set or similar, they have to be cloned after each call to the consumer.</p>
-     *
-     * @param function
-     *     The function whose solutions should be computed.
-     * @param action
-     *     The action to be performed on these solutions.
+     * <p>The path handed out is the walk's working state, as a {@link Cursor}'s {@code current()}: copy it to keep it.
      */
     void forEachPath(int function, Consumer<? super P> action);
 
+    /**
+     * As {@link #forEachPath}, recording only the variables of {@code relevantSet} and stopping below the last of
+     * them.
+     */
     void forEachPartialPath(int function, NatSet relevantSet, Consumer<? super P> action);
 
+    /**
+     * Whether some path of {@code function} satisfies {@code predicate}, which sees the paths as
+     * {@link #forEachPath} does.
+     */
     boolean anyPathMatches(int function, Predicate<? super P> predicate);
 
     /**
@@ -178,6 +186,7 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
         return dereference(result);
     }
 
+    /** {@code simplify(and(function1, function2), domain)}, possibly in one traversal. */
     default int andSimplify(int function1, int function2, int domain) {
         return simplify(and(function1, function2), domain);
     }
@@ -187,6 +196,7 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      */
     int andNot(int function1, int function2);
 
+    /** {@code simplify(andNot(function1, function2), domain)}, possibly in one traversal. */
     default int andNotSimplify(int function1, int function2, int domain) {
         return simplify(andNot(function1, function2), domain);
     }
@@ -196,6 +206,9 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      */
     int equivalence(int function1, int function2);
 
+    /**
+     * {@code simplify(equivalence(function1, function2), domain)}, possibly in one traversal.
+     */
     default int equivalenceSimplify(int function1, int function2, int domain) {
         return simplify(equivalence(function1, function2), domain);
     }
@@ -237,6 +250,9 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      */
     int implication(int function1, int function2);
 
+    /**
+     * {@code simplify(implication(function1, function2), domain)}, possibly in one traversal.
+     */
     default int implicationSimplify(int function1, int function2, int domain) {
         return simplify(implication(function1, function2), domain);
     }
@@ -246,6 +262,7 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      */
     int not(int function);
 
+    /** {@code simplify(not(function), domain)}, possibly in one traversal. */
     default int notSimplify(int function, int domain) {
         return simplify(not(function), domain);
     }
@@ -255,6 +272,7 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      */
     int notAnd(int function1, int function2);
 
+    /** {@code simplify(notAnd(function1, function2), domain)}, possibly in one traversal. */
     default int notAndSimplify(int function1, int function2, int domain) {
         return simplify(notAnd(function1, function2), domain);
     }
@@ -278,6 +296,7 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
         return dereference(result);
     }
 
+    /** {@code simplify(or(function1, function2), domain)}, possibly in one traversal. */
     default int orSimplify(int function1, int function2, int domain) {
         return simplify(or(function1, function2), domain);
     }
@@ -287,6 +306,7 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      */
     int xor(int function1, int function2);
 
+    /** {@code simplify(xor(function1, function2), domain)}, possibly in one traversal. */
     default int xorSimplify(int function1, int function2, int domain) {
         return simplify(xor(function1, function2), domain);
     }
@@ -296,6 +316,9 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      */
     int ifThenElse(int ifFunction, int thenFunction, int elseFunction);
 
+    /**
+     * {@code simplify(ifThenElse(ifFunction, thenFunction, elseFunction), domain)}, possibly in one traversal.
+     */
     default int ifThenElseSimplify(int ifFunction, int thenFunction, int elseFunction, int domain) {
         return simplify(ifThenElse(ifFunction, thenFunction, elseFunction), domain);
     }
