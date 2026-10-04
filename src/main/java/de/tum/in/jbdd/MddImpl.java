@@ -51,10 +51,6 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         cache = new BooleanCache(this);
         variableDomain = new int[32];
         numberOfVariables = 0;
-
-        if (configuration.logStatisticsOnShutdown()) {
-            Util.registerForCleanupStatistics(this, configuration.name());
-        }
     }
 
     @Override

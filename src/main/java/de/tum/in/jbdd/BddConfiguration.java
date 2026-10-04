@@ -31,8 +31,8 @@ public class BddConfiguration extends NodeTableConfiguration {
     public static final int DEFAULT_MTBDD_CACHE_EPHEMERAL_MULTIPLIER = 32;
     public static final int DEFAULT_REGISTERED_OPERATION_DIVIDER = 8;
 
-    /** An optional, human-readable name for this configuration's instance - used to label diagnostics
-     * (e.g. shutdown statistics) instead of falling back to an identity-based label; empty by default. */
+    /** An optional, human-readable name for this configuration's instance: it prefixes the keys of its
+     * statistics, so several can be read side by side; empty by default. */
     @Value.Default
     public String name() {
         return "";
@@ -114,11 +114,6 @@ public class BddConfiguration extends NodeTableConfiguration {
     @Value.Default
     public int registeredOperationDivider() {
         return DEFAULT_REGISTERED_OPERATION_DIVIDER;
-    }
-
-    @Value.Default
-    public boolean logStatisticsOnShutdown() {
-        return false;
     }
 
     @Value.Default

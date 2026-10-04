@@ -38,11 +38,6 @@ public final class DdContextImpl implements DdContext, StatisticsSource {
         this.order = new DdVariableOrderImpl(this);
         this.bdd = new BddImpl(this);
         this.mtbdd = new MtBddImpl(this);
-
-        if (configuration.logStatisticsOnShutdown()) {
-            // Weakly held, which is sound because either diagram reaches back here through the order.
-            Util.registerForCleanupStatistics(this, configuration.name());
-        }
     }
 
     DdContextImpl(BddConfiguration configuration, int variables) {

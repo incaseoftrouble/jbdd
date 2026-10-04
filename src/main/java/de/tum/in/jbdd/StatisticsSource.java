@@ -21,7 +21,7 @@ import java.util.Map;
 /**
  * Reports the statistics of one structure. Not the public way to ask - that is {@link DdContext} for a
  * BDD/MTBDD pair and {@link Mdd} for an MDD, both of which report a complete key space. This is what those
- * are assembled from, and what {@link Util#registerForCleanupStatistics} logs.
+ * are assembled from.
  */
 @FunctionalInterface
 interface StatisticsSource {

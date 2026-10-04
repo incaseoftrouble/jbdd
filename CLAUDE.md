@@ -205,11 +205,11 @@ Entry points — never `new BddImpl(...)` outside tests:
   `Bdd` nor `MtBdd` reports its own, since a partial view of one key space is what made the numbers hard to
   find. Internally each contributor implements the package-private `StatisticsSource` (the two tables prefix
   their keys `bdd_`/`mtbdd_` through `statisticsPrefix()`, so the spaces stay disjoint and the merge loses
-  nothing), and the rest of the machinery — `formatStatistics`, `prefixStatistics`,
-  `registerForCleanupStatistics` — sits in `Util`. `logStatisticsOnShutdown()` registers the **context**,
-  weakly, which is sound because either diagram reaches it back through the order; a context therefore logs
-  one complete block rather than a partial one per diagram. `Mdd` keeps an accessor of its own and registers
-  itself: it is its own variable universe, with no context above it. Creating a variable is the context's
+  nothing), and the rest of the machinery — `formatStatistics`, `prefixStatistics` (by the configuration's
+  `name()`) — sits in `Util`. `Mdd` keeps an accessor of its own: it is its own variable universe, with no
+  context above it. JBDD reports nothing on its own at shutdown: a client wanting the statistics of a run that
+  is being stopped reads `statistics()` from a shutdown hook of its own and writes them wherever it likes
+  (logging from a hook is unreliable - `java.util.logging` resets its handlers in a hook of its own). Creating a variable is the context's
   because it is about the *universe*, and it hands back a **BDD** function whichever diagram the caller came
   from.
 - `BinaryFactoryContext.create(...)` — a context plus the object-layer factories `bddSets()`, `bddMaps()`

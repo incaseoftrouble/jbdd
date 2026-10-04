@@ -16,24 +16,12 @@
  */
 package de.tum.in.jbdd;
 
-import java.lang.ref.WeakReference;
 import java.math.BigInteger;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Map;
-import java.util.concurrent.ConcurrentLinkedDeque;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 import java.util.stream.Collectors;
-import org.jspecify.annotations.Nullable;
 
 final class Util {
-    private static final Logger logger = Logger.getLogger(Util.class.getName());
-
-    @SuppressWarnings("StaticCollection")
-    private static final Collection<CleanupStatisticsRef> registeredStatistics = new ConcurrentLinkedDeque<>();
-
     private Util() {}
 
     static int mod(int value, int modulus) {
@@ -61,23 +49,6 @@ final class Util {
         return statistics.entrySet().stream()
                 .collect(Collectors.toUnmodifiableMap(
                         e -> String.format("%s_%s", name, e.getKey()), Map.Entry::getValue));
-    }
-
-    static void registerForCleanupStatistics(StatisticsSource owner, @Nullable String name) {
-        if (!logger.isLoggable(Level.INFO)) {
-            return;
-        }
-        ShutdownHookLazyHolder.init();
-        registeredStatistics.add(new CleanupStatisticsRef(owner, name));
-    }
-
-    /** Prints statistics for every registered owner that is still reachable - useful on demand, not just
-     * from the shutdown hook. Opportunistically drops entries whose owner has already been collected. */
-    static void printAllRegisteredStatistics() {
-        if (!logger.isLoggable(Level.INFO)) {
-            return;
-        }
-        registeredStatistics.removeIf(ref -> !ref.log());
     }
 
     static int[] protectNodes(DecisionDiagram dd, int[] resolvedMapping) {
@@ -137,37 +108,5 @@ final class Util {
         BigInteger quotient =
                 quotientAndRemainder[1].signum() == 0 ? quotientAndRemainder[0] : quotientAndRemainder[0].setBit(0);
         return Math.scalb(quotient.doubleValue(), -shift);
-    }
-
-    private static final class CleanupStatisticsRef extends WeakReference<StatisticsSource> {
-        private final String label;
-
-        CleanupStatisticsRef(StatisticsSource owner, @Nullable String name) {
-            super(owner);
-            this.label = String.format(
-                    "%s@%s",
-                    name == null || name.isEmpty() ? owner.getClass().getSimpleName() : name,
-                    Integer.toHexString(System.identityHashCode(owner)));
-        }
-
-        boolean log() {
-            StatisticsSource owner = get();
-            if (owner == null) {
-                return false;
-            }
-            Map<String, Object> statistics = owner.statistics();
-            logger.info(() -> String.format("CACHE STATISTICS (%s):\n%s", label, formatStatistics(statistics)));
-            return true;
-        }
-    }
-
-    private static final class ShutdownHookLazyHolder {
-        private static final AtomicBoolean registered = new AtomicBoolean();
-
-        static void init() {
-            if (registered.compareAndSet(false, true)) {
-                Runtime.getRuntime().addShutdownHook(new Thread(Util::printAllRegisteredStatistics));
-            }
-        }
     }
 }
