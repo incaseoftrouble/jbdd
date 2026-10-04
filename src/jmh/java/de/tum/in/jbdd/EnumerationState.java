@@ -37,6 +37,7 @@ import org.openjdk.jmh.annotations.State;
  * which moves every variable but the first and last.
  */
 @State(Scope.Benchmark)
+@SuppressWarnings("PMD.DataClass") // A benchmark's state is one
 public class EnumerationState {
     /**
      * MANY_FREE: one short path, everything else free - the counter dominates entirely. SOME_FREE: half
@@ -56,6 +57,7 @@ public class EnumerationState {
     private BddImpl bdd;
 
     private int function;
+    private int domain;
 
     @SuppressWarnings("NullAway.Init")
     private MutableNatSet support;
@@ -99,6 +101,8 @@ public class EnumerationState {
 
         this.bdd = (BddImpl) diagram;
         this.function = bdd.reference(build(bdd, shape));
+        // Half the assignments, cutting across every shape: the parity of the last two variables.
+        this.domain = bdd.reference(bdd.xor(bdd.variableFunction(variables - 1), bdd.variableFunction(variables - 2)));
         this.support = MutableNatSet.dense(variables);
         this.support.set(0, variables);
 
@@ -118,6 +122,10 @@ public class EnumerationState {
 
     public int function() {
         return function;
+    }
+
+    public int domain() {
+        return domain;
     }
 
     private static int build(Bdd bdd, Shape shape) {

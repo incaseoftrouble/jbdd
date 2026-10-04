@@ -753,8 +753,8 @@ variable-indexed buffer, distinguished by a `@Nullable translated` field (no buf
 sets hold the whole path, so every writer mirrors its own flips: `PathWalk` routes all four of its writes
 through `assign`/`pushSupport`/`popSupport`, and `SolutionCursor.increment` does the same for the free
 levels. The walk snapshots `levelToVariable` at construction, so a mirrored write is one array load and
-cannot be invalidated by a variable creation resizing the context's array. Measured against rebuilding per
-step (`EnumerationBenchmark`): solutions 4.3x with many free variables, 1.65x with none, paths 1.8x–2.6x;
+cannot be invalidated by a variable creation resizing the context's array. Measured once against rebuilding per
+step (a benchmark variant since removed): solutions 4.3x with many free variables, 1.65x with none, paths 1.8x–2.6x;
 on the identity order the mirroring is a null check that never fires. Two rules keep it correct: every
 write to either level set goes through one of the four writers, and `currentIsConsistent()` rebuilds and
 compares under `-ea`, so a writer that forgot to mirror fails at the cursor, not downstream.
@@ -1155,10 +1155,19 @@ intuitions transfer badly. Two habits follow:
 
 ## 13. Benchmarks
 
-`src/jmh/java/...`, JMH, DIMACS instances in `src/jmh/resources`. Performance claims in comments and the
-changelog are expected to be backed by these; **measure before tuning a constant.** `RandomBenchmark`,
-`SyntheticBenchmark`, `SyntheticSetBenchmark`, `DimacsBenchmark`, `EnumerationBenchmark`,
-`HashSchemeBenchmark`, `NaryBenchmark`, `NatSetBenchmark`.
+`src/jmh/java/...`, JMH, DIMACS instances in `src/jmh/resources`. They exist to catch performance regressions, so
+each is a workload a client runs, not a comparison between implementation options: a benchmark written to decide
+an option is run, its result recorded where the decision is documented, and removed. Performance claims in
+comments and the changelog are expected to be backed by these; **measure before tuning a constant.**
+
+| task | workload |
+|---|---|
+| `jmhRandom` | `RandomBenchmark`: 18,000 random operations over a growing pool of functions |
+| `jmhSynthetic` | `SyntheticBenchmark` (11 queens, a 1024-bit adder), `SyntheticSetBenchmark` (queens over `BddSet`) |
+| `jmhDimacs` | `DimacsBenchmark`: CNF instances conjoined clause by clause |
+| `jmhEnumeration` | `EnumerationBenchmark`: solution and path cursors over `EnumerationState`'s shapes (many free variables, some, none, long paths), on the identity order and on one every cursor translates |
+| `jmhNary` | `NaryBenchmark`: `or(int[])` over guarded cubes, `and(int[])` over clauses, cold |
+| `jmhNatSet` | `NatSetBenchmark`: the set operations a synthesis tool spends its time in, per shape |
 
 `NatSetBenchmark` sits in `collections` and times each operation over a pool of 1024 random sets of one shape
 (singletons, tiny sets, 2 to 32 elements below 64, sparse ones below 4096), so a time is per set, over sets
