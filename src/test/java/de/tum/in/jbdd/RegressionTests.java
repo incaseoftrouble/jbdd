@@ -337,14 +337,18 @@ class RegressionTests {
         MtBddImpl mt = bdd.mtbdd();
 
         // Every numbering hands out raw index 0 for its first value, so all of these maps are the very
-        // same MTBDD terminal under different keys - enough of them to saturate its reference count
-        // (Byte.MAX_VALUE), past which reference/dereference are no-ops. Wrappers must stay canonical
-        // and, unlike under a separate "unmanaged" map, must stay collectible.
+        // same MTBDD terminal under different keys; its reference count is saturated (Short.MAX_VALUE), past
+        // which reference/dereference are no-ops. Wrappers must stay canonical and, unlike under a separate
+        // "unmanaged" map, must stay collectible.
         List<BddMap<String>> held = new ArrayList<>();
         for (int i = 0; i < 200; i++) {
             held.add(maps.<String>create().of("v" + i));
         }
-        assertTrue(mt.isUnmanaged(((GcReferenceManager.DdContainer) held.get(0)).function()));
+        int terminal = ((GcReferenceManager.DdContainer) held.get(0)).function();
+        for (int i = 0; i < Short.MAX_VALUE; i++) {
+            mt.reference(terminal);
+        }
+        assertTrue(mt.isUnmanaged(terminal));
         for (int i = 0; i < held.size(); i++) {
             BddMap<String> map = held.get(i);
             assertEquals("v" + i, map.evaluate(NatSetFixtures.of()));

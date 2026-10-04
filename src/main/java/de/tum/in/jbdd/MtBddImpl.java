@@ -67,8 +67,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     private final BddImpl bdd;
     private final MtBddTable table;
     private final MtBddCache cache;
-    private byte[] valueReferenceCounts;
-    private static final byte MAXIMUM_REFERENCE_COUNT = Byte.MAX_VALUE;
+    private short[] valueReferenceCounts;
+    private static final short MAXIMUM_REFERENCE_COUNT = Short.MAX_VALUE;
     // Convert to sparse bit set?
     private final MutableNatSet allocatedValues = MutableNatSet.create();
     private int valuesAllocatedSinceCollection = 0;
@@ -88,7 +88,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         this.bdd = context.bdd();
         this.table = new MtBddTable(this, context.configuration().mtbddInitialSize());
         this.cache = new MtBddCache(this, bdd);
-        this.valueReferenceCounts = new byte[INITIAL_VALUE_CAPACITY];
+        this.valueReferenceCounts = new short[INITIAL_VALUE_CAPACITY];
         this.protectionTracker = bdd.protectionTracker();
         observers.registerStrongly(protectionTracker);
 

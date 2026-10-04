@@ -338,7 +338,7 @@ Manual, and the three protect against different things. Confusing them is the cl
 1. **Reference counts.** Per node, 14 saturating bits in the metadata word. Saturated = pinned forever,
    ref/deref become no-ops (variable nodes are saturated at creation; `BddSetFactory.pin` saturates a
    set's root, so there is no unpin and pinning twice is free). `consume`/`updateWith`/
-   `ReferenceGuard` are the rebalancing helpers. MTBDD *terminals* get a parallel `byte[]
+   `ReferenceGuard` are the rebalancing helpers. MTBDD *terminals* get a parallel `short[]
    valueReferenceCounts` indexed by value — same saturating scheme, separate array.
    **Nothing returned by any operation is automatically referenced.** Chaining two constructing calls
    across statements requires explicit bookkeeping in between.
