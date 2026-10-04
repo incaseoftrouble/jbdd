@@ -197,8 +197,12 @@ public interface BddMap<V> {
      */
     BddMap<BddMap<V>> split(NatSet splitVariables, Values<BddMap<V>> destination);
 
-    /** This map's diagram as a {@link Dag} with one root, its {@link Dag.Kind#VALUE} entries holding its values. */
-    Dag<V> dag();
+    /**
+     * {@code folder} over this map's diagram: each node folded once, children before their node and the high child
+     * before the low one, so the values are seen once each, in that order. The folder runs inside the walk, which
+     * only reads the diagram; it may build maps.
+     */
+    <R extends @Nullable Object> R fold(Folder<? super V, R> folder);
 
     /**
      * {@link #split(NatSet, Values)} with every residual map passed through {@code residual} on its way into
@@ -206,6 +210,21 @@ public interface BddMap<V> {
      */
     <W> BddMap<W> splitMap(
             NatSet splitVariables, Values<W> destination, Function<? super BddMap<V>, ? extends W> residual);
+
+    /**
+     * What {@link #fold} computes per node of a map's diagram, from the results of the node's children.
+     *
+     * @param <V> the map's values
+     * @param <R> the result per node, {@code @Nullable} where the folder may return {@code null}: the children's
+     *     results it is handed are its own, so with {@code R} non-null it never sees {@code null}
+     */
+    interface Folder<V, R extends @Nullable Object> {
+        /** The result of a constant node. */
+        R value(V value);
+
+        /** The result of a node deciding on {@code variable}, from the results where it holds and where not. */
+        R decision(int variable, R high, R low);
+    }
 
     /**
      * A value transform applying to every map over one numbering at once, created by

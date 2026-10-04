@@ -19,6 +19,7 @@ package de.tum.in.jbdd;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -516,29 +517,36 @@ class BddSetTest {
         assertThrows(IllegalArgumentException.class, () -> target.adopt(set, variable -> -1));
     }
 
-    private static List<BddSet> rebuild(BddSetFactory sets, Dag<Boolean> dag) {
-        List<BddSet> entries = new ArrayList<>(dag.size());
-        for (int entry = 0; entry < dag.size(); entry++) {
-            switch (dag.kind(entry)) {
-                case VALUE:
-                    entries.add(sets.of(dag.value(entry)));
-                    break;
-                case DECISION:
-                    assertTrue(dag.high(entry) < entry && dag.low(entry) < entry);
-                    entries.add(sets.ifThenElse(
-                            sets.var(dag.variable(entry)), entries.get(dag.high(entry)), entries.get(dag.low(entry))));
-                    break;
-                case COMPLEMENT:
-                    assertTrue(dag.complementOf(entry) < entry);
-                    entries.add(entries.get(dag.complementOf(entry)).complement());
-                    break;
-            }
+    // Rebuilds the set, counting what it is asked.
+    private static final class SetFolder implements BddSet.Folder<BddSet> {
+        private final BddSetFactory sets;
+        private int decisions = 0;
+        private int complements = 0;
+
+        SetFolder(BddSetFactory sets) {
+            this.sets = sets;
         }
-        return entries;
+
+        @Override
+        public BddSet trueValue() {
+            return sets.universe();
+        }
+
+        @Override
+        public BddSet decision(int variable, BddSet high, BddSet low) {
+            decisions += 1;
+            return sets.ifThenElse(sets.var(variable), high, low);
+        }
+
+        @Override
+        public BddSet complement(BddSet result) {
+            complements += 1;
+            return result.complement();
+        }
     }
 
     @Test
-    void testDagOfEveryFunctionOfThreeVariables() {
+    void testFoldOfEveryFunctionOfThreeVariables() {
         int variables = 3;
         int valuations = 1 << variables;
         BinaryFactoryContext ctx = BinaryFactoryContext.create();
@@ -553,42 +561,50 @@ class BddSetTest {
                 }
             }
 
-            // One entry per distinct function, and folding it back gives the set.
-            Dag<Boolean> dag = function.dag();
-            List<BddSet> entries = rebuild(sets, dag);
-            assertEquals(1, dag.numberOfRoots());
-            assertEquals(function, entries.get(dag.root(0)));
-            assertEquals(dag.size(), new HashSet<>(entries).size());
+            SetFolder alone = new SetFolder(sets);
+            assertEquals(function, function.fold(alone));
 
-            // With its complement as a second root, shared: the complement is one more entry, and sharing inside the
-            // function can only save entries (a complemented subfunction's children are not visited).
-            Dag<Boolean> shared = sets.dag(List.of(function, function.complement()), true);
-            List<BddSet> sharedEntries = rebuild(sets, shared);
-            assertEquals(function, sharedEntries.get(shared.root(0)));
-            assertEquals(function.complement(), sharedEntries.get(shared.root(1)));
-            if (!function.isEmpty() && !function.isUniverse()) {
-                assertEquals(Dag.Kind.COMPLEMENT, shared.kind(shared.root(1)));
-                assertEquals(shared.root(0), shared.complementOf(shared.root(1)));
-                assertTrue(shared.size() <= dag.size() + 1);
-            }
+            // With its complement as a second root, the nodes are shared: no node folded again, and only the root's
+            // complement computed in addition, if it was not already.
+            SetFolder both = new SetFolder(sets);
+            assertEquals(
+                    List.of(function, function.complement()),
+                    sets.fold(List.of(function, function.complement()), both));
+            assertEquals(alone.decisions, both.decisions);
+            assertTrue(both.complements <= alone.complements + 1);
         }
     }
 
     @Test
-    void testDagOrderIsHighFirstPostOrder() {
+    void testFoldIsHighFirstChildrenFirstOncePerNode() {
         BinaryFactoryContext ctx = BinaryFactoryContext.create();
         BddSetFactory sets = ctx.bddSets();
-        Dag<Boolean> dag = sets.var(0).intersection(sets.var(1)).dag();
+        BddSet function = sets.var(0).intersection(sets.var(1));
 
-        // x0 ? (x1 ? true : false) : false - the high branch first, each child before its parent.
-        assertEquals(4, dag.size());
-        assertEquals(true, dag.value(0));
-        assertEquals(false, dag.value(1));
-        assertEquals(1, dag.variable(2));
-        assertEquals(0, dag.variable(3));
-        assertEquals(List.of(2, 1), List.of(dag.high(3), dag.low(3)));
-        assertEquals(3, dag.root(0));
-        assertThrows(IllegalArgumentException.class, () -> dag.variable(0));
+        // x0 ? (x1 ? true : !true) : !true - true first, then x1's node, then x0's; the complement of true once. All
+        // results are null, which must be memoized like any other.
+        List<String> order = new ArrayList<>();
+        assertNull(function.fold(
+                new BddSet.Folder<@Nullable Object>() { // NOPMD - a diamond here infers Object
+                    @Override
+                    public @Nullable Object trueValue() {
+                        order.add("true");
+                        return null;
+                    }
+
+                    @Override
+                    public @Nullable Object decision(int variable, @Nullable Object high, @Nullable Object low) {
+                        order.add("x" + variable);
+                        return null;
+                    }
+
+                    @Override
+                    public @Nullable Object complement(@Nullable Object result) {
+                        order.add("!");
+                        return null;
+                    }
+                }));
+        assertEquals(List.of("true", "!", "x1", "x0"), order);
     }
 
     private static int[] bits(int valuation, int variables) {

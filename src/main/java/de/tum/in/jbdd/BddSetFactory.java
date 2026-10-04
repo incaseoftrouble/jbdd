@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.IntFunction;
 import java.util.function.IntUnaryOperator;
+import org.jspecify.annotations.Nullable;
 
 /** Obtained from {@link BinaryFactoryContext#bddSets()} - there's no standalone way to build one,
  * since every {@code BddSetFactory} needs a {@link Bdd} to share (see {@link DdContext}). */
@@ -98,11 +99,12 @@ public interface BddSetFactory {
     BddSet adopt(BddSet set, IntUnaryOperator variableMapping);
 
     /**
-     * The diagram below {@code roots} as one {@link Dag}, root {@code i} being {@code roots.get(i)} and its values
-     * {@code true} and {@code false}. With {@code shareComplements}, a function whose complement came earlier in the
-     * walk is a {@link Dag.Kind#COMPLEMENT} entry of it.
+     * {@code folder} over the diagram below {@code roots}, its result per root: each node folded once across all of
+     * them, children before their node and the high child before the low one, and the complement of a node's result
+     * computed once, where a complement edge or root needs it. The folder runs inside the walk, which only reads the
+     * diagram; it may build sets.
      */
-    Dag<Boolean> dag(List<? extends BddSet> roots, boolean shareComplements);
+    <R extends @Nullable Object> List<R> fold(List<? extends BddSet> roots, BddSet.Folder<R> folder);
 
     /** {@link #adopt(BddSet, IntUnaryOperator)} with every variable read as itself. */
     default BddSet adopt(BddSet set) {

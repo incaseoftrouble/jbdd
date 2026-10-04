@@ -18,11 +18,11 @@ package de.tum.in.jbdd;
 
 import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.Cursor;
-import de.tum.in.jbdd.collections.IntIntHashMap;
 import de.tum.in.jbdd.collections.MutableNatSet;
 import de.tum.in.jbdd.collections.NatSet;
 import java.lang.ref.Reference;
 import java.math.BigInteger;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -141,40 +141,46 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
     }
 
     @Override
-    public Dag<Boolean> dag(List<? extends BddSet> roots, boolean shareComplements) {
-        Dag.Builder<Boolean> builder = new Dag.Builder<>();
-        IntIntHashMap entries = new IntIntHashMap();
+    public <R extends @Nullable Object> List<R> fold(List<? extends BddSet> roots, BddSet.Folder<R> folder) {
+        FoldMemo<R> results = new FoldMemo<>();
+        FoldMemo<R> complements = new FoldMemo<>();
         try {
+            List<R> rootResults = new ArrayList<>(roots.size());
             for (BddSet root : roots) {
-                builder.addRoot(dagEntry(functionOf(root), shareComplements, builder, entries));
+                rootResults.add(foldFunction(functionOf(root), folder, results, complements));
             }
-            return builder.build();
+            return rootResults;
         } finally {
             // The walk only reads, so nothing is collected meanwhile - as long as the roots' wrappers live.
             Reference.reachabilityFence(roots);
         }
     }
 
-    private int dagEntry(int function, boolean shareComplements, Dag.Builder<Boolean> builder, IntIntHashMap entries) {
-        int known = entries.get(function, -1);
-        if (known >= 0) {
-            return known;
-        }
-        int entry;
-        if (dd.isConstant(function)) {
-            entry = builder.addValue(function == dd.trueFunction());
-        } else {
-            int complement = shareComplements ? entries.get(dd.not(function), -1) : -1;
-            if (complement < 0) {
-                int high = dagEntry(dd.highOf(function), shareComplements, builder, entries);
-                int low = dagEntry(dd.lowOf(function), shareComplements, builder, entries);
-                entry = builder.addDecision(dd.decisionVariable(function), high, low);
+    // Per node, the diagram's own complement edges: a complemented function is its node's result complemented, once
+    // per node. The high edge of a node is never complemented, its low edge may be.
+    private <R extends @Nullable Object> R foldFunction(
+            int function, BddSet.Folder<R> folder, FoldMemo<R> results, FoldMemo<R> complements) {
+        int node = BooleanBase.positive(function);
+        Object result = results.lookup(node);
+        if (result == null) {
+            R computed;
+            if (node == BooleanBase.TRUE) {
+                computed = folder.trueValue();
             } else {
-                entry = builder.addComplement(complement);
+                R high = foldFunction(dd.high(node), folder, results, complements);
+                R low = foldFunction(dd.low(node), folder, results, complements);
+                computed = folder.decision(dd.decisionVariable(node), high, low);
             }
+            result = results.put(node, computed);
         }
-        entries.put(function, entry);
-        return entry;
+        if (node == function) {
+            return results.unmask(result);
+        }
+        Object complement = complements.lookup(node);
+        if (complement == null) {
+            complement = complements.put(node, folder.complement(results.unmask(result)));
+        }
+        return complements.unmask(complement);
     }
 
     // variableMapping on each variable of support, all of which then exist here; adopt asks once per node.

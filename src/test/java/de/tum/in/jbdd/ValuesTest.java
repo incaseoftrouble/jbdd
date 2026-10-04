@@ -18,12 +18,14 @@ package de.tum.in.jbdd;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 import de.tum.in.jbdd.collections.MutableNatSet;
 import de.tum.in.jbdd.collections.NatSet;
 import java.util.ArrayList;
 import java.util.List;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -131,27 +133,41 @@ class ValuesTest {
     }
 
     @Test
-    void testDagOfAMap() {
+    void testFoldOfAMap() {
         BinaryFactoryContext ctx = BinaryFactoryContext.create();
         Values<String> strings = ctx.bddMaps().create();
         BddSet x0 = ctx.bddSets().var(0);
         BddSet x1 = ctx.bddSets().var(1);
         BddMap<String> map = strings.of("none").update(x1, "x1").update(x0, "x0");
 
-        // Folding the snapshot back gives the map; values come in high-first order, each once.
-        Dag<String> dag = map.dag();
-        List<BddMap<String>> entries = new ArrayList<>();
-        List<String> valueOrder = new ArrayList<>();
-        for (int entry = 0; entry < dag.size(); entry++) {
-            if (dag.kind(entry) == Dag.Kind.VALUE) {
-                entries.add(strings.of(dag.value(entry)));
-                valueOrder.add(dag.value(entry));
-            } else {
-                entries.add(strings.ifThenElse(
-                        dag.variable(entry), entries.get(dag.high(entry)), entries.get(dag.low(entry))));
+        // The values once each, high first; null results memoized like any other.
+        List<String> values = new ArrayList<>();
+        assertNull(map.fold(
+                new BddMap.Folder<String, @Nullable Object>() { // NOPMD - a diamond here infers Object
+                    @Override
+                    public @Nullable Object value(String value) {
+                        values.add(value);
+                        return null;
+                    }
+
+                    @Override
+                    public @Nullable Object decision(int variable, @Nullable Object high, @Nullable Object low) {
+                        return null;
+                    }
+                }));
+        assertEquals(List.of("x0", "x1", "none"), values);
+
+        // A map built inside the walk.
+        assertEquals(map, map.fold(new BddMap.Folder<String, BddMap<String>>() {
+            @Override
+            public BddMap<String> value(String value) {
+                return strings.of(value);
             }
-        }
-        assertEquals(map, entries.get(dag.root(0)));
-        assertEquals(List.of("x0", "x1", "none"), valueOrder);
+
+            @Override
+            public BddMap<String> decision(int variable, BddMap<String> high, BddMap<String> low) {
+                return strings.ifThenElse(variable, high, low);
+            }
+        }));
     }
 }

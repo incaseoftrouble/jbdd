@@ -238,9 +238,17 @@ Entry points — never `new BddImpl(...)` outside tests:
 - `BddSetFactory.of(expression, ExpressionStructure)` builds a set from a caller's own propositional expression
   type, read through the structure (a pure callback, like every other); `known` lets the caller supply sets it
   already has for subexpressions. One memoized build, every intermediate referenced until its end.
-- A caller that folds over a diagram (conversions, exports, encodings) takes a `Dag` snapshot rather than walking
-  `high()`/`low()`: one int-keyed walk, no wrappers, and the fold runs outside every operation. Entries are
-  snapshot indices, not nodes, so a `Dag` holds nothing and outlives any collection.
+- A caller converting a diagram into something of its own (an expression, a hash, an encoding, the values in
+  order) folds over it: `BddSet.fold`, `BddSetFactory.fold(roots, folder)`, `BddMap.fold`. One int-keyed walk, no
+  wrappers, the folder called per node, children first and high before low, memoized per node (`FoldMemo`, a null
+  result included). The result type is nullness-parametric (`R extends @Nullable Object`): a folder is handed only
+  results it returned, so one over a non-null `R` never checks for null and one returning null declares
+  `@Nullable R`, and the IDE and NullAway hold each to its choice. The two folders differ on purpose: a set's
+  diagram shares a node between a function and its complement, so `BddSet.Folder` has `trueValue()` and an abstract
+  `complement`, computed once per node a complement edge or root needs it - a folder forgetting it does not compile;
+  `BddMap.Folder` has a value and no complement.
+  The folder runs between the walk's reads; the roots stay referenced and nothing moves, so it may build on the
+  factory. There is no snapshot type: a caller of the int layer walks `highOf`/`lowOf` with an `IntObjectHashMap`.
 - A set or map crosses contexts only by `BddSetFactory.adopt(set, variableMapping)` /
   `Values.adopt(map, variableMapping, valueMapping)`, over the int layer's `adopt`. Both create the mapped
   variables first; the map version maps each distinct value before the traversal (so the mapping may build

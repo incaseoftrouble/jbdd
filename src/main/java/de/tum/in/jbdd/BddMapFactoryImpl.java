@@ -20,7 +20,6 @@ import static de.tum.in.jbdd.RegisteredOperation.*;
 
 import de.tum.in.jbdd.RegisteredOperation.Forwarding;
 import de.tum.in.jbdd.collections.Cube;
-import de.tum.in.jbdd.collections.IntIntHashMap;
 import de.tum.in.jbdd.collections.MutableNatSet;
 import de.tum.in.jbdd.collections.NatSet;
 import java.lang.ref.Reference;
@@ -967,28 +966,32 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
         }
 
         @Override
-        public Dag<V> dag() {
-            Dag.Builder<V> builder = new Dag.Builder<>();
-            builder.addRoot(dagEntry(function, builder, new IntIntHashMap(), MutableNatSet.dense(0)));
-            return builder.build();
+        public <R extends @Nullable Object> R fold(BddMap.Folder<? super V, R> folder) {
+            try {
+                return foldNode(function, folder, new FoldMemo<>(), MutableNatSet.dense(0));
+            } finally {
+                // The walk only reads, so nothing is collected meanwhile - as long as this wrapper lives.
+                Reference.reachabilityFence(this);
+            }
         }
 
-        private int dagEntry(int node, Dag.Builder<V> builder, IntIntHashMap entries, NatSet noAssignment) {
-            int known = entries.get(node, -1);
-            if (known >= 0) {
-                return known;
+        private <R extends @Nullable Object> R foldNode(
+                int node, BddMap.Folder<? super V, R> folder, FoldMemo<R> results, NatSet noAssignment) {
+            Object known = results.lookup(node);
+            if (known != null) {
+                return results.unmask(known);
             }
             MtBddImpl dd = factory.dd;
-            int entry;
+            R result;
             if (dd.isConstant(node)) {
-                entry = builder.addValue(values.valueOf(dd.evaluate(node, noAssignment)));
+                result = folder.value(values.valueOf(dd.evaluate(node, noAssignment)));
             } else {
-                int high = dagEntry(dd.highOf(node), builder, entries, noAssignment);
-                int low = dagEntry(dd.lowOf(node), builder, entries, noAssignment);
-                entry = builder.addDecision(dd.decisionVariable(node), high, low);
+                R high = foldNode(dd.highOf(node), folder, results, noAssignment);
+                R low = foldNode(dd.lowOf(node), folder, results, noAssignment);
+                result = folder.decision(dd.decisionVariable(node), high, low);
             }
-            entries.put(node, entry);
-            return entry;
+            results.put(node, result);
+            return result;
         }
 
         @Override

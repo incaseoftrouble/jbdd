@@ -29,6 +29,7 @@ import java.util.function.IntFunction;
 import java.util.function.IntUnaryOperator;
 import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Symbolic representation of a {@code Set<NatSet>}. Deliberately exposes no operation that assumes or
@@ -204,13 +205,32 @@ public interface BddSet {
      */
     Optional<Cube> shortestPath();
 
-    /** This set's diagram as a {@link Dag}, without complement sharing - see {@link BddSetFactory#dag}. */
-    default Dag<Boolean> dag() {
-        return factory().dag(List.of(this), false);
+    /** {@code folder} over this set's diagram - see {@link BddSetFactory#fold}. */
+    default <R extends @Nullable Object> R fold(Folder<R> folder) {
+        return factory().fold(List.of(this), folder).get(0);
     }
 
     /** Like {@link #forEachPath}, stopping at the first path {@code predicate} accepts; whether one did. */
     boolean anyPathMatches(Predicate<? super Cube> predicate);
+
+    /**
+     * What {@link BddSetFactory#fold} computes per node of a set's diagram, from the results of the node's children.
+     * The diagram shares a node between a function and its complement, so {@code false} is the complement of
+     * {@code true}.
+     *
+     * @param <R> the result per node, {@code @Nullable} where the folder may return {@code null}: the children's
+     *     results it is handed are its own, so with {@code R} non-null it never sees {@code null}
+     */
+    interface Folder<R extends @Nullable Object> {
+        /** The result of {@code true}. */
+        R trueValue();
+
+        /** The result of a node deciding on {@code variable}, from the results where it holds and where not. */
+        R decision(int variable, R high, R low);
+
+        /** The result of the complement of a function whose result is {@code result}. */
+        R complement(R result);
+    }
 
     /**
      * A pre-built {@link BddSet#exists(NatSet)} over a fixed variable set, created by
