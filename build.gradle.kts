@@ -101,6 +101,9 @@ jmh {
   if (isRequested("jmhMtBdd")) {
     includes.add("MtBddBenchmark*")
   }
+  if (isRequested("jmhReorder")) {
+    includes.add("ReorderBenchmark*")
+  }
 }
 
 tasks.register<Task>("jmhRandom") {
@@ -135,6 +138,11 @@ tasks.register<Task>("jmhNary") {
 
 tasks.register<Task>("jmhMtBdd") {
   description = "Run the MTBDD map workload"
+  finalizedBy("jmh")
+}
+
+tasks.register<Task>("jmhReorder") {
+  description = "Run the reordering workload"
   finalizedBy("jmh")
 }
 
