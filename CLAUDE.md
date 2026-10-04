@@ -274,15 +274,29 @@ Collections independent of decision diagrams, public for users too; nothing here
   `Set`'s; `NatSet.ORDER` orders by size, then lexicographically. `MutableNatSet` has `java.util.BitSet`'s
   mutators under their names; arguments are checked by assertion only. Not yet used by the core; `docs/natset-draft.md` is the plan for that.
 - **Two implementation classes, never more**, so a call site stays at most bimorphic: `ImmutableNatSet` (an
-  exact ascending array or words, whichever is smaller, in one `final` `Object` field told apart by `instanceof` -
-  24 bytes rather than 32 for two typed fields; its hash code computed once; the empty set and the singletons
-  below 128 shared) and `MutableNatSetImpl` (at most 16 elements as a sorted `int[]` where
-  that is smaller than words over their span, words otherwise; an insertion may move it to words, only
-  `optimize()` moves it back, so removing never changes the representation). Neither class is a `Set`: `boxed()`
-  wraps the set in a `BoxedNatSet`, with `Set`'s equality and hash code, whose mutators always throw over an
-  immutable set. The read algorithms over either store are static functions in `NatSetUtil`, shared by both.
-  `forEach` is the fast path (over words it samples the first 1024 bits and then walks run by run or bit by bit,
-  as naturals-util does), the primitive `iterator()` the walk that stops early.
+  exact ascending array or words, in one `final` `Object` field told apart by `instanceof` - 24 bytes rather than 32
+  for two typed fields; its hash code computed once, on construction; the empty set and the singletons below 128
+  shared) and `MutableNatSetImpl` (at most 16 elements as a sorted `int[]`, words otherwise; an insertion may move it
+  to words, only `optimize()` moves it back, so removing never changes the representation). Words are chosen when
+  they take no more memory than the array, counting the JVM's padding of arrays to 8 bytes (`NatSetUtil.useWords`):
+  a singleton below 64 is a word, as `int[1]` and `long[1]` both take 24 bytes, and arrays are left for sets far
+  apart. Words-only was measured and gains nothing (a synthesis tool end to end, `jmhEnumeration`/`jmhRandom`), while sparse sets
+  as words take 2 to 10 times as long and up to `element / 64` words. Neither class is a `Set`: `boxed()` wraps the
+  set in a `BoxedNatSet`, with `Set`'s equality and hash code, whose mutators always throw over an immutable set.
+- The read algorithms over either store are static functions in `NatSetUtil`, shared by both. Operands of one
+  representation meet word against word or array against array (`union`/`intersection`/`difference` of immutable
+  sets build the result's store directly, `NatSet.ORDER` compares with `Arrays.mismatch`/`Arrays.compare`), and
+  `containsAll`/`intersects` of words against an array test the array's elements in the words (mostly a tiny set
+  against a larger one) - in the loop rather than a helper, as a call site C2 does not find hot inlines 35
+  bytes at most. An immutable set's representation follows from its elements and its store is exact, so two are equal
+  exactly if their stores are; otherwise equal sizes and words equal up to the shorter's end (a mutable set's words
+  may run on), or equal array prefixes, decide. A mutable set's bulk and range operations count the change in the
+  words they touch, not every word (asserted).
+- **Words are walked bit by bit**, one trailing-zero count and one clear per element: `forEach`, `anyMatch`/
+  `allMatch`/`noneMatch`, and the primitive `iterator()` as a cursor on a word. Walking run by run, and choosing by
+  sampling the runs first, was measured once (a benchmark since removed): runs won 13 to 24% only with runs of twelve elements and more
+  below 1024 bits and lost up to fivefold above, and the sampling cost more than either walk. These, not a
+  `nextSetBit` loop, are how to walk a set: in array mode `nextSetBit` searches the array.
 - `Cube`, `BitSets` (helpers around `java.util.BitSet`), `IntIntHashMap` / `IntObjectHashMap`.
 
 ### Navigation: types that are not in a file of their own

@@ -24,6 +24,7 @@ import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.function.IntConsumer;
+import java.util.function.IntPredicate;
 import java.util.stream.IntStream;
 import java.util.stream.StreamSupport;
 import org.jspecify.annotations.Nullable;
@@ -35,6 +36,10 @@ import org.jspecify.annotations.Nullable;
  */
 @SuppressWarnings({"ObjectEquality", "VariableNotUsedInsideIf"})
 final class MutableNatSetImpl implements MutableNatSet {
+    // A shift of a long uses only the low six bits of its count (JLS 15.19), which the word masks rely on: 1L << i is
+    // the bit of i within its word, -1L << from the bits from from upwards in its word. The bits below to in its
+    // word are -1L >>> (-to & 63), the & written out though the shift implies it: the count is 64 - to % 64, and 0
+    // where 64 divides to, leaving the whole word.
     private static final int WORD_SHIFT = NatSetUtil.WORD_SHIFT;
     private static final int MAX_ARRAY_SIZE = NatSetUtil.MAX_ARRAY_SIZE;
     private static final int[] NO_ELEMENTS = new int[0];
@@ -43,6 +48,11 @@ final class MutableNatSetImpl implements MutableNatSet {
     int[] elements = NO_ELEMENTS;
     long @Nullable [] words;
     private int size = 0;
+
+    /** The elements, the first {@link #size()} entries, if held as an array. */
+    int @Nullable [] elements() {
+        return words == null ? elements : null;
+    }
 
     MutableNatSetImpl() {
         // Empty, as an array.
@@ -156,8 +166,19 @@ final class MutableNatSetImpl implements MutableNatSet {
         return grown;
     }
 
-    private void recount(long[] current) {
-        size = NatSetUtil.wordsCount(current);
+    // Under assertions, after an operation counting its change rather than every word.
+    private boolean sizeIsExact() {
+        long[] current = words;
+        return current == null || size == NatSetUtil.wordsCount(current);
+    }
+
+    // The elements in words [from, to]: what a range operation counts before and after, rather than every word.
+    private static int countWords(long[] current, int from, int to) {
+        int count = 0;
+        for (int index = from; index <= to; index++) {
+            count += Long.bitCount(current[index]);
+        }
+        return count;
     }
 
     // The index of the first array element at least element, size if there is none.
@@ -283,19 +304,29 @@ final class MutableNatSetImpl implements MutableNatSet {
             }
             return;
         }
-        for (int index = 0; index < current.length; index++) {
-            long word = current[index];
-            while (word != 0) {
-                action.accept((index << WORD_SHIFT) + Long.numberOfTrailingZeros(word));
-                word &= word - 1;
-            }
-        }
+        NatSetUtil.wordsForEach(current, action);
     }
 
     @Override
     public PrimitiveIterator.OfInt iterator() {
         long[] current = words;
         return current == null ? new NatSetUtil.ArrayIterator(elements, size) : new NatSetUtil.WordsIterator(current);
+    }
+
+    @Override
+    public boolean anyMatch(IntPredicate predicate) {
+        long[] current = words;
+        return current == null
+                ? NatSetUtil.arrayAnyMatch(elements, size, predicate)
+                : !NatSetUtil.wordsWhile(current, element -> !predicate.test(element));
+    }
+
+    @Override
+    public boolean allMatch(IntPredicate predicate) {
+        long[] current = words;
+        return current == null
+                ? NatSetUtil.arrayAllMatch(elements, size, predicate)
+                : NatSetUtil.wordsWhile(current, predicate);
     }
 
     @Override
@@ -417,8 +448,9 @@ final class MutableNatSetImpl implements MutableNatSet {
         int maxWord = (to - 1) >>> WORD_SHIFT;
         long[] target = maxWord < current.length ? current : growWords(current, maxWord + 1);
         int minWord = from >>> WORD_SHIFT;
+        int before = countWords(target, minWord, maxWord);
         long firstMask = -1L << from;
-        long lastMask = -1L >>> -to;
+        long lastMask = -1L >>> (-to & 63);
         if (minWord == maxWord) {
             target[minWord] |= firstMask & lastMask;
         } else {
@@ -426,7 +458,8 @@ final class MutableNatSetImpl implements MutableNatSet {
             Arrays.fill(target, minWord + 1, maxWord, -1L);
             target[maxWord] |= lastMask;
         }
-        recount(target);
+        size += countWords(target, minWord, maxWord) - before;
+        assert sizeIsExact();
     }
 
     @Override
@@ -462,12 +495,13 @@ final class MutableNatSetImpl implements MutableNatSet {
             return;
         }
         int maxWord = (to - 1) >>> WORD_SHIFT;
-        long lastMask = -1L >>> -to;
+        long lastMask = -1L >>> (-to & 63);
         if (maxWord >= current.length) {
             maxWord = current.length - 1;
             lastMask = -1L;
         }
         long firstMask = -1L << from;
+        int before = countWords(current, minWord, maxWord);
         if (minWord == maxWord) {
             current[minWord] &= ~(firstMask & lastMask);
         } else {
@@ -475,13 +509,14 @@ final class MutableNatSetImpl implements MutableNatSet {
             Arrays.fill(current, minWord + 1, maxWord, 0L);
             current[maxWord] &= ~lastMask;
         }
-        recount(current);
+        size -= before - countWords(current, minWord, maxWord);
+        assert sizeIsExact();
     }
 
     @Override
     public void clear() {
         long[] current = words;
-        if (current != null) {
+        if (current != null && size > 0) {
             Arrays.fill(current, 0L);
         }
         size = 0;
@@ -506,8 +541,9 @@ final class MutableNatSetImpl implements MutableNatSet {
         int maxWord = (to - 1) >>> WORD_SHIFT;
         long[] target = maxWord < current.length ? current : growWords(current, maxWord + 1);
         int minWord = from >>> WORD_SHIFT;
+        int before = countWords(target, minWord, maxWord);
         long firstMask = -1L << from;
-        long lastMask = -1L >>> -to;
+        long lastMask = -1L >>> (-to & 63);
         if (minWord == maxWord) {
             target[minWord] ^= firstMask & lastMask;
         } else {
@@ -517,7 +553,8 @@ final class MutableNatSetImpl implements MutableNatSet {
             }
             target[maxWord] ^= lastMask;
         }
-        recount(target);
+        size += countWords(target, minWord, maxWord) - before;
+        assert sizeIsExact();
     }
 
     // Bulk operations
@@ -542,22 +579,33 @@ final class MutableNatSetImpl implements MutableNatSet {
         }
         long[] otherWords = NatSetUtil.wordsOf(other);
         if (otherWords == null) {
-            long[] kept = new long[current.length];
-            other.forEach(element -> {
-                int wordIndex = element >>> WORD_SHIFT;
-                if (wordIndex < current.length) {
-                    kept[wordIndex] |= current[wordIndex] & (1L << element);
+            // At most MAX_ARRAY_SIZE elements to keep: noted, then set again in the cleared words.
+            int[] otherElements = NatSetUtil.elementsOf(other);
+            assert otherElements != null;
+            int[] kept = new int[other.size()];
+            int count = 0;
+            for (int index = 0; index < kept.length; index++) {
+                if (NatSetUtil.wordsContain(current, otherElements[index])) {
+                    kept[count] = otherElements[index];
+                    count += 1;
                 }
-            });
-            System.arraycopy(kept, 0, current, 0, current.length);
+            }
+            Arrays.fill(current, 0L);
+            for (int index = 0; index < count; index++) {
+                current[kept[index] >>> WORD_SHIFT] |= 1L << kept[index];
+            }
+            size = count;
         } else {
             int common = Math.min(current.length, otherWords.length);
+            int count = 0;
             for (int index = 0; index < common; index++) {
-                current[index] &= otherWords[index];
+                long word = current[index] & otherWords[index];
+                current[index] = word;
+                count += Long.bitCount(word);
             }
             Arrays.fill(current, common, current.length, 0L);
+            size = count;
         }
-        recount(current);
     }
 
     @Override
@@ -575,10 +623,15 @@ final class MutableNatSetImpl implements MutableNatSet {
             current = switchToWords(Math.max(last(), other.last()));
         }
         long[] target = otherWords.length <= current.length ? current : growWords(current, otherWords.length);
+        int added = 0;
         for (int index = 0; index < otherWords.length; index++) {
-            target[index] |= otherWords[index];
+            long word = target[index];
+            long updated = word | otherWords[index];
+            target[index] = updated;
+            added += Long.bitCount(updated ^ word);
         }
-        recount(target);
+        size += added;
+        assert sizeIsExact();
     }
 
     @Override
@@ -591,10 +644,14 @@ final class MutableNatSetImpl implements MutableNatSet {
         long[] otherWords = NatSetUtil.wordsOf(other);
         if (current != null && otherWords != null) {
             int common = Math.min(current.length, otherWords.length);
+            int removed = 0;
             for (int index = 0; index < common; index++) {
-                current[index] &= ~otherWords[index];
+                long word = current[index];
+                removed += Long.bitCount(word & otherWords[index]);
+                current[index] = word & ~otherWords[index];
             }
-            recount(current);
+            size -= removed;
+            assert sizeIsExact();
         } else if (current == null) {
             int kept = 0;
             for (int index = 0; index < size; index++) {
@@ -626,10 +683,15 @@ final class MutableNatSetImpl implements MutableNatSet {
             current = switchToWords(Math.max(last(), other.last()));
         }
         long[] target = otherWords.length <= current.length ? current : growWords(current, otherWords.length);
+        int change = 0;
         for (int index = 0; index < otherWords.length; index++) {
-            target[index] ^= otherWords[index];
+            long word = target[index];
+            long updated = word ^ otherWords[index];
+            target[index] = updated;
+            change += Long.bitCount(updated) - Long.bitCount(word);
         }
-        recount(target);
+        size += change;
+        assert sizeIsExact();
     }
 
     // Combination

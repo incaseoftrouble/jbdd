@@ -16,9 +16,11 @@
  */
 package de.tum.in.jbdd.collections;
 
+import java.util.Arrays;
 import java.util.NoSuchElementException;
 import java.util.PrimitiveIterator;
 import java.util.function.IntConsumer;
+import java.util.function.IntPredicate;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -29,18 +31,24 @@ final class NatSetUtil {
     /** Element {@code e} is bit {@code e} (modulo 64) of word {@code e >>> WORD_SHIFT}. */
     static final int WORD_SHIFT = Integer.numberOfTrailingZeros(Long.SIZE);
 
-    /** The most elements held as an array. */
+    /**
+     * The most elements held as an array.
+     */
     static final int MAX_ARRAY_SIZE = 16;
-    /** Words {@link #wordsForEach} samples before choosing how to walk the rest (as naturals-util: 1024 bits). */
-    static final int SAMPLE_WORDS = 16;
-    /** Average run length from which walking run by run beats extracting bit by bit (as naturals-util). */
-    static final int RUN_LENGTH_THRESHOLD = 4;
+    /** How many array elements one word costs: words are used once they cost no more than the array. */
+    static final int WORD_COST = 2;
+
+    private static final long[] NO_WORDS = new long[0];
 
     private NatSetUtil() {}
 
-    /** Whether words over {@code [0, max]} take no more memory than {@code count} elements in an array. */
+    /**
+     * Whether words over {@code [0, max]} take no more memory than {@code count} elements in an array, which the JVM
+     * pads to 8 bytes, an even number of elements: a singleton below 64 is a word ({@code int[1]} and {@code long[1]}
+     * both take 24 bytes), and so are three elements below 128.
+     */
     static boolean useWords(int count, int max) {
-        return count > 0 && (count > MAX_ARRAY_SIZE || 2 * wordCount(max + 1) <= count);
+        return count > 0 && (count > MAX_ARRAY_SIZE || WORD_COST * wordCount(max + 1) <= count + (count & 1));
     }
 
     /** The number of words holding {@code [0, bits)}. */
@@ -51,6 +59,26 @@ final class NatSetUtil {
     /** The words of {@code set}, {@code null} if it is held as an array. */
     static long @Nullable [] wordsOf(NatSet set) {
         return set instanceof MutableNatSetImpl ? ((MutableNatSetImpl) set).words : ((ImmutableNatSet) set).words();
+    }
+
+    /** The words of {@code set}, none for the empty set, {@code null} if it is held as a non-empty array. */
+    static long @Nullable [] wordsOrNone(NatSet set) {
+        return set.isEmpty() ? NO_WORDS : wordsOf(set);
+    }
+
+    /**
+     * The elements of {@code set}, the first {@code set.size()} entries, if it is held as an array; else
+     * {@code null}.
+     */
+    static int @Nullable [] elementsOf(NatSet set) {
+        return set instanceof MutableNatSetImpl
+                ? ((MutableNatSetImpl) set).elements()
+                : ((ImmutableNatSet) set).elements();
+    }
+
+    /** Word {@code index} of {@code words}, zero past its end. */
+    static long word(long[] words, int index) {
+        return index < words.length ? words[index] : 0L;
     }
 
     // Arrays
@@ -142,7 +170,7 @@ final class NatSetUtil {
         if (wordIndex >= words.length) {
             return wordsLength(words) - 1;
         }
-        long word = words[wordIndex] & (-1L >>> -(from + 1));
+        long word = words[wordIndex] & (-1L >>> (-(from + 1) & 63));
         while (true) {
             if (word != 0) {
                 return ((wordIndex + 1) << WORD_SHIFT) - 1 - Long.numberOfLeadingZeros(word);
@@ -216,52 +244,32 @@ final class NatSetUtil {
         return Long.hashCode(hash);
     }
 
-    /**
-     * Hands each element of {@code words} to {@code action}, ascending. As naturals-util's {@code BitSets.forEach}:
-     * the first {@link #SAMPLE_WORDS} words are walked run by run, counting runs and elements; the rest run by run
-     * if runs average at least {@link #RUN_LENGTH_THRESHOLD} elements (one loop per run instead of one bit
-     * extraction per element), bit by bit otherwise (cheaper per element when runs are short).
-     */
+    /** Hands the elements of {@code words} to {@code action}, ascending. */
     static void wordsForEach(long[] words, IntConsumer action) {
-        int sampled = Math.min(words.length, SAMPLE_WORDS);
-        int elements = 0;
-        int runs = 0;
-        for (int index = 0; index < sampled; index++) {
+        for (int index = 0; index < words.length; index++) {
             long word = words[index];
             while (word != 0) {
-                int start = Long.numberOfTrailingZeros(word);
-                int end = start + Long.numberOfTrailingZeros(~(word >>> start));
-                int base = index << WORD_SHIFT;
-                for (int element = base + start; element < base + end; element++) {
-                    action.accept(element);
-                }
-                elements += end - start;
-                runs += 1;
-                word = end == Long.SIZE ? 0 : word & (-1L << end);
+                action.accept((index << WORD_SHIFT) + Long.numberOfTrailingZeros(word));
+                word &= word - 1;
             }
         }
-        if (elements >= RUN_LENGTH_THRESHOLD * runs) {
-            for (int index = sampled; index < words.length; index++) {
-                long word = words[index];
-                while (word != 0) {
-                    int start = Long.numberOfTrailingZeros(word);
-                    int end = start + Long.numberOfTrailingZeros(~(word >>> start));
-                    int base = index << WORD_SHIFT;
-                    for (int element = base + start; element < base + end; element++) {
-                        action.accept(element);
-                    }
-                    word = end == Long.SIZE ? 0 : word & (-1L << end);
+    }
+
+    /**
+     * Hands the elements of {@code words} to {@code proceed}, ascending, as long as it returns {@code true}; whether it
+     * saw all of them.
+     */
+    static boolean wordsWhile(long[] words, IntPredicate proceed) {
+        for (int index = 0; index < words.length; index++) {
+            long word = words[index];
+            while (word != 0) {
+                if (!proceed.test((index << WORD_SHIFT) + Long.numberOfTrailingZeros(word))) {
+                    return false;
                 }
-            }
-        } else {
-            for (int index = sampled; index < words.length; index++) {
-                long word = words[index];
-                while (word != 0) {
-                    action.accept((index << WORD_SHIFT) + Long.numberOfTrailingZeros(word));
-                    word &= word - 1;
-                }
+                word &= word - 1;
             }
         }
+        return true;
     }
 
     /** The first {@code size} entries of {@code elements}, ascending. */
@@ -289,6 +297,88 @@ final class NatSetUtil {
             index += 1;
             return element;
         }
+    }
+
+    /** Whether some element of the first {@code size} entries of {@code elements} satisfies {@code predicate}. */
+    static boolean arrayAnyMatch(int[] elements, int size, IntPredicate predicate) {
+        for (int index = 0; index < size; index++) {
+            if (predicate.test(elements[index])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Writes the union of two ascending arrays to {@code target}, ascending; how many it wrote. */
+    static int arrayUnion(int[] first, int firstSize, int[] second, int secondSize, int[] target) {
+        int i = 0;
+        int j = 0;
+        int count = 0;
+        while (i < firstSize && j < secondSize) {
+            int a = first[i];
+            int b = second[j];
+            target[count] = Math.min(a, b);
+            count += 1;
+            if (a <= b) {
+                i += 1;
+            }
+            if (b <= a) {
+                j += 1;
+            }
+        }
+        System.arraycopy(first, i, target, count, firstSize - i);
+        count += firstSize - i;
+        System.arraycopy(second, j, target, count, secondSize - j);
+        return count + secondSize - j;
+    }
+
+    /** Writes the intersection of two ascending arrays to {@code target}, ascending; how many it wrote. */
+    static int arrayIntersection(int[] first, int firstSize, int[] second, int secondSize, int[] target) {
+        int i = 0;
+        int j = 0;
+        int count = 0;
+        while (i < firstSize && j < secondSize) {
+            int a = first[i];
+            int b = second[j];
+            if (a == b) {
+                target[count] = a;
+                count += 1;
+            }
+            if (a <= b) {
+                i += 1;
+            }
+            if (b <= a) {
+                j += 1;
+            }
+        }
+        return count;
+    }
+
+    /** Writes the elements of the first ascending array not in the second to {@code target}; how many it wrote. */
+    static int arrayDifference(int[] first, int firstSize, int[] second, int secondSize, int[] target) {
+        int j = 0;
+        int count = 0;
+        for (int i = 0; i < firstSize; i++) {
+            int a = first[i];
+            while (j < secondSize && second[j] < a) {
+                j += 1;
+            }
+            if (j == secondSize || second[j] != a) {
+                target[count] = a;
+                count += 1;
+            }
+        }
+        return count;
+    }
+
+    /** Whether every element of the first {@code size} entries of {@code elements} satisfies {@code predicate}. */
+    static boolean arrayAllMatch(int[] elements, int size, IntPredicate predicate) {
+        for (int index = 0; index < size; index++) {
+            if (!predicate.test(elements[index])) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** The elements of {@code words}, ascending: a cursor on a word, which hands out and clears its lowest bit. */
@@ -347,6 +437,14 @@ final class NatSetUtil {
 
     // Over the interface
 
+    /**
+     * The element of {@code set} after {@code element}, {@code -1} if there is none: {@code nextSetBit(element + 1)},
+     * which would overflow after {@link Integer#MAX_VALUE}, a valid element.
+     */
+    static int nextAfter(NatSet set, int element) {
+        return element == Integer.MAX_VALUE ? -1 : set.nextSetBit(element + 1);
+    }
+
     @SuppressWarnings("ObjectEquality")
     static boolean containsAll(NatSet set, NatSet other) {
         if (other == set) { // NOPMD - identity is the point of the check
@@ -366,12 +464,20 @@ final class NatSetUtil {
             }
             return true;
         }
-        for (int element = other.nextSetBit(0); element >= 0; element = other.nextSetBit(element + 1)) {
-            if (!set.contains(element)) {
-                return false;
+        if (words != null) {
+            // Mostly a word against an empty set or a singleton. In the loop rather than a helper: a call site not hot
+            // enough inlines no more than 35 bytes.
+            int[] elements = elementsOf(other);
+            assert elements != null;
+            int size = other.size();
+            for (int index = 0; index < size; index++) {
+                if (!wordsContain(words, elements[index])) {
+                    return false;
+                }
             }
+            return true;
         }
-        return true;
+        return other.allMatch(set::contains);
     }
 
     @SuppressWarnings("ObjectEquality")
@@ -387,14 +493,23 @@ final class NatSetUtil {
             }
             return false;
         }
+        if (words != null || otherWords != null) {
+            // An array against words: its elements tested in the words, in the loop as in containsAll.
+            NatSet array = words == null ? set : other;
+            long[] against = words == null ? otherWords : words;
+            int[] elements = elementsOf(array);
+            assert against != null && elements != null;
+            int size = array.size();
+            for (int index = 0; index < size; index++) {
+                if (wordsContain(against, elements[index])) {
+                    return true;
+                }
+            }
+            return false;
+        }
         NatSet smaller = other.size() < set.size() ? other : set;
         NatSet larger = smaller == set ? other : set; // NOPMD - identity is the point of the check
-        for (int element = smaller.nextSetBit(0); element >= 0; element = smaller.nextSetBit(element + 1)) {
-            if (larger.contains(element)) {
-                return true;
-            }
-        }
-        return false;
+        return smaller.anyMatch(larger::contains);
     }
 
     static int compare(NatSet first, NatSet second) {
@@ -402,26 +517,45 @@ final class NatSetUtil {
         if (sizes != 0) {
             return sizes;
         }
-        int i = first.nextSetBit(0);
-        int j = second.nextSetBit(0);
-        while (i >= 0) {
+        long[] firstWords = wordsOf(first);
+        long[] secondWords = wordsOf(second);
+        if (firstWords != null && secondWords != null) {
+            // The smallest element in one set only decides: up to it both agree, and there the one holding it has the
+            // smaller element. Of equal sizes, sets equal up to the shorter's end are equal.
+            int common = Math.min(firstWords.length, secondWords.length);
+            int index = Arrays.mismatch(firstWords, 0, common, secondWords, 0, common);
+            if (index < 0) {
+                return 0;
+            }
+            long difference = firstWords[index] ^ secondWords[index];
+            return (firstWords[index] & Long.lowestOneBit(difference)) == 0 ? 1 : -1;
+        }
+        int[] firstElements = elementsOf(first);
+        int[] secondElements = elementsOf(second);
+        if (firstElements != null && secondElements != null) {
+            int size = first.size();
+            return Arrays.compare(firstElements, 0, size, secondElements, 0, size);
+        }
+        PrimitiveIterator.OfInt firstIterator = first.iterator();
+        PrimitiveIterator.OfInt secondIterator = second.iterator();
+        while (firstIterator.hasNext()) {
+            int i = firstIterator.nextInt();
+            int j = secondIterator.nextInt();
             if (i != j) {
                 return Integer.compare(i, j);
             }
-            i = first.nextSetBit(i + 1);
-            j = second.nextSetBit(j + 1);
         }
         return 0;
     }
 
     static String toString(NatSet set) {
         StringBuilder builder = new StringBuilder(2 + 4 * set.size()).append('[');
-        for (int i = set.nextSetBit(0); i >= 0; i = set.nextSetBit(i + 1)) {
+        set.forEach((int element) -> {
             if (builder.length() > 1) {
                 builder.append(", ");
             }
-            builder.append(i);
-        }
+            builder.append(element);
+        });
         return builder.append(']').toString();
     }
 
@@ -440,6 +574,22 @@ final class NatSetUtil {
                 && natSet instanceof ImmutableNatSet
                 && set.hashCode() != natSet.hashCode()) {
             return false;
+        }
+        long[] words = wordsOf(set);
+        long[] otherWords = wordsOf(natSet);
+        if (words != null && otherWords != null) {
+            // A mutable set's words may run past its last element. Of equal sizes, sets with equal words up to the
+            // shorter's end leave no element for the longer's rest.
+            int common = Math.min(words.length, otherWords.length);
+            boolean equal = Arrays.equals(words, 0, common, otherWords, 0, common);
+            assert !equal || wordsLength(words) == wordsLength(otherWords);
+            return equal;
+        }
+        if (words == null && otherWords == null) {
+            int[] elements = elementsOf(set);
+            int[] otherElements = elementsOf(natSet);
+            assert elements != null && otherElements != null;
+            return Arrays.equals(elements, 0, size, otherElements, 0, size);
         }
         return containsAll(set, natSet);
     }

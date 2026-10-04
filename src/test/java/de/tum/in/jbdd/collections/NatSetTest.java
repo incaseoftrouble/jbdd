@@ -216,6 +216,8 @@ class NatSetTest {
                 assertEquals(first.intersects(second), firstSet.intersects(secondSet));
                 assertEquals(intersection.equals(second), firstSet.containsAll(secondSet));
                 assertEquals(first.equals(second), firstSet.equals(secondSet));
+                assertEquals(second.stream().allMatch(first::get), secondSet.allMatch(firstSet::contains));
+                assertEquals(second.stream().anyMatch(first::get), secondSet.anyMatch(firstSet::contains));
                 int sizes = Integer.compare(first.cardinality(), second.cardinality());
                 int order = sizes == 0
                         ? Arrays.compare(
@@ -291,8 +293,8 @@ class NatSetTest {
 
     @Test
     void forEachOverEveryRunStructure() {
-        // The words are walked run by run or bit by bit after sampling the first 1024 bits; each combination of a
-        // sparse or run-structured sample and a sparse or run-structured rest.
+        // Runs and single elements, within a word, across word boundaries and up to the last bit of a word, in each
+        // combination of a sparse or run-structured beginning and a sparse or run-structured rest.
         Random random = new Random(2);
         for (boolean runsFirst : new boolean[] {true, false}) {
             for (boolean runsAfter : new boolean[] {true, false}) {
@@ -353,6 +355,28 @@ class NatSetTest {
                 }
             }
         }
+    }
+
+    @Test
+    void largestElement() {
+        // Integer.MAX_VALUE is an element like any other; iterating past it must not overflow.
+        int max = Integer.MAX_VALUE;
+        MutableNatSet mutable = MutableNatSet.of(3, max);
+        List<NatSet> sets = List.of(NatSet.of(max), NatSet.of(3, max), mutable);
+        for (NatSet set : sets) {
+            assertEquals(max, set.last());
+            assertTrue(set.contains(max));
+            assertEquals(set, NatSet.copyOf(set));
+            assertTrue(set.containsAll(NatSet.of(max)));
+            assertTrue(set.intersects(NatSet.of(max)));
+            assertEquals(0, NatSet.ORDER.compare(set, MutableNatSet.copyOf(set)));
+            assertEquals(new TreeSet<>(set.boxed()).toString(), set.toString());
+            assertEquals(set.boxed(), new HashSet<>(set.boxed()));
+            assertEquals(set.size(), set.intStream().count());
+        }
+        assertEquals(Set.of(3, max), NatSet.of(max).union(NatSet.of(3)).boxed());
+        assertTrue(mutable.boxed().remove(max));
+        assertEquals(NatSet.of(3), mutable);
     }
 
     @Test

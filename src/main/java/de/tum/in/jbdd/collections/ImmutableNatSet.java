@@ -24,14 +24,16 @@ import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.function.IntConsumer;
+import java.util.function.IntPredicate;
 import java.util.stream.IntStream;
 import java.util.stream.StreamSupport;
 import org.jspecify.annotations.Nullable;
 
 /**
  * A {@link NatSet} that never changes: what {@link NatSet}'s factories and operations return. Held as an exact
- * ascending array or as words, whichever is smaller (see {@link NatSetUtil#useWords}); the empty set and those of
- * one element below {@link #CACHE_LIMIT} are shared. The hash code is computed once.
+ * ascending array or as words without trailing zero words, whichever takes less memory (see
+ * {@link NatSetUtil#useWords}), so the representation follows from the elements and equal sets hold equal stores; the
+ * empty set and those of one element below {@link #CACHE_LIMIT} are shared. The hash code is computed once.
  */
 final class ImmutableNatSet implements NatSet {
     private static final int WORD_SHIFT = NatSetUtil.WORD_SHIFT;
@@ -42,7 +44,7 @@ final class ImmutableNatSet implements NatSet {
 
     static {
         for (int element = 0; element < CACHE_LIMIT; element++) {
-            SINGLETONS[element] = new ImmutableNatSet(new int[] {element});
+            SINGLETONS[element] = newSingleton(element);
         }
     }
 
@@ -81,7 +83,16 @@ final class ImmutableNatSet implements NatSet {
 
     static ImmutableNatSet singleton(int element) {
         assert element >= 0 : "Negative element " + element;
-        return element < CACHE_LIMIT ? SINGLETONS[element] : new ImmutableNatSet(new int[] {element});
+        return element < CACHE_LIMIT ? SINGLETONS[element] : newSingleton(element);
+    }
+
+    private static ImmutableNatSet newSingleton(int element) {
+        if (NatSetUtil.useWords(1, element)) {
+            long[] words = new long[NatSetUtil.wordCount(element + 1)];
+            words[element >>> WORD_SHIFT] = 1L << element;
+            return new ImmutableNatSet(words, 1);
+        }
+        return new ImmutableNatSet(new int[] {element});
     }
 
     /** The set of the first {@code count} entries of {@code sorted}, ascending and distinct, which it may keep. */
@@ -307,6 +318,28 @@ final class ImmutableNatSet implements NatSet {
     }
 
     @Override
+    public boolean anyMatch(IntPredicate predicate) {
+        int[] array = elements();
+        if (array != null) {
+            return NatSetUtil.arrayAnyMatch(array, size, predicate);
+        }
+        long[] current = words();
+        assert current != null;
+        return !NatSetUtil.wordsWhile(current, element -> !predicate.test(element));
+    }
+
+    @Override
+    public boolean allMatch(IntPredicate predicate) {
+        int[] array = elements();
+        if (array != null) {
+            return NatSetUtil.arrayAllMatch(array, size, predicate);
+        }
+        long[] current = words();
+        assert current != null;
+        return NatSetUtil.wordsWhile(current, predicate);
+    }
+
+    @Override
     public IntStream intStream() {
         int[] array = elements();
         if (array != null) {
@@ -334,6 +367,8 @@ final class ImmutableNatSet implements NatSet {
 
     // Combination: an operand that is the result is returned as it is, never changing.
 
+    // Two operands of one representation are combined into the result's store directly, mixed ones through a copy.
+
     @Override
     public NatSet union(NatSet other) {
         if (containsAll(other)) {
@@ -342,7 +377,24 @@ final class ImmutableNatSet implements NatSet {
         if (other instanceof ImmutableNatSet && other.containsAll(this)) {
             return other;
         }
-        MutableNatSetImpl union = MutableNatSetImpl.copyOf((NatSet) this);
+        long[] current = words();
+        long[] otherWords = NatSetUtil.wordsOf(other);
+        if (current != null && otherWords != null) {
+            boolean longer = current.length >= otherWords.length;
+            long[] union = (longer ? current : otherWords).clone();
+            long[] shorter = longer ? otherWords : current;
+            for (int index = 0; index < shorter.length; index++) {
+                union[index] |= shorter[index];
+            }
+            return ofWords(union, NatSetUtil.wordsCount(union), true);
+        }
+        int[] array = elements();
+        int[] otherArray = NatSetUtil.elementsOf(other);
+        if (array != null && otherArray != null) {
+            int[] union = new int[size + other.size()];
+            return ofSorted(union, NatSetUtil.arrayUnion(array, size, otherArray, other.size(), union));
+        }
+        MutableNatSetImpl union = MutableNatSetImpl.copyOf(this);
         union.or(other);
         return freeze(union);
     }
@@ -355,7 +407,23 @@ final class ImmutableNatSet implements NatSet {
         if (other instanceof ImmutableNatSet && containsAll(other)) {
             return other;
         }
-        MutableNatSetImpl intersection = MutableNatSetImpl.copyOf((NatSet) this);
+        long[] current = words();
+        long[] otherWords = NatSetUtil.wordsOf(other);
+        if (current != null && otherWords != null) {
+            long[] intersection = new long[Math.min(current.length, otherWords.length)];
+            for (int index = 0; index < intersection.length; index++) {
+                intersection[index] = current[index] & otherWords[index];
+            }
+            return ofWords(intersection, NatSetUtil.wordsCount(intersection), true);
+        }
+        int[] array = elements();
+        int[] otherArray = NatSetUtil.elementsOf(other);
+        if (array != null && otherArray != null) {
+            int[] intersection = new int[Math.min(size, other.size())];
+            return ofSorted(
+                    intersection, NatSetUtil.arrayIntersection(array, size, otherArray, other.size(), intersection));
+        }
+        MutableNatSetImpl intersection = MutableNatSetImpl.copyOf(this);
         intersection.and(other);
         return freeze(intersection);
     }
@@ -365,7 +433,23 @@ final class ImmutableNatSet implements NatSet {
         if (!intersects(other)) {
             return this;
         }
-        MutableNatSetImpl difference = MutableNatSetImpl.copyOf((NatSet) this);
+        long[] current = words();
+        long[] otherWords = NatSetUtil.wordsOf(other);
+        if (current != null && otherWords != null) {
+            long[] difference = current.clone();
+            int common = Math.min(current.length, otherWords.length);
+            for (int index = 0; index < common; index++) {
+                difference[index] &= ~otherWords[index];
+            }
+            return ofWords(difference, NatSetUtil.wordsCount(difference), true);
+        }
+        int[] array = elements();
+        int[] otherArray = NatSetUtil.elementsOf(other);
+        if (array != null && otherArray != null) {
+            int[] difference = new int[size];
+            return ofSorted(difference, NatSetUtil.arrayDifference(array, size, otherArray, other.size(), difference));
+        }
+        MutableNatSetImpl difference = MutableNatSetImpl.copyOf(this);
         difference.andNot(other);
         return freeze(difference);
     }
@@ -400,7 +484,22 @@ final class ImmutableNatSet implements NatSet {
 
     @Override
     public boolean equals(Object o) {
-        return o == this || NatSetUtil.setEquals(this, o);
+        if (o == this) {
+            return true;
+        }
+        if (!(o instanceof ImmutableNatSet)) {
+            return NatSetUtil.setEquals(this, o);
+        }
+        // Equal sets hold equal stores: the representation follows from the elements, and both are exact.
+        ImmutableNatSet other = (ImmutableNatSet) o;
+        Object otherStore = other.store;
+        boolean equal = size == other.size
+                && hash == other.hash
+                && (store instanceof long[]
+                        ? otherStore instanceof long[] && Arrays.equals((long[]) store, (long[]) otherStore)
+                        : otherStore instanceof int[] && Arrays.equals((int[]) store, (int[]) otherStore));
+        assert equal == NatSetUtil.setEquals(this, o) : this + " " + o;
+        return equal;
     }
 
     @Override

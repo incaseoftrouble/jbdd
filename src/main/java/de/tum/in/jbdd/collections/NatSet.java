@@ -22,6 +22,7 @@ import java.util.Comparator;
 import java.util.PrimitiveIterator;
 import java.util.Set;
 import java.util.function.IntConsumer;
+import java.util.function.IntPredicate;
 import java.util.stream.IntStream;
 
 /**
@@ -96,6 +97,7 @@ public interface NatSet {
 
     /**
      * The smallest element at least {@code from}, {@code -1} if there is none - as {@link BitSet#nextSetBit(int)}.
+     * A loop {@code nextSetBit(e + 1)} must stop after {@link Integer#MAX_VALUE}, which is a valid element.
      */
     int nextSetBit(int from);
 
@@ -117,6 +119,16 @@ public interface NatSet {
 
     /** The elements in ascending order, for a walk that may stop early. */
     PrimitiveIterator.OfInt iterator();
+
+    /** Whether some element satisfies {@code predicate}, testing in ascending order until one does. */
+    boolean anyMatch(IntPredicate predicate);
+
+    /** Whether every element satisfies {@code predicate}, testing in ascending order until one does not. */
+    boolean allMatch(IntPredicate predicate);
+
+    default boolean noneMatch(IntPredicate predicate) {
+        return !anyMatch(predicate);
+    }
 
     /** The elements in ascending order. */
     IntStream intStream();
