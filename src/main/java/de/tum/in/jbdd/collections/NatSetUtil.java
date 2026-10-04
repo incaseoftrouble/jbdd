@@ -420,6 +420,64 @@ final class NatSetUtil {
         }
     }
 
+    /**
+     * {@code words} with every element shifted by {@code amount} (towards 0 if negative), those that would be
+     * negative dropped: a new array, possibly with trailing zero words.
+     */
+    static long[] shiftedWords(long[] words, int amount) {
+        assert amount > Integer.MIN_VALUE : amount;
+        int distance = Math.abs(amount);
+        int wordShift = distance >>> WORD_SHIFT;
+        int bitShift = distance & (Long.SIZE - 1);
+        if (amount >= 0) {
+            long[] shifted = new long[words.length + wordShift + (bitShift == 0 ? 0 : 1)];
+            for (int index = 0; index < words.length; index++) {
+                long word = words[index];
+                shifted[index + wordShift] |= word << bitShift;
+                if (bitShift != 0) {
+                    shifted[index + wordShift + 1] |= word >>> (Long.SIZE - bitShift);
+                }
+            }
+            return shifted;
+        }
+        if (wordShift >= words.length) {
+            return new long[0];
+        }
+        long[] shifted = new long[words.length - wordShift];
+        for (int index = wordShift; index < words.length; index++) {
+            long word = words[index];
+            shifted[index - wordShift] |= word >>> bitShift;
+            if (bitShift != 0 && index > wordShift) {
+                shifted[index - wordShift - 1] |= word << (Long.SIZE - bitShift);
+            }
+        }
+        return shifted;
+    }
+
+    /** The index of the first of the ascending {@code elements[0, size)} that stays natural when shifted by amount. */
+    static int arrayFirstKept(int[] elements, int size, int amount) {
+        int first = 0;
+        // Elements are natural and amount is negative here, so the sum cannot overflow.
+        while (amount < 0 && first < size && elements[first] + amount < 0) {
+            first += 1;
+        }
+        return first;
+    }
+
+    /** {@code words} without trailing zero words, a copy. */
+    static long[] trimmedWords(long[] words) {
+        return Arrays.copyOf(words, wordCount(wordsLength(words)));
+    }
+
+    /** The ascending elements, as words without trailing zero words. */
+    static long[] arrayToWords(int[] elements, int size) {
+        long[] words = new long[size == 0 ? 0 : wordCount(elements[size - 1] + 1)];
+        for (int index = 0; index < size; index++) {
+            words[elements[index] >>> WORD_SHIFT] |= 1L << elements[index];
+        }
+        return words;
+    }
+
     /** The elements of {@code words}, of which there are {@code count}, as an ascending array. */
     static int[] wordsToArray(long[] words, int count) {
         int[] array = new int[count];

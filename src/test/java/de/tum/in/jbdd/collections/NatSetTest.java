@@ -96,6 +96,9 @@ class NatSetTest {
         set.boxed().iterator().forEachRemaining(iterated::add);
         assertEquals(forEach, iterated);
         assertEquals(reference, set.toBitSet());
+        assertArrayEquals(reference.toLongArray(), set.toLongArray());
+        assertEquals(set, NatSet.valueOf(reference.toLongArray()));
+        assertEquals(set, MutableNatSet.valueOf(reference.toLongArray()));
         assertEquals(reference.length(), set.length());
         assertEquals(reference.isEmpty() ? -1 : reference.nextSetBit(0), set.first());
         assertEquals(reference.length() - 1, set.last());
@@ -390,5 +393,32 @@ class NatSetTest {
         assertThrows(AssertionError.class, () -> set.previousSetBit(-2));
         assertThrows(AssertionError.class, () -> NatSet.of(4).nextSetBit(-1));
         assertFalse(set.contains(-1));
+    }
+
+    @Test
+    void shiftsAgreeWithBitSet() {
+        Random random = new Random(5);
+        for (int span : new int[] {8, 64, 200, 3000}) {
+            for (int round = 0; round < 200; round++) {
+                BitSet reference = randomBitSet(random, span, random.nextInt(span < 64 ? 6 : 40));
+                int last = reference.length() - 1;
+                int[] amounts = {
+                    0, 1, -1, 63, 64, 65, -63, -64, -65, random.nextInt(2 * span + 1) - span, -(last + 1), -(last + 2)
+                };
+                for (int amount : amounts) {
+                    BitSet expected = new BitSet();
+                    reference.stream().filter(e -> e + amount >= 0).forEach(e -> expected.set(e + amount));
+                    NatSet set = natSet(random, reference);
+                    assertSameContents(expected, set.shifted(amount));
+                    assertSameContents(reference, set);
+                    assertFalse(set.shifted(amount) instanceof MutableNatSet);
+                    MutableNatSet mutable = MutableNatSet.copyOf(set);
+                    mutable.shift(amount);
+                    assertSameContents(expected, mutable);
+                }
+            }
+        }
+        assertSame(NatSet.of(3), NatSet.of(3).shifted(0));
+        assertEquals(NatSet.of(), NatSet.of(1, 2).shifted(-3));
     }
 }

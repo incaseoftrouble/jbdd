@@ -271,8 +271,10 @@ Collections independent of decision diagrams, public for users too; nothing here
   A set equals any `NatSet` of the same elements and nothing else; its hash code mixes its non-zero words with
   their indices (murmur3's finalizer), built on the fly in array mode, so both classes and representations
   agree - `Set`'s sum of the elements would put all subsets of `[0, 21)` into 211 buckets. `toString` is
-  `Set`'s; `NatSet.ORDER` orders by size, then lexicographically. `MutableNatSet` has `java.util.BitSet`'s
-  mutators under their names; arguments are checked by assertion only. Not yet used by the core; `docs/natset-draft.md` is the plan for that.
+  `Set`'s; `NatSet.ORDER` orders by size, then lexicographically. `shifted(amount)` and
+  `MutableNatSet.shift(amount)` move every element, dropping those that would turn negative (a word-wise shift
+  with carry, or an add per array element; in place, the array stays an array). `MutableNatSet` has
+  `java.util.BitSet`'s mutators under their names; arguments are checked by assertion only. Not yet used by the core; `docs/natset-draft.md` is the plan for that.
 - **Two implementation classes, never more**, so a call site stays at most bimorphic: `ImmutableNatSet` (an
   exact ascending array or words, in one `final` `Object` field told apart by `instanceof` - 24 bytes rather than 32
   for two typed fields; its hash code computed once, on construction; the empty set and the singletons below 128

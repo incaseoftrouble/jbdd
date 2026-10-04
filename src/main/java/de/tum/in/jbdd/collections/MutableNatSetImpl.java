@@ -118,6 +118,21 @@ final class MutableNatSetImpl implements MutableNatSet {
         return copy;
     }
 
+    static MutableNatSetImpl valueOf(long... words) {
+        MutableNatSetImpl set = new MutableNatSetImpl();
+        int count = NatSetUtil.wordsCount(words);
+        if (count > 0) {
+            int length = NatSetUtil.wordsLength(words);
+            if (NatSetUtil.useWords(count, length - 1)) {
+                set.words = NatSetUtil.trimmedWords(words);
+            } else {
+                set.elements = NatSetUtil.wordsToArray(words, count);
+            }
+            set.size = count;
+        }
+        return set;
+    }
+
     static MutableNatSetImpl copyOf(BitSet set) {
         MutableNatSetImpl copy = new MutableNatSetImpl();
         int count = set.cardinality();
@@ -717,11 +732,47 @@ final class MutableNatSetImpl implements MutableNatSet {
         return ImmutableNatSet.freeze(difference);
     }
 
+    @Override
+    public void shift(int amount) {
+        assert amount > Integer.MIN_VALUE && (amount <= 0 || size == 0 || last() <= Integer.MAX_VALUE - amount)
+                : amount;
+        if (amount == 0 || size == 0) {
+            return;
+        }
+        long[] current = words;
+        if (current == null) {
+            // The array stays an array, whatever the span: as for removals, only optimize() changes that.
+            int first = NatSetUtil.arrayFirstKept(elements, size, amount);
+            for (int index = first; index < size; index++) {
+                elements[index - first] = elements[index] + amount;
+            }
+            size -= first;
+        } else {
+            words = NatSetUtil.shiftedWords(current, amount);
+            if (amount < 0) {
+                size = NatSetUtil.wordsCount(words);
+            }
+        }
+    }
+
+    @Override
+    public NatSet shifted(int amount) {
+        MutableNatSetImpl copy = new MutableNatSetImpl(this);
+        copy.shift(amount);
+        return ImmutableNatSet.freeze(copy);
+    }
+
     // Views, copies, bridges
 
     @Override
     public Set<Integer> boxed() {
         return new BoxedNatSet(this);
+    }
+
+    @Override
+    public long[] toLongArray() {
+        long[] current = words;
+        return current == null ? NatSetUtil.arrayToWords(elements, size) : NatSetUtil.trimmedWords(current);
     }
 
     @Override

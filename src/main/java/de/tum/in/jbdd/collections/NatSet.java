@@ -69,6 +69,11 @@ public interface NatSet {
         return ImmutableNatSet.copyOf(set);
     }
 
+    /** The set whose words are {@code words}: element {@code i} is bit {@code i % 64} of word {@code i / 64}. */
+    static NatSet valueOf(long[] words) {
+        return ImmutableNatSet.valueOf(words);
+    }
+
     static NatSet copyOf(BitSet set) {
         return ImmutableNatSet.copyOf(set);
     }
@@ -146,10 +151,19 @@ public interface NatSet {
     NatSet difference(NatSet other);
 
     /**
+     * Every element plus {@code amount} (towards 0 if negative), dropping those that would be negative. The result's
+     * elements must stay ints.
+     */
+    NatSet shifted(int amount);
+
+    /**
      * This set as a {@code Set<Integer>}, a new view: unmodifiable unless this set is a {@link MutableNatSet}, and
      * with {@link Set}'s equality and hash code.
      */
     Set<Integer> boxed();
+
+    /** The elements as words, as {@link #valueOf} reads them, without trailing zero words. */
+    long[] toLongArray();
 
     /** The elements as a new {@link BitSet}. */
     BitSet toBitSet();

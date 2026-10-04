@@ -39,6 +39,11 @@ public interface MutableNatSet extends NatSet {
         return MutableNatSetImpl.of(elements);
     }
 
+    /** The set whose words are {@code words} - see {@link NatSet#valueOf}. */
+    static MutableNatSet valueOf(long... words) {
+        return MutableNatSetImpl.valueOf(words);
+    }
+
     static MutableNatSet copyOf(NatSet set) {
         return MutableNatSetImpl.copyOf(set);
     }
@@ -76,6 +81,9 @@ public interface MutableNatSet extends NatSet {
     void andNot(NatSet other);
 
     void xor(NatSet other);
+
+    /** {@link #shifted(int)} in place: adds {@code amount} to every element, dropping those that would be negative. */
+    void shift(int amount);
 
     /** Chooses the smaller of the two representations for the current elements. */
     void optimize();

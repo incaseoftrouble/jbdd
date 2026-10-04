@@ -172,6 +172,10 @@ final class ImmutableNatSet implements NatSet {
         return setWords == null ? ofSorted(set.elements, set.size()) : ofWords(setWords, set.size(), true);
     }
 
+    static ImmutableNatSet valueOf(long... words) {
+        return ofWords(words, NatSetUtil.wordsCount(words), false);
+    }
+
     static ImmutableNatSet copyOf(BitSet set) {
         long[] words = set.toLongArray();
         return ofWords(words, set.cardinality(), true);
@@ -454,11 +458,44 @@ final class ImmutableNatSet implements NatSet {
         return freeze(difference);
     }
 
+    @Override
+    public NatSet shifted(int amount) {
+        assert amount > Integer.MIN_VALUE && (amount <= 0 || size == 0 || last() <= Integer.MAX_VALUE - amount)
+                : amount;
+        if (amount == 0 || size == 0) {
+            return this;
+        }
+        int[] array = elements();
+        if (array != null) {
+            int first = NatSetUtil.arrayFirstKept(array, size, amount);
+            int[] shifted = new int[size - first];
+            for (int index = first; index < size; index++) {
+                shifted[index - first] = array[index] + amount;
+            }
+            return ofSorted(shifted, shifted.length);
+        }
+        long[] current = words();
+        assert current != null;
+        long[] shifted = NatSetUtil.shiftedWords(current, amount);
+        return ofWords(shifted, amount > 0 ? size : NatSetUtil.wordsCount(shifted), true);
+    }
+
     // Views, copies, bridges
 
     @Override
     public Set<Integer> boxed() {
         return new BoxedNatSet(this);
+    }
+
+    @Override
+    public long[] toLongArray() {
+        int[] array = elements();
+        if (array != null) {
+            return NatSetUtil.arrayToWords(array, size);
+        }
+        long[] current = words();
+        assert current != null;
+        return NatSetUtil.trimmedWords(current);
     }
 
     @Override
