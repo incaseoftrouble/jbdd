@@ -396,6 +396,33 @@ class NatSetTest {
     }
 
     @Test
+    void powerSetCountsThroughEverySubset() {
+        for (NatSet basis :
+                List.of(NatSet.of(), NatSet.range(0, 5), NatSet.range(3, 9), NatSet.of(1, 4, 70, 200, 201))) {
+            Set<NatSet> subsets = new HashSet<>();
+            Cursor<NatSet> cursor = NatSets.powerSet(basis);
+            assertTrue(cursor.current().isEmpty());
+            for (; cursor.valid(); cursor.advance()) {
+                assertTrue(basis.containsAll(cursor.current()));
+                assertTrue(subsets.add(NatSet.copyOf(cursor.current())));
+            }
+            assertEquals(1 << basis.size(), subsets.size());
+            assertFalse(cursor.advance());
+        }
+    }
+
+    @Test
+    void hashCodesSpreadOverSmallSets() {
+        // Set's hash code, the sum of the elements, would give 121 values here.
+        Set<Integer> hashes = new HashSet<>();
+        for (Cursor<NatSet> cursor = NatSets.powerSet(16); cursor.valid(); cursor.advance()) {
+            hashes.add(cursor.current().hashCode());
+            hashes.add(NatSet.copyOf(cursor.current()).hashCode());
+        }
+        assertTrue(hashes.size() > 65_000, String.valueOf(hashes.size()));
+    }
+
+    @Test
     void shiftsAgreeWithBitSet() {
         Random random = new Random(5);
         for (int span : new int[] {8, 64, 200, 3000}) {

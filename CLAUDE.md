@@ -299,6 +299,9 @@ Collections independent of decision diagrams, public for users too; nothing here
   sampling the runs first, was measured once (a benchmark since removed): runs won 13 to 24% only with runs of twelve elements and more
   below 1024 bits and lost up to fivefold above, and the sampling cost more than either walk. These, not a
   `nextSetBit` loop, are how to walk a set: in array mode `nextSetBit` searches the array.
+- `NatSets`: helpers over `NatSet` - mapped copies and views, `int` encodings, `difference` into a target,
+  `increment` (a set as a binary counter over given positions: a contiguous one carries with `nextClearBit`),
+  `forEachWithIndex`, and `powerSet`, a `Cursor` handing out that counter.
 - `Cursor` (the enumeration shape of §8), `Cube`, `BitSets` (helpers around `java.util.BitSet`), `IntIntHashMap` / `IntObjectHashMap`.
 
 ### Navigation: types that are not in a file of their own

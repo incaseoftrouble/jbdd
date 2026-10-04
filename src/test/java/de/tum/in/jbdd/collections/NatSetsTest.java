@@ -1,0 +1,84 @@
+/*
+ * This file is part of JBDD (https://github.com/incaseoftrouble/jbdd).
+ * Copyright (c) 2026 Tobias Meggendorfer.
+ *
+ * JBDD is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 3.
+ *
+ * JBDD is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with JBDD. If not, see <http://www.gnu.org/licenses/>.
+ */
+package de.tum.in.jbdd.collections;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.util.HashSet;
+import java.util.Set;
+import org.junit.jupiter.api.Test;
+
+class NatSetsTest {
+    @Test
+    void combinationsLeaveTheirOperands() {
+        NatSet a = MutableNatSet.of(1, 2);
+        NatSet b = MutableNatSet.of(2, 3);
+
+        assertEquals(NatSet.of(2), NatSets.intersection(a, b));
+        assertEquals(NatSet.of(1, 2, 3), NatSets.union(a, b));
+        assertEquals(NatSet.of(1), NatSets.without(a, b));
+        assertEquals(NatSet.of(3), NatSets.without(b, a));
+        assertEquals(NatSet.of(1, 2), a);
+        assertEquals(NatSet.of(2, 3), b);
+    }
+
+    @Test
+    void mappedCopiesAndViews() {
+        assertEquals(NatSet.of(2, 4, 6, 8), NatSets.copyOf(Set.of(1, 2, 3, 4), x -> 2 * x));
+        NatSet doubled = NatSets.copyOf(Set.of(2, 4), x -> 2 * x);
+        assertEquals(NatSet.of(4, 8), doubled);
+        assertEquals(Set.of(2, 4), NatSets.asSet(doubled, x -> x / 2));
+    }
+
+    @Test
+    void intEncoding() {
+        int bits = 2 + 8 + 32;
+        assertEquals(NatSet.of(1, 3, 5), NatSets.fromInt(bits));
+        assertEquals(bits, NatSets.toInt(NatSets.fromInt(bits)));
+    }
+
+    @Test
+    void incrementCountsInBinaryOverThePositions() {
+        for (NatSet positions : new NatSet[] {NatSet.range(0, 3), NatSet.range(2, 5), NatSet.of(1, 5, 64)}) {
+            MutableNatSet number = MutableNatSet.create();
+            Set<NatSet> seen = new HashSet<>();
+            do {
+                assertTrue(positions.containsAll(number));
+                assertTrue(seen.add(NatSet.copyOf(number)));
+            } while (NatSets.increment(number, positions));
+            // Past the largest value the counter is back at zero.
+            assertTrue(number.isEmpty());
+            assertEquals(8, seen.size());
+        }
+    }
+
+    @Test
+    void powerSetsOfEverySize() {
+        for (int size : new int[] {0, 1, 2, 3, 7, 16}) {
+            Set<NatSet> subsets = new HashSet<>();
+            Cursor<NatSet> cursor = NatSets.powerSet(size);
+            for (; cursor.valid(); cursor.advance()) {
+                assertTrue(cursor.current().length() <= size);
+                assertTrue(subsets.add(NatSet.copyOf(cursor.current())));
+            }
+            assertEquals(1 << size, subsets.size());
+            assertFalse(cursor.advance());
+        }
+    }
+}
