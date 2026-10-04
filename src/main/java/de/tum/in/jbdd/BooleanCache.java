@@ -83,6 +83,8 @@ final class BooleanCache implements VariableOrderObserver {
         satisfactionInCache = new BinaryToObjectCache<>(bdd);
 
         supportCache = new UnaryToObjectCache<>(bdd);
+        // the smallest size; composition grows it on usage (tableSizeChanged leaves it alone)
+        supportCache.grow(0);
         fractionCache = new FractionCache(bdd);
         fractionInCache = new FractionInCache(bdd);
         composeTupleCache = new ComposeTupleCache(bdd);
@@ -147,7 +149,6 @@ final class BooleanCache implements VariableOrderObserver {
         int unarySize = size / 2;
         satisfactionCache.grow(unarySize);
         satisfactionInCache.grow(unarySize);
-        supportCache.grow(unarySize);
         fractionCache.grow(unarySize);
 
         composeTupleCache.grow(size);

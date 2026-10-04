@@ -1532,8 +1532,9 @@ public abstract class NodeTable {
         int node = nodeFor(function);
         assert !Assertions.COSTLY_ASSERTIONS || isNoneMarkedBelowNode(node);
         doForEachVariable(node, action, null, Integer.MAX_VALUE);
-        // doForEachVariable marks decision nodes, so do not consider leaves
-        unMarkAllBelowNode(node, false);
+        // doForEachVariable marks decision nodes only, and not below a cached support (so not unMarkAllBelowNode,
+        // which asserts every node below is marked)
+        doSetMarkBelow(node, false, false);
         assert !Assertions.COSTLY_ASSERTIONS || isNoneMarkedBelowNode(node);
     }
 
@@ -1581,11 +1582,29 @@ public abstract class NodeTable {
         }
         nodeData[node] = markedData;
 
+        int[] cached = cachedSupport(node);
+        if (cached != null) {
+            // the node's whole support, its own variable included: nothing below needs a visit
+            for (int supportVariable : cached) {
+                if (filter == null || filter.contains(supportVariable)) {
+                    action.accept(supportVariable);
+                }
+            }
+            return;
+        }
+
         if (filter == null || filter.contains(variable)) {
             action.accept(variable);
         }
 
         recurseForEachVariable(node, action, filter, depthLimit);
+    }
+
+    /** The support of {@code node} if a cache holds it, as ascending variables never to be modified; else null. */
+    @SuppressWarnings({"PMD.EmptyMethodInAbstractClassShouldBeAbstract", "PMD.ReturnEmptyCollectionRatherThanNull"})
+    // null says no cache holds it, which is what most tables answer; an empty array would say the support is empty
+    protected int @Nullable [] cachedSupport(int node) {
+        return null;
     }
 
     protected abstract void recurseForEachVariable(

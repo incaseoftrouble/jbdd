@@ -561,7 +561,8 @@ consequences that are easy to get wrong:
   - **Stable** — keys are plain ids (`agreement`, `ite`, `update`, `simplify`, `constrain`), or carry the
     whole context: the BDD `compose` (`ComposeTupleCache`, see below), `restrict` (`RestrictCubeCache`, the
     node and the cube of the literals below the prefix it walks without the cache, so restrictions differing
-    in that prefix share it), the support (`supportCache`, ascending variables per node) and the satisfying
+    in that prefix share it), the support (`supportCache`, ascending variables per node; filled by composition only, which grows it on
+    usage - support queries walk the diagram and take an entry where they meet one) and the satisfying
     fraction (`FractionCache`: per regular node its own fraction and its complement's, interleaved, so that
     neither is ever derived as `1 - x`, which would round a small complement to 0; a fraction depends on
     neither the variable count nor the order; `FractionInCache` is the same pair per node and domain, both

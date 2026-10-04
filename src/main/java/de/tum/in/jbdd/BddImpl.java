@@ -1205,10 +1205,11 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
                 function, cube, literalCubeHashes[2 * variable + (value ? 1 : 0)], levelOfVariable(variable));
     }
 
-    /** The support of a function as ascending variables, cached per node. Never to be modified. */
-    // TODO Since we now have a support cache -- let's make it NatSet based and replace the standard support / supportTo
-    // with it?
-    //   N.B. I think we need level order here and variable order when we return it
+    /**
+     * The support of a function as ascending variables, cached per node and never to be modified - what composition
+     * reads per subtree. Support queries walk the diagram instead and take a cached array where they meet one
+     * ({@link BddTable#cachedSupport}): filling the cache costs an array per node below.
+     */
     int[] supportArray(int function) {
         int node = positive(function);
         if (node == TRUE) {
@@ -1320,6 +1321,8 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         }
         int result = computeComposeRecursive(function, domain, variables, replacements, replaced);
         table.popFromWorkStack(2);
+        // Only composition fills the support cache, so it grows with composition's use, not with the table.
+        cache.supportCache().growOnUsage();
         return result;
     }
 
@@ -2934,6 +2937,11 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         @Override
         protected int levelOfVariable(int variable) {
             return bdd.levelOfVariable(variable);
+        }
+
+        @Override
+        protected int @Nullable [] cachedSupport(int node) {
+            return bdd.cache.supportCache().lookup(node);
         }
 
         @Override
