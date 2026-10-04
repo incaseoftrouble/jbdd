@@ -36,6 +36,7 @@
 * Node tables under memory pressure: a JVM collection (at most once per table size) before memory decides against growing, no growth by less than an eighth, a table that cannot grow collects again only after using half of what it freed, and `OutOfMemoryError` once a collection leaves under a twentieth free - instead of a full mark every few allocations
 * `constrain` is `BinaryDecisionDiagram`'s and `MultiTerminalDecisionDiagram`'s: an n-valued variable has no nearest domain value, so an MDD offers `simplify` only
 * `MtBdd.invert` returns a `FunctionToFunctionMap`; `Inverse` was the same type under another name
+* `MtBdd.apply` over no operands is the operator's value on the empty tuple, and `cartesianProduct` of no functions the constant naming the empty tuple; both returned the placeholder
 * `compose` reads its mapping and `or(int[])` its operands without writing to the array; `compose` used to resolve placeholders in place
 * The relabeler of `MtBdd.splitRelabeled`, `BddMap.splitMap` and `BddSet.split` runs outside the operation and may build functions
 * MTBDD terminal reference counts are `short`s (saturating at 32767) rather than bytes

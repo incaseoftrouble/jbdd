@@ -33,7 +33,6 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.PrimitiveIterator;
 import java.util.function.Consumer;
@@ -1086,7 +1085,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         assert functions.length == operator.arity : "Operator declares arity " + operator.arity;
 
         if (functions.length == 0) {
-            return placeholder();
+            return of(operator.applyAsInt(functions));
         }
 
         assert accessGuard.acquire();
@@ -2289,25 +2288,6 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     public FunctionToFunctionsMap cartesianProduct(int[] functions) {
         for (int function : functions) {
             assert isValidFunction(function);
-        }
-
-        if (functions.length == 0) {
-            return new FunctionToFunctionsMap() {
-                @Override
-                public int function() {
-                    return placeholder();
-                }
-
-                @Override
-                public int[] functionFor(int value) {
-                    throw new NoSuchElementException();
-                }
-
-                @Override
-                public NatSet codomain() {
-                    return MutableNatSet.create();
-                }
-            };
         }
 
         assert accessGuard.acquire();

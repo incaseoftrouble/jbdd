@@ -360,7 +360,8 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
 
     /**
      * The n-ary counterpart of {@link #apply(int, int, MtBddBinaryOperator)} - the single canonical entry
-     * point every n-ary {@code apply}/{@code applyXxx} overload below funnels through.
+     * point every n-ary {@code apply}/{@code applyXxx} overload below funnels through. Over no operands it is the
+     * constant {@code operator} yields for the empty tuple.
      */
     int apply(int[] functions, MtBddNaryOperator operator);
 
@@ -536,7 +537,8 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
     /**
      * Creates the product of the given {@code functions}. Suppose each function is {@code f_i(x_1, ..., x_n}},
      * then their product is a function {@code f(x)} that yields {@code [f_1(x), ..., f_m(x)]}. The returned
-     * function indexes the {@code values} map. The outputs of {@code f} do not need to be dense.
+     * function indexes the {@code values} map. The outputs of {@code f} do not need to be dense. The product of no
+     * functions is the constant naming the empty tuple.
      */
     FunctionToFunctionsMap cartesianProduct(int[] functions);
 

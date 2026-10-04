@@ -480,10 +480,10 @@ class MtBddTest {
     }
 
     @Test
-    void testEmptyNaryApplyReturnsPlaceholder() {
+    void testEmptyNaryApplyIsTheOperatorsValueOnTheEmptyTuple() {
         BddImpl bdd = new DdContextImpl(config).bdd();
         MtBddImpl mt = bdd.mtbdd();
-        assertEquals(mt.placeholder(), mt.apply(EMPTY_INTS, values -> 42));
+        assertEquals(mt.of(42), mt.apply(EMPTY_INTS, values -> 42));
     }
 
     private static int buildSharedLeafFunction(MtBddImpl mt, int value1, int value2) {
@@ -987,14 +987,14 @@ class MtBddTest {
     }
 
     @Test
-    void testCartesianProductEmptyFunctionsReturnsPlaceholder() {
+    void testCartesianProductOfNoFunctionsIsTheEmptyTuple() {
         BddImpl bdd = new DdContextImpl(config).bdd();
         MtBddImpl mt = bdd.mtbdd();
 
-        // Mirrors apply()'s own convention for 0 operands: not a meaningful function, just the sentinel.
         MultiTerminalDecisionDiagram.FunctionToFunctionsMap product = mt.cartesianProduct(EMPTY_INTS);
-        assertEquals(mt.placeholder(), product.function());
-        assertTrue(product.codomain().isEmpty());
+        assertTrue(mt.isConstant(product.function()));
+        assertEquals(1, product.codomain().size());
+        assertEquals(0, product.functionFor(mt.evaluate(product.function(), new boolean[0])).length);
     }
 
     @Test
