@@ -152,6 +152,7 @@ DecisionDiagram                     ids, ref counting, support, statistics, Refe
 - `DecisionDiagram` carries the ownership contract only and names no node at all. Everything counting
   nodes — `size(function)`, `nodeCount`, `gc()` — sits on `NodeBasedDd`. `gc()` is a *hint*: the caller
   says "now is a good time", the implementation may decline, and it is a semantic no-op either way.
+  Every statistics value is a number (`Integer`, `Long` or `Double`), never a string.
   `NodeBasedDd` also carries the introspection every implementation can answer: `check()` (§4),
   `treeToString`, `invalidateCache`. All three are semantic no-ops or read-only, and all three are the
   kind of thing a caller debugging its own corruption has no other way to reach.

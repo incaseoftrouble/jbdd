@@ -452,7 +452,7 @@ final class BooleanCache implements VariableOrderObserver {
         caches.forEach((name, cache) -> statistics.putAll(cache.statistics("cache_" + name)));
         statistics.putAll(composeTupleCache.statistics("cache_compose_tuple"));
         statistics.putAll(restrictCubeCache.statistics("cache_restrict_cube"));
-        statistics.put("exists_reuse_count", String.valueOf(existsReuseCount));
+        statistics.put("exists_reuse_count", existsReuseCount);
         return statistics;
     }
 

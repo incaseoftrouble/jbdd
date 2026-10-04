@@ -405,11 +405,11 @@ class ReorderTest {
 
         assertTrue(saved > 0, "expected the reordering to save something");
         assertEquals(before - after, saved, "the reported saving must be the actual one");
-        assertEquals(String.valueOf(saved), bdd.statistics().get("reorder_saved_nodes"));
-        assertEquals("1", bdd.statistics().get("reorder_count"));
+        assertEquals((long) saved, bdd.statistics().get("reorder_saved_nodes"));
+        assertEquals(1, bdd.statistics().get("reorder_count"));
         // The cost side is recorded too, and a sift that saved something must have swapped something.
-        assertTrue(Long.parseLong((String) bdd.statistics().get("reorder_swaps")) > 0);
-        assertTrue(Long.parseLong((String) bdd.statistics().get("reorder_rewritten_nodes")) > 0);
+        assertTrue(((Number) bdd.statistics().get("reorder_swaps")).longValue() > 0);
+        assertTrue(((Number) bdd.statistics().get("reorder_rewritten_nodes")).longValue() > 0);
         assertNotNull(bdd.statistics().get("reorder_collections"));
         assertNotNull(bdd.statistics().get("reorder_abandoned_directions"));
         assertNotNull(bdd.statistics().get("reorder_time_milliseconds"));
@@ -418,8 +418,8 @@ class ReorderTest {
         // A second reordering has nothing left to find, and says so rather than going backwards.
         int again = bdd.variableOrder().reorder();
         assertEquals(0, again);
-        assertEquals("2", bdd.statistics().get("reorder_count"));
-        assertEquals(String.valueOf(saved), bdd.statistics().get("reorder_saved_nodes"));
+        assertEquals(2, bdd.statistics().get("reorder_count"));
+        assertEquals((long) saved, bdd.statistics().get("reorder_saved_nodes"));
     }
 
     @Test
@@ -965,18 +965,18 @@ class ReorderTest {
         BddImpl bdd = context.bdd();
         randomFunctions(bdd, variables, 8, 271_828L);
 
-        assertEquals("0", bdd.statistics().get("reorder_identity_reverts"), "nothing has reordered yet");
+        assertEquals(0, bdd.statistics().get("reorder_identity_reverts"), "nothing has reordered yet");
 
         context.variableOrder().siftDown(1);
         context.variableOrder().siftDown(3);
         bdd.variableOrder().reorderToIdentity();
 
         assertEquals(identityOrder(variables), currentOrder(bdd, variables));
-        assertEquals("1", bdd.statistics().get("reorder_identity_reverts"));
+        assertEquals(1, bdd.statistics().get("reorder_identity_reverts"));
 
         // Already implicit, so there is nothing to permute and nothing to revert.
         bdd.variableOrder().reorderToIdentity();
-        assertEquals("1", bdd.statistics().get("reorder_identity_reverts"));
+        assertEquals(1, bdd.statistics().get("reorder_identity_reverts"));
     }
 
     @Test
@@ -1119,9 +1119,9 @@ class ReorderTest {
 
         bdd.variableOrder().reorder();
         assertEquals(1, recorder.moved.size(), "a sifting pass is one order change, not one per swap");
-        long swaps = Long.parseLong((String) bdd.statistics().get("reorder_swaps"));
+        long swaps = ((Number) bdd.statistics().get("reorder_swaps")).longValue();
         assertTrue(swaps > 1, "the pass should have made several swaps");
-        assertEquals("1", bdd.statistics().get("reorder_notifications"));
+        assertEquals(1, bdd.statistics().get("reorder_notifications"));
 
         // What the listener was told has to be the order before and the order after, in full.
         int[] previous = recorder.previous.get(0);

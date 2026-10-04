@@ -20,7 +20,7 @@
   * `simplify`: (also called `constrain`) reduce a function `f` to a given domain `d`, i.e. preserve the values of `f` where `d` is true but otherwise do whatever - on `BddSet` and `BddMap` as well as on the int layer
   * `xyIn`: Perform operation `xy` relative to a given domain `d` (e.g.\ count satisfying assignments of `x` in `d`)
   * `xySimplify`: Perform `simplify(xy(...), g)`, but potentially much faster
-  * `DdContext.formatStatistics`: render a statistics map as sorted `key=value` lines
+  * `DdContext.formatStatistics`: render a statistics map as sorted `key=value` lines; statistics values are numbers, not strings
   * `decisionVariable` / `high` / `low` on `BddSet` and `BddMap`: the Shannon decomposition, so a structural recursion needs no node access
   * `BddSet.restrict` and `BddSetFactory.ifThenElse`: the set-layer counterparts of the int-layer operations
   * `implicants` (`BddUtil` and `BddSet`) and its inverse `of(Cube)`: a cover of a function by cubes, each cube of a cofactor recording the decision variable only where it does not imply the other cofactor already - complement first for a CNF cover

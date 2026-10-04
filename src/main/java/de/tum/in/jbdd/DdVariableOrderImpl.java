@@ -657,18 +657,18 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
     /** Reported by the BDD, which is where a caller looks for them - there is only one order. */
     Map<String, Object> reorderStatistics() {
         return Map.of(
-                "reorder_count", String.valueOf(reorderCount),
-                "reorder_saved_nodes", String.valueOf(reorderSavedNodes),
-                "reorder_time_milliseconds", String.valueOf(reorderTimeMilliseconds),
-                "reorder_swaps", String.valueOf(reorderSwaps),
-                "reorder_notifications", String.valueOf(reorderNotifications),
-                "reorder_rewritten_nodes", String.valueOf(reorderRewrittenNodes),
-                "reorder_collections", String.valueOf(reorderCollections),
-                "reorder_abandoned_directions", String.valueOf(reorderAbandonedDirections),
-                "reorder_identity_reverts", String.valueOf(reorderIdentityReverts),
+                "reorder_count", reorderCount,
+                "reorder_saved_nodes", reorderSavedNodes,
+                "reorder_time_milliseconds", reorderTimeMilliseconds,
+                "reorder_swaps", reorderSwaps,
+                "reorder_notifications", reorderNotifications,
+                "reorder_rewritten_nodes", reorderRewrittenNodes,
+                "reorder_collections", reorderCollections,
+                "reorder_abandoned_directions", reorderAbandonedDirections,
+                "reorder_identity_reverts", reorderIdentityReverts,
                 /* Nodes rewritten per node saved - the one ratio that says whether sifting is earning its
                  * keep, the way node_table_work_per_created_node does for memory management. */
-                "reorder_work_per_saved_node", String.valueOf(Util.ratio(reorderRewrittenNodes, reorderSavedNodes)));
+                "reorder_work_per_saved_node", Util.ratio(reorderRewrittenNodes, reorderSavedNodes));
     }
 
     @Override

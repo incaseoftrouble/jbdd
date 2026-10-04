@@ -1942,69 +1942,59 @@ public abstract class NodeTable {
             }
         }
 
-        int chainLenghtSum = 0;
+        int chainLengthSum = 0;
         int maximumChainLength = 0;
         for (int length : chainLength) {
             if (length == 0) {
                 continue;
             }
-            chainLenghtSum += 1;
+            chainLengthSum += 1;
             if (maximumChainLength < length) {
                 maximumChainLength = length;
             }
         }
 
         return Map.ofEntries(
-                entry(prefix + "node_table_size", String.valueOf(size())),
-                entry(prefix + "biggest_referenced_node", String.valueOf(biggestReferencedNode)),
-                entry(prefix + "created_nodes", String.valueOf(createdNodes)),
-                entry(prefix + "valid_nodes", String.valueOf(validNodes)),
-                entry(prefix + "referenced_nodes", String.valueOf(referencedNodes)),
-                entry(prefix + "saturated_nodes", String.valueOf(saturatedNodes)),
-                entry(prefix + "children_count", String.valueOf(childrenCount)),
-                entry(prefix + "hash_table_load_factor", String.valueOf(chainLenghtSum * 1.0 / size())),
-                entry(prefix + "hash_table_distinct_chains", String.valueOf(distinctChains)),
-                entry(
-                        prefix + "hash_table_average_chain_length",
-                        String.valueOf(chainLenghtSum * 1.0 / distinctChains)),
-                entry(prefix + "hash_table_longest_chain", String.valueOf(maximumChainLength)),
-                entry(prefix + "hash_table_lookups", String.valueOf(hashChainLookups)),
-                entry(
-                        prefix + "hash_table_lookup_average_length",
-                        String.valueOf(hashChainLookupLength * 1.0 / hashChainLookups)),
-                entry(prefix + "node_table_gc_count", String.valueOf(garbageCollectionCount)),
-                entry(prefix + "node_table_reorder_created_nodes", String.valueOf(reorderCreatedNodes)),
-                entry(prefix + "node_table_reorder_gc_count", String.valueOf(reorderGarbageCollectionCount)),
-                entry(
-                        prefix + "node_table_reorder_gc_collected_nodes",
-                        String.valueOf(reorderGarbageCollectedNodeCount)),
-                entry(prefix + "node_table_reorder_gc_time_milliseconds", String.valueOf(reorderGarbageCollectionTime)),
-                entry(prefix + "node_table_gc_time_milliseconds", String.valueOf(garbageCollectionTime)),
-                entry(prefix + "node_table_gc_collected_nodes", String.valueOf(garbageCollectedNodeCount)),
-                entry(prefix + "node_table_grow_count", String.valueOf(growCount)),
-                entry(prefix + "node_table_gc_marked_nodes", String.valueOf(markedNodeCount)),
-                entry(prefix + "node_table_gc_swept_nodes", String.valueOf(sweptNodeCount)),
-                entry(prefix + "node_table_grow_rehashed_nodes", String.valueOf(rehashedNodeCount)),
-                entry(prefix + "node_table_peak_live_nodes", String.valueOf(peakLiveNodeCount)),
-                entry(prefix + "node_table_futile_gc_count", String.valueOf(futileGarbageCollectionCount)),
-                entry(prefix + "node_table_memory_limited_grow_count", String.valueOf(memoryLimitedGrowthCount)),
-                entry(prefix + "node_table_jvm_gc_request_count", String.valueOf(jvmGcRequestCount)),
+                entry(prefix + "node_table_size", size()),
+                entry(prefix + "biggest_referenced_node", biggestReferencedNode),
+                entry(prefix + "created_nodes", createdNodes),
+                entry(prefix + "valid_nodes", validNodes),
+                entry(prefix + "referenced_nodes", referencedNodes),
+                entry(prefix + "saturated_nodes", saturatedNodes),
+                entry(prefix + "children_count", childrenCount),
+                entry(prefix + "hash_table_load_factor", chainLengthSum * 1.0 / size()),
+                entry(prefix + "hash_table_distinct_chains", distinctChains),
+                entry(prefix + "hash_table_average_chain_length", Util.ratio(chainLengthSum, distinctChains)),
+                entry(prefix + "hash_table_longest_chain", maximumChainLength),
+                entry(prefix + "hash_table_lookups", hashChainLookups),
+                entry(prefix + "hash_table_lookup_average_length", Util.ratio(hashChainLookupLength, hashChainLookups)),
+                entry(prefix + "node_table_gc_count", garbageCollectionCount),
+                entry(prefix + "node_table_reorder_created_nodes", reorderCreatedNodes),
+                entry(prefix + "node_table_reorder_gc_count", reorderGarbageCollectionCount),
+                entry(prefix + "node_table_reorder_gc_collected_nodes", reorderGarbageCollectedNodeCount),
+                entry(prefix + "node_table_reorder_gc_time_milliseconds", reorderGarbageCollectionTime),
+                entry(prefix + "node_table_gc_time_milliseconds", garbageCollectionTime),
+                entry(prefix + "node_table_gc_collected_nodes", garbageCollectedNodeCount),
+                entry(prefix + "node_table_grow_count", growCount),
+                entry(prefix + "node_table_gc_marked_nodes", markedNodeCount),
+                entry(prefix + "node_table_gc_swept_nodes", sweptNodeCount),
+                entry(prefix + "node_table_grow_rehashed_nodes", rehashedNodeCount),
+                entry(prefix + "node_table_peak_live_nodes", peakLiveNodeCount),
+                entry(prefix + "node_table_futile_gc_count", futileGarbageCollectionCount),
+                entry(prefix + "node_table_memory_limited_grow_count", memoryLimitedGrowthCount),
+                entry(prefix + "node_table_jvm_gc_request_count", jvmGcRequestCount),
                 /* The cost of memory management, amortized over the nodes produced, prime indicator
                  * for regressions; rises sharply if the table is collected too often. */
                 entry(
                         prefix + "node_table_work_per_created_node",
-                        String.valueOf(Util.ratio(markedNodeCount + sweptNodeCount + rehashedNodeCount, createdNodes))),
+                        Util.ratio(markedNodeCount + sweptNodeCount + rehashedNodeCount, createdNodes)),
                 /* Fraction of each swept table which was actually reclaimed. Complements the above: keeping
                  * the work per created node low by simply growing the table shows up as a low yield. */
-                entry(
-                        prefix + "node_table_gc_yield",
-                        String.valueOf(Util.ratio(garbageCollectedNodeCount, sweptNodeCount))),
+                entry(prefix + "node_table_gc_yield", Util.ratio(garbageCollectedNodeCount, sweptNodeCount)),
                 /* Table slots held per live node, i.e. the memory paid for the work per created node above.
                  * Note that the live node count is only sampled during mark phases, so this and
                  * node_table_peak_live_nodes are 0 for a table which never collected. */
-                entry(
-                        prefix + "node_table_slots_per_live_node",
-                        String.valueOf(Util.ratio(size(), peakLiveNodeCount))));
+                entry(prefix + "node_table_slots_per_live_node", Util.ratio(size(), peakLiveNodeCount)));
     }
 
     private static final class FunctionToStringSupplier {

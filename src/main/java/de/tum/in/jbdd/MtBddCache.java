@@ -667,15 +667,15 @@ final class MtBddCache implements VariableOrderObserver {
     Map<String, Object> statistics() {
         Map<String, Object> statistics = new HashMap<>();
         caches.forEach((name, cache) -> statistics.putAll(cache.statistics("mtbdd_cache_" + name)));
-        statistics.put("mtbdd_cache_apply_reuse_count", String.valueOf(applyReuseCount));
-        statistics.put("mtbdd_cache_map_reuse_count", String.valueOf(mapReuseCount));
-        statistics.put("mtbdd_cache_map_boolean_reuse_count", String.valueOf(mapBooleanReuseCount));
-        statistics.put("mtbdd_cache_apply_boolean_reuse_count", String.valueOf(applyBooleanReuseCount));
-        statistics.put("mtbdd_cache_all_match_reuse_count", String.valueOf(allMatchReuseCount));
-        statistics.put("mtbdd_cache_compose_reuse_count", String.valueOf(composeReuseCount));
-        statistics.put("mtbdd_cache_restrict_reuse_count", String.valueOf(restrictReuseCount));
-        statistics.put("mtbdd_cache_reaches_match_reuse_count", String.valueOf(reachesMatchReuseCount));
-        statistics.put("mtbdd_cache_count_reuse_count", String.valueOf(countReuseCount));
+        statistics.put("mtbdd_cache_apply_reuse_count", applyReuseCount);
+        statistics.put("mtbdd_cache_map_reuse_count", mapReuseCount);
+        statistics.put("mtbdd_cache_map_boolean_reuse_count", mapBooleanReuseCount);
+        statistics.put("mtbdd_cache_apply_boolean_reuse_count", applyBooleanReuseCount);
+        statistics.put("mtbdd_cache_all_match_reuse_count", allMatchReuseCount);
+        statistics.put("mtbdd_cache_compose_reuse_count", composeReuseCount);
+        statistics.put("mtbdd_cache_restrict_reuse_count", restrictReuseCount);
+        statistics.put("mtbdd_cache_reaches_match_reuse_count", reachesMatchReuseCount);
+        statistics.put("mtbdd_cache_count_reuse_count", countReuseCount);
         return statistics;
     }
 
