@@ -108,14 +108,7 @@ final class BoxedNatSet extends AbstractSet<Integer> {
 
     @Override
     public boolean removeIf(Predicate<? super Integer> filter) {
-        MutableNatSet target = mutable();
-        int before = target.size();
-        for (int element : target.toIntArray()) {
-            if (filter.test(element)) {
-                target.clear(element);
-            }
-        }
-        return target.size() != before;
+        return mutable().removeIf(filter::test);
     }
 
     @Override

@@ -17,6 +17,7 @@
 package de.tum.in.jbdd.collections;
 
 import java.util.Collection;
+import java.util.Iterator;
 import java.util.Set;
 import java.util.function.IntFunction;
 import java.util.function.IntUnaryOperator;
@@ -71,6 +72,58 @@ public final class NatSets {
     public static MutableNatSet intersection(NatSet first, NatSet second) {
         MutableNatSet intersection = MutableNatSet.copyOf(first);
         intersection.and(second);
+        return intersection;
+    }
+
+    /** The union of all {@code sets}, as a set of the caller's own; empty for none. */
+    public static MutableNatSet union(Iterable<? extends NatSet> sets) {
+        MutableNatSet union = MutableNatSet.create();
+        for (NatSet set : sets) {
+            union.or(set);
+        }
+        return union;
+    }
+
+    /**
+     * The union of all {@code sets} without building one where none is needed: the empty set for none, the one
+     * non-empty operand itself (whatever it is) where the others are empty, and otherwise one built once and frozen.
+     */
+    public static NatSet lazyUnion(Iterable<? extends NatSet> sets) {
+        NatSet single = null;
+        MutableNatSet union = null;
+        for (NatSet set : sets) {
+            if (set.isEmpty()) {
+                continue;
+            }
+            if (union != null) {
+                union.or(set);
+            } else if (single == null) {
+                single = set;
+            } else {
+                union = MutableNatSet.copyOf(single);
+                union.or(set);
+            }
+        }
+        if (union != null) {
+            return union.freezeAndClear();
+        }
+        return single == null ? NatSet.of() : single;
+    }
+
+    /**
+     * The intersection of all {@code sets}, as a set of the caller's own.
+     *
+     * @throws IllegalArgumentException for no sets, whose intersection would be every natural.
+     */
+    public static MutableNatSet intersection(Iterable<? extends NatSet> sets) {
+        Iterator<? extends NatSet> iterator = sets.iterator();
+        if (!iterator.hasNext()) {
+            throw new IllegalArgumentException("The intersection of no sets");
+        }
+        MutableNatSet intersection = MutableNatSet.copyOf(iterator.next());
+        while (iterator.hasNext() && !intersection.isEmpty()) {
+            intersection.and(iterator.next());
+        }
         return intersection;
     }
 

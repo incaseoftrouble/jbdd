@@ -289,7 +289,8 @@ Collections independent of decision diagrams, public for users too; nothing here
   their indices (murmur3's finalizer), built on the fly in array mode, so both classes and representations
   agree - `Set`'s sum of the elements would put all subsets of `[0, 21)` into 211 buckets. `toString` is
   `Set`'s; `NatSet.ORDER` orders by size, then lexicographically. `subSet(from, to)` is the elements in a range,
-  `slice(from, to)` the same re-based at 0 (`BitSet.get(from, to)`). `shifted(amount)` and
+  `slice(from, to)` the same re-based at 0 (`BitSet.get(from, to)`); `MutableNatSet.freezeAndClear()` hands a built set's
+  store to a set that never changes and leaves the mutable one empty. `shifted(amount)` and
   `MutableNatSet.shift(amount)` move every element, dropping those that would turn negative (a word-wise shift
   with carry, or an add per array element; in place, the array stays an array). `MutableNatSet` has
   `java.util.BitSet`'s mutators under their names; arguments are checked by assertion only. JBDD's API speaks it throughout (a fresh result such as `supportAt` or `anyAssignment` is a

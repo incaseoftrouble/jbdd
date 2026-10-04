@@ -43,7 +43,7 @@
 * `compose` reads its mapping and `or(int[])` its operands without writing to the array; `compose` used to resolve placeholders in place
 * The relabeler of `MtBdd.splitRelabeled`, `BddMap.splitMap` and `BddSet.split` runs outside the operation and may build functions
 * `BddConfiguration` is down to one cache knob, `cacheSizeDivider` (the eight per-arity dividers, `registeredOperationDivider` and `useCachePreserve` are gone - caches always keep their valid entries), `initialSize` / `mtbddInitialSize` (no `bddInitialSize`), `keepReorderingStructures` and the two collection knobs; tables always double (`growthFactor` is gone)
-* `Cube.positives()` is gone, it was `assignment()`
+* `MutableNatSet.removeIf`; `Cube.positives()` is gone, it was `assignment()`
 * MTBDD terminal reference counts are `short`s (saturating at 32767) rather than bytes
 * The n-ary MTBDD `apply` over two operands keeps the operator's neutral and absorbing values
 * Dereferencing the topmost referenced node no longer searches the table downwards for the next one
@@ -76,7 +76,7 @@
 * Significant improvement of `compose` / `ifThenElse` in certain cases (e.g.\ identifying constant replacements)
 * The BDD `compose` / `composeSimplify` (and with them `replaceVariables` and the registered replacers) is a joint descent over the function, the domain and the replacements it reads, restricted along the path and cached on that whole tuple: the path reaches the replacements, instead of each branch being composed for both values and one half discarded - exponentially fewer nodes where the replaced variables sit below those their replacements read. The compose, `restrict` and support caches are stable (keyed on their whole context), so a registered BDD compose no longer carries a cache of its own
 * Preserve cached values when possible (should provide notable improvements on some workloads)
-* `NatSet.subSet(from, to)` and `slice(from, to)` (the elements of a range, in place or re-based at 0), `MutableNatSet.range(from, to)`, `firstOr` / `lastOr`
+* `NatSet.subSet(from, to)` and `slice(from, to)` (the elements of a range, in place or re-based at 0), `MutableNatSet.freezeAndClear()` (a built set as one that never changes, without a copy), `MutableNatSet.range(from, to)`, `firstOr` / `lastOr`, `NatSets.union` / `intersection` over any number of sets and `lazyUnion`, which builds nothing for one non-empty operand
 
 ## 0.6
 

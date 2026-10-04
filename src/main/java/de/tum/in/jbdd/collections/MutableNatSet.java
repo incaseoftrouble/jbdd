@@ -18,6 +18,7 @@ package de.tum.in.jbdd.collections;
 
 import java.util.BitSet;
 import java.util.Collection;
+import java.util.function.IntPredicate;
 
 /**
  * A {@link NatSet} to be modified, the holder's own: what a method returning a copy returns. {@link BitSet}'s
@@ -91,8 +92,17 @@ public interface MutableNatSet extends NatSet {
 
     void xor(NatSet other);
 
+    /** Removes every element satisfying {@code filter}; whether any did. */
+    boolean removeIf(IntPredicate filter);
+
     /** {@link #shifted(int)} in place: adds {@code amount} to every element, dropping those that would be negative. */
     void shift(int amount);
+
+    /**
+     * This set's elements, taken over without copying, and this set cleared: the end of building a set that is kept.
+     * {@link NatSet#copyOf(NatSet)} is the copying form.
+     */
+    NatSet freezeAndClear();
 
     /** Chooses the smaller of the two representations for the current elements. */
     void optimize();

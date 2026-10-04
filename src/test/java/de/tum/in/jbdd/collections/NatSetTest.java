@@ -518,4 +518,25 @@ class NatSetTest {
             assertEquals(to + 10, mutable.lastOr(-7));
         }
     }
+
+    @Test
+    void freezeAndClearTakesTheElementsOver() {
+        Random random = new Random(7);
+        for (int span : new int[] {8, 64, 200, 3000}) {
+            for (int round = 0; round < 100; round++) {
+                BitSet reference = randomBitSet(random, span, random.nextInt(span < 64 ? 6 : 40));
+                MutableNatSet mutable = MutableNatSet.copyOf(reference);
+                NatSet frozen = mutable.freezeAndClear();
+                assertFalse(frozen instanceof MutableNatSet);
+                assertSameContents(reference, frozen);
+                assertTrue(mutable.isEmpty());
+                assertEquals(NatSet.copyOf(reference), frozen);
+                // The emptied set is usable again, and the frozen one does not follow it.
+                mutable.set(3);
+                mutable.set(span + 5);
+                assertSameContents(reference, frozen);
+                assertEquals(NatSet.of(3, span + 5), mutable);
+            }
+        }
+    }
 }

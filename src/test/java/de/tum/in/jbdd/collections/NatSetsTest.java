@@ -18,9 +18,12 @@ package de.tum.in.jbdd.collections;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
@@ -34,6 +37,23 @@ class NatSetsTest {
         assertEquals(NatSet.of(1, 2, 3), NatSets.union(a, b));
         assertEquals(NatSet.of(1), NatSets.without(a, b));
         assertEquals(NatSet.of(3), NatSets.without(b, a));
+        assertEquals(NatSet.of(1, 2), a);
+        assertEquals(NatSet.of(2, 3), b);
+
+        NatSet c = NatSet.of(2, 3, 70);
+        assertEquals(NatSet.of(1, 2, 3, 70), NatSets.union(List.of(a, b, c)));
+        assertEquals(NatSet.of(2), NatSets.intersection(List.of(a, b, c)));
+        assertEquals(NatSet.of(), NatSets.union(List.of()));
+        assertEquals(NatSet.of(1, 2), NatSets.union(List.of(a)));
+        assertEquals(NatSet.of(1, 2), NatSets.intersection(List.of(a)));
+        assertEquals(NatSet.of(), NatSets.intersection(List.of(a, NatSet.of(), c)));
+        assertThrows(IllegalArgumentException.class, () -> NatSets.intersection(List.of()));
+        assertEquals(NatSet.of(1, 2, 3, 70), NatSets.lazyUnion(List.of(a, b, c)));
+        assertFalse(NatSets.lazyUnion(List.of(a, b, c)) instanceof MutableNatSet);
+        assertSame(a, NatSets.lazyUnion(List.of(a)));
+        assertSame(c, NatSets.lazyUnion(List.of(NatSet.of(), c, MutableNatSet.create())));
+        assertSame(NatSet.of(), NatSets.lazyUnion(List.of()));
+        assertSame(NatSet.of(), NatSets.lazyUnion(List.of(MutableNatSet.create())));
         assertEquals(NatSet.of(1, 2), a);
         assertEquals(NatSet.of(2, 3), b);
     }

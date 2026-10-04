@@ -709,6 +709,41 @@ final class MutableNatSetImpl implements MutableNatSet {
         assert sizeIsExact();
     }
 
+    @Override
+    public boolean removeIf(IntPredicate filter) {
+        long[] current = words;
+        if (current == null) {
+            int kept = 0;
+            for (int index = 0; index < size; index++) {
+                int element = elements[index];
+                if (!filter.test(element)) {
+                    elements[kept] = element;
+                    kept += 1;
+                }
+            }
+            boolean removed = kept != size;
+            size = kept;
+            return removed;
+        }
+        int removed = 0;
+        for (int index = 0; index < current.length; index++) {
+            long word = current[index];
+            long remaining = word;
+            while (remaining != 0) {
+                long bit = Long.lowestOneBit(remaining);
+                if (filter.test((index << WORD_SHIFT) + Long.numberOfTrailingZeros(bit))) {
+                    word &= ~bit;
+                    removed += 1;
+                }
+                remaining &= remaining - 1;
+            }
+            current[index] = word;
+        }
+        size -= removed;
+        assert sizeIsExact();
+        return removed > 0;
+    }
+
     // Combination
 
     @Override
@@ -799,6 +834,16 @@ final class MutableNatSetImpl implements MutableNatSet {
         }
         long[] sliced = NatSetUtil.sliceWords(current, from, to);
         return ImmutableNatSet.ofWords(sliced, NatSetUtil.wordsCount(sliced), true);
+    }
+
+    @Override
+    public NatSet freezeAndClear() {
+        NatSet frozen = ImmutableNatSet.freeze(this);
+        // The store is the frozen set's now, or copied into it: start over, empty.
+        elements = NO_ELEMENTS;
+        words = null;
+        size = 0;
+        return frozen;
     }
 
     // Views, copies, bridges
