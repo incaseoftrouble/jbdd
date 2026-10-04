@@ -1173,4 +1173,42 @@ class RegressionTests {
         assertTrue(context.bdd().evaluate(conjunction[0], support));
         assertFalse(context.bdd().evaluate(conjunction[0], valuation));
     }
+
+    /**
+     * {@code restrict} keys its cache on the cube of the literals below the function's top level - which, when all
+     * of them are, used to be the caller's cube itself rather than a copy. A path cursor's cube is the walk's working
+     * state, so the key then changed under the cache, and a later restriction by a cube the walk had moved on to
+     * could hit an entry computed for another one.
+     */
+    @Test
+    void testRestrictDoesNotKeepAWalksCubeAsItsKey() {
+        DdContextImpl context = new DdContextImpl(config);
+        BddImpl bdd = context.bdd();
+        int[] v = bdd.createVariables(10);
+        // Paths over v1..v6 only, so h's top variable v0 is never consumed: the whole path cube becomes the key.
+        int paths = bdd.reference(bdd.falseFunction());
+        for (int i = 1; i <= 6; i++) {
+            paths = bdd.updateWith(bdd.xor(paths, v[i]), paths);
+        }
+        int h = bdd.reference(bdd.ifThenElse(
+                v[0],
+                bdd.reference(bdd.xor(bdd.and(v[1], v[7]), bdd.or(v[3], v[8]))),
+                bdd.reference(bdd.and(v[2], v[9]))));
+        MtBddImpl mt = context.mtBdd();
+        int map = mt.reference(mt.ifThenElse(h, mt.of(1), mt.of(2)));
+
+        for (Cursor<Cube> cursor = bdd.pathCursor(paths); cursor.valid(); cursor.advance()) {
+            Cube cube = cursor.current();
+            int restricted = bdd.reference(bdd.restrict(h, cube));
+            int mapRestricted = mt.reference(mt.restrict(map, cube));
+            for (int mask = 0; mask < 1 << 10; mask += 37) {
+                MutableNatSet assignment = NatSetFixtures.valueOf(mask);
+                cube.forEachLiteral(assignment::set);
+                assertEquals(bdd.evaluate(h, assignment), bdd.evaluate(restricted, assignment), cube.toString());
+                assertEquals(mt.evaluate(map, assignment), mt.evaluate(mapRestricted, assignment), cube.toString());
+            }
+            bdd.dereference(restricted);
+            mt.dereference(mapRestricted);
+        }
+    }
 }

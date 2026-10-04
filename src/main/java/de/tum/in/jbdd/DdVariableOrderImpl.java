@@ -142,10 +142,14 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
         return explicitOrder ? levelToVariable[level] : level;
     }
 
+    /**
+     * The literals of {@code cube} on the levels below {@code level}, as a cube of its own: never {@code cube}
+     * itself, which may be a walk's working state while the result becomes a cache key.
+     */
     Cube literalsBelow(Cube cube, int level) {
         NatSet support = cube.support();
-        if (support.allMatch(variable -> variable > level)) {
-            return cube;
+        if (support.allMatch(variable -> levelOfVariable(variable) > level)) {
+            return cube.copy();
         }
         MutableNatSet remainingSupport = MutableNatSet.create();
         MutableNatSet remainingAssignment = MutableNatSet.create();

@@ -265,8 +265,8 @@ Entry points — never `new BddImpl(...)` outside tests:
   `BddSetFactory.of` take them, `of(Cube)` builds one's function. Its operations return new cubes; a walk's cube
   is working state (§8). `of` copies what it is given and `ofUnsafe` takes the sets as they are (checking the
   assignment against the support by assertion only); the accessors `assignment()` / `support()` hand out the
-  cube's own sets, never copies, so a caller keeping one across a walk's step takes `copy()`, a no-op over sets
-  that never change.
+  cube's own sets, never copies, so a caller keeping one across a walk's step (or JBDD keeping one as a cache
+  key - `restrict` does) takes `copy()`, a no-op over sets that never change.
 - `io.DimacsReader` parses DIMACS CNF (benchmarks/tests).
 
 ### `de.tum.in.jbdd.collections`
