@@ -2957,18 +2957,19 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         }
 
         @Override
-        protected boolean recurseNoneMarkedBelow(int node) {
+        protected boolean recurseNoneMarkedBelow(int node, MutableNatSet visited) {
             int low = positive(low(node));
             int high = high(node);
-            return (low == TRUE || doIsNoneMarkedBelow(low)) && (high == TRUE || doIsNoneMarkedBelow(high));
+            return (low == TRUE || doIsNoneMarkedBelow(low, visited))
+                    && (high == TRUE || doIsNoneMarkedBelow(high, visited));
         }
 
         @Override
-        protected boolean recurseIsAllMarkedBelow(int node, boolean includeLeaves) {
+        protected boolean recurseIsAllMarkedBelow(int node, boolean includeLeaves, MutableNatSet visited) {
             int low = positive(low(node));
             int high = high(node);
-            return (low == TRUE || doIsAllMarkedBelow(low, includeLeaves))
-                    && (high == TRUE || doIsAllMarkedBelow(high, includeLeaves));
+            return (low == TRUE || doIsAllMarkedBelow(low, includeLeaves, visited))
+                    && (high == TRUE || doIsAllMarkedBelow(high, includeLeaves, visited));
         }
 
         @Override

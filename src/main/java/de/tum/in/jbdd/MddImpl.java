@@ -1450,12 +1450,12 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         @Override
-        protected boolean recurseNoneMarkedBelow(int node) {
+        protected boolean recurseNoneMarkedBelow(int node, MutableNatSet visited) {
             int[] children = tree[node];
             boolean all = true;
             for (int child : children) {
                 int childNode = positive(child);
-                if (childNode != TRUE && !doIsNoneMarkedBelow(childNode)) {
+                if (childNode != TRUE && !doIsNoneMarkedBelow(childNode, visited)) {
                     all = false;
                     break;
                 }
@@ -1464,12 +1464,12 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         @Override
-        protected boolean recurseIsAllMarkedBelow(int node, boolean includeLeaves) {
+        protected boolean recurseIsAllMarkedBelow(int node, boolean includeLeaves, MutableNatSet visited) {
             int[] children = tree[node];
             boolean all = true;
             for (int child : children) {
                 int childNode = positive(child);
-                if (childNode != TRUE && !doIsAllMarkedBelow(childNode, includeLeaves)) {
+                if (childNode != TRUE && !doIsAllMarkedBelow(childNode, includeLeaves, visited)) {
                     all = false;
                     break;
                 }

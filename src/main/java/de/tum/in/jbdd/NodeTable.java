@@ -1028,7 +1028,7 @@ public abstract class NodeTable {
                 if (freeNodeCount() > threshold) {
                     // Collected enough, reset the pressure
                     denseFreeThreshold = -1;
-                    assert rewriteDepth > 0 || checkOwner();
+                    assert !Assertions.COSTLY_ASSERTIONS || rewriteDepth > 0 || checkOwner();
                     return false;
                 }
                 // Reachable under memory pressure: We have little room, but collecting did not collect much.
@@ -1093,13 +1093,13 @@ public abstract class NodeTable {
 
             // Don't go through this whole procedure again, allow the table to grow fuller
             denseFreeThreshold = freeNodes / 2;
-            assert rewriteDepth > 0 || checkOwner();
+            assert !Assertions.COSTLY_ASSERTIONS || rewriteDepth > 0 || checkOwner();
             return false;
         }
 
         grow(newSize);
         notifyAfterTableGrowth(invalidatedNodes, invalidatedLeaves);
-        assert rewriteDepth > 0 || checkOwner();
+        assert !Assertions.COSTLY_ASSERTIONS || rewriteDepth > 0 || checkOwner();
         return true;
     }
 
@@ -1413,18 +1413,22 @@ public abstract class NodeTable {
 
     public boolean isNoneMarkedBelowNode(int node) {
         assert isValidNode(node);
-        return doIsNoneMarkedBelow(node);
+        return doIsNoneMarkedBelow(node, MutableNatSet.create());
     }
 
-    protected boolean doIsNoneMarkedBelow(int node) {
+    protected boolean doIsNoneMarkedBelow(int node, MutableNatSet visited) {
         assert isValidNode(node);
         if (isLeafNode(node)) {
             return isLeafUnmarkedOrUnmanaged(node);
         }
-        return !isDecisionNodeMarked(node) && recurseNoneMarkedBelow(node);
+        if (visited.contains(node)) {
+            return true;
+        }
+        visited.set(node);
+        return !isDecisionNodeMarked(node) && recurseNoneMarkedBelow(node, visited);
     }
 
-    protected abstract boolean recurseNoneMarkedBelow(int node);
+    protected abstract boolean recurseNoneMarkedBelow(int node, MutableNatSet visited);
 
     public boolean isAllMarkedBelowNode(int node) {
         return isAllMarkedBelowNode(node, true);
@@ -1432,25 +1436,30 @@ public abstract class NodeTable {
 
     public boolean isAllMarkedBelowNode(int node, boolean includeLeaves) {
         assert isValidNode(node);
-        return doIsAllMarkedBelow(node, includeLeaves);
+        return doIsAllMarkedBelow(node, includeLeaves, MutableNatSet.create());
     }
 
-    protected boolean doIsAllMarkedBelow(int node, boolean includeLeaves) {
+    protected boolean doIsAllMarkedBelow(int node, boolean includeLeaves, MutableNatSet visited) {
         assert isValidNode(node);
         if (isLeafNode(node)) {
             return !includeLeaves || isLeafNodeMarkedOrUnmanaged(node);
         }
-        return isDecisionNodeMarked(node) && recurseIsAllMarkedBelow(node, includeLeaves);
+        if (visited.contains(node)) {
+            return true;
+        }
+        visited.set(node);
+        return isDecisionNodeMarked(node) && recurseIsAllMarkedBelow(node, includeLeaves, visited);
     }
 
-    protected abstract boolean recurseIsAllMarkedBelow(int node, boolean includeLeaves);
+    protected abstract boolean recurseIsAllMarkedBelow(int node, boolean includeLeaves, MutableNatSet visited);
 
     public int unMarkAllBelowNode(int node, boolean includeLeaves) {
         /* The algorithm does not descend into trees whose root is unmarked, hence at the start of the
          * algorithm, all children of marked nodes must be marked to ensure correctness. */
-        assert isValidNode(node) && isAllMarkedBelowNode(node, includeLeaves);
+        assert isValidNode(node);
+        assert !Assertions.COSTLY_ASSERTIONS || isAllMarkedBelowNode(node, includeLeaves);
         int unmarkedCount = doSetMarkBelow(node, false, includeLeaves);
-        assert isNoneMarkedBelowNode(node);
+        assert !Assertions.COSTLY_ASSERTIONS || isNoneMarkedBelowNode(node);
         return unmarkedCount;
     }
 
@@ -1519,11 +1528,11 @@ public abstract class NodeTable {
         assert isValidPointer(pointer);
 
         int node = treeNodeFor(pointer);
-        assert isNoneMarkedBelowNode(node);
+        assert !Assertions.COSTLY_ASSERTIONS || isNoneMarkedBelowNode(node);
         doForEachVariable(node, action, null, Integer.MAX_VALUE);
         // doForEachVariable marks decision nodes, so do not consider leaves
         unMarkAllBelowNode(node, false);
-        assert isNoneMarkedBelowNode(node);
+        assert !Assertions.COSTLY_ASSERTIONS || isNoneMarkedBelowNode(node);
     }
 
     /** The greatest level any variable of {@code variables} sits at, or -1 if there is none. */
@@ -1546,11 +1555,11 @@ public abstract class NodeTable {
         }
 
         int node = treeNodeFor(pointer);
-        assert isNoneMarkedBelowNode(node);
+        assert !Assertions.COSTLY_ASSERTIONS || isNoneMarkedBelowNode(node);
         doForEachVariable(node, action, filter, depthLimit);
         // doForEachVariable never marks leaves (see the unfiltered overload above), so don't touch them here.
         doSetMarkBelow(node, false, false);
-        assert isNoneMarkedBelowNode(node);
+        assert !Assertions.COSTLY_ASSERTIONS || isNoneMarkedBelowNode(node);
     }
 
     protected void doForEachVariable(int node, IntConsumer action, @Nullable NatSet filter, int depthLimit) {

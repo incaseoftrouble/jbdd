@@ -717,7 +717,7 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
             if (supportCache == null) {
                 supportCache = NatSet.copyOf(factory.dd.support(function));
             }
-            assert supportCache.equals(factory.dd.support(function));
+            assert !Assertions.COSTLY_ASSERTIONS || supportCache.equals(factory.dd.support(function));
             return supportCache;
         }
 

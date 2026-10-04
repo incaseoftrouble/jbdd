@@ -568,10 +568,10 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
 
         assert accessGuard.acquire();
-        assert table.isNoneMarkedBelowNode(function);
+        assert !Assertions.COSTLY_ASSERTIONS || table.isNoneMarkedBelowNode(function);
         boolean result = allValuesMatchRecursive(function, predicate);
         table.doSetMarkBelow(function, false, false);
-        assert table.isNoneMarkedBelowNode(function);
+        assert !Assertions.COSTLY_ASSERTIONS || table.isNoneMarkedBelowNode(function);
         assert accessGuard.release();
         return result;
     }
@@ -592,10 +592,10 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
 
         assert accessGuard.acquire();
-        assert table.isNoneMarkedBelowNode(function);
+        assert !Assertions.COSTLY_ASSERTIONS || table.isNoneMarkedBelowNode(function);
         boolean result = anyValueMatchesRecursive(function, predicate);
         table.doSetMarkBelow(function, false, false);
-        assert table.isNoneMarkedBelowNode(function);
+        assert !Assertions.COSTLY_ASSERTIONS || table.isNoneMarkedBelowNode(function);
         assert accessGuard.release();
         return result;
     }
@@ -617,11 +617,11 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
 
         assert accessGuard.acquire();
-        assert table.isNoneMarkedBelowNode(function);
+        assert !Assertions.COSTLY_ASSERTIONS || table.isNoneMarkedBelowNode(function);
         table.markAllBelowNode(function, true);
         table.markedValues.forEach(action);
         table.unMarkAllBelowNode(function, true);
-        assert table.isNoneMarkedBelowNode(function);
+        assert !Assertions.COSTLY_ASSERTIONS || table.isNoneMarkedBelowNode(function);
         assert accessGuard.release();
     }
 
@@ -635,11 +635,11 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         // The mark phase computes exactly this set as a side effect, so copy it out directly instead of
         // going through forEachValue's IntConsumer round-trip.
         assert accessGuard.acquire();
-        assert table.isNoneMarkedBelowNode(function);
+        assert !Assertions.COSTLY_ASSERTIONS || table.isNoneMarkedBelowNode(function);
         table.markAllBelowNode(function, true);
         MutableNatSet values = MutableNatSet.copyOf(table.markedValues);
         table.unMarkAllBelowNode(function, true);
-        assert table.isNoneMarkedBelowNode(function);
+        assert !Assertions.COSTLY_ASSERTIONS || table.isNoneMarkedBelowNode(function);
         assert accessGuard.release();
         return values;
     }
@@ -2842,23 +2842,23 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
 
         @Override
-        protected boolean recurseNoneMarkedBelow(int node) {
+        protected boolean recurseNoneMarkedBelow(int node, MutableNatSet visited) {
             int low = low(node);
             int high = high(node);
-            return (isUnmarkedConstant(low) || doIsNoneMarkedBelow(low))
-                    && (isUnmarkedConstant(high) || doIsNoneMarkedBelow(high));
+            return (isUnmarkedConstant(low) || doIsNoneMarkedBelow(low, visited))
+                    && (isUnmarkedConstant(high) || doIsNoneMarkedBelow(high, visited));
         }
 
         @Override
-        protected boolean recurseIsAllMarkedBelow(int node, boolean includeLeaves) {
+        protected boolean recurseIsAllMarkedBelow(int node, boolean includeLeaves, MutableNatSet visited) {
             int low = low(node);
             int high = high(node);
             return ((!includeLeaves && mtbdd.isConstant(low))
                             || isMarkedConstant(low)
-                            || doIsAllMarkedBelow(low, includeLeaves))
+                            || doIsAllMarkedBelow(low, includeLeaves, visited))
                     && ((!includeLeaves && mtbdd.isConstant(high))
                             || isMarkedConstant(high)
-                            || doIsAllMarkedBelow(high, includeLeaves));
+                            || doIsAllMarkedBelow(high, includeLeaves, visited));
         }
 
         @Override

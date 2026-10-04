@@ -563,7 +563,7 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
             if (supportCache == null) {
                 supportCache = NatSet.copyOf(factory.dd.support(function));
             }
-            assert supportCache.equals(factory.dd.support(function));
+            assert !Assertions.COSTLY_ASSERTIONS || supportCache.equals(factory.dd.support(function));
             return supportCache; // Never changes, so it is shared rather than copied
         }
 
