@@ -16,18 +16,14 @@
  */
 package de.tum.in.jbdd.collections;
 
-import java.util.AbstractSet;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collection;
-import java.util.NoSuchElementException;
 import java.util.PrimitiveIterator;
 import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
-import java.util.function.Consumer;
 import java.util.function.IntConsumer;
-import java.util.function.Predicate;
 import java.util.stream.IntStream;
 import java.util.stream.StreamSupport;
 import org.jspecify.annotations.Nullable;
@@ -37,9 +33,7 @@ import org.jspecify.annotations.Nullable;
  * ascending array or as words, whichever is smaller (see {@link NatSetUtil#useWords}); the empty set and those of
  * one element below {@link #CACHE_LIMIT} are shared. The hash code is computed once.
  */
-// The concrete types are the point: an operand of this class or the mutable one is where the fast paths are.
-@SuppressWarnings("PMD.LooseCoupling")
-final class ImmutableNatSet extends AbstractSet<Integer> implements NatSet {
+final class ImmutableNatSet implements NatSet {
     private static final int WORD_SHIFT = NatSetUtil.WORD_SHIFT;
     private static final int CACHE_LIMIT = 128;
     private static final int[] NO_ELEMENTS = new int[0];
@@ -173,8 +167,8 @@ final class ImmutableNatSet extends AbstractSet<Integer> implements NatSet {
     }
 
     static ImmutableNatSet copyOf(Collection<Integer> elements) {
-        if (elements instanceof NatSet) {
-            return copyOf((NatSet) elements);
+        if (elements instanceof BoxedNatSet) {
+            return copyOf(((BoxedNatSet) elements).set());
         }
         int[] array = new int[elements.size()];
         int index = 0;
@@ -199,11 +193,6 @@ final class ImmutableNatSet extends AbstractSet<Integer> implements NatSet {
         long[] current = words();
         assert current != null;
         return NatSetUtil.wordsContain(current, element);
-    }
-
-    @Override
-    public boolean contains(Object o) {
-        return o instanceof Integer && contains((int) (Integer) o);
     }
 
     @Override
@@ -242,7 +231,7 @@ final class ImmutableNatSet extends AbstractSet<Integer> implements NatSet {
 
     @Override
     public int nextSetBit(int from) {
-        NatSetUtil.checkIndex(from);
+        assert from >= 0 : from;
         int[] array = elements();
         if (array != null) {
             return NatSetUtil.arrayNext(array, size, from);
@@ -254,7 +243,7 @@ final class ImmutableNatSet extends AbstractSet<Integer> implements NatSet {
 
     @Override
     public int previousSetBit(int from) {
-        NatSetUtil.checkPrevious(from);
+        assert from >= -1 : from;
         if (from < 0) {
             return -1;
         }
@@ -269,7 +258,7 @@ final class ImmutableNatSet extends AbstractSet<Integer> implements NatSet {
 
     @Override
     public int nextClearBit(int from) {
-        NatSetUtil.checkIndex(from);
+        assert from >= 0 : from;
         int[] array = elements();
         if (array != null) {
             return NatSetUtil.arrayNextClear(array, size, from);
@@ -307,34 +296,14 @@ final class ImmutableNatSet extends AbstractSet<Integer> implements NatSet {
     }
 
     @Override
-    public void forEach(Consumer<? super Integer> action) {
-        forEach((IntConsumer) action::accept);
-    }
-
-    @Override
     public PrimitiveIterator.OfInt iterator() {
         int[] array = elements();
         if (array != null) {
-            return Arrays.stream(array).iterator();
+            return new NatSetUtil.ArrayIterator(array, size);
         }
-        return new PrimitiveIterator.OfInt() {
-            private int next = nextSetBit(0);
-
-            @Override
-            public boolean hasNext() {
-                return next >= 0;
-            }
-
-            @Override
-            public int nextInt() {
-                if (next < 0) {
-                    throw new NoSuchElementException();
-                }
-                int current = next;
-                next = nextSetBit(current + 1);
-                return current;
-            }
-        };
+        long[] current = words();
+        assert current != null;
+        return new NatSetUtil.WordsIterator(current);
     }
 
     @Override
@@ -405,7 +374,7 @@ final class ImmutableNatSet extends AbstractSet<Integer> implements NatSet {
 
     @Override
     public Set<Integer> boxed() {
-        return this;
+        return new BoxedNatSet(this);
     }
 
     @Override
@@ -427,43 +396,6 @@ final class ImmutableNatSet extends AbstractSet<Integer> implements NatSet {
         assert current != null;
         target.or(BitSet.valueOf(current));
         return target;
-    }
-
-    // Set's mutators throw whether or not they would change anything, as for the JDK's unmodifiable sets.
-
-    @Override
-    public boolean add(Integer element) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean remove(Object o) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean addAll(Collection<? extends Integer> c) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean removeAll(Collection<?> c) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean retainAll(Collection<?> c) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean removeIf(Predicate<? super Integer> filter) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void clear() {
-        throw new UnsupportedOperationException();
     }
 
     @Override

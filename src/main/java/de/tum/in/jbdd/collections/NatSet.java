@@ -19,6 +19,7 @@ package de.tum.in.jbdd.collections;
 import java.util.BitSet;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.PrimitiveIterator;
 import java.util.Set;
 import java.util.function.IntConsumer;
 import java.util.stream.IntStream;
@@ -30,11 +31,11 @@ import java.util.stream.IntStream;
  * returning a set the caller may modify returns a {@link MutableNatSet} of the caller's own;
  * {@link MutableNatSet#copyOf(NatSet)} turns any set into one.
  *
- * <p>Equal to any {@link Set} of the same {@link Integer}s, with {@link Set}'s hash code, and printed as one is
- * ({@code [0, 3]}). {@link #boxed()} is that set, a view.
+ * <p>Equal to any {@code NatSet} of the same elements, whatever its class or representation, and printed as a
+ * {@link Set} is ({@code [0, 3]}). It is not a {@link Set}: {@link #boxed()} is that, a view, to be avoided where a
+ * primitive operation serves.
  *
- * <p>The factories take naturals, checked by assertion only; {@link MutableNatSet}'s mutators throw for a negative
- * index as {@link BitSet}'s do.
+ * <p>Arguments are naturals (and ranges ordered), checked by assertion only.
  *
  * <p>Only this package implements it.
  */
@@ -81,11 +82,6 @@ public interface NatSet {
     /** The number of elements. */
     int size();
 
-    /** {@link #size()}, under {@link BitSet}'s name. */
-    default int cardinality() {
-        return size();
-    }
-
     boolean isEmpty();
 
     boolean containsAll(NatSet other);
@@ -100,33 +96,27 @@ public interface NatSet {
 
     /**
      * The smallest element at least {@code from}, {@code -1} if there is none - as {@link BitSet#nextSetBit(int)}.
-     *
-     * @throws IndexOutOfBoundsException if {@code from} is negative
      */
     int nextSetBit(int from);
 
     /**
      * The largest element at most {@code from}, {@code -1} if there is none - as {@link BitSet#previousSetBit(int)}.
-     *
-     * @throws IndexOutOfBoundsException if {@code from} is below {@code -1}
      */
     int previousSetBit(int from);
 
     /**
      * The smallest natural at least {@code from} not in this set - as {@link BitSet#nextClearBit(int)}.
-     *
-     * @throws IndexOutOfBoundsException if {@code from} is negative
      */
     int nextClearBit(int from);
 
     /** One more than the largest element, {@code 0} if empty - as {@link BitSet#length()}. */
     int length();
 
-    /**
-     * Hands each element to {@code action}, in ascending order. The fastest way over all elements; to stop early,
-     * loop over {@link #nextSetBit(int)}.
-     */
+    /** Hands each element to {@code action}, in ascending order: the fastest way over all elements. */
     void forEach(IntConsumer action);
+
+    /** The elements in ascending order, for a walk that may stop early. */
+    PrimitiveIterator.OfInt iterator();
 
     /** The elements in ascending order. */
     IntStream intStream();
@@ -143,7 +133,10 @@ public interface NatSet {
     /** This set without the elements of {@code other}. */
     NatSet difference(NatSet other);
 
-    /** This set as a {@code Set<Integer>}, a view: unmodifiable unless this set is a {@link MutableNatSet}. */
+    /**
+     * This set as a {@code Set<Integer>}, a new view: unmodifiable unless this set is a {@link MutableNatSet}, and
+     * with {@link Set}'s equality and hash code.
+     */
     Set<Integer> boxed();
 
     /** The elements as a new {@link BitSet}. */
@@ -152,11 +145,11 @@ public interface NatSet {
     /** Adds the elements to {@code target} and returns it. */
     BitSet copyInto(BitSet target);
 
-    /** Equal to any {@link Set} of the same elements. */
+    /** Equal to any {@code NatSet} of the same elements, and to nothing else. */
     @Override
     boolean equals(Object o);
 
-    /** The sum of the elements, as {@link Set#hashCode()}. */
+    /** A hash of the elements' words, the same for either class and representation (not {@link Set}'s). */
     @Override
     int hashCode();
 }

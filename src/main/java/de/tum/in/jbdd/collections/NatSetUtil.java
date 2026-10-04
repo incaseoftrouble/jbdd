@@ -16,7 +16,8 @@
  */
 package de.tum.in.jbdd.collections;
 
-import java.util.Set;
+import java.util.NoSuchElementException;
+import java.util.PrimitiveIterator;
 import java.util.function.IntConsumer;
 import org.jspecify.annotations.Nullable;
 
@@ -96,11 +97,19 @@ final class NatSetUtil {
     }
 
     static int arrayHash(int[] elements, int size) {
-        int hash = 0;
-        for (int index = 0; index < size; index++) {
-            hash += elements[index];
+        // The words the elements make, built on the fly, so that both representations hash alike.
+        long hash = 0;
+        int index = 0;
+        while (index < size) {
+            int wordIndex = elements[index] >>> WORD_SHIFT;
+            long word = 0;
+            do {
+                word |= 1L << elements[index];
+                index += 1;
+            } while (index < size && elements[index] >>> WORD_SHIFT == wordIndex);
+            hash = hashStep(hash, wordIndex, word);
         }
-        return hash;
+        return hashFinish(hash);
     }
 
     // Words
@@ -181,16 +190,30 @@ final class NatSetUtil {
         return count;
     }
 
+    /**
+     * The hash code of a set: its non-zero words in ascending order, each with its index, through murmur3's
+     * finalizer. Zero words do not count, so trailing ones and the representation do not matter.
+     */
     static int wordsHash(long[] words) {
-        int hash = 0;
+        long hash = 0;
         for (int index = 0; index < words.length; index++) {
             long word = words[index];
-            while (word != 0) {
-                hash += (index << WORD_SHIFT) + Long.numberOfTrailingZeros(word);
-                word &= word - 1;
+            if (word != 0) {
+                hash = hashStep(hash, index, word);
             }
         }
-        return hash;
+        return hashFinish(hash);
+    }
+
+    private static long hashStep(long hash, int index, long word) {
+        long mixed = word + index * 0xC2B2AE3D27D4EB4FL;
+        mixed = (mixed ^ (mixed >>> 33)) * 0xFF51AFD7ED558CCDL;
+        mixed = (mixed ^ (mixed >>> 33)) * 0xC4CEB9FE1A85EC53L;
+        return hash * 0x9E3779B97F4A7C15L + (mixed ^ (mixed >>> 33));
+    }
+
+    private static int hashFinish(long hash) {
+        return Long.hashCode(hash);
     }
 
     /**
@@ -238,6 +261,72 @@ final class NatSetUtil {
                     word &= word - 1;
                 }
             }
+        }
+    }
+
+    /** The first {@code size} entries of {@code elements}, ascending. */
+    static final class ArrayIterator implements PrimitiveIterator.OfInt {
+        private final int[] elements;
+        private final int size;
+        private int index = 0;
+
+        ArrayIterator(int[] elements, int size) {
+            this.elements = elements;
+            this.size = size;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return index < size;
+        }
+
+        @Override
+        public int nextInt() {
+            if (index >= size) {
+                throw new NoSuchElementException();
+            }
+            int element = elements[index];
+            index += 1;
+            return element;
+        }
+    }
+
+    /** The elements of {@code words}, ascending: a cursor on a word, which hands out and clears its lowest bit. */
+    static final class WordsIterator implements PrimitiveIterator.OfInt {
+        private final long[] words;
+        private int wordIndex = -1;
+        // The current word's elements not handed out yet; zero once every word is through.
+        private long word = 0;
+
+        WordsIterator(long[] words) {
+            this.words = words;
+            nextWord();
+        }
+
+        private void nextWord() {
+            while (word == 0 && wordIndex + 1 < words.length) {
+                wordIndex += 1;
+                word = words[wordIndex];
+            }
+        }
+
+        @Override
+        public boolean hasNext() {
+            return word != 0;
+        }
+
+        @Override
+        public int nextInt() {
+            long current = word;
+            if (current == 0) {
+                throw new NoSuchElementException();
+            }
+            int element = (wordIndex << WORD_SHIFT) + Long.numberOfTrailingZeros(current);
+            word = current & (current - 1);
+            if (word == 0) {
+                nextWord();
+            }
+            return element;
         }
     }
 
@@ -336,54 +425,22 @@ final class NatSetUtil {
         return builder.append(']').toString();
     }
 
-    /** Whether {@code set} equals {@code other}, by {@link Set}'s contract. */
+    /** Whether {@code set} equals {@code other}: a {@link NatSet} of the same elements. */
     static boolean setEquals(NatSet set, Object other) {
-        if (other instanceof NatSet) {
-            NatSet natSet = (NatSet) other;
-            if (set.size() != natSet.size()) {
-                return false;
-            }
-            // Only an immutable set knows its hash code without computing it.
-            if (set instanceof ImmutableNatSet
-                    && natSet instanceof ImmutableNatSet
-                    && set.hashCode() != natSet.hashCode()) {
-                return false;
-            }
-            return containsAll(set, natSet);
-        }
-        if (!(other instanceof Set)) {
+        if (!(other instanceof NatSet)) {
             return false;
         }
-        Set<?> boxed = (Set<?>) other;
-        if (boxed.size() != set.size()) {
+        NatSet natSet = (NatSet) other;
+        int size = set.size();
+        if (size != natSet.size()) {
             return false;
         }
-        for (Object element : boxed) {
-            if (!(element instanceof Integer) || !set.contains((Integer) element)) {
-                return false;
-            }
+        // Only an immutable set knows its hash code without computing it.
+        if (set instanceof ImmutableNatSet
+                && natSet instanceof ImmutableNatSet
+                && set.hashCode() != natSet.hashCode()) {
+            return false;
         }
-        return true;
-    }
-
-    static void checkIndex(int index) {
-        if (index < 0) {
-            throw new IndexOutOfBoundsException("index < 0: " + index);
-        }
-    }
-
-    static void checkPrevious(int from) {
-        if (from < -1) {
-            throw new IndexOutOfBoundsException("from < -1: " + from);
-        }
-    }
-
-    static void checkRange(int from, int to) {
-        if (from < 0) {
-            throw new IndexOutOfBoundsException("from < 0: " + from);
-        }
-        if (to < from) {
-            throw new IndexOutOfBoundsException("from: " + from + " > to: " + to);
-        }
+        return containsAll(set, natSet);
     }
 }

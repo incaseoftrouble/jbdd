@@ -104,7 +104,10 @@ class NatSetTest {
         assertEquals(boxed, set.boxed());
         assertEquals(set.boxed(), boxed);
         assertEquals(new HashSet<>(boxed), set.boxed());
-        assertEquals(boxed.hashCode(), set.hashCode());
+        assertEquals(boxed.hashCode(), set.boxed().hashCode());
+        // A set is not a Set: only the view is equal to one.
+        assertNotEquals(set, set.boxed());
+        assertNotEquals(set.boxed(), set);
         assertEquals(boxed.toString(), set.toString());
     }
 
@@ -340,7 +343,7 @@ class NatSetTest {
                 List<NatSet> representations = List.of(array, words, optimized, immutable, frozenWords);
                 Set<Integer> boxed = new HashSet<>(array.boxed());
                 for (NatSet first : representations) {
-                    assertEquals(boxed.hashCode(), first.hashCode());
+                    assertEquals(boxed.hashCode(), first.boxed().hashCode());
                     assertEquals(boxed, first.boxed());
                     for (NatSet second : representations) {
                         assertEquals(first, second);
@@ -353,16 +356,15 @@ class NatSetTest {
     }
 
     @Test
-    void bitSetExceptions() {
+    void argumentsAreAsserted() {
         MutableNatSet set = MutableNatSet.create();
-        assertThrows(IndexOutOfBoundsException.class, () -> set.set(-1));
-        assertThrows(IndexOutOfBoundsException.class, () -> set.get(-1));
-        assertThrows(IndexOutOfBoundsException.class, () -> set.clear(-1));
-        assertThrows(IndexOutOfBoundsException.class, () -> set.set(3, 2));
-        assertThrows(IndexOutOfBoundsException.class, () -> set.nextSetBit(-1));
-        assertThrows(IndexOutOfBoundsException.class, () -> set.nextClearBit(-1));
-        assertThrows(IndexOutOfBoundsException.class, () -> set.previousSetBit(-2));
-        assertThrows(IndexOutOfBoundsException.class, () -> NatSet.of(4).nextSetBit(-1));
+        assertThrows(AssertionError.class, () -> set.set(-1));
+        assertThrows(AssertionError.class, () -> set.clear(-1));
+        assertThrows(AssertionError.class, () -> set.set(3, 2));
+        assertThrows(AssertionError.class, () -> set.nextSetBit(-1));
+        assertThrows(AssertionError.class, () -> set.nextClearBit(-1));
+        assertThrows(AssertionError.class, () -> set.previousSetBit(-2));
+        assertThrows(AssertionError.class, () -> NatSet.of(4).nextSetBit(-1));
         assertFalse(set.contains(-1));
     }
 }

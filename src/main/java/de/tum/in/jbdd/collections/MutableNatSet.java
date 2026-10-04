@@ -21,7 +21,7 @@ import java.util.Collection;
 
 /**
  * A {@link NatSet} to be modified, the holder's own: what a method returning a copy returns. {@link BitSet}'s
- * mutators under their names and with their exceptions: a negative index throws {@link IndexOutOfBoundsException}.
+ * mutators under their names.
  * A few elements far apart are held as a sorted array, anything else as words; {@link #optimize()} reconsiders
  * that, which nothing else ever undoes.
  */
@@ -50,9 +50,6 @@ public interface MutableNatSet extends NatSet {
     static MutableNatSet copyOf(Collection<Integer> elements) {
         return MutableNatSetImpl.copyOf(elements);
     }
-
-    /** {@link #contains(int)}, but throwing for a negative index as {@link BitSet#get(int)} does. */
-    boolean get(int index);
 
     void set(int index);
 

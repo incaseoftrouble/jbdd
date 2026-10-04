@@ -16,16 +16,13 @@
  */
 package de.tum.in.jbdd.collections;
 
-import java.util.AbstractSet;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collection;
-import java.util.NoSuchElementException;
 import java.util.PrimitiveIterator;
 import java.util.Set;
 import java.util.Spliterator;
 import java.util.Spliterators;
-import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.stream.IntStream;
 import java.util.stream.StreamSupport;
@@ -36,9 +33,8 @@ import org.jspecify.annotations.Nullable;
  * that is smaller than words over their span, words otherwise. An insertion may move the set from the array to
  * words; nothing moves it back but {@link #optimize()}, so removing never changes the representation.
  */
-// The concrete types are the point: an operand of this class or the immutable one is where the fast paths are.
-@SuppressWarnings({"PMD.LooseCoupling", "ObjectEquality", "VariableNotUsedInsideIf"})
-final class MutableNatSetImpl extends AbstractSet<Integer> implements MutableNatSet {
+@SuppressWarnings({"ObjectEquality", "VariableNotUsedInsideIf"})
+final class MutableNatSetImpl implements MutableNatSet {
     private static final int WORD_SHIFT = NatSetUtil.WORD_SHIFT;
     private static final int MAX_ARRAY_SIZE = NatSetUtil.MAX_ARRAY_SIZE;
     private static final int[] NO_ELEMENTS = new int[0];
@@ -128,8 +124,8 @@ final class MutableNatSetImpl extends AbstractSet<Integer> implements MutableNat
     }
 
     static MutableNatSetImpl copyOf(Collection<Integer> elements) {
-        if (elements instanceof NatSet) {
-            return copyOf((NatSet) elements);
+        if (elements instanceof BoxedNatSet) {
+            return copyOf(((BoxedNatSet) elements).set());
         }
         int[] array = new int[elements.size()];
         int index = 0;
@@ -207,17 +203,6 @@ final class MutableNatSetImpl extends AbstractSet<Integer> implements MutableNat
     }
 
     @Override
-    public boolean contains(Object o) {
-        return o instanceof Integer && contains((int) (Integer) o);
-    }
-
-    @Override
-    public boolean get(int index) {
-        NatSetUtil.checkIndex(index);
-        return contains(index);
-    }
-
-    @Override
     public int size() {
         return size;
     }
@@ -252,14 +237,14 @@ final class MutableNatSetImpl extends AbstractSet<Integer> implements MutableNat
 
     @Override
     public int nextSetBit(int from) {
-        NatSetUtil.checkIndex(from);
+        assert from >= 0 : from;
         long[] current = words;
         return current == null ? NatSetUtil.arrayNext(elements, size, from) : NatSetUtil.wordsNext(current, from);
     }
 
     @Override
     public int previousSetBit(int from) {
-        NatSetUtil.checkPrevious(from);
+        assert from >= -1 : from;
         if (from < 0) {
             return -1;
         }
@@ -271,7 +256,7 @@ final class MutableNatSetImpl extends AbstractSet<Integer> implements MutableNat
 
     @Override
     public int nextClearBit(int from) {
-        NatSetUtil.checkIndex(from);
+        assert from >= 0 : from;
         long[] current = words;
         return current == null
                 ? NatSetUtil.arrayNextClear(elements, size, from)
@@ -308,40 +293,9 @@ final class MutableNatSetImpl extends AbstractSet<Integer> implements MutableNat
     }
 
     @Override
-    public void forEach(Consumer<? super Integer> action) {
-        forEach((IntConsumer) action::accept);
-    }
-
-    @Override
     public PrimitiveIterator.OfInt iterator() {
-        return new PrimitiveIterator.OfInt() {
-            private int next = nextSetBit(0);
-            private int current = -1;
-
-            @Override
-            public boolean hasNext() {
-                return next >= 0;
-            }
-
-            @Override
-            public int nextInt() {
-                if (next < 0) {
-                    throw new NoSuchElementException();
-                }
-                current = next;
-                next = nextSetBit(current + 1);
-                return current;
-            }
-
-            @Override
-            public void remove() {
-                if (current < 0) {
-                    throw new IllegalStateException();
-                }
-                clear(current);
-                current = -1;
-            }
-        };
+        long[] current = words;
+        return current == null ? new NatSetUtil.ArrayIterator(elements, size) : new NatSetUtil.WordsIterator(current);
     }
 
     @Override
@@ -367,7 +321,7 @@ final class MutableNatSetImpl extends AbstractSet<Integer> implements MutableNat
 
     @Override
     public void set(int index) {
-        NatSetUtil.checkIndex(index);
+        assert index >= 0 : index;
         long[] current = words;
         if (current == null) {
             int position = indexAtLeast(index);
@@ -412,7 +366,7 @@ final class MutableNatSetImpl extends AbstractSet<Integer> implements MutableNat
 
     @Override
     public void clear(int index) {
-        NatSetUtil.checkIndex(index);
+        assert index >= 0 : index;
         long[] current = words;
         if (current == null) {
             int position = indexAtLeast(index);
@@ -446,7 +400,7 @@ final class MutableNatSetImpl extends AbstractSet<Integer> implements MutableNat
 
     @Override
     public void set(int from, int to) {
-        NatSetUtil.checkRange(from, to);
+        assert 0 <= from && from <= to : from + ", " + to;
         if (from == to) {
             return;
         }
@@ -486,7 +440,7 @@ final class MutableNatSetImpl extends AbstractSet<Integer> implements MutableNat
 
     @Override
     public void clear(int from, int to) {
-        NatSetUtil.checkRange(from, to);
+        assert 0 <= from && from <= to : from + ", " + to;
         if (from == to) {
             return;
         }
@@ -535,7 +489,7 @@ final class MutableNatSetImpl extends AbstractSet<Integer> implements MutableNat
 
     @Override
     public void flip(int from, int to) {
-        NatSetUtil.checkRange(from, to);
+        assert 0 <= from && from <= to : from + ", " + to;
         if (from == to) {
             return;
         }
@@ -705,7 +659,7 @@ final class MutableNatSetImpl extends AbstractSet<Integer> implements MutableNat
 
     @Override
     public Set<Integer> boxed() {
-        return this;
+        return new BoxedNatSet(this);
     }
 
     @Override
@@ -725,26 +679,6 @@ final class MutableNatSetImpl extends AbstractSet<Integer> implements MutableNat
             target.or(BitSet.valueOf(current));
         }
         return target;
-    }
-
-    // Set
-
-    @Override
-    public boolean add(Integer element) {
-        if (contains((int) element)) {
-            return false;
-        }
-        set(element);
-        return true;
-    }
-
-    @Override
-    public boolean remove(Object o) {
-        if (!contains(o)) {
-            return false;
-        }
-        clear((Integer) o);
-        return true;
     }
 
     @Override

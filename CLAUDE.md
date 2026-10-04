@@ -268,19 +268,21 @@ Collections independent of decision diagrams, public for users too; nothing here
   a view). What `NatSet`'s factories and operations return never changes and is shared, not copied (`copyOf` of
   such a set is the set itself; `union` and friends may return an operand that never changes); a
   `MutableNatSet` is the holder's own - what a method returning a copy returns, and what `MutableNatSet.copyOf` makes.
-  Equality, hash code and `toString` are `Set<Integer>`'s; `NatSet.ORDER` orders by size, then
-  lexicographically. `MutableNatSet` has `java.util.BitSet`'s mutators under their names and exceptions. Not yet
-  used by the core; `docs/natset-draft.md` is the plan for that.
+  A set equals any `NatSet` of the same elements and nothing else; its hash code mixes its non-zero words with
+  their indices (murmur3's finalizer), built on the fly in array mode, so both classes and representations
+  agree - `Set`'s sum of the elements would put all subsets of `[0, 21)` into 211 buckets. `toString` is
+  `Set`'s; `NatSet.ORDER` orders by size, then lexicographically. `MutableNatSet` has `java.util.BitSet`'s
+  mutators under their names; arguments are checked by assertion only. Not yet used by the core; `docs/natset-draft.md` is the plan for that.
 - **Two implementation classes, never more**, so a call site stays at most bimorphic: `ImmutableNatSet` (an
   exact ascending array or words, whichever is smaller, in one `final` `Object` field told apart by `instanceof` -
   24 bytes rather than 32 for two typed fields; its hash code computed once; the empty set and the singletons
   below 128 shared) and `MutableNatSetImpl` (at most 16 elements as a sorted `int[]` where
   that is smaller than words over their span, words otherwise; an insertion may move it to words, only
-  `optimize()` moves it back, so removing never changes the representation). Both extend `AbstractSet<Integer>`,
-  which is what makes `boxed()` `this`; the immutable one's `Set` mutators always throw. The read algorithms
-  over either store are static functions in `NatSetUtil`, shared by both. There is no primitive iterator:
+  `optimize()` moves it back, so removing never changes the representation). Neither class is a `Set`: `boxed()`
+  wraps the set in a `BoxedNatSet`, with `Set`'s equality and hash code, whose mutators always throw over an
+  immutable set. The read algorithms over either store are static functions in `NatSetUtil`, shared by both.
   `forEach` is the fast path (over words it samples the first 1024 bits and then walks run by run or bit by bit,
-  as naturals-util does), a `nextSetBit` loop the one that stops early.
+  as naturals-util does), the primitive `iterator()` the walk that stops early.
 - `Cube`, `BitSets` (helpers around `java.util.BitSet`), `IntIntHashMap` / `IntObjectHashMap`.
 
 ### Navigation: types that are not in a file of their own
