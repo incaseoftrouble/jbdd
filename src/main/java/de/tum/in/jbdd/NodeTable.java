@@ -81,9 +81,11 @@ public abstract class NodeTable {
 
     /* Approximation of dead node count. */
     private int approximateDeadNodeCount = 0;
-    /* Tracks the index of the last node which is referenced. Invariants on this variable:
-     * biggestReferencedNode <= biggestValidNode and if a node has positive reference count, its
-     * index is less than or equal to biggestReferencedNode. */
+    /* An upper bound on the referenced nodes: biggestReferencedNode <= biggestValidNode, and a node with a
+     * positive reference count has an index of at most biggestReferencedNode. Exact after every sweep, which
+     * passes every node anyway, and lax in between: letting go of the topmost referenced node does not search
+     * for the next one below, which cost as many slot visits as lay between the two - the whole table, for a
+     * fresh result referenced over a few operations and released again. */
     private int biggestReferencedNode;
     /* Keep track of the last used node to terminate some loops early. The invariant is that if a node
      * is valid, then the node index is less than or equal to biggestValidNode. */
@@ -711,14 +713,6 @@ public abstract class NodeTable {
             // this node was the only one keeping its children "alive" - similarly, this node could be
             // kept alive by other nodes "above" it.
             approximateDeadNodeCount++;
-            if (node == biggestReferencedNode) {
-                // Update biggestReferencedNode: the next referenced node below, PLACEHOLDER if there is none
-                int below = node - 1;
-                while (below >= FIRST_NODE && !dataIsReferencedOrSaturated(nodeData[below])) {
-                    below -= 1;
-                }
-                biggestReferencedNode = below >= FIRST_NODE ? below : PLACEHOLDER;
-            }
         }
         nodeData[node] = dataDecreaseReferenceCount(metadata);
         if (reorderBookkeeping && isUnreached(node)) {
@@ -1049,6 +1043,7 @@ public abstract class NodeTable {
                 int[] nodeData = this.nodeData;
                 int invalidatedCount = 0;
                 approximateDeadNodeCount = 0;
+                biggestReferencedNode = PLACEHOLDER;
                 sweptNodeCount += biggestValidNode;
                 for (int node = biggestValidNode; node >= FIRST_NODE; node--) {
                     int metadata = nodeData[node];
@@ -1062,6 +1057,9 @@ public abstract class NodeTable {
                         nodeData[node] = dataMakeInvalid();
                     } else {
                         nodeData[node] = unmarkedData;
+                        if (biggestReferencedNode == PLACEHOLDER && dataIsReferencedOrSaturated(unmarkedData)) {
+                            biggestReferencedNode = node;
+                        }
                     }
                 }
                 /* Same argument as in reclaimUnmarkedNodes: the nodes dropped here are exactly the ones the parent
@@ -1275,7 +1273,6 @@ public abstract class NodeTable {
         long startTimestamp = System.currentTimeMillis();
 
         int biggestValidNode = this.biggestValidNode;
-        int[] nodeData = this.nodeData;
         int[] hashChain = this.hashChain;
 
         /* Clear the chain starts - they are rebuilt below, in one sequential sweep together with the free
@@ -1297,7 +1294,9 @@ public abstract class NodeTable {
             firstFreeNode = i;
         }
 
+        int[] nodeData = this.nodeData;
         int referencedNodes = 0;
+        int biggestReferencedNode = PLACEHOLDER;
         // Rebuild hash chain for valid nodes, connect invalid nodes into the free chain
         // We need to rebuild the chain for unused nodes first as a smaller, unused node might be part
         // of a chain containing bigger nodes which are in use.
@@ -1317,9 +1316,13 @@ public abstract class NodeTable {
                 referencedNodes += 1;
                 nodeData[node] = unmarkedData;
                 linkHashList(node, modHash(positiveHash(node, unmarkedData)));
+                if (biggestReferencedNode == PLACEHOLDER && dataIsReferencedOrSaturated(unmarkedData)) {
+                    biggestReferencedNode = node;
+                }
             }
         }
 
+        this.biggestReferencedNode = biggestReferencedNode;
         this.biggestValidNode = biggestValidNode;
         this.firstFreeNode = firstFreeNode;
         this.freeNodeCount = (size() - FIRST_NODE) - referencedNodes;
@@ -1612,10 +1615,10 @@ public abstract class NodeTable {
             checkState(!dataIsValid(nodeData[i]), "Node (%s) is valid", pointerToStringSupplier(i));
         }
 
-        // Check biggestReferencedNode variable (PLACEHOLDER means "nothing is referenced", see above)
+        // Check biggestReferencedNode, a bound: the node there is valid, nothing above it is referenced
         checkState(
-                biggestReferencedNode == PLACEHOLDER || dataIsReferencedOrSaturated(nodeData[biggestReferencedNode]),
-                "Node (%s) is not referenced",
+                biggestReferencedNode == PLACEHOLDER || dataIsValid(nodeData[biggestReferencedNode]),
+                "Node (%s) is not valid",
                 pointerToStringSupplier(biggestReferencedNode));
         for (int i = biggestReferencedNode + 1; i < size(); i++) {
             checkState(

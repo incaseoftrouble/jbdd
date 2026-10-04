@@ -432,6 +432,13 @@ Three load-bearing properties:
   *before* choosing between reclaiming and the futile path, since the futile path's invalidation is valid only
   right before `grow()`.
 
+`biggestReferencedNode` is an upper bound, exact after every sweep (both sweeps pass every node and record
+the topmost referenced one) and lax in between: a dereference never searches downwards for the next
+referenced node, which cost as many slot visits as lay between the two - the whole table, for a fresh result
+referenced over a few operations and released again (measured at 300 µs per reference/dereference pair
+with a million dead slots below it). It bounds the loops over referenced nodes: `markAllReferencedNodes` (every
+collection), `referencedNodeCount()` (and so the statistics) and `check()`.
+
 `invalidateUnmarkedNodes()` deliberately does *not* fix the free list or counts — it is valid only
 immediately before `grow()`, which rebuilds both. It does reset the dead-node counter (like
 `reclaimUnmarkedNodes()` it removes every dead node) and drops the reordering bookkeeping, since the
