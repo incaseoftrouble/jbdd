@@ -42,7 +42,7 @@ asking for clarification over guessing.**
 ./gradlew test --tests 'de.tum.in.jbdd.RegressionTests'    # quick loop
 ./gradlew compileJava compileTestJava -q                   # quickest check
 ./gradlew spotlessApply    # palantir-java-format, 120 cols; pre-commit hook runs spotlessCheck
-./gradlew jmhRandom | jmhSynthetic | jmhDimacs | jmhEnumeration | jmhNary | jmh
+./gradlew jmhRandom | jmhSynthetic | jmhDimacs | jmhEnumeration | jmhNary | jmhNatSet | jmh
 ```
 
 Gotchas that have cost real time:
@@ -1158,7 +1158,12 @@ intuitions transfer badly. Two habits follow:
 `src/jmh/java/...`, JMH, DIMACS instances in `src/jmh/resources`. Performance claims in comments and the
 changelog are expected to be backed by these; **measure before tuning a constant.** `RandomBenchmark`,
 `SyntheticBenchmark`, `SyntheticSetBenchmark`, `DimacsBenchmark`, `EnumerationBenchmark`,
-`HashSchemeBenchmark`, `NaryBenchmark`.
+`HashSchemeBenchmark`, `NaryBenchmark`, `NatSetBenchmark`.
+
+`NatSetBenchmark` sits in `collections` and times each operation over a pool of 1024 random sets of one shape
+(singletons, tiny sets, 2 to 32 elements below 64, sparse ones below 4096), so a time is per set, over sets
+that differ. The representation (`NatSetUtil.MAX_ARRAY_SIZE`, `WORD_COST`) is fixed; the layouts it was chosen
+against were measured once and are recorded in §3.
 
 ## 14. Where the sharp edges are
 
