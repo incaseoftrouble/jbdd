@@ -562,8 +562,8 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
     }
 
     @Override
-    public Map<String, Object> statistics() {
-        return mt.statistics();
+    public Map<String, Object> statistics(StatisticsDetail detail) {
+        return mt.statistics(detail);
     }
 
     @Override

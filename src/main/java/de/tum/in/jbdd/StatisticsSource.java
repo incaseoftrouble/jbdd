@@ -19,11 +19,17 @@ package de.tum.in.jbdd;
 import java.util.Map;
 
 /**
- * Reports the statistics of one structure. Not the public way to ask - that is {@link DdContext} for a
- * BDD/MTBDD pair and {@link Mdd} for an MDD, both of which report a complete key space. This is what those
- * are assembled from.
+ * Reports statistics of an object. The keys may change between versions; the values are numbers.
  */
 @FunctionalInterface
-interface StatisticsSource {
-    Map<String, Object> statistics();
+public interface StatisticsSource {
+    /**
+     * A snapshot of the statistics, read to the given {@code detail}.
+     */
+    Map<String, Object> statistics(StatisticsDetail detail);
+
+    /** {@link #statistics(StatisticsDetail)} in {@link StatisticsDetail#FULL full}. */
+    default Map<String, Object> statistics() {
+        return statistics(StatisticsDetail.FULL);
+    }
 }

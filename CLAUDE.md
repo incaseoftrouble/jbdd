@@ -208,12 +208,17 @@ Entry points — never `new BddImpl(...)` outside tests:
   `variableOrder()`), the two `createVariable*AtLevel` forms, and **the** `statistics()`: both diagrams,
   their tables and caches, and the order, in one map. It is the only public accessor over a pair — neither
   `Bdd` nor `MtBdd` reports its own, since a partial view of one key space is what made the numbers hard to
-  find. Internally each contributor implements the package-private `StatisticsSource` (the two tables prefix
-  their keys `bdd_`/`mtbdd_` through `statisticsPrefix()`, so the spaces stay disjoint and the merge loses
-  nothing), and the rest of the machinery — `formatStatistics`, `prefixStatistics` (by the configuration's
-  `name()`) — sits in `Util`. `Mdd` keeps an accessor of its own: it is its own variable universe, with no
-  context above it. JBDD reports nothing on its own at shutdown: a client wanting the statistics of a run that
-  is being stopped reads `statistics()` from a shutdown hook of its own and writes them wherever it likes
+  find. The accessor is the public `StatisticsSource`, which `DdContext` and `Mdd` extend; each contributor
+  implements it too (the two tables prefix their keys `bdd_`/`mtbdd_` through `statisticsPrefix()`, so the
+  spaces stay disjoint and the merge loses nothing). `Statistics` holds the public `formatStatistics` and the
+  package-private `prefixStatistics` (by the configuration's `name()`). `Mdd` keeps an accessor of its own: it
+  is its own variable universe, with no context above it. `statistics(StatisticsDetail)` reads to a detail: `COUNTERS` are the fields the
+  structures keep as they run (no pass, no write, no access guard - the one level another thread may read,
+  best effort), `FULL` (what `statistics()` reads) adds a read-only pass over each table (valid, referenced
+  and saturated nodes, the nodes below the referenced ones, counted with a visited `NatSet` of its own, never
+  the mark bits; the hash chains). JBDD reports nothing on its own at shutdown: a client wanting the
+  statistics of a run that is being stopped reads `statistics(COUNTERS)` from a shutdown hook of its own and
+  writes them wherever it likes
   (logging from a hook is unreliable - `java.util.logging` resets its handlers in a hook of its own). Creating a variable is the context's
   because it is about the *universe*, and it hands back a **BDD** function whichever diagram the caller came
   from.

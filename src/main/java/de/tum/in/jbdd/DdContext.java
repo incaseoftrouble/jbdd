@@ -16,12 +16,10 @@
  */
 package de.tum.in.jbdd;
 
-import java.util.Map;
-
 /**
- * A {@link Bdd} and the {@link MtBdd} over it.
+ * A {@link Bdd} and the {@link MtBdd} over it. Its statistics cover both diagrams and the order they share.
  */
-public interface DdContext {
+public interface DdContext extends StatisticsSource {
     static DdContext create() {
         return create(ImmutableBddConfiguration.builder().build());
     }
@@ -65,18 +63,4 @@ public interface DdContext {
      * @return The {@link #bdd()} functions representing the new variables, top to bottom.
      */
     int[] createVariablesAtLevel(int level, int count);
-
-    /**
-     * A snapshot of the statistics of both diagrams, their tables and caches, and the order they share.
-     * The content may change between versions; the values are primitives.
-     */
-    Map<String, Object> statistics();
-
-    /**
-     * Renders a statistics map - this one's, or an {@link Mdd}'s - as sorted {@code key=value} lines,
-     * which is what one is read as.
-     */
-    static String formatStatistics(Map<String, Object> statistics) {
-        return Util.formatStatistics(statistics);
-    }
 }

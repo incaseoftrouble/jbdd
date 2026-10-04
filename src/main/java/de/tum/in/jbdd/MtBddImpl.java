@@ -2499,14 +2499,16 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     }
 
     @Override
-    public Map<String, Object> statistics() {
-        assert accessGuard.acquire();
-        Map<String, Object> statistics = new HashMap<>(table.statistics("mtbdd_"));
+    public Map<String, Object> statistics(StatisticsDetail detail) {
+        // COUNTERS may be read from another thread, which the access guard would take for a second user.
+        boolean guarded = detail == StatisticsDetail.FULL;
+        assert !guarded || accessGuard.acquire();
+        Map<String, Object> statistics = new HashMap<>(table.statistics("mtbdd_", detail));
         statistics.putAll(cache.statistics());
         statistics.put("mtbdd_allocated_values", allocatedValues.size());
         statistics.put("mtbdd_value_triggered_collections", valueTriggeredCollectionCount);
-        assert accessGuard.release();
-        return Util.prefixStatistics(bdd.configuration().name(), statistics);
+        assert !guarded || accessGuard.release();
+        return Statistics.prefixStatistics(bdd.configuration().name(), statistics);
     }
 
     /**

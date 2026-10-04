@@ -415,6 +415,38 @@ class RegressionTests {
     }
 
     @Test
+    void testStatisticsDetailAndTheirPassLeavesMarksAlone() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BddSetFactory sets = ctx.bddSets();
+        List<BddSet> held = new ArrayList<>();
+        for (int i = 0; i < 64; i++) {
+            held.add(cube(sets, i).union(cube(sets, 3 * i + 1)));
+        }
+        Map<String, Object> full = ctx.statistics();
+        Map<String, Object> counters = ctx.statistics(StatisticsDetail.COUNTERS);
+        assertTrue(full.keySet().containsAll(counters.keySet()));
+        assertTrue(full.keySet().stream().anyMatch(key -> key.endsWith("children_count")));
+        assertTrue(counters.keySet().stream()
+                .noneMatch(key -> key.endsWith("children_count")
+                        || key.endsWith("valid_nodes")
+                        || key.endsWith("hash_table_longest_chain")));
+
+        // The full pass counts with a visited set of its own: marks set by someone else stay as they are and do not
+        // change what it counts.
+        BddImpl bdd = (BddImpl) ctx.bdd();
+        int node = bdd.table().nodeFor(((GcReferenceManager.DdContainer) held.get(0)).function());
+        bdd.table().markAllBelowNode(node, true);
+        Map<String, Object> marked = ctx.statistics();
+        assertTrue(bdd.table().isAllMarkedBelowNode(node));
+        bdd.table().unMarkAllBelowNode(node, true);
+        assertTrue(bdd.table().isNoneMarked());
+        full.keySet().stream()
+                .filter(key -> key.endsWith("children_count") || key.endsWith("referenced_nodes"))
+                .forEach(key -> assertEquals(full.get(key), marked.get(key), key));
+        assertEquals(64, held.size());
+    }
+
+    @Test
     void testWrapperTableStaysCanonicalThroughCollections() throws InterruptedException {
         // Enough wrappers to grow the table several times, half of them collected, so lookups probe across the
         // holes the backward-shift deletion closes - and a function and its complement are separate keys.

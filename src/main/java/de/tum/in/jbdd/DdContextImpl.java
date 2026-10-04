@@ -27,7 +27,7 @@ import java.util.Map;
  * those variables are laid out in is {@link DdVariableOrderImpl}'s; everything that moves it lives there.
  */
 @SuppressWarnings("AssertWithSideEffects")
-public final class DdContextImpl implements DdContext, StatisticsSource {
+public final class DdContextImpl implements DdContext {
     private final BddConfiguration configuration;
     private final DdVariableOrderImpl order;
     private final BddImpl bdd;
@@ -150,9 +150,9 @@ public final class DdContextImpl implements DdContext, StatisticsSource {
     }
 
     @Override
-    public Map<String, Object> statistics() {
-        Map<String, Object> statistics = new HashMap<>(bdd.statistics());
-        Map<String, Object> mtbddStatistics = mtbdd.statistics();
+    public Map<String, Object> statistics(StatisticsDetail detail) {
+        Map<String, Object> statistics = new HashMap<>(bdd.statistics(detail));
+        Map<String, Object> mtbddStatistics = mtbdd.statistics(detail);
         assert mtbddStatistics.keySet().stream().noneMatch(statistics::containsKey)
                 : "The two diagrams report overlapping statistics";
         statistics.putAll(mtbddStatistics);

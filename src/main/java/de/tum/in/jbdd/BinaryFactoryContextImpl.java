@@ -57,8 +57,8 @@ final class BinaryFactoryContextImpl implements BinaryFactoryContext {
     }
 
     @Override
-    public Map<String, Object> statistics() {
-        Map<String, Object> statistics = new HashMap<>(context.statistics());
+    public Map<String, Object> statistics(StatisticsDetail detail) {
+        Map<String, Object> statistics = new HashMap<>(context.statistics(detail));
         statistics.putAll(bddSets.wrapperStatistics("set_"));
         statistics.putAll(bddMaps.wrapperStatistics("map_"));
         return Map.copyOf(statistics);

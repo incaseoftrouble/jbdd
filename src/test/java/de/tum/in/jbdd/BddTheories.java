@@ -336,7 +336,7 @@ class BddTheories {
     @AfterAll
     static void statistics() {
         for (BinaryDd bdd : infoMap.keySet()) {
-            logger.log(Level.INFO, Util.formatStatistics(((StatisticsSource) bdd).statistics()));
+            logger.log(Level.INFO, Statistics.formatStatistics(((StatisticsSource) bdd).statistics()));
         }
     }
 

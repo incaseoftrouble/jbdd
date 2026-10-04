@@ -21,7 +21,7 @@
   * `simplify`: (also called `constrain`) reduce a function `f` to a given domain `d`, i.e. preserve the values of `f` where `d` is true but otherwise do whatever - on `BddSet` and `BddMap` as well as on the int layer
   * `xyIn`: Perform operation `xy` relative to a given domain `d` (e.g.\ count satisfying assignments of `x` in `d`)
   * `xySimplify`: Perform `simplify(xy(...), g)`, but potentially much faster
-  * `DdContext.formatStatistics`: render a statistics map as sorted `key=value` lines; statistics values are numbers, not strings
+  * `Statistics.formatStatistics`: render a statistics map as sorted `key=value` lines; statistics values are numbers, not strings
   * `decisionVariable` / `high` / `low` on `BddSet` and `BddMap`: the Shannon decomposition, so a structural recursion needs no node access
   * `BddSet.restrict` and `BddSetFactory.ifThenElse`: the set-layer counterparts of the int-layer operations
   * `implicants` (`BddUtil` and `BddSet`) and its inverse `of(Cube)`: a cover of a function by cubes, each cube of a cofactor recording the decision variable only where it does not imply the other cofactor already - complement first for a CNF cover
@@ -49,6 +49,7 @@
 * MTBDD terminal reference counts are `short`s (saturating at 32767) rather than bytes
 * The n-ary MTBDD `apply` over two operands keeps the operator's neutral and absorbing values
 * Dereferencing the topmost referenced node no longer searches the table downwards for the next one
+* `StatisticsSource.statistics(StatisticsDetail)`, on `DdContext` and `Mdd`: `COUNTERS` reads only the fields kept as the diagrams run (no pass over a table, readable from another thread), `FULL` (`statistics()`) adds a pass over each table, which no longer uses the mark bits
 * Removed `BddConfiguration.logStatisticsOnShutdown()`: its output went through `java.util.logging`, whose own shutdown hook resets the handlers first, so nothing was ever printed - read `DdContext.statistics()` from a shutdown hook of your own instead
 * Packages: `Cube`, `Cursor`, `NatSets`, the maps and `NatSet` live in `de.tum.in.jbdd.collections`, `DimacsReader` in `de.tum.in.jbdd.io`; `Cube.ofUnsafe` checks its arguments by assertion only
   * `BddUtil`: what is computed from a `BinaryDecisionDiagram`'s public operations alone - `implicants`, `primeImplicants`, `shortestPath` and a generic `adopt` - as static methods rather than interface defaults

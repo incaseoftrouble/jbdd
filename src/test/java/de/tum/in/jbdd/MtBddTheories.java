@@ -343,7 +343,7 @@ class MtBddTheories {
     @AfterAll
     static void statistics() {
         for (Context context : contexts) {
-            logger.log(Level.INFO, Util.formatStatistics(context.ddContext.statistics()));
+            logger.log(Level.INFO, Statistics.formatStatistics(context.ddContext.statistics()));
         }
     }
 

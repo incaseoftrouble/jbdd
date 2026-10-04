@@ -49,7 +49,6 @@ import org.jspecify.annotations.Nullable;
     "AssertWithSideEffects"
 })
 public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
-
     /* The variable order and everything else the BDD shares with its MTBDD, reordering included. */
     private final DdContextImpl context;
     private final BooleanCache cache;

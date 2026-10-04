@@ -577,8 +577,8 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     }
 
     @Override
-    public Map<String, Object> statistics() {
-        return mdd.statistics();
+    public Map<String, Object> statistics(StatisticsDetail detail) {
+        return mdd.statistics(detail);
     }
 
     @Override

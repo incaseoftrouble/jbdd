@@ -39,7 +39,6 @@ import org.jspecify.annotations.Nullable;
     "AssertWithSideEffects"
 })
 public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
-
     private final BooleanCache cache;
     private int numberOfVariables;
     private int[] variableDomain;

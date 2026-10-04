@@ -24,6 +24,7 @@ import de.tum.in.jbdd.collections.NatSet;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.PrimitiveIterator;
@@ -1921,29 +1922,38 @@ public abstract class NodeTable {
         return createdNodes;
     }
 
-    public Map<String, Object> statistics(String prefix) {
+    public Map<String, Object> statistics(String prefix, StatisticsDetail detail) {
+        Map<String, Object> statistics = new HashMap<>(counterStatistics(prefix));
+        if (detail == StatisticsDetail.FULL) {
+            statistics.putAll(structureStatistics(prefix));
+        }
+        return statistics;
+    }
+
+    /*
+     * What only a pass over the table tells. It only reads: the nodes below the referenced ones are counted with a
+     * visited set of their own, not the mark bits, which a collection or a walk may be using.
+     */
+    private Map<String, Object> structureStatistics(String prefix) {
         int childrenCount = 0;
         int saturatedNodes = 0;
         int referencedNodes = 0;
         int validNodes = 0;
-
+        MutableNatSet below = MutableNatSet.create();
+        IntArrayList pending = new IntArrayList();
         for (int node = 0; node < size(); node++) {
             int metadata = nodeData[node];
             if (dataIsValid(metadata)) {
                 validNodes += 1;
                 if (dataIsReferencedOrSaturated(metadata)) {
                     referencedNodes += 1;
-                    childrenCount += markAllBelowNode(node, true);
-
+                    childrenCount += countUnvisitedBelow(node, below, pending);
                     if (dataIsSaturated(metadata)) {
                         saturatedNodes += 1;
                     }
                 }
             }
         }
-
-        unMarkAll();
-
         int[] chainLength = new int[size()];
         Deque<Integer> path = new ArrayDeque<>();
         int distinctChains = 0;
@@ -1990,9 +2000,6 @@ public abstract class NodeTable {
         }
 
         return Map.ofEntries(
-                entry(prefix + "node_table_size", size()),
-                entry(prefix + "biggest_referenced_node", biggestReferencedNode),
-                entry(prefix + "created_nodes", createdNodes),
                 entry(prefix + "valid_nodes", validNodes),
                 entry(prefix + "referenced_nodes", referencedNodes),
                 entry(prefix + "saturated_nodes", saturatedNodes),
@@ -2000,7 +2007,31 @@ public abstract class NodeTable {
                 entry(prefix + "hash_table_load_factor", chainLengthSum * 1.0 / size()),
                 entry(prefix + "hash_table_distinct_chains", distinctChains),
                 entry(prefix + "hash_table_average_chain_length", Util.ratio(chainLengthSum, distinctChains)),
-                entry(prefix + "hash_table_longest_chain", maximumChainLength),
+                entry(prefix + "hash_table_longest_chain", maximumChainLength));
+    }
+
+    /** The decision nodes at and below root not in visited yet, which it adds to visited. */
+    private int countUnvisitedBelow(int root, MutableNatSet visited, IntArrayList pending) {
+        int count = 0;
+        pending.add(root);
+        while (pending.size() > 0) {
+            // a child may be a complemented reference
+            int node = nodeFor(pending.removeLast());
+            if (isLeafNode(node) || visited.contains(node)) {
+                continue;
+            }
+            visited.set(node);
+            count += 1;
+            forEachChild(node, pending::add);
+        }
+        return count;
+    }
+
+    private Map<String, Object> counterStatistics(String prefix) {
+        return Map.ofEntries(
+                entry(prefix + "node_table_size", size()),
+                entry(prefix + "biggest_referenced_node", biggestReferencedNode),
+                entry(prefix + "created_nodes", createdNodes),
                 entry(prefix + "hash_table_lookups", hashChainLookups),
                 entry(prefix + "hash_table_lookup_average_length", Util.ratio(hashChainLookupLength, hashChainLookups)),
                 entry(prefix + "node_table_gc_count", garbageCollectionCount),

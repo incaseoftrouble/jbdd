@@ -40,4 +40,11 @@ final class IntArrayList {
     int size() {
         return size;
     }
+
+    /** Removes the last value and returns it; the list must not be empty. */
+    int removeLast() {
+        assert size > 0;
+        size -= 1;
+        return values[size];
+    }
 }

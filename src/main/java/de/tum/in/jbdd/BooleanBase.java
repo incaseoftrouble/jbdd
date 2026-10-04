@@ -78,16 +78,18 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
     abstract String statisticsPrefix();
 
     @Override
-    public Map<String, Object> statistics() {
-        assert accessGuard.acquire();
+    public Map<String, Object> statistics(StatisticsDetail detail) {
+        // COUNTERS may be read from another thread, which the access guard would take for a second user.
+        boolean guarded = detail == StatisticsDetail.FULL;
+        assert !guarded || accessGuard.acquire();
         Map<String, Object> statistics = Stream.of(
-                        table().statistics(statisticsPrefix()).entrySet().stream(),
+                        table().statistics(statisticsPrefix(), detail).entrySet().stream(),
                         cache().statistics().entrySet().stream(),
                         ownStatistics().entrySet().stream())
                 .flatMap(stream -> stream)
                 .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
-        assert accessGuard.release();
-        return Util.prefixStatistics(configuration().name(), statistics);
+        assert !guarded || accessGuard.release();
+        return Statistics.prefixStatistics(configuration().name(), statistics);
     }
 
     /** Whatever the concrete diagram wants to report beyond its table's and its caches'. */
