@@ -268,7 +268,8 @@ final class MutableNatSetImpl implements MutableNatSet {
 
     @Override
     public int last() {
-        return length() - 1;
+        // wraps back to Integer.MAX_VALUE for a set containing it
+        return unboundedLength() - 1;
     }
 
     @Override
@@ -301,11 +302,15 @@ final class MutableNatSetImpl implements MutableNatSet {
 
     @Override
     public int length() {
+        int length = unboundedLength();
+        assert length >= 0 : "contains Integer.MAX_VALUE";
+        return length;
+    }
+
+    // length(), Integer.MIN_VALUE for a set containing Integer.MAX_VALUE
+    private int unboundedLength() {
         long[] current = words;
-        if (current == null) {
-            return size == 0 ? 0 : elements[size - 1] + 1;
-        }
-        return NatSetUtil.wordsLength(current);
+        return current == null ? (size == 0 ? 0 : elements[size - 1] + 1) : NatSetUtil.wordsLength(current);
     }
 
     @Override

@@ -132,7 +132,10 @@ public interface NatSet {
      */
     int nextClearBit(int from);
 
-    /** One more than the largest element, {@code 0} if empty - as {@link BitSet#length()}. */
+    /**
+     * One more than the largest element, {@code 0} if empty - as {@link BitSet#length()}. A set containing
+     * {@link Integer#MAX_VALUE} has no such length.
+     */
     int length();
 
     /**

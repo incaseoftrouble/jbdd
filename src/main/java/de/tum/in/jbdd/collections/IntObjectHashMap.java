@@ -28,7 +28,8 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * A hash map from {@code int} to non-null objects that boxes no key: open addressing with linear probing over two
- * arrays. Meant for memos keyed by functions or nodes. Every {@code int} is a valid key. Not thread-safe.
+ * arrays. Meant for memos keyed by functions or nodes. Every {@code int} but {@link Integer#MIN_VALUE}, which marks a
+ * free slot, is a valid key. Not thread-safe.
  *
  * @param <V> the type of the values
  */

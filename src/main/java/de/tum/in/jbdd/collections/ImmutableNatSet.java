@@ -241,7 +241,8 @@ final class ImmutableNatSet implements NatSet {
 
     @Override
     public int last() {
-        return length() - 1;
+        // wraps back to Integer.MAX_VALUE for a set containing it
+        return unboundedLength() - 1;
     }
 
     @Override
@@ -285,6 +286,13 @@ final class ImmutableNatSet implements NatSet {
 
     @Override
     public int length() {
+        int length = unboundedLength();
+        assert length >= 0 : "contains Integer.MAX_VALUE";
+        return length;
+    }
+
+    // length(), Integer.MIN_VALUE for a set containing Integer.MAX_VALUE
+    private int unboundedLength() {
         int[] array = elements();
         if (array != null) {
             return size == 0 ? 0 : array[size - 1] + 1;
