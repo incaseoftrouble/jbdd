@@ -24,7 +24,7 @@ import java.util.function.Consumer;
  * <p>The shape is
  *
  * <pre>{@code
- * for (Cursor<BitSet> cursor = bdd.solutionCursor(function); cursor.valid(); cursor.advance()) {
+ * for (Cursor<NatSet> cursor = bdd.solutionCursor(function); cursor.valid(); cursor.advance()) {
  *     use(cursor.current());
  * }
  * }</pre>

@@ -19,12 +19,14 @@ package de.tum.in.jbdd;
 import static de.tum.in.jbdd.BooleanBase.EMPTY_INT_ARRAY;
 import static de.tum.in.jbdd.Preconditions.checkState;
 
-import de.tum.in.jbdd.collections.BitSets;
 import de.tum.in.jbdd.collections.Cube;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
+import de.tum.in.jbdd.collections.NatSets;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.List;
 import java.util.Map;
+import java.util.PrimitiveIterator;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -141,16 +143,16 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
     }
 
     Cube literalsBelow(Cube cube, int level) {
-        BitSet support = cube.supportUnsafe();
-        if (BitSets.allMatch(support, variable -> variable > level)) {
+        NatSet support = cube.support();
+        if (support.allMatch(variable -> variable > level)) {
             return cube;
         }
-        BitSet remainingSupport = new BitSet();
-        BitSet remainingAssignment = new BitSet();
-        BitSets.forEach(support, variable -> {
+        MutableNatSet remainingSupport = MutableNatSet.create();
+        MutableNatSet remainingAssignment = MutableNatSet.create();
+        support.forEach(variable -> {
             if (levelOfVariable(variable) > level) {
                 remainingSupport.set(variable);
-                remainingAssignment.set(variable, cube.assignmentUnsafe().get(variable));
+                remainingAssignment.set(variable, cube.assignment().contains(variable));
             }
         });
         return Cube.ofUnsafe(remainingAssignment, remainingSupport);
@@ -272,7 +274,7 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
         mtbdd().table().endReorderingStatistics();
 
         int[] current = currentVariableToLevel();
-        BitSet movedVariables = new BitSet(numberOfVariables);
+        MutableNatSet movedVariables = MutableNatSet.dense(numberOfVariables);
         for (int variable = 0; variable < numberOfVariables; variable++) {
             if (previous[variable] != current[variable]) {
                 movedVariables.set(variable);
@@ -289,7 +291,7 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
         observers.dispatch(observer -> observer.orderChanged(previous, current, movedVariables));
         assert Arrays.equals(previous, previousCopy)
                         && Arrays.equals(current, currentCopy)
-                        && movedVariables.stream().allMatch(variable -> previous[variable] != current[variable])
+                        && movedVariables.intStream().allMatch(variable -> previous[variable] != current[variable])
                 : "A listener modified what it was told about the order";
     }
 
@@ -400,7 +402,7 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
      * <p>Blocks must not overlap, but the given list can be a subset of all variables.</p>
      */
     @Override
-    public void reorderTo(List<BitSet> blocks) {
+    public void reorderTo(List<NatSet> blocks) {
         if (numberOfVariables < 2) {
             return;
         }
@@ -408,21 +410,23 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
         assert bdd().table().workStacksEmpty() && mtbdd().table().workStacksEmpty();
         beginReordering();
 
-        BitSet listed = new BitSet(numberOfVariables);
+        MutableNatSet listed = MutableNatSet.dense(numberOfVariables);
         long[] keyed = new long[numberOfVariables];
         int index = 0;
         int nextFreeStart = 0;
 
         // Create a heuristic order of the blocks
-        for (BitSet block : blocks) {
+        for (NatSet block : blocks) {
             checkState(!block.intersects(listed), "Reordering blocks overlap");
-            int size = block.cardinality();
+            int size = block.size();
             if (size == 0) {
                 continue;
             }
             int[] levels = new int[size];
             int at = 0;
-            for (int variable = block.nextSetBit(0); variable >= 0; variable = block.nextSetBit(variable + 1)) {
+            PrimitiveIterator.OfInt iterator = block.iterator();
+            while (iterator.hasNext()) {
+                int variable = iterator.nextInt();
                 checkState(variable < numberOfVariables, "Unknown variable %s in a reordering block", variable);
                 levels[at] = levelOfVariable(variable);
                 at += 1;
@@ -444,7 +448,7 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
         }
         // All the other levels are sorted in between
         for (int level = 0; level < numberOfVariables; level++) {
-            if (!listed.get(variableAtLevel(level))) {
+            if (!listed.contains(variableAtLevel(level))) {
                 keyed[index] = ((2L * level + 1) << Integer.SIZE) | level;
                 index += 1;
             }
@@ -499,11 +503,11 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
         if (numberOfVariables < 2) {
             return 0;
         }
-        return reorder(List.of(BitSets.range(0, numberOfVariables)));
+        return reorder(List.of(NatSet.range(0, numberOfVariables)));
     }
 
     @Override
-    public int reorder(List<BitSet> groups) {
+    public int reorder(List<NatSet> groups) {
         if (numberOfVariables < 2) {
             return 0;
         }
@@ -527,21 +531,23 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
                     bdd.table().nodesWithVariable(variable) + mtbdd.table().nodesWithVariable(variable);
         }
 
-        for (BitSet group : groups) {
-            if (group.cardinality() < 2) {
+        for (NatSet group : groups) {
+            if (group.size() < 2) {
                 continue;
             }
             int minLevel = Integer.MAX_VALUE;
             int maxLevel = -1;
-            for (int variable = group.nextSetBit(0); variable >= 0; variable = group.nextSetBit(variable + 1)) {
+            PrimitiveIterator.OfInt iterator = group.iterator();
+            while (iterator.hasNext()) {
+                int variable = iterator.nextInt();
                 minLevel = Math.min(minLevel, levelOfVariable(variable));
                 maxLevel = Math.max(maxLevel, levelOfVariable(variable));
             }
 
             // Sort variables by their weight -- start with those that have the most nodes, as
             // these have most to gain
-            long[] order = new long[group.cardinality()];
-            BitSets.forEachWithIndex(
+            long[] order = new long[group.size()];
+            NatSets.forEachWithIndex(
                     group, (variable, index) -> order[index] = ((long) weight[variable] << Integer.SIZE) | variable);
             Arrays.sort(order);
 
@@ -566,21 +572,23 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
         return saved;
     }
 
-    private boolean checkDisjointContiguousBlocks(List<BitSet> groups) {
-        BitSet seen = new BitSet(numberOfVariables);
-        for (BitSet group : groups) {
+    private boolean checkDisjointContiguousBlocks(List<NatSet> groups) {
+        MutableNatSet seen = MutableNatSet.dense(numberOfVariables);
+        for (NatSet group : groups) {
             checkState(!group.intersects(seen), "Reordering groups overlap");
             seen.or(group);
 
             int minLevel = Integer.MAX_VALUE;
             int maxLevel = -1;
-            for (int variable = group.nextSetBit(0); variable >= 0; variable = group.nextSetBit(variable + 1)) {
+            PrimitiveIterator.OfInt iterator = group.iterator();
+            while (iterator.hasNext()) {
+                int variable = iterator.nextInt();
                 checkState(variable < numberOfVariables, "Unknown variable %s in a reordering group", variable);
                 minLevel = Math.min(minLevel, levelOfVariable(variable));
                 maxLevel = Math.max(maxLevel, levelOfVariable(variable));
             }
             checkState(
-                    group.isEmpty() || maxLevel - minLevel + 1 == group.cardinality(),
+                    group.isEmpty() || maxLevel - minLevel + 1 == group.size(),
                     "Reordering group %s does not occupy a contiguous run of levels",
                     group);
         }

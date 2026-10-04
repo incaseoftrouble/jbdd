@@ -17,7 +17,9 @@
 package de.tum.in.jbdd;
 
 import de.tum.in.jbdd.collections.Cube;
-import java.util.BitSet;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
+import java.util.PrimitiveIterator;
 import java.util.function.IntUnaryOperator;
 
 /**
@@ -30,7 +32,11 @@ import java.util.function.IntUnaryOperator;
  * time after an invalid call.</p>
  */
 // TODO AndExistsSimplify and similar (quantify + apply + simplify at the same time)
-public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTerminalDecisionDiagram<BitSet, Cube> {
+public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTerminalDecisionDiagram<NatSet, Cube> {
+    /** A satisfying assignment, fresh and the caller's own. */
+    @Override
+    MutableNatSet satisfyingAssignment(int function);
+
     /**
      * The fraction of all assignments satisfying {@code function}: {@link #countSatisfyingAssignments(int)} divided by
      * {@code 2^}{@link #numberOfVariables()}, which is the same over any set of variables containing the function's
@@ -154,7 +160,7 @@ public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTe
         if (variables.length == 0) {
             return trueFunction();
         }
-        BitSet variableSet = new BitSet(numberOfVariables());
+        MutableNatSet variableSet = MutableNatSet.dense(numberOfVariables());
         for (int variable : variables) {
             variableSet.set(variable);
         }
@@ -169,7 +175,7 @@ public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTe
      *
      * @return The conjunction of specified variables.
      */
-    int conjunction(BitSet variables);
+    int conjunction(NatSet variables);
 
     /**
      * Creates the disjunction of all {@code variables}.
@@ -183,7 +189,7 @@ public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTe
         if (variables.length == 0) {
             return falseFunction();
         }
-        BitSet variableSet = new BitSet(numberOfVariables());
+        MutableNatSet variableSet = MutableNatSet.dense(numberOfVariables());
         for (int variable : variables) {
             variableSet.set(variable);
         }
@@ -198,7 +204,7 @@ public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTe
      *
      * @return The disjunction of specified variables.
      */
-    int disjunction(BitSet variables);
+    int disjunction(NatSet variables);
 
     /**
      * Constructs the <i>composition</i> of the given boolean {@code function} with the boolean functions in {@code variableNodes}.
@@ -246,9 +252,9 @@ public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTe
      * Registers an {@code exists} operation bound to a fixed set of {@code quantifiedVariables} - see
      * {@link RegisteredOperation}. The set is read here and may be changed afterwards.
      *
-     * @see #exists(int, BitSet)
+     * @see #exists(int, NatSet)
      */
-    RegisteredOperation.Unary registerExists(BitSet quantifiedVariables);
+    RegisteredOperation.Unary registerExists(NatSet quantifiedVariables);
 
     /**
      * The function of the cube {@code path}: {@link Cube#support()} fixed to
@@ -257,14 +263,14 @@ public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTe
     default int of(Cube path) {
         // Held referenced throughout, the constant included: a diagram may count references on its leaves.
         int cube = reference(trueFunction());
-        for (int variable = path.supportUnsafe().nextSetBit(0);
-                variable >= 0;
-                variable = path.supportUnsafe().nextSetBit(variable + 1)) {
-            int literal = path.assignmentUnsafe().get(variable)
+        PrimitiveIterator.OfInt iterator = path.support().iterator();
+        while (iterator.hasNext()) {
+            int variable = iterator.nextInt();
+            int literal = path.assignment().contains(variable)
                     ? variableFunction(variable)
                     : reference(not(variableFunction(variable)));
             cube = updateWith(and(cube, literal), cube);
-            if (!path.assignmentUnsafe().get(variable)) {
+            if (!path.assignment().contains(variable)) {
                 dereference(literal);
             }
         }

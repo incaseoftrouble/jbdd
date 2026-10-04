@@ -16,9 +16,8 @@
  */
 package de.tum.in.jbdd;
 
-import de.tum.in.jbdd.collections.BitSets;
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.Random;
@@ -28,9 +27,9 @@ final class ScopedAssignments {
 
     private ScopedAssignments() {}
 
-    static Iterable<boolean[]> of(int length, int maxVariables, BitSet... variableSets) {
-        BitSet relevant = BitSets.lazyUnion(variableSets);
-        int variableCount = relevant.cardinality();
+    static Iterable<boolean[]> of(int length, int maxVariables, NatSet... variableSets) {
+        NatSet relevant = NatSetFixtures.lazyUnion(variableSets);
+        int variableCount = relevant.size();
         if (variableCount <= maxVariables) {
             return () -> new PowerSetIterator(relevant, length);
         }
@@ -48,9 +47,9 @@ final class ScopedAssignments {
         private final int sampleSize;
         private int produced = 0;
 
-        RandomAssignmentIterator(BitSet relevant, int length, int sampleSize, Random random) {
+        RandomAssignmentIterator(NatSet relevant, int length, int sampleSize, Random random) {
             this.assignment = new boolean[length];
-            this.positions = relevant.stream().toArray();
+            this.positions = relevant.intStream().toArray();
             this.random = random;
             this.sampleSize = sampleSize;
         }
@@ -128,8 +127,8 @@ final class ScopedAssignments {
             this.next = new boolean[length];
         }
 
-        PowerSetIterator(BitSet base, int length) {
-            this.indices = base.stream().toArray();
+        PowerSetIterator(NatSet base, int length) {
+            this.indices = base.intStream().toArray();
             this.next = new boolean[length];
         }
 

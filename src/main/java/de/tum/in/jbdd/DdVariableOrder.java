@@ -16,7 +16,7 @@
  */
 package de.tum.in.jbdd;
 
-import java.util.BitSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.List;
 
 /**
@@ -75,7 +75,7 @@ public interface DdVariableOrder {
      *
      * @see #reorder()
      */
-    int reorder(List<BitSet> groups);
+    int reorder(List<NatSet> groups);
 
     /**
      * Rearranges the order into the requested shape: block {@code i} ends up entirely above block
@@ -92,7 +92,7 @@ public interface DdVariableOrder {
      *
      * @see #reorder(List)
      */
-    void reorderTo(List<BitSet> blocks);
+    void reorderTo(List<NatSet> blocks);
 
     /**
      * Puts every variable back at the level of its own number, undoing whatever reordering happened.

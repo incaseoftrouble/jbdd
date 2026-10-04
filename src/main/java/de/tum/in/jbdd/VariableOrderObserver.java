@@ -16,7 +16,7 @@
  */
 package de.tum.in.jbdd;
 
-import java.util.BitSet;
+import de.tum.in.jbdd.collections.NatSet;
 
 /**
  * Hears about the variable order moving. Registered with the order rather than with a diagram, and so
@@ -33,7 +33,7 @@ interface VariableOrderObserver {
      * listener concerned with only some of them can test that first. All three arguments describe the
      * order as of now and must not be modified.
      */
-    default void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, BitSet movedVariables) {
+    default void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, NatSet movedVariables) {
         // Nothing by default
     }
 

@@ -18,16 +18,18 @@ package de.tum.in.jbdd;
 
 import static de.tum.in.jbdd.Preconditions.*;
 
-import de.tum.in.jbdd.collections.BitSets;
 import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.Cursor;
 import de.tum.in.jbdd.collections.IntIntHashMap;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
+import de.tum.in.jbdd.collections.NatSets;
 import java.math.BigInteger;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
+import java.util.PrimitiveIterator;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.IntUnaryOperator;
@@ -46,7 +48,7 @@ import org.jspecify.annotations.Nullable;
     "DuplicatedCode",
     "AssertWithSideEffects"
 })
-public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
+public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
 
     /* The variable order and everything else the BDD shares with its MTBDD, reordering included. */
     private final DdContextImpl context;
@@ -243,9 +245,11 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
     }
 
     /** The greatest level any variable of {@code variables} sits at, or -1 if there is none. */
-    int maxLevel(BitSet variables) {
+    int maxLevel(NatSet variables) {
         int max = -1;
-        for (int variable = variables.nextSetBit(0); variable >= 0; variable = variables.nextSetBit(variable + 1)) {
+        PrimitiveIterator.OfInt iterator = variables.iterator();
+        while (iterator.hasNext()) {
+            int variable = iterator.nextInt();
             max = Math.max(max, levelOfVariable(variable));
         }
         return max;
@@ -335,14 +339,14 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
     }
 
     @Override
-    public boolean evaluate(int function, BitSet assignment) {
+    public boolean evaluate(int function, NatSet assignment) {
         assert isValidFunction(function);
 
         int currentNode = positive(function);
         boolean lookingFor = currentNode == function;
         while (currentNode != TRUE) {
             assert table.isValidDecisionNode(currentNode);
-            if (assignment.get(table.variable(currentNode))) {
+            if (assignment.contains(table.variable(currentNode))) {
                 currentNode = table.high(currentNode);
             } else {
                 int low = table.low(currentNode);
@@ -356,31 +360,31 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
     }
 
     @Override
-    public BitSet satisfyingAssignment(int function) {
+    public MutableNatSet satisfyingAssignment(int function) {
         assert isValidFunction(function);
 
         if (function == FALSE) {
             throw new NoSuchElementException("False has no solution");
         }
 
-        BitSet path = new BitSet(numberOfVariables());
+        MutableNatSet path = MutableNatSet.dense(numberOfVariables());
         satisfyingAssignment(function, path);
         return path;
     }
 
     @Override
-    public Optional<BitSet> satisfyingAssignmentIn(int function, int domain) {
+    public Optional<NatSet> satisfyingAssignmentIn(int function, int domain) {
         assert isValidFunction(function);
 
         if (function == FALSE || domain == FALSE) {
             return Optional.empty();
         }
 
-        BitSet path = new BitSet(numberOfVariables());
+        MutableNatSet path = MutableNatSet.dense(numberOfVariables());
         return satisfyingAssignmentInRecursive(function, domain, path) ? Optional.of(path) : Optional.empty();
     }
 
-    private void clearBelowLevel(BitSet set, int level) {
+    private void clearBelowLevel(MutableNatSet set, int level) {
         if (isReordered()) {
             for (int current = level; current < numberOfVariables(); current++) {
                 set.clear(variableAtLevel(current));
@@ -390,7 +394,7 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         }
     }
 
-    private boolean satisfyingAssignment(int function, BitSet path) {
+    private boolean satisfyingAssignment(int function, MutableNatSet path) {
         assert function != FALSE;
 
         int currentNode = positive(function);
@@ -415,7 +419,7 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         return true;
     }
 
-    private boolean satisfyingAssignmentInRecursive(int function1, int function2, BitSet path) {
+    private boolean satisfyingAssignmentInRecursive(int function1, int function2, MutableNatSet path) {
         if (function1 == FALSE || function2 == FALSE) {
             return false;
         }
@@ -455,7 +459,7 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
     }
 
     @Override
-    public void forEachSolutionIn(int function, int domain, Consumer<? super BitSet> action) {
+    public void forEachSolutionIn(int function, int domain, Consumer<? super NatSet> action) {
         assert isValidFunction(function) && isValidFunction(domain);
 
         if (function == FALSE || domain == FALSE) {
@@ -463,14 +467,21 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         }
         assert accessGuard.acquire();
         forEachSolutionInRecursive(
-                function, domain, null, 0, new BitSet(numberOfVariables()), new int[numberOfVariables()], 0, action);
+                function,
+                domain,
+                null,
+                0,
+                MutableNatSet.dense(numberOfVariables()),
+                new int[numberOfVariables()],
+                0,
+                action);
         assert accessGuard.release();
     }
 
     @Override
-    public void forEachSolutionIn(int function, int domain, BitSet support, Consumer<? super BitSet> action) {
+    public void forEachSolutionIn(int function, int domain, NatSet support, Consumer<? super NatSet> action) {
         assert isValidFunction(function) && isValidFunction(domain);
-        assert BitSets.isSubset(support(function), support) && BitSets.isSubset(support(domain), support);
+        assert support.containsAll(support(function)) && support.containsAll(support(domain));
 
         if (function == FALSE || domain == FALSE) {
             return;
@@ -480,18 +491,25 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         // The recursion descends by level, so the support has to be handed to it in level order.
         int[] variables;
         if (isReordered()) {
-            long[] order = new long[support.cardinality()];
-            BitSets.forEachWithIndex(
+            long[] order = new long[support.size()];
+            NatSets.forEachWithIndex(
                     support,
                     (variable, index) -> order[index] = ((long) levelOfVariable(variable) << Integer.SIZE) | variable);
             Arrays.sort(order);
-            variables = new int[support.cardinality()];
+            variables = new int[support.size()];
             Arrays.setAll(variables, index -> (int) order[index]);
         } else {
-            variables = BitSets.toArray(support);
+            variables = support.toIntArray();
         }
         forEachSolutionInRecursive(
-                function, domain, variables, 0, new BitSet(numberOfVariables()), new int[variables.length], 0, action);
+                function,
+                domain,
+                variables,
+                0,
+                MutableNatSet.dense(numberOfVariables()),
+                new int[variables.length],
+                0,
+                action);
         assert accessGuard.release();
     }
 
@@ -500,10 +518,10 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
             int function2,
             int @Nullable [] support,
             int index,
-            BitSet assignment,
+            MutableNatSet assignment,
             int[] freeVariables,
             int freeCount,
-            Consumer<? super BitSet> action) {
+            Consumer<? super NatSet> action) {
         if (function1 == FALSE || function2 == FALSE) {
             return;
         }
@@ -553,11 +571,11 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
     }
 
     private static void forEachFreeExtension(
-            BitSet assignment, int[] freeVariables, int freeCount, Consumer<? super BitSet> action) {
+            MutableNatSet assignment, int[] freeVariables, int freeCount, Consumer<? super NatSet> action) {
         action.accept(assignment);
         while (true) {
             int index = 0;
-            while (index < freeCount && assignment.get(freeVariables[index])) {
+            while (index < freeCount && assignment.contains(freeVariables[index])) {
                 assignment.clear(freeVariables[index]);
                 index++;
             }
@@ -570,29 +588,29 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
     }
 
     @Override
-    public Cursor<BitSet> solutionCursor(int function) {
-        return solutionCursorIn(function, TRUE, BitSets.range(0, numberOfVariables()));
+    public Cursor<NatSet> solutionCursor(int function) {
+        return solutionCursorIn(function, TRUE, NatSet.range(0, numberOfVariables()));
     }
 
     @Override
-    public Cursor<BitSet> solutionCursor(int function, BitSet support) {
+    public Cursor<NatSet> solutionCursor(int function, NatSet support) {
         return solutionCursorIn(function, TRUE, support);
     }
 
     @Override
-    public Cursor<BitSet> solutionCursorIn(int function, int domain) {
-        return solutionCursorIn(function, domain, BitSets.range(0, numberOfVariables()));
+    public Cursor<NatSet> solutionCursorIn(int function, int domain) {
+        return solutionCursorIn(function, domain, NatSet.range(0, numberOfVariables()));
     }
 
     @Override
-    public Cursor<BitSet> solutionCursorIn(int function, int domain, BitSet support) {
+    public Cursor<NatSet> solutionCursorIn(int function, int domain, NatSet support) {
         assert isValidFunction(function) && isValidFunction(domain);
 
         if (function == FALSE || domain == FALSE) {
             return Cursors.empty();
         }
         if (function == TRUE && domain == TRUE) {
-            return Cursors.powerSet(support);
+            return NatSets.powerSet(support);
         }
         return new SolutionCursor(this, function, domain, support);
     }
@@ -612,7 +630,7 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
 
     @Override
     public int of(Cube path) {
-        assert path.supportUnsafe().stream().allMatch(this::isValidVariable);
+        assert path.support().intStream().allMatch(this::isValidVariable);
         assert accessGuard.acquire();
         int node = cubeFunction(path);
         assert accessGuard.release();
@@ -622,15 +640,15 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
     // Deepest level first: each literal lands above everything built so far, so a step is one node.
     private int cubeFunction(Cube cube) {
         assert table.workStacksEmpty();
-        BitSet support = cube.supportUnsafe();
-        int[] levels = new int[support.cardinality()];
-        BitSets.forEachWithIndex(support, (value, index) -> levels[index] = levelOfVariable(value));
+        NatSet support = cube.support();
+        int[] levels = new int[support.size()];
+        NatSets.forEachWithIndex(support, (value, index) -> levels[index] = levelOfVariable(value));
         Arrays.sort(levels);
         int node = TRUE;
         for (int index = levels.length - 1; index >= 0; index--) {
             int level = levels[index];
             table.pushToWorkStack(node);
-            node = cube.assignmentUnsafe().get(variableAtLevel(level))
+            node = cube.assignment().contains(variableAtLevel(level))
                     ? makeFunction(level, FALSE, node)
                     : makeFunction(level, node, FALSE);
             table.popFromWorkStack();
@@ -654,13 +672,13 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         }
 
         int numberOfVariables = numberOfVariables();
-        Cube path = Cube.ofUnsafe(new BitSet(numberOfVariables), new BitSet(numberOfVariables));
+        WalkCube path = new WalkCube(numberOfVariables);
         forEachPathRecursive(positive(function), null, numberOfVariables, path, action, isPositive(function));
         assert accessGuard.release();
     }
 
     @Override
-    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super Cube> action) {
+    public void forEachPartialPath(int function, NatSet relevantSet, Consumer<? super Cube> action) {
         assert isValidFunction(function);
 
         if (function == FALSE) {
@@ -674,21 +692,21 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         }
 
         int maxRelevantLevel = maxLevel(relevantSet);
-        Cube path = Cube.ofUnsafe(new BitSet(maxRelevantLevel + 1), new BitSet(maxRelevantLevel + 1));
+        WalkCube path = new WalkCube(maxRelevantLevel + 1);
         forEachPathRecursive(positive(function), relevantSet, maxRelevantLevel, path, action, isPositive(function));
         assert accessGuard.release();
     }
 
     private void forEachPathRecursive(
             int node,
-            @Nullable BitSet support,
+            @Nullable NatSet support,
             int depthLimit,
-            Cube path,
+            WalkCube path,
             Consumer<? super Cube> action,
             boolean lookingFor) {
         if (node == TRUE) {
             assert lookingFor;
-            action.accept(path);
+            action.accept(path.cube);
             return;
         }
         assert table.isValidDecisionNode(node);
@@ -697,16 +715,16 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         int variable = table.variable(node);
         if (levelOfVariable(variable) > depthLimit) {
             // There must exist at least one satisfying path
-            action.accept(path);
+            action.accept(path.cube);
             return;
         }
 
         int lowEdge = table.low(node);
         int highNode = table.high(node);
-        boolean relevant = support == null || support.get(variable);
+        boolean relevant = support == null || support.contains(variable);
 
         if (relevant) {
-            path.supportUnsafe().set(variable);
+            path.support.set(variable);
         }
 
         if (!isFalse(lowEdge, lookingFor)) {
@@ -715,19 +733,19 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         }
         if (!isFalse(highNode, lookingFor)) {
             if (relevant) {
-                path.assignmentUnsafe().set(variable);
+                path.assignment.set(variable);
                 forEachPathRecursive(highNode, support, depthLimit, path, action, lookingFor);
-                assert path.assignmentUnsafe().get(variable);
-                path.assignmentUnsafe().clear(variable);
+                assert path.assignment.contains(variable);
+                path.assignment.clear(variable);
             } else {
-                assert !path.assignmentUnsafe().get(variable);
+                assert !path.assignment.contains(variable);
                 forEachPathRecursive(highNode, support, depthLimit, path, action, lookingFor);
             }
         }
 
-        assert relevant == path.supportUnsafe().get(variable);
+        assert relevant == path.support.contains(variable);
         if (relevant) {
-            path.supportUnsafe().clear(variable);
+            path.support.clear(variable);
         }
     }
 
@@ -746,17 +764,17 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         }
 
         int numberOfVariables = numberOfVariables();
-        Cube path = Cube.ofUnsafe(new BitSet(numberOfVariables), new BitSet(numberOfVariables));
+        WalkCube path = new WalkCube(numberOfVariables);
         boolean result = anyPathMatchesRecursive(positive(function), path, predicate, isPositive(function));
         assert accessGuard.release();
         return result;
     }
 
     private boolean anyPathMatchesRecursive(
-            int node, Cube path, Predicate<? super Cube> predicate, boolean lookingFor) {
+            int node, WalkCube path, Predicate<? super Cube> predicate, boolean lookingFor) {
         if (node == TRUE) {
             assert lookingFor;
-            return predicate.test(path);
+            return predicate.test(path.cube);
         }
         assert table.isValidDecisionNode(node);
         assert !isConstant(node);
@@ -764,7 +782,7 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         int variable = table.variable(node);
         int lowEdge = table.low(node);
 
-        path.supportUnsafe().set(variable);
+        path.support.set(variable);
         if (!isFalse(lowEdge, lookingFor)
                 && anyPathMatchesRecursive(positive(lowEdge), path, predicate, isPositive(lowEdge) == lookingFor)) {
             return true;
@@ -772,14 +790,14 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
 
         int highNode = table.high(node);
         if (!isFalse(highNode, lookingFor)) {
-            path.assignmentUnsafe().set(variable);
+            path.assignment.set(variable);
             if (anyPathMatchesRecursive(highNode, path, predicate, lookingFor)) {
                 return true;
             }
-            path.assignmentUnsafe().clear(variable);
+            path.assignment.clear(variable);
         }
 
-        path.supportUnsafe().clear(variable);
+        path.support.clear(variable);
         return false;
     }
 
@@ -794,9 +812,9 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
     }
 
     @Override
-    public BigInteger countSatisfyingAssignments(int function, BitSet support) {
-        assert BitSets.isSubset(support(function), support);
-        return countSatisfyingAssignments(function).divide(TWO.pow(numberOfVariables() - support.cardinality()));
+    public BigInteger countSatisfyingAssignments(int function, NatSet support) {
+        assert support.containsAll(support(function));
+        return countSatisfyingAssignments(function).divide(TWO.pow(numberOfVariables() - support.size()));
     }
 
     @Override
@@ -1140,8 +1158,8 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
             }
         }
         if (isRestrict) {
-            BitSet restrictValues = new BitSet(variableMapping.length + 1);
-            BitSet restrictSupport = new BitSet(variableMapping.length + 1);
+            MutableNatSet restrictValues = MutableNatSet.dense(variableMapping.length + 1);
+            MutableNatSet restrictSupport = MutableNatSet.dense(variableMapping.length + 1);
             for (int i = 0; i < variableMapping.length; i++) {
                 if (isConstant(variableMapping[i])) {
                     restrictSupport.set(i);
@@ -1187,7 +1205,7 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
     }
 
     /** The support of a function as ascending variables, cached per node. Never to be modified. */
-    // TODO Since we now have a support cache -- let's make it BitSet based and replace the standard support / supportTo
+    // TODO Since we now have a support cache -- let's make it NatSet based and replace the standard support / supportTo
     // with it?
     //   N.B. I think we need level order here and variable order when we return it
     int[] supportArray(int function) {
@@ -1238,10 +1256,10 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
     }
 
     /** The replaced variables in {@code support}, ascending. */
-    private static int[] replacedIn(int[] support, BitSet replaced) {
+    private static int[] replacedIn(int[] support, NatSet replaced) {
         int count = 0;
         for (int variable : support) {
-            if (replaced.get(variable)) {
+            if (replaced.contains(variable)) {
                 count++;
             }
         }
@@ -1252,7 +1270,7 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         int[] variables = new int[count];
         int index = 0;
         for (int variable : support) {
-            if (replaced.get(variable)) {
+            if (replaced.contains(variable)) {
                 variables[index] = variable;
                 index += 1;
             }
@@ -1286,7 +1304,7 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
      * agrees with the composition wherever the domain holds, and equals it for a TRUE domain.
      */
     int computeCompose(int function, int domain, int[] resolvedMapping) {
-        BitSet replaced = new BitSet();
+        MutableNatSet replaced = MutableNatSet.create();
         for (int variable = 0; variable < resolvedMapping.length; variable++) {
             if (resolvedMapping[variable] != this.variableNodes[variable]) {
                 replaced.set(variable);
@@ -1305,7 +1323,7 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
     }
 
     private int computeComposeRecursive(
-            int function, int domain, int[] variables, int[] replacements, BitSet replaced) {
+            int function, int domain, int[] variables, int[] replacements, NatSet replaced) {
         int pushed = 0;
         while (true) {
             if (domain == FALSE) {
@@ -1358,7 +1376,7 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         int lowFunction = table.low(node);
         int highFunction = table.high(node);
         int result;
-        if (replaced.get(topVariable)) {
+        if (replaced.contains(topVariable)) {
             int condition = replacements[Util.indexOfSorted(variables, topVariable)];
             // If the expression we replace the current variable with is not in the domain, we can pin the variable to
             // false
@@ -1420,7 +1438,7 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
             int childDomain,
             int[] variables,
             int[] replacements,
-            BitSet replaced,
+            NatSet replaced,
             int branchVariable,
             boolean branchValue) {
         int[] childVariables = replacedIn(supportArray(child), replaced);
@@ -1514,15 +1532,14 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         }
 
         int current = function;
-        while (!isConstant(current) && restriction.supportUnsafe().get(table.variable(positive(current)))) {
-            current = restriction.assignmentUnsafe().get(table.variable(positive(current)))
-                    ? high(current)
-                    : low(current);
+        while (!isConstant(current) && restriction.support().contains(table.variable(positive(current)))) {
+            current =
+                    restriction.assignment().contains(table.variable(positive(current))) ? high(current) : low(current);
         }
         if (isConstant(current)) {
             return current;
         }
-        int maxRestrictedLevel = maxLevel(restriction.supportUnsafe());
+        int maxRestrictedLevel = maxLevel(restriction.support());
         if (decisionLevelOrMax(current) > maxRestrictedLevel) {
             return current;
         }
@@ -1549,8 +1566,8 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         if (nodeLevel > maxRestrictedLevel) {
             return function;
         }
-        if (restriction.supportUnsafe().get(nodeVariable)) {
-            int child = restriction.assignmentUnsafe().get(nodeVariable) ? table.high(node) : table.low(node);
+        if (restriction.support().contains(nodeVariable)) {
+            int child = restriction.assignment().contains(nodeVariable) ? table.high(node) : table.low(node);
             return complementIf(computeRestrict(child, restriction, cubeHash, maxRestrictedLevel), func);
         }
 
@@ -1569,8 +1586,8 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
     }
 
     @Override
-    public int conjunction(BitSet variables) {
-        assert variables.stream().allMatch(this::isValidVariable);
+    public int conjunction(NatSet variables) {
+        assert variables.intStream().allMatch(this::isValidVariable);
         assert accessGuard.acquire();
         int node = cubeFunction(Cube.ofUnsafe(variables, variables));
         assert accessGuard.release();
@@ -1578,11 +1595,11 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
     }
 
     @Override
-    public int disjunction(BitSet variables) {
-        assert variables.stream().allMatch(this::isValidVariable);
+    public int disjunction(NatSet variables) {
+        assert variables.intStream().allMatch(this::isValidVariable);
         assert accessGuard.acquire();
         // x1 | ... | xn is !(!x1 & ... & !xn)
-        int node = not(cubeFunction(Cube.ofUnsafe(new BitSet(0), variables)));
+        int node = not(cubeFunction(Cube.ofUnsafe(MutableNatSet.dense(0), variables)));
         assert accessGuard.release();
         return node;
     }
@@ -2016,14 +2033,14 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
     }
 
     @Override
-    public int exists(int function, BitSet quantifiedVariables) {
+    public int exists(int function, NatSet quantifiedVariables) {
         assert isValidFunction(function);
         assert quantifiedVariables.length() - 1 <= numberOfVariables();
 
         if (isConstant(function)) {
             return function;
         }
-        if (quantifiedVariables.cardinality() == numberOfVariables()) {
+        if (quantifiedVariables.size() == numberOfVariables()) {
             return TRUE;
         }
 
@@ -2036,15 +2053,15 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
     }
 
     @Override
-    public RegisteredOperation.Unary registerExists(BitSet quantifiedVariables) {
+    public RegisteredOperation.Unary registerExists(NatSet quantifiedVariables) {
         assert quantifiedVariables.length() - 1 <= numberOfVariables();
         if (quantifiedVariables.isEmpty()) {
             return RegisteredOperation.identity();
         }
-        return new BddOperations.Exists(this, BitSets.copyOf(quantifiedVariables));
+        return new BddOperations.Exists(this, MutableNatSet.copyOf(quantifiedVariables));
     }
 
-    int existsGeneral(int function, BitSet quantifiedLevels, BooleanCache.UnaryToIntCache existsCache) {
+    int existsGeneral(int function, NatSet quantifiedLevels, BooleanCache.UnaryToIntCache existsCache) {
         assert accessGuard.acquire();
         assert table.workStacksEmpty();
         table.pushToWorkStack(function);
@@ -2055,11 +2072,11 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         return result;
     }
 
-    BitSet variablesToLevels(BitSet variables) {
-        return isReordered() ? BitSets.map(variables, this::levelOfVariable) : variables;
+    NatSet variablesToLevels(NatSet variables) {
+        return isReordered() ? NatSets.map(variables, this::levelOfVariable) : variables;
     }
 
-    private int existsRecursive(int function, BitSet quantifiedLevels, BooleanCache.UnaryToIntCache existsCache) {
+    private int existsRecursive(int function, NatSet quantifiedLevels, BooleanCache.UnaryToIntCache existsCache) {
         assert isValidFunction(function);
 
         if (isConstant(function)) {
@@ -2542,16 +2559,16 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
          * references, so a complemented edge needs no separate bookkeeping. */
         private final int[] highFunctionPath;
         private final int[] highDomainPath;
-        private final BitSet levelAssignment;
-        private final BitSet pathSupportLevels;
+        private final MutableNatSet levelAssignment;
+        private final MutableNatSet pathSupportLevels;
         /* The levels of the current path, deepest last - the recursion's call stack, made explicit. */
         private final int[] levelStack;
         /* Variable-indexed mirrors of the two sets above, maintained as the walk writes them, or null
          * when the caller reads levels directly. A step changes a handful of levels while the sets hold
          * the whole path, so mirroring the writes beats rebuilding the image of the set afterwards.
          * The one place the walk knows about variables at all. */
-        private final @Nullable BitSet variableAssignment;
-        private final @Nullable BitSet variableSupport;
+        private final @Nullable MutableNatSet variableAssignment;
+        private final @Nullable MutableNatSet variableSupport;
         /* The order, snapshot rather than asked for per write: a mirrored write is one array load
          * instead of two hops into the context, and it cannot be invalidated under the walk by a
          * variable creation that resizes the context's own array. Only allocated when mirroring. */
@@ -2567,8 +2584,8 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
                 BddImpl bdd,
                 int function,
                 int domain,
-                @Nullable BitSet variableAssignment,
-                @Nullable BitSet variableSupport) {
+                @Nullable MutableNatSet variableAssignment,
+                @Nullable MutableNatSet variableSupport) {
             assert bdd.isValidFunction(function) && bdd.isValidFunction(domain);
             assert function != FALSE && domain != FALSE;
             assert function != TRUE || domain != TRUE : "Nothing to walk - every assignment is a solution";
@@ -2579,8 +2596,8 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
             this.rootDomain = domain;
             this.highFunctionPath = new int[variableCount];
             this.highDomainPath = new int[variableCount];
-            this.levelAssignment = new BitSet(variableCount);
-            this.pathSupportLevels = new BitSet(variableCount);
+            this.levelAssignment = MutableNatSet.dense(variableCount);
+            this.pathSupportLevels = MutableNatSet.dense(variableCount);
             this.levelStack = new int[variableCount];
             this.variableAssignment = variableAssignment;
             this.variableSupport = variableSupport;
@@ -2619,11 +2636,11 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
             }
         }
 
-        BitSet pathSupportLevels() {
+        MutableNatSet pathSupportLevels() {
             return pathSupportLevels;
         }
 
-        BitSet levelAssignment() {
+        MutableNatSet levelAssignment() {
             return levelAssignment;
         }
 
@@ -2652,7 +2669,7 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
              * this simply carries on from whatever is left on the stack. */
             while (stackDepth > 0) {
                 int level = levelStack[stackDepth - 1];
-                if (!levelAssignment.get(level)) {
+                if (!levelAssignment.contains(level)) {
                     int high = highFunctionPath[level];
                     int highDomain = highDomainPath[level];
                     if (high != FALSE && highDomain != FALSE) {
@@ -2731,34 +2748,34 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
      * Walks the solutions of a function: every path, and for each of them every way of filling in the
      * support variables that path leaves free.
      */
-    static final class SolutionCursor implements Cursor<BitSet> {
+    static final class SolutionCursor implements Cursor<NatSet> {
         private final BddImpl bdd;
         private final PathWalk path;
-        private final BitSet supportLevels;
+        private final NatSet supportLevels;
         /* The support levels the current path leaves free, recomputed whenever the path moves - once per
          * path, not per solution. There (usually) are far more solutions than paths, and rescanning the whole
          * support each time to skip what the path fixes is what puts this off the recursion's pace. */
-        private final BitSet freeLevels;
-        private final @Nullable BitSet translated;
+        private final MutableNatSet freeLevels;
+        private final @Nullable MutableNatSet translated;
         private boolean valid;
 
-        private static BitSet levelsOf(BddImpl bdd, BitSet variables) {
-            BitSet levels = new BitSet(bdd.numberOfVariables());
-            BitSets.map(variables, levels, bdd::levelOfVariable);
+        private static NatSet levelsOf(BddImpl bdd, NatSet variables) {
+            MutableNatSet levels = MutableNatSet.dense(bdd.numberOfVariables());
+            NatSets.map(variables, levels, bdd::levelOfVariable);
             return levels;
         }
 
-        SolutionCursor(BddImpl bdd, int function, int domain, BitSet support) {
+        SolutionCursor(BddImpl bdd, int function, int domain, NatSet support) {
             int variableCount = bdd.numberOfVariables();
             assert variableCount > 0 && support.length() <= variableCount;
-            assert BitSets.isSubset(bdd.support(function), support);
-            assert BitSets.isSubset(bdd.support(domain), support);
+            assert support.containsAll(bdd.support(function));
+            assert support.containsAll(bdd.support(domain));
 
             this.bdd = bdd;
             boolean translating = bdd.isReordered();
             this.supportLevels = translating ? levelsOf(bdd, support) : support;
-            this.freeLevels = new BitSet(variableCount);
-            this.translated = translating ? new BitSet(variableCount) : null;
+            this.freeLevels = MutableNatSet.dense(variableCount);
+            this.translated = translating ? MutableNatSet.dense(variableCount) : null;
             // The walk maintains the buffer for the levels it decides; the counter below maintains it for
             // the ones it leaves free. Between them nothing is ever rebuilt.
             this.path = new PathWalk(bdd, function, domain, translated, null);
@@ -2775,7 +2792,7 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         }
 
         @Override
-        public BitSet current() {
+        public NatSet current() {
             assert valid : "current() is only defined while the cursor is valid";
             return translated == null ? path.levelAssignment() : translated;
         }
@@ -2803,13 +2820,15 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         }
 
         private boolean increment() {
-            BitSet levelAssignment = path.levelAssignment();
+            MutableNatSet levelAssignment = path.levelAssignment();
             if (translated == null) {
-                return BitSets.increment(levelAssignment, freeLevels);
+                return NatSets.increment(levelAssignment, freeLevels);
             }
-            for (int level = freeLevels.nextSetBit(0); level >= 0; level = freeLevels.nextSetBit(level + 1)) {
+            PrimitiveIterator.OfInt iterator = freeLevels.iterator();
+            while (iterator.hasNext()) {
+                int level = iterator.nextInt();
                 int variable = bdd.variableAtLevel(level);
-                if (levelAssignment.get(level)) {
+                if (levelAssignment.contains(level)) {
                     levelAssignment.clear(level);
                     translated.clear(variable);
                 } else {
@@ -2822,15 +2841,15 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         }
 
         private void refreshFreeLevels() {
-            BitSets.difference(freeLevels, supportLevels, path.pathSupportLevels());
+            NatSets.difference(freeLevels, supportLevels, path.pathSupportLevels());
         }
 
         private boolean currentIsConsistent() {
-            assert BitSets.isSubset(path.pathSupportLevels(), supportLevels);
+            assert supportLevels.containsAll(path.pathSupportLevels());
             assert bdd.evaluate(path.function(), current()) && bdd.evaluate(path.domain(), current());
             if (translated != null) {
-                BitSet rebuilt = new BitSet(bdd.numberOfVariables());
-                BitSets.map(path.levelAssignment(), rebuilt, bdd::variableAtLevel);
+                MutableNatSet rebuilt = MutableNatSet.dense(bdd.numberOfVariables());
+                NatSets.map(path.levelAssignment(), rebuilt, bdd::variableAtLevel);
                 assert rebuilt.equals(translated) : "Incremental translation drifted from the walk";
             }
             return true;
@@ -2841,7 +2860,7 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         private final BddImpl bdd;
         private final PathWalk path;
         /** Only on a reordered diagram, where the walk is by level and the caller wants variables. */
-        private final @Nullable Cube translated;
+        private final @Nullable WalkCube translated;
         /** What {@link #current()} hands out: the translation buffer, or the walk's own sets wrapped. */
         private final Cube current;
 
@@ -2850,15 +2869,15 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         PathCursor(BddImpl bdd, int function) {
             int variableCount = bdd.numberOfVariables();
             this.bdd = bdd;
-            this.translated =
-                    bdd.isReordered() ? Cube.ofUnsafe(new BitSet(variableCount), new BitSet(variableCount)) : null;
+            this.translated = bdd.isReordered() ? new WalkCube(variableCount) : null;
             // Both halves of a path are maintained by the walk itself, so a step rebuilds nothing.
             this.path = translated == null
                     ? new PathWalk(bdd, function, TRUE)
-                    : new PathWalk(bdd, function, TRUE, translated.assignmentUnsafe(), translated.supportUnsafe());
+                    : new PathWalk(bdd, function, TRUE, translated.assignment, translated.support);
             this.valid = path.onPath();
-            this.current =
-                    translated == null ? Cube.ofUnsafe(path.levelAssignment(), path.pathSupportLevels()) : translated;
+            this.current = translated == null
+                    ? Cube.ofUnsafe(path.levelAssignment(), path.pathSupportLevels())
+                    : translated.cube;
             assert !valid || currentIsConsistent();
         }
 
@@ -2887,14 +2906,14 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         }
 
         private boolean currentIsConsistent() {
-            assert bdd.evaluate(path.function(), current.assignmentUnsafe());
+            assert bdd.evaluate(path.function(), current.assignment());
             if (translated != null) {
                 int variableCount = bdd.numberOfVariables();
-                BitSet assignment = new BitSet(variableCount);
-                BitSet support = new BitSet(variableCount);
-                BitSets.map(path.levelAssignment(), assignment, bdd::variableAtLevel);
-                BitSets.map(path.pathSupportLevels(), support, bdd::variableAtLevel);
-                assert assignment.equals(translated.assignmentUnsafe()) && support.equals(translated.supportUnsafe())
+                MutableNatSet assignment = MutableNatSet.dense(variableCount);
+                MutableNatSet support = MutableNatSet.dense(variableCount);
+                NatSets.map(path.levelAssignment(), assignment, bdd::variableAtLevel);
+                NatSets.map(path.pathSupportLevels(), support, bdd::variableAtLevel);
+                assert assignment.equals(translated.assignment) && support.equals(translated.support)
                         : "Incremental translation drifted from the walk";
             }
             return true;
@@ -2964,7 +2983,7 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         }
 
         @Override
-        protected void recurseForEachVariable(int node, IntConsumer action, @Nullable BitSet filter, int depthLimit) {
+        protected void recurseForEachVariable(int node, IntConsumer action, @Nullable NatSet filter, int depthLimit) {
             int low = positive(low(node));
             int high = high(node);
             if (low != TRUE) {
@@ -3001,18 +3020,18 @@ public class BddImpl extends BooleanBase<BitSet, Cube> implements Bdd {
         }
 
         @Override
-        protected void notifyAfterGc(int reclaimedNodes, BitSet reclaimedValues) {
+        protected void notifyAfterGc(int reclaimedNodes, NatSet reclaimedValues) {
             bdd.notifyAfterGc(reclaimedNodes);
         }
 
         @Override
-        protected void notifyAfterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
+        protected void notifyAfterTableGrowth(int invalidatedNodes, NatSet reclaimedValues) {
             bdd.notifyAfterTableGrow(invalidatedNodes);
         }
 
         @Override
-        protected BitSet clearUnreferencedLeaves() {
-            return BitSets.of();
+        protected NatSet clearUnreferencedLeaves() {
+            return NatSet.of();
         }
 
         @Override

@@ -22,8 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import de.tum.in.jbdd.collections.BitSets;
-import java.util.BitSet;
+import de.tum.in.jbdd.collections.MutableNatSet;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
@@ -44,16 +43,16 @@ class UtilityTest {
     void testPowerIterator() {
         Random random = new Random(0);
         int size = 12;
-        BitSet set = new BitSet(size);
+        MutableNatSet set = MutableNatSet.dense(size);
         for (int i = 0; i < size; i++) {
             if (random.nextBoolean()) {
                 set.set(i);
             }
         }
-        var iterator = BitSets.powerSetIterator(set);
+        var iterator = NatSetFixtures.powerSetIterator(set);
         AtomicLong counter = new AtomicLong();
         iterator.forEachRemaining(i -> counter.incrementAndGet());
-        assertThat(counter.get(), is(1L << set.cardinality()));
+        assertThat(counter.get(), is(1L << set.size()));
     }
 
     @Test

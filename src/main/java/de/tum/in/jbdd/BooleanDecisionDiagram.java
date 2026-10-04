@@ -16,7 +16,8 @@
  */
 package de.tum.in.jbdd;
 
-import java.util.BitSet;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 
 public interface BooleanDecisionDiagram extends DecisionDiagram {
     /**
@@ -34,13 +35,13 @@ public interface BooleanDecisionDiagram extends DecisionDiagram {
      * witness for this specific valuation (the path taken), which can be much smaller than the full
      * {@link #support(int)} (which accounts for every path). O(depth) instead of O(size).
      */
-    default BitSet supportAt(int function, BitSet assignment) {
-        BitSet result = new BitSet();
+    default MutableNatSet supportAt(int function, NatSet assignment) {
+        MutableNatSet result = MutableNatSet.create();
         int current = function;
         while (!isConstant(current)) {
             int variable = decisionVariable(current);
             result.set(variable);
-            current = assignment.get(variable) ? highOf(current) : lowOf(current);
+            current = assignment.contains(variable) ? highOf(current) : lowOf(current);
         }
         return result;
     }

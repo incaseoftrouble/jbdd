@@ -22,12 +22,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import de.tum.in.jbdd.collections.BitSets;
 import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.Cursor;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -49,8 +49,8 @@ class MtBddTest {
     private static final int[] EMPTY_INTS = new int[0];
     private static final boolean[] EMPTY_BOOL = new boolean[0];
 
-    private static BitSet fullSupport(int numVars) {
-        BitSet support = new BitSet(numVars);
+    private static NatSet fullSupport(int numVars) {
+        MutableNatSet support = MutableNatSet.dense(numVars);
         support.set(0, numVars);
         return support;
     }
@@ -70,8 +70,8 @@ class MtBddTest {
         for (int round = 0; round < 2; round++) {
             for (int valuation = 0; valuation < 1 << 3; valuation++) {
                 for (boolean deeper : new boolean[] {false, true}) {
-                    BitSet support = BitSets.range(0, 3);
-                    BitSet assignment = BitSet.valueOf(new long[] {valuation});
+                    MutableNatSet support = NatSetFixtures.range(0, 3);
+                    MutableNatSet assignment = NatSetFixtures.valueOf(valuation);
                     if (deeper) {
                         support.set(4);
                         assignment.set(4);
@@ -81,7 +81,7 @@ class MtBddTest {
                     for (int variable = support.nextSetBit(0);
                             variable >= 0;
                             variable = support.nextSetBit(variable + 1)) {
-                        mapping[variable] = assignment.get(variable) ? bdd.trueFunction() : bdd.falseFunction();
+                        mapping[variable] = assignment.contains(variable) ? bdd.trueFunction() : bdd.falseFunction();
                     }
                     Cube cube = Cube.of(assignment, support);
 
@@ -238,8 +238,8 @@ class MtBddTest {
         assertEquals(5, mt.evaluate(f, new boolean[] {false, true}));
         assertEquals(7, mt.evaluate(f, new boolean[] {false, false}));
 
-        // Same traversal, BitSet-assignment overload: v0=false, v1=true -> matches the boolean[] case above.
-        BitSet bitSetAssignment = new BitSet(2);
+        // Same traversal, NatSet-assignment overload: v0=false, v1=true -> matches the boolean[] case above.
+        MutableNatSet bitSetAssignment = MutableNatSet.dense(2);
         bitSetAssignment.set(1);
         assertEquals(5, mt.evaluate(f, bitSetAssignment));
     }
@@ -337,7 +337,7 @@ class MtBddTest {
         // The witness anyAssignment returns must itself actually evaluate to a matching value.
         IntPredicate isTwo = v -> v == 2;
         assertTrue(mt.anyAssignment(f, isTwo).isPresent());
-        BitSet witness = mt.anyAssignment(f, isTwo).get();
+        NatSet witness = mt.anyAssignment(f, isTwo).get();
         assertEquals(2, mt.evaluate(f, witness));
 
         // f never reaches 999 (its only leaves are 1..4), so no witness can exist.
@@ -371,7 +371,7 @@ class MtBddTest {
         assertFalse(mt.assignmentCursor(constant, v -> v != 2).valid());
 
         // A support smaller than the full variable set, but still a superset of f's real dependencies.
-        BitSet minimalSupport = new BitSet(numVars);
+        MutableNatSet minimalSupport = MutableNatSet.dense(numVars);
         minimalSupport.set(0);
         minimalSupport.set(1);
         checkAgainstBruteForce(mt, f, v -> v == 2, numVars, minimalSupport);
@@ -388,9 +388,9 @@ class MtBddTest {
     // Ground truth is a brute-force scan of every assignment via evaluate(); the iterator's output is
     // correct iff it produces exactly that set, with no duplicates.
     private static void checkAgainstBruteForce(
-            MtBddImpl mt, int function, IntPredicate values, int numVars, BitSet support) {
-        Set<BitSet> expected = new HashSet<>();
-        int supportSize = support.cardinality();
+            MtBddImpl mt, int function, IntPredicate values, int numVars, NatSet support) {
+        Set<NatSet> expected = new HashSet<>();
+        int supportSize = support.size();
         int[] supportVars = new int[supportSize];
         int idx = 0;
         for (int i = support.nextSetBit(0); i >= 0; i = support.nextSetBit(i + 1)) {
@@ -403,7 +403,7 @@ class MtBddTest {
                 assignment[supportVars[i]] = (mask & (1 << i)) != 0;
             }
             if (values.test(mt.evaluate(function, assignment))) {
-                BitSet bs = new BitSet(numVars);
+                MutableNatSet bs = MutableNatSet.dense(numVars);
                 for (int i = 0; i < numVars; i++) {
                     if (assignment[i]) {
                         bs.set(i);
@@ -413,11 +413,11 @@ class MtBddTest {
             }
         }
 
-        List<BitSet> actualList = new ArrayList<>();
-        for (Cursor<BitSet> cursor = mt.assignmentCursor(function, values, support); cursor.valid(); cursor.advance()) {
-            actualList.add(BitSets.copyOf(cursor.current()));
+        List<NatSet> actualList = new ArrayList<>();
+        for (Cursor<NatSet> cursor = mt.assignmentCursor(function, values, support); cursor.valid(); cursor.advance()) {
+            actualList.add(NatSetFixtures.copyOf(cursor.current()));
         }
-        Set<BitSet> actual = new HashSet<>(actualList);
+        Set<NatSet> actual = new HashSet<>(actualList);
 
         assertEquals(actualList.size(), actual.size(), "duplicate assignment produced by the cursor");
         assertEquals(expected, actual);
@@ -512,13 +512,15 @@ class MtBddTest {
         // Every combination of (v0, v1) is a distinct path here (the function has no don't-cares), and
         // paths through a shared leaf must still be reported separately.
         assertEquals(4, paths.size());
-        Set<BitSet> distinctAssignments = new HashSet<>();
+        Set<NatSet> distinctAssignments = new HashSet<>();
         for (int i = 0; i < paths.size(); i++) {
             Cube path = paths.get(i);
-            assertEquals(2, path.support().cardinality());
-            boolean[] assignment = {path.assignment().get(0), path.assignment().get(1)};
+            assertEquals(2, path.support().size());
+            boolean[] assignment = {
+                path.assignment().contains(0), path.assignment().contains(1)
+            };
             assertEquals((int) values.get(i), mt.evaluate(f, assignment));
-            distinctAssignments.add(path.assignment());
+            distinctAssignments.add(NatSet.copyOf(path.assignment()));
         }
         assertEquals(4, distinctAssignments.size());
     }
@@ -747,9 +749,9 @@ class MtBddTest {
 
         int f = mt.of(0, mt.of(1, mt.of(1), mt.of(2)), mt.of(1, mt.of(3), mt.of(4)));
 
-        BitSet restrictedVariables = new BitSet(numVars);
+        MutableNatSet restrictedVariables = MutableNatSet.dense(numVars);
         restrictedVariables.set(0);
-        BitSet restrictedValues = new BitSet(numVars);
+        MutableNatSet restrictedValues = MutableNatSet.dense(numVars);
         restrictedValues.set(0); // x0 := true
         int restricted = mt.restrict(f, Cube.of(restrictedValues, restrictedVariables));
 
@@ -763,7 +765,7 @@ class MtBddTest {
         }
 
         // Restricting nothing changes nothing, returning f itself unchanged.
-        assertEquals(f, mt.restrict(f, Cube.of(new BitSet(numVars), new BitSet(numVars))));
+        assertEquals(f, mt.restrict(f, Cube.of(MutableNatSet.dense(numVars), MutableNatSet.dense(numVars))));
     }
 
     @Test
@@ -827,7 +829,7 @@ class MtBddTest {
         // constant - a negative MTBDD function id. A plain int split() could not express this as a leaf
         // value (of() requires value >= 0), which is exactly why split() returns a ToFunctionMap instead.
         int f = mt.of(0, mt.of(10), mt.of(20));
-        BitSet splitVariables = new BitSet(1);
+        MutableNatSet splitVariables = MutableNatSet.dense(1);
         splitVariables.set(0);
 
         MultiTerminalDecisionDiagram.FunctionToFunctionMap result = mt.split(f, splitVariables);
@@ -850,7 +852,7 @@ class MtBddTest {
         int f = buildValueFunction(mt, numVars, 0, 0);
 
         // Split on the "even" variables x0, x2, mirroring the interface doc's example.
-        BitSet splitVariables = new BitSet(numVars);
+        MutableNatSet splitVariables = MutableNatSet.dense(numVars);
         splitVariables.set(0);
         splitVariables.set(2);
         MultiTerminalDecisionDiagram.FunctionToFunctionMap result = mt.split(f, splitVariables);
@@ -924,7 +926,7 @@ class MtBddTest {
         assertArrayEquals(new int[] {2, 8}, product.functionFor(indexTF));
 
         // Exactly the two distinct tuples were recorded, nothing more.
-        assertEquals(2, product.codomain().cardinality());
+        assertEquals(2, product.codomain().size());
     }
 
     @Test
@@ -981,7 +983,7 @@ class MtBddTest {
             assertEquals(mt.evaluate(f2, assignment), tuple[1]);
         }
         // Four distinct (component, component) tuples exist here; the memo must not merge or duplicate any.
-        assertEquals(4, product.codomain().cardinality());
+        assertEquals(4, product.codomain().size());
     }
 
     @Test
@@ -1059,7 +1061,7 @@ class MtBddTest {
         int simplified = mt.simplify(f, domain);
 
         assertEquals(f, simplified);
-        assertFalse(mt.support(simplified).get(0));
+        assertFalse(mt.support(simplified).contains(0));
     }
 
     @Test
@@ -1076,7 +1078,7 @@ class MtBddTest {
         int domain = bdd.equivalence(bdd.variableFunction(0), bdd.variableFunction(2));
         int constrained = mt.constrain(f, domain);
 
-        assertTrue(mt.support(constrained).get(0));
+        assertTrue(mt.support(constrained).contains(0));
 
         // constrain's contract only promises agreement where domain holds - check exactly that.
         for (int mask = 0; mask < (1 << 3); mask++) {
@@ -1166,7 +1168,7 @@ class MtBddTest {
         int simplified = mt.applySimplify(f, g, sum, domain);
 
         assertEquals(1, mt.size(simplified));
-        assertFalse(mt.support(simplified).get(0));
+        assertFalse(mt.support(simplified).contains(0));
         assertEquals(1 + 10, mt.evaluate(simplified, new boolean[] {true, true}));
         assertEquals(2 + 10, mt.evaluate(simplified, new boolean[] {true, false}));
     }
@@ -1273,7 +1275,7 @@ class MtBddTest {
 
         // As in applySimplify: the free x0=false branch is dropped rather than mapped.
         assertEquals(1, mt.size(simplified));
-        assertFalse(mt.support(simplified).get(0));
+        assertFalse(mt.support(simplified).contains(0));
 
         assertEquals(mapped, mt.mapSimplify(f, x -> x * 2, bdd.trueFunction()));
         assertTrue(mt.isConstant(mt.mapSimplify(f, x -> x * 2, bdd.falseFunction())));
@@ -1327,7 +1329,7 @@ class MtBddTest {
         int domain = bdd.variableFunction(0);
         int simplified = mt.composeSimplify(f, mapping, domain);
 
-        assertFalse(mt.support(simplified).get(0));
+        assertFalse(mt.support(simplified).contains(0));
         assertEquals(mt.evaluate(f, new boolean[] {true, false}), mt.evaluate(simplified, new boolean[] {true, true}));
         assertEquals(mt.evaluate(f, new boolean[] {true, true}), mt.evaluate(simplified, new boolean[] {true, false}));
     }
@@ -1365,7 +1367,9 @@ class MtBddTest {
         int count = 0;
         for (ValuedCursor<Cube> cursor = mt.pathCursor(f); cursor.valid(); cursor.advance()) {
             Cube path = cursor.current();
-            boolean[] assignment = {path.assignment().get(0), path.assignment().get(1)};
+            boolean[] assignment = {
+                path.assignment().contains(0), path.assignment().contains(1)
+            };
             assertEquals(mt.evaluate(f, assignment), cursor.value());
             count++;
         }
@@ -1392,7 +1396,7 @@ class MtBddTest {
         IntPredicate values = v -> v == 2;
 
         int count = 0;
-        for (ValuedCursor<BitSet> cursor = mt.assignmentCursor(f, values, fullSupport(numVars));
+        for (ValuedCursor<NatSet> cursor = mt.assignmentCursor(f, values, fullSupport(numVars));
                 cursor.valid();
                 cursor.advance()) {
             assertEquals(mt.evaluate(f, cursor.current()), cursor.value());
@@ -1403,7 +1407,7 @@ class MtBddTest {
         assertEquals(8, count);
 
         // A constant function: every assignment yields the one value.
-        ValuedCursor<BitSet> constantCursor = mt.assignmentCursor(mt.of(7), null, fullSupport(numVars));
+        ValuedCursor<NatSet> constantCursor = mt.assignmentCursor(mt.of(7), null, fullSupport(numVars));
         assertTrue(constantCursor.valid());
         assertEquals(7, constantCursor.value());
         while (constantCursor.advance()) {
@@ -1455,7 +1459,7 @@ class MtBddTest {
             int offset = round * 100_000;
             int mapped = mt.reference(mt.map(function, value -> value + offset));
             assertTrue(mt.check());
-            assertEquals(offset, mt.evaluate(mapped, new BitSet(variables)));
+            assertEquals(offset, mt.evaluate(mapped, MutableNatSet.dense(variables)));
             mt.dereference(mapped);
         }
         assertTrue(
@@ -1473,8 +1477,8 @@ class MtBddTest {
         return (Integer) context.statistics().get("mtbdd_value_triggered_collections");
     }
 
-    private static BitSet leafAssignment(int leaf, int variables) {
-        BitSet assignment = new BitSet(variables);
+    private static NatSet leafAssignment(int leaf, int variables) {
+        MutableNatSet assignment = MutableNatSet.dense(variables);
         for (int variable = 0; variable < variables; variable++) {
             assignment.set(variable, (leaf & (1 << (variables - variable - 1))) != 0);
         }
@@ -1518,7 +1522,7 @@ class MtBddTest {
         for (int value = 0; value < kept; value++) {
             int function = mt.of(value);
             assertTrue(mt.isValidFunction(function));
-            assertEquals(value, mt.evaluate(function, new BitSet()));
+            assertEquals(value, mt.evaluate(function, MutableNatSet.create()));
         }
         assertTrue(mt.check());
     }

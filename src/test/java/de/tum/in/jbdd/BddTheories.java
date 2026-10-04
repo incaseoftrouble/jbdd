@@ -33,12 +33,12 @@ import de.tum.in.jbdd.Generator.UnaryDataPoint;
 import de.tum.in.jbdd.SyntaxTree.SyntaxTreeLiteral;
 import de.tum.in.jbdd.SyntaxTree.SyntaxTreeNode;
 import de.tum.in.jbdd.SyntaxTree.SyntaxTreeNot;
-import de.tum.in.jbdd.collections.BitSets;
 import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.Cursor;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
@@ -84,7 +84,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 @TestInstance(Lifecycle.PER_CLASS)
 @ExtendWith(FailFastExtension.class)
 class BddTheories {
-    private static final Comparator<BitSet> LEXICOGRAPHIC = new BitSetComparator();
+    private static final Comparator<NatSet> LEXICOGRAPHIC = new BitSetComparator();
     private static final Logger logger = Logger.getLogger(BddTheories.class.getName());
 
     private static final Map<BinaryDd, ExtendedInfo> infoMap = new LinkedHashMap<>();
@@ -233,18 +233,18 @@ class BddTheories {
         infoMap.keySet().forEach(BinaryDd::check);
     }
 
-    private static Iterator<boolean[]> getArrayIterator(BitSet enabledVariables) {
+    private static Iterator<boolean[]> getArrayIterator(NatSet enabledVariables) {
         boolean[] base = new boolean[variableCount];
-        enabledVariables.stream().forEach(i -> base[i] = true);
+        enabledVariables.intStream().forEach(i -> base[i] = true);
         return new ScopedAssignments.PowerSetIterator(base);
     }
 
-    private static Iterable<boolean[]> assignmentsOver(BitSet... variableSets) {
+    private static Iterable<boolean[]> assignmentsOver(NatSet... variableSets) {
         return ScopedAssignments.of(variableCount, MAX_ASSIGNMENT_VARIABLES, variableSets);
     }
 
-    private static BitSet asSet(boolean[] array) {
-        BitSet set = new BitSet(array.length);
+    private static NatSet asSet(boolean[] array) {
+        MutableNatSet set = MutableNatSet.dense(array.length);
         for (int i = 0; i < array.length; i++) {
             if (array[i]) {
                 set.set(i);
@@ -266,12 +266,12 @@ class BddTheories {
     }
 
     /** {@code assignment} re-indexed by the level each variable sits at; the identity unless reordered. */
-    private static BitSet byLevel(BinaryDecisionDiagram bdd, BitSet assignment) {
+    private static NatSet byLevel(BinaryDecisionDiagram bdd, NatSet assignment) {
         if (!(bdd instanceof ReorderableDd)) {
             return assignment;
         }
         ReorderableDd reorderable = (ReorderableDd) bdd;
-        BitSet levels = new BitSet(bdd.numberOfVariables());
+        MutableNatSet levels = MutableNatSet.dense(bdd.numberOfVariables());
         for (int variable = assignment.nextSetBit(0); variable >= 0; variable = assignment.nextSetBit(variable + 1)) {
             levels.set(reorderable.levelOfVariable(variable));
         }
@@ -289,8 +289,8 @@ class BddTheories {
         }
     }
 
-    private static BitSet fullSupport(BinaryDd bdd) {
-        BitSet all = new BitSet(bdd.numberOfVariables());
+    private static NatSet fullSupport(BinaryDd bdd) {
+        MutableNatSet all = MutableNatSet.dense(bdd.numberOfVariables());
         all.set(0, bdd.numberOfVariables());
         return all;
     }
@@ -394,19 +394,19 @@ class BddTheories {
         assumeTrue(bdd.isValidFunction(domain));
 
         int conjunction = bdd.reference(bdd.and(function, domain));
-        Set<BitSet> expected = new HashSet<>();
-        for (Cursor<BitSet> cursor = bdd.solutionCursor(conjunction); cursor.valid(); cursor.advance()) {
-            expected.add(BitSets.copyOf(cursor.current()));
+        Set<NatSet> expected = new HashSet<>();
+        for (Cursor<NatSet> cursor = bdd.solutionCursor(conjunction); cursor.valid(); cursor.advance()) {
+            expected.add(NatSetFixtures.copyOf(cursor.current()));
         }
 
-        Set<BitSet> fromCursor = new HashSet<>();
-        for (Cursor<BitSet> cursor = bdd.solutionCursorIn(function, domain); cursor.valid(); cursor.advance()) {
-            fromCursor.add(BitSets.copyOf(cursor.current()));
+        Set<NatSet> fromCursor = new HashSet<>();
+        for (Cursor<NatSet> cursor = bdd.solutionCursorIn(function, domain); cursor.valid(); cursor.advance()) {
+            fromCursor.add(NatSetFixtures.copyOf(cursor.current()));
         }
         assertThat(fromCursor, is(expected));
 
-        Set<BitSet> fromCallback = new HashSet<>();
-        bdd.forEachSolutionIn(function, domain, solution -> fromCallback.add(BitSets.copyOf(solution)));
+        Set<NatSet> fromCallback = new HashSet<>();
+        bdd.forEachSolutionIn(function, domain, solution -> fromCallback.add(NatSetFixtures.copyOf(solution)));
         assertThat(fromCallback, is(expected));
 
         bdd.dereference(conjunction);
@@ -715,10 +715,10 @@ class BddTheories {
 
         int composeNode = bdd.reference(bdd.compose(function, composeArray));
 
-        BitSet pathMap = new BitSet();
+        MutableNatSet pathMap = MutableNatSet.create();
         bdd.forEachPath(composeNode, path -> {
             pathMap.clear();
-            BitSets.forEach(path.assignmentUnsafe(), i -> pathMap.set(inverse[i]));
+            NatSetFixtures.forEach(path.assignment(), i -> pathMap.set(inverse[i]));
             assertThat(bdd.evaluate(function, pathMap), is(true));
         });
 
@@ -986,7 +986,7 @@ class BddTheories {
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
 
-        BitSet set = new BitSet();
+        MutableNatSet set = MutableNatSet.create();
         set.set(0, bdd.numberOfVariables());
 
         assertThat(
@@ -1002,7 +1002,7 @@ class BddTheories {
         assumeTrue(bdd.isValidFunction(function));
 
         Random random = new Random(function);
-        BitSet set = new BitSet();
+        MutableNatSet set = MutableNatSet.create();
         for (int i = 0; i < bdd.numberOfVariables(); i++) {
             if (random.nextBoolean()) {
                 set.set(i);
@@ -1093,31 +1093,32 @@ class BddTheories {
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
 
-        BitSet quantificationBitSet = new BitSet(bdd.numberOfVariables());
+        MutableNatSet quantificationBitSet = MutableNatSet.dense(bdd.numberOfVariables());
         Random quantificationRandom = new Random(function);
         for (int i = 0; i < bdd.numberOfVariables(); i++) {
             if (quantificationRandom.nextInt(bdd.numberOfVariables()) < 5) {
                 quantificationBitSet.set(i);
             }
         }
-        assumeTrue(quantificationBitSet.cardinality() <= 5);
+        assumeTrue(quantificationBitSet.size() <= 5);
 
         int exists = bdd.exists(function, quantificationBitSet);
-        BitSet supportIntersection = bdd.support(exists);
+        MutableNatSet supportIntersection = MutableNatSet.copyOf(bdd.support(exists));
         supportIntersection.and(quantificationBitSet);
         assertThat(supportIntersection.isEmpty(), is(true));
 
-        BitSet unquantifiedVariables = BitSets.copyOf(quantificationBitSet);
+        MutableNatSet unquantifiedVariables = NatSetFixtures.copyOf(quantificationBitSet);
         unquantifiedVariables.flip(0, bdd.numberOfVariables());
 
         assertThat(
-                Iterators.all(BitSets.powerSetIterator(unquantifiedVariables), unquantifiedAssignment -> {
+                Iterators.all(NatSetFixtures.powerSetIterator(unquantifiedVariables), unquantifiedAssignment -> {
                     boolean bddEvaluation = bdd.evaluate(exists, Objects.requireNonNull(unquantifiedAssignment));
-                    boolean setEvaluation = Iterators.any(BitSets.powerSetIterator(quantificationBitSet), bitSet -> {
-                        BitSet actualBitSet = BitSets.copyOf(Objects.requireNonNull(bitSet));
-                        actualBitSet.or(unquantifiedAssignment);
-                        return bdd.evaluate(function, actualBitSet);
-                    });
+                    boolean setEvaluation =
+                            Iterators.any(NatSetFixtures.powerSetIterator(quantificationBitSet), bitSet -> {
+                                MutableNatSet actualBitSet = NatSetFixtures.copyOf(Objects.requireNonNull(bitSet));
+                                actualBitSet.or(unquantifiedAssignment);
+                                return bdd.evaluate(function, actualBitSet);
+                            });
                     return bddEvaluation == setEvaluation;
                 }),
                 is(true));
@@ -1130,31 +1131,32 @@ class BddTheories {
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
 
-        BitSet quantificationBitSet = new BitSet(bdd.numberOfVariables());
+        MutableNatSet quantificationBitSet = MutableNatSet.dense(bdd.numberOfVariables());
         Random quantificationRandom = new Random(function);
         for (int i = 0; i < bdd.numberOfVariables(); i++) {
             if (quantificationRandom.nextInt(bdd.numberOfVariables()) < 5) {
                 quantificationBitSet.set(i);
             }
         }
-        assumeTrue(quantificationBitSet.cardinality() <= 5);
+        assumeTrue(quantificationBitSet.size() <= 5);
 
         int forall = bdd.forall(function, quantificationBitSet);
-        BitSet supportIntersection = bdd.support(forall);
+        MutableNatSet supportIntersection = MutableNatSet.copyOf(bdd.support(forall));
         supportIntersection.and(quantificationBitSet);
         assertThat(supportIntersection.isEmpty(), is(true));
 
-        BitSet unquantifiedVariables = BitSets.copyOf(quantificationBitSet);
+        MutableNatSet unquantifiedVariables = NatSetFixtures.copyOf(quantificationBitSet);
         unquantifiedVariables.flip(0, bdd.numberOfVariables());
 
         assertThat(
-                Iterators.all(BitSets.powerSetIterator(unquantifiedVariables), unquantifiedAssignment -> {
+                Iterators.all(NatSetFixtures.powerSetIterator(unquantifiedVariables), unquantifiedAssignment -> {
                     boolean bddEvaluation = bdd.evaluate(forall, Objects.requireNonNull(unquantifiedAssignment));
-                    boolean setEvaluation = Iterators.all(BitSets.powerSetIterator(quantificationBitSet), bitSet -> {
-                        BitSet actualBitSet = BitSets.copyOf(Objects.requireNonNull(bitSet));
-                        actualBitSet.or(unquantifiedAssignment);
-                        return bdd.evaluate(function, actualBitSet);
-                    });
+                    boolean setEvaluation =
+                            Iterators.all(NatSetFixtures.powerSetIterator(quantificationBitSet), bitSet -> {
+                                MutableNatSet actualBitSet = NatSetFixtures.copyOf(Objects.requireNonNull(bitSet));
+                                actualBitSet.or(unquantifiedAssignment);
+                                return bdd.evaluate(function, actualBitSet);
+                            });
                     return bddEvaluation == setEvaluation;
                 }),
                 is(true));
@@ -1167,25 +1169,25 @@ class BddTheories {
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
 
-        BitSet support = bdd.support(function);
-        assumeTrue(support.cardinality() <= 7);
+        MutableNatSet support = MutableNatSet.copyOf(bdd.support(function));
+        assumeTrue(support.size() <= 7);
 
-        BitSet supportFromSolutions = new BitSet(bdd.numberOfVariables());
-        BitSet supportFromPathSupport = new BitSet(bdd.numberOfVariables());
+        MutableNatSet supportFromSolutions = MutableNatSet.dense(bdd.numberOfVariables());
+        MutableNatSet supportFromPathSupport = MutableNatSet.dense(bdd.numberOfVariables());
 
-        List<BitSet> paths = new ArrayList<>();
+        List<NatSet> paths = new ArrayList<>();
         bdd.forEachPath(function, path -> {
-            paths.add(path.assignment());
+            paths.add(NatSet.copyOf(path.assignment()));
             supportFromPathSupport.or(path.support());
         });
         assertThat(supportFromPathSupport, is(support));
 
-        Iterator<BitSet> pathIterator = paths.iterator();
-        BitSet previous = null;
-        Set<BitSet> solutionBitSets = new HashSet<>();
+        Iterator<NatSet> pathIterator = paths.iterator();
+        NatSet previous = null;
+        Set<NatSet> solutionBitSets = new HashSet<>();
 
         while (pathIterator.hasNext()) {
-            BitSet next = pathIterator.next();
+            MutableNatSet next = MutableNatSet.copyOf(pathIterator.next());
             if (previous != null) {
                 // Paths come out in the order the diagram is laid out in, which is by level - the same
                 // thing as by variable index only while nothing has reordered.
@@ -1202,7 +1204,7 @@ class BddTheories {
         assertThat(supportFromSolutions, is(support));
 
         // Build up all minimal solutions using a naive algorithm
-        Set<BitSet> assignments = new BddPathExplorer(bdd, function).getAssignments();
+        Set<NatSet> assignments = new BddPathExplorer(bdd, function).getAssignments();
         assertThat(solutionBitSets, is(assignments));
     }
 
@@ -1213,35 +1215,35 @@ class BddTheories {
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
 
-        BitSet support = bdd.support(function);
-        assumeTrue(support.cardinality() <= 7);
+        MutableNatSet support = MutableNatSet.copyOf(bdd.support(function));
+        assumeTrue(support.size() <= 7);
 
-        BitSet supportRestriction = new BitSet();
+        MutableNatSet supportRestriction = MutableNatSet.create();
         Random mixer = new Random(bdd.hashCode() + function);
         for (int i = 0; i < bdd.numberOfVariables(); i++) {
             supportRestriction.set(i, mixer.nextBoolean());
         }
 
-        BitSet supportFromPathSupport = new BitSet(bdd.numberOfVariables());
+        MutableNatSet supportFromPathSupport = MutableNatSet.dense(bdd.numberOfVariables());
 
-        Set<BitSet> paths = new HashSet<>();
+        Set<NatSet> paths = new HashSet<>();
         bdd.forEachPartialPath(function, supportRestriction, path -> {
-            assertThat(BitSets.isSubset(path.support(), supportRestriction), is(true));
-            paths.add(path.assignment());
+            assertThat(NatSetFixtures.isSubset(path.support(), supportRestriction), is(true));
+            paths.add(NatSet.copyOf(path.assignment()));
             supportFromPathSupport.or(path.support());
         });
-        var supportCopy = BitSets.copyOf(support);
+        var supportCopy = NatSetFixtures.copyOf(support);
         supportCopy.and(supportRestriction);
         assertThat(supportFromPathSupport, is(supportCopy));
 
-        for (BitSet path : paths) {
-            assertThat(BitSets.isSubset(path, supportRestriction), is(true));
+        for (NatSet path : paths) {
+            assertThat(NatSetFixtures.isSubset(path, supportRestriction), is(true));
         }
 
         // Build up all minimal solutions using a naive algorithm
-        Set<BitSet> assignments = new HashSet<>();
-        for (BitSet assignment : new BddPathExplorer(bdd, function).getAssignments()) {
-            var copy = BitSets.copyOf(assignment);
+        Set<NatSet> assignments = new HashSet<>();
+        for (NatSet assignment : new BddPathExplorer(bdd, function).getAssignments()) {
+            var copy = NatSetFixtures.copyOf(assignment);
             copy.and(supportRestriction);
             assignments.add(copy);
         }
@@ -1255,28 +1257,28 @@ class BddTheories {
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
 
-        BitSet support = bdd.support(function);
-        assumeTrue(support.cardinality() <= 7);
+        MutableNatSet support = MutableNatSet.copyOf(bdd.support(function));
+        assumeTrue(support.size() <= 7);
 
-        List<BitSet> minimalSolutions = new ArrayList<>();
+        List<NatSet> minimalSolutions = new ArrayList<>();
         int variableCount = bdd.numberOfVariables();
         bdd.forEachPath(function, path -> {
-            minimalSolutions.add(path.assignment());
-            BitSet nonRelevantVariables = path.support();
+            minimalSolutions.add(NatSet.copyOf(path.assignment()));
+            MutableNatSet nonRelevantVariables = MutableNatSet.copyOf(path.support());
             nonRelevantVariables.flip(0, variableCount);
             assertThat(nonRelevantVariables.intersects(path.assignment()), is(false));
             assertThat(bdd.evaluate(function, path.assignment()), is(true));
 
-            Iterator<BitSet> iterator = BitSets.powerSetIterator(nonRelevantVariables);
+            Iterator<NatSet> iterator = NatSetFixtures.powerSetIterator(nonRelevantVariables);
             while (iterator.hasNext()) {
-                BitSet next = BitSets.copyOf(iterator.next());
+                MutableNatSet next = NatSetFixtures.copyOf(iterator.next());
                 next.or(path.assignment());
                 assertThat(bdd.evaluate(function, next), is(true));
             }
         });
 
-        List<BitSet> otherMinimalSolutions = new ArrayList<>();
-        bdd.forEachPath(function, path -> otherMinimalSolutions.add(path.assignment()));
+        List<NatSet> otherMinimalSolutions = new ArrayList<>();
+        bdd.forEachPath(function, path -> otherMinimalSolutions.add(NatSet.copyOf(path.assignment())));
         assertThat(minimalSolutions, is(otherMinimalSolutions));
     }
 
@@ -1287,8 +1289,8 @@ class BddTheories {
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
 
-        BitSet support = bdd.support(function);
-        assumeTrue(support.cardinality() <= 7);
+        MutableNatSet support = MutableNatSet.copyOf(bdd.support(function));
+        assumeTrue(support.size() <= 7);
 
         List<Cube> paths = new ArrayList<>();
         bdd.forEachPath(function, path -> paths.add(path.copy()));
@@ -1427,7 +1429,7 @@ class BddTheories {
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
 
-        Set<BitSet> satisfyingAssignments = new HashSet<>();
+        Set<NatSet> satisfyingAssignments = new HashSet<>();
         for (boolean[] valuation : valuations) {
             if (bdd.evaluate(function, valuation)) {
                 satisfyingAssignments.add(asSet(valuation));
@@ -1462,36 +1464,36 @@ class BddTheories {
         }
 
         int variable = bdd.decisionVariable(function);
-        BitSet support = bdd.support(function);
-        assertThat(support.get(variable), is(true));
+        MutableNatSet support = MutableNatSet.copyOf(bdd.support(function));
+        assertThat(support.contains(variable), is(true));
 
-        BitSet lowSupport = bdd.support(low);
-        assertThat(lowSupport.get(variable), is(false));
-        assertThat(BitSets.isSubset(lowSupport, support), is(true));
-        BitSet highSupport = bdd.support(high);
-        assertThat(highSupport.get(variable), is(false));
-        assertThat(BitSets.isSubset(highSupport, support), is(true));
+        NatSet lowSupport = bdd.support(low);
+        assertThat(lowSupport.contains(variable), is(false));
+        assertThat(NatSetFixtures.isSubset(lowSupport, support), is(true));
+        NatSet highSupport = bdd.support(high);
+        assertThat(highSupport.contains(variable), is(false));
+        assertThat(NatSetFixtures.isSubset(highSupport, support), is(true));
 
-        Set<BitSet> lowSolutions = new HashSet<>();
-        Set<BitSet> highSolutions = new HashSet<>();
+        Set<NatSet> lowSolutions = new HashSet<>();
+        Set<NatSet> highSolutions = new HashSet<>();
 
         // The low and high functions will be insensitive to the variable's value
         bdd.forEachSolution(function, support, assignment -> {
-            BitSet copy = BitSets.copyOf(assignment);
+            MutableNatSet copy = NatSetFixtures.copyOf(assignment);
             copy.clear(variable);
-            (assignment.get(variable) ? highSolutions : lowSolutions).add(copy);
+            (assignment.contains(variable) ? highSolutions : lowSolutions).add(copy);
         });
 
-        Set<BitSet> solutionOfLow = new HashSet<>();
-        Set<BitSet> solutionOfHigh = new HashSet<>();
+        Set<NatSet> solutionOfLow = new HashSet<>();
+        Set<NatSet> solutionOfHigh = new HashSet<>();
         bdd.forEachSolution(low, support, assignment -> {
-            BitSet copy = BitSets.copyOf(assignment);
+            MutableNatSet copy = NatSetFixtures.copyOf(assignment);
             copy.clear(variable);
             assertThat(bdd.evaluate(function, copy), is(true));
             solutionOfLow.add(copy);
         });
         bdd.forEachSolution(high, support, assignment -> {
-            BitSet copy = BitSets.copyOf(assignment);
+            MutableNatSet copy = NatSetFixtures.copyOf(assignment);
             copy.set(variable);
             assertThat(bdd.evaluate(function, copy), is(true));
             copy.clear(variable);
@@ -1689,8 +1691,8 @@ class BddTheories {
                 assertThat(bdd.isVariableOrNegated(function), is(true));
             }
         }
-        BitSet support = bdd.support(function);
-        assertThat(bdd.isVariableOrNegated(function), is(support.cardinality() == 1));
+        MutableNatSet support = MutableNatSet.copyOf(bdd.support(function));
+        assertThat(bdd.isVariableOrNegated(function), is(support.size() == 1));
     }
 
     @ParameterizedTest(name = "{index}")
@@ -1700,15 +1702,15 @@ class BddTheories {
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
 
-        Set<BitSet> satisfyingAssignments = new HashSet<>();
+        Set<NatSet> satisfyingAssignments = new HashSet<>();
         for (boolean[] valuation : valuations) {
             if (bdd.evaluate(function, valuation)) {
                 satisfyingAssignments.add(asSet(valuation));
             }
         }
 
-        for (Cursor<BitSet> cursor = bdd.solutionCursor(function); cursor.valid(); cursor.advance()) {
-            BitSet valuation = cursor.current();
+        for (Cursor<NatSet> cursor = bdd.solutionCursor(function); cursor.valid(); cursor.advance()) {
+            NatSet valuation = cursor.current();
             assertThat("Invalid solution", bdd.evaluate(function, valuation), is(true));
             assertThat("Duplicate solution", satisfyingAssignments.remove(valuation), is(true));
         }
@@ -1891,8 +1893,8 @@ class BddTheories {
         assumeTrue(bdd.isValidFunction(function));
 
         Random restrictRandom = new Random(function);
-        BitSet restrictedVariables = new BitSet(bdd.numberOfVariables());
-        BitSet restrictedVariableValues = new BitSet(bdd.numberOfVariables());
+        MutableNatSet restrictedVariables = MutableNatSet.dense(bdd.numberOfVariables());
+        MutableNatSet restrictedVariableValues = MutableNatSet.dense(bdd.numberOfVariables());
         int[] composeArray = new int[bdd.numberOfVariables()];
         for (int i = 0; i < 10; i++) {
             for (int j = 0; j < bdd.numberOfVariables(); j++) {
@@ -1915,7 +1917,7 @@ class BddTheories {
             assertThat(restricted, is(composed));
             bdd.dereference(restricted);
 
-            BitSet restrictSupport = bdd.support(restricted);
+            MutableNatSet restrictSupport = MutableNatSet.copyOf(bdd.support(restricted));
             restrictSupport.and(restrictedVariables);
             assertThat(restrictSupport.isEmpty(), is(true));
 
@@ -1975,8 +1977,8 @@ class BddTheories {
         } else {
             // Have some arbitrary ordering
             List<Integer> containedVariableList = new ArrayList<>(containedVariables);
-            BitSet valuation = new BitSet(variableCount);
-            BitSet support = new BitSet(variableCount);
+            MutableNatSet valuation = MutableNatSet.dense(variableCount);
+            MutableNatSet support = MutableNatSet.dense(variableCount);
 
             for (int checkedVariable : containedVariableList) {
                 int checkedContainedIndex = containedVariableList.indexOf(checkedVariable);
@@ -2016,14 +2018,14 @@ class BddTheories {
         assumeTrue(bdd.isValidFunction(function1));
         assumeTrue(bdd.isValidFunction(function2));
 
-        BitSet function1Support = bdd.support(function1);
-        BitSet function2Support = bdd.support(function2);
-        BitSet supportUnion = BitSets.copyOf(function1Support);
+        NatSet function1Support = bdd.support(function1);
+        NatSet function2Support = bdd.support(function2);
+        MutableNatSet supportUnion = NatSetFixtures.copyOf(function1Support);
         supportUnion.or(function2Support);
 
         for (int resultFunction : doBddOperations(bdd, function1, function2)) {
-            BitSet operationSupport = bdd.support(resultFunction);
-            operationSupport.stream().forEach(setBit -> assertThat(supportUnion.get(setBit), is(true)));
+            NatSet operationSupport = bdd.support(resultFunction);
+            operationSupport.intStream().forEach(setBit -> assertThat(supportUnion.contains(setBit), is(true)));
         }
     }
 
@@ -2034,12 +2036,12 @@ class BddTheories {
         int function = dataPoint.function;
         assumeTrue(bdd.isValidFunction(function));
 
-        BitSet support = bdd.support(function);
-        BitSet supportRestrict = new BitSet(bdd.numberOfVariables());
+        MutableNatSet support = MutableNatSet.copyOf(bdd.support(function));
+        MutableNatSet supportRestrict = MutableNatSet.dense(bdd.numberOfVariables());
         for (int i = 0; i < bdd.numberOfVariables(); i += 2) {
             supportRestrict.set(i);
         }
-        BitSet cutoffSupport = bdd.supportFiltered(function, supportRestrict);
+        NatSet cutoffSupport = bdd.supportFiltered(function, supportRestrict);
         support.and(supportRestrict);
         assertThat(cutoffSupport, is(support));
     }
@@ -2194,13 +2196,13 @@ class BddTheories {
         assumeTrue(bdd.isValidFunction(function1));
         assumeTrue(bdd.isValidFunction(function2));
 
-        BitSet support = bdd.support(function1);
+        MutableNatSet support = MutableNatSet.copyOf(bdd.support(function1));
         bdd.supportTo(function2, support);
 
         boolean anyDistinct = false;
-        var iterator = BitSets.powerSetIterator(support);
+        var iterator = NatSetFixtures.powerSetIterator(support);
         while (iterator.hasNext()) {
-            BitSet next = iterator.next();
+            MutableNatSet next = MutableNatSet.copyOf(iterator.next());
             if (bdd.evaluate(function1, next) != bdd.evaluate(function2, next)) {
                 anyDistinct = true;
                 break;
@@ -2221,17 +2223,17 @@ class BddTheories {
         }
     }
 
-    private static final class BitSetComparator implements Comparator<BitSet> {
+    private static final class BitSetComparator implements Comparator<NatSet> {
         @Override
-        public int compare(BitSet one, BitSet other) {
+        public int compare(NatSet one, NatSet other) {
             int oneLength = one.length();
             int otherLength = other.length();
             for (int i = 0; i < oneLength; i++) {
-                if (one.get(i)) {
-                    if (!other.get(i)) {
+                if (one.contains(i)) {
+                    if (!other.contains(i)) {
                         return 1;
                     }
-                } else if (other.get(i)) {
+                } else if (other.contains(i)) {
                     return -1;
                 }
             }
@@ -2240,32 +2242,32 @@ class BddTheories {
     }
 
     private static final class BddPathExplorer {
-        private final Set<BitSet> assignments;
+        private final Set<NatSet> assignments;
         private final BinaryDecisionDiagram bdd;
 
         BddPathExplorer(BinaryDecisionDiagram bdd, int startingFunction) {
             this.bdd = bdd;
             this.assignments = new HashSet<>();
             if (startingFunction == bdd.trueFunction()) {
-                assignments.add(new BitSet(bdd.numberOfVariables()));
+                assignments.add(MutableNatSet.dense(bdd.numberOfVariables()));
             } else if (startingFunction != bdd.falseFunction()) {
                 List<Integer> path = new ArrayList<>();
                 path.add(startingFunction);
-                recurse(path, new BitSet(bdd.numberOfVariables()));
+                recurse(path, MutableNatSet.dense(bdd.numberOfVariables()));
             }
         }
 
-        Set<BitSet> getAssignments() {
+        Set<NatSet> getAssignments() {
             return assignments;
         }
 
-        private void recurse(List<Integer> currentPath, BitSet currentAssignment) {
+        private void recurse(List<Integer> currentPath, NatSet currentAssignment) {
             int pathLeaf = currentPath.get(currentPath.size() - 1);
             int low = bdd.lowOf(pathLeaf);
             int high = bdd.highOf(pathLeaf);
 
             if (low == bdd.trueFunction()) {
-                assignments.add(BitSets.copyOf(currentAssignment));
+                assignments.add(NatSetFixtures.copyOf(currentAssignment));
             } else if (low != bdd.falseFunction()) {
                 List<Integer> recursePath = new ArrayList<>(currentPath);
                 recursePath.add(low);
@@ -2273,7 +2275,7 @@ class BddTheories {
             }
 
             if (high != bdd.falseFunction()) {
-                BitSet assignment = BitSets.copyOf(currentAssignment);
+                MutableNatSet assignment = NatSetFixtures.copyOf(currentAssignment);
                 assignment.set(bdd.decisionVariable(pathLeaf));
                 if (high == bdd.trueFunction()) {
                     assignments.add(assignment);

@@ -19,11 +19,10 @@ package de.tum.in.jbdd;
 import static de.tum.in.jbdd.Util.*;
 import static java.util.Map.entry;
 
-import de.tum.in.jbdd.collections.BitSets;
 import de.tum.in.jbdd.collections.Cube;
+import de.tum.in.jbdd.collections.NatSet;
 import java.math.BigInteger;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
@@ -53,7 +52,7 @@ final class BooleanCache implements VariableOrderObserver {
     private final TernaryToIntCache iteCache;
     private final QuaternaryToIntCache iteSimplifyCache;
     private final UnaryToIntCache existsCache;
-    private BitSet existsVariables = new BitSet(0);
+    private NatSet existsVariables = NatSet.of();
     private final UnaryToObjectCache<BigInteger> satisfactionCache;
     private final BinaryToObjectCache<BigInteger> satisfactionInCache;
     private final Map<String, IntCache> caches;
@@ -189,7 +188,7 @@ final class BooleanCache implements VariableOrderObserver {
     }
 
     @Override
-    public void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, BitSet movedVariables) {
+    public void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, NatSet movedVariables) {
         /* Everything goes. Only the counts (ranging over the levels below their node) and constrain (deciding
          * top-down) are wrong now; the rest hold in any order, reordering rewriting in place. But keeping them
          * saves one clear at most: invalidation is lazy, and a reordering that collects has cleared them already. */
@@ -234,12 +233,12 @@ final class BooleanCache implements VariableOrderObserver {
 
     // Lookup
 
-    void initExists(BitSet quantifiedVariables) {
+    void initExists(NatSet quantifiedVariables) {
         if (quantifiedVariables.equals(this.existsVariables)) {
             existsReuseCount += 1;
             return;
         }
-        this.existsVariables = BitSets.copyOf(quantifiedVariables);
+        this.existsVariables = NatSet.copyOf(quantifiedVariables);
         existsCache.invalidate();
     }
 

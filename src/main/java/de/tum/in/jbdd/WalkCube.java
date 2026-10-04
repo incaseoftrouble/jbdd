@@ -1,6 +1,6 @@
 /*
  * This file is part of JBDD (https://github.com/incaseoftrouble/jbdd).
- * Copyright (c) 2026 Tobias Meggendorfer.
+ * Copyright (c) 2017-2023 Tobias Meggendorfer.
  *
  * JBDD is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,18 +16,22 @@
  */
 package de.tum.in.jbdd;
 
-import de.tum.in.jbdd.collections.NatSet;
+import de.tum.in.jbdd.collections.Cube;
+import de.tum.in.jbdd.collections.Cursor;
+import de.tum.in.jbdd.collections.MutableNatSet;
 
-interface NodeTableObserver {
-    default void beforeGc(DecisionDiagram origin) {
-        // Default: nothing to release ahead of time.
-    }
+/**
+ * A walk's cube over the sets the walk mutates in place: what it hands out is its working state (see
+ * {@link Cursor}).
+ */
+final class WalkCube {
+    final MutableNatSet assignment;
+    final MutableNatSet support;
+    final Cube cube;
 
-    default void afterGc(DecisionDiagram origin, int reclaimedNodes, NatSet reclaimedValues) {
-        // Default: nothing depends on which nodes/values were reclaimed.
-    }
-
-    default void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, NatSet reclaimedValues) {
-        // Default: nothing depends on the table's size.
+    WalkCube(int capacity) {
+        this.assignment = MutableNatSet.dense(capacity);
+        this.support = MutableNatSet.dense(capacity);
+        this.cube = Cube.ofUnsafe(assignment, support);
     }
 }

@@ -18,7 +18,7 @@ package de.tum.in.jbdd;
 
 import de.tum.in.jbdd.SyntaxTree.SyntaxTreeBinaryOperation.BinaryType;
 import de.tum.in.jbdd.SyntaxTree.SyntaxTreeTernaryOperation.TernaryType;
-import java.util.BitSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
@@ -135,7 +135,7 @@ public final class SyntaxTree {
         return Objects.equals(rootNode, that.rootNode);
     }
 
-    boolean evaluate(BitSet valuation) {
+    boolean evaluate(NatSet valuation) {
         return rootNode.evaluate(valuation);
     }
 
@@ -188,7 +188,7 @@ public final class SyntaxTree {
         }
 
         @Override
-        boolean evaluate(BitSet valuation) {
+        boolean evaluate(NatSet valuation) {
             switch (type) { // NOPMD
                 case AND:
                     return left.evaluate(valuation) && right.evaluate(valuation);
@@ -290,7 +290,7 @@ public final class SyntaxTree {
         }
 
         @Override
-        boolean evaluate(BitSet valuation) {
+        boolean evaluate(NatSet valuation) {
             return value;
         }
 
@@ -345,8 +345,8 @@ public final class SyntaxTree {
         }
 
         @Override
-        boolean evaluate(BitSet valuation) {
-            return valuation.get(variableNumber);
+        boolean evaluate(NatSet valuation) {
+            return valuation.contains(variableNumber);
         }
 
         @Override
@@ -382,7 +382,7 @@ public final class SyntaxTree {
     abstract static class SyntaxTreeNode {
         abstract int depth();
 
-        abstract boolean evaluate(BitSet valuation);
+        abstract boolean evaluate(NatSet valuation);
 
         abstract boolean evaluate(boolean[] valuation);
 
@@ -417,7 +417,7 @@ public final class SyntaxTree {
         }
 
         @Override
-        boolean evaluate(BitSet valuation) {
+        boolean evaluate(NatSet valuation) {
             return !child.evaluate(valuation);
         }
 
@@ -488,7 +488,7 @@ public final class SyntaxTree {
         }
 
         @Override
-        boolean evaluate(BitSet valuation) {
+        boolean evaluate(NatSet valuation) {
             if (type == TernaryType.ITE) {
                 if (first.evaluate(valuation)) {
                     return second.evaluate(valuation);

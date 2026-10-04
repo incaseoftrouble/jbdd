@@ -18,8 +18,9 @@ package de.tum.in.jbdd;
 
 import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.Cursor;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.math.BigInteger;
-import java.util.BitSet;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.IntBinaryOperator;
@@ -57,7 +58,7 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
      *
      * @return The value of the function under the given assignment.
      */
-    int evaluate(int function, BitSet assignment);
+    int evaluate(int function, NatSet assignment);
 
     /**
      * Creates the constant function with given {@code value}.
@@ -80,7 +81,7 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
     /**
      * Returns any assignment of the given {@code function} leading to the given {@code values}, if any.
      */
-    Optional<BitSet> anyAssignment(int function, IntPredicate values);
+    Optional<MutableNatSet> anyAssignment(int function, IntPredicate values);
 
     /**
      * Counts the number of assignments under which the given {@code function} evaluates to the given {@code values}.
@@ -91,7 +92,7 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
      * Counts the number of assignments under which the given {@code function} evaluates to the given {@code values},
      * only considering variables in the {@code support}.
      */
-    BigInteger countAssignments(int function, IntPredicate values, BitSet support);
+    BigInteger countAssignments(int function, IntPredicate values, NatSet support);
 
     /**
      * Walks all assignments under which the given {@code function} evaluates to one of the given
@@ -106,13 +107,13 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
      * <p><b>Note:</b> The bit set it hands out is its own working state - see {@link Cursor}. If all
      * assignments should be gathered into a set or similar, they have to be cloned.</p>
      */
-    ValuedCursor<BitSet> assignmentCursor(int function, @Nullable IntPredicate values);
+    ValuedCursor<NatSet> assignmentCursor(int function, @Nullable IntPredicate values);
 
     /**
      * Like {@link #assignmentCursor(int, IntPredicate)}, but only distinguishing assignments to the
      * variables in {@code support}, which must contain the function's own support.
      */
-    ValuedCursor<BitSet> assignmentCursor(int function, @Nullable IntPredicate values, BitSet support);
+    ValuedCursor<NatSet> assignmentCursor(int function, @Nullable IntPredicate values, NatSet support);
 
     /**
      * Walks all root-to-leaf paths of the given {@code function} in lexicographic ascending order, with
@@ -134,7 +135,7 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
      *
      * <p>The solutions are generated in lexicographic ascending order.</p>
      */
-    default void forEachSolution(int function, @Nullable IntPredicate values, Consumer<? super BitSet> action) {
+    default void forEachSolution(int function, @Nullable IntPredicate values, Consumer<? super NatSet> action) {
         assignmentCursor(function, values).forEachRemaining(action);
     }
 
@@ -158,8 +159,8 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
     /**
      * Computes the co-domain of the given {@code function}.
      */
-    default BitSet valuesOf(int function) {
-        BitSet values = new BitSet();
+    default MutableNatSet valuesOf(int function) {
+        MutableNatSet values = MutableNatSet.create();
         forEachValue(function, values::set);
         return values;
     }
@@ -168,7 +169,7 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
      * Determines whether all values in the co-domain of the given {@code function} match the {@code predicate}.
      */
     default boolean allValuesMatch(int function, IntPredicate predicate) {
-        return valuesOf(function).stream().allMatch(predicate);
+        return valuesOf(function).intStream().allMatch(predicate);
     }
 
     /**
@@ -510,7 +511,7 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
      * an index into {@link FunctionToFunctionMap#codomain()} whose associated function {@code h(x_1, x_3, ..., x_n)}
      * evaluates to {@code f(x_1, ..., x_n)}.
      */
-    FunctionToFunctionMap split(int function, BitSet splitVariables);
+    FunctionToFunctionMap split(int function, NatSet splitVariables);
 
     /**
      * {@link #split} for a function of the associated BDD: the result's {@link FunctionToFunctionMap#function()}
@@ -519,7 +520,7 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
      * bddFunction} restricts to under that assignment. As with {@link #split}, the pieces are unprotected and
      * must be referenced before any further call.
      */
-    FunctionToFunctionMap splitBdd(int bddFunction, BitSet splitVariables);
+    FunctionToFunctionMap splitBdd(int bddFunction, NatSet splitVariables);
 
     /**
      * Like {@link #split}, but instead of handing back a {@link FunctionToFunctionMap} whose pieces the
@@ -529,7 +530,7 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
      * relabeler.applyAsInt(split(function, splitVariables).functionFor(v)))}, except the whole computation
      * happens as a single traversal, so no intermediate function is ever exposed unprotected.
      */
-    int splitRelabeled(int function, BitSet splitVariables, IntUnaryOperator relabeler);
+    int splitRelabeled(int function, NatSet splitVariables, IntUnaryOperator relabeler);
 
     /**
      * Creates the product of the given {@code functions}. Suppose each function is {@code f_i(x_1, ..., x_n}},
@@ -590,7 +591,7 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
         /**
          * The co-domain of the inverted function.
          */
-        BitSet codomain();
+        NatSet codomain();
     }
 
     interface FunctionToFunctionMap {
@@ -607,7 +608,7 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
         /**
          * The co-domain of the meta-function.
          */
-        BitSet codomain();
+        NatSet codomain();
     }
 
     interface FunctionToFunctionsMap {
@@ -624,7 +625,7 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
         /**
          * The co-domain of the meta-function.
          */
-        BitSet codomain();
+        NatSet codomain();
     }
 
     @FunctionalInterface

@@ -27,14 +27,14 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-import de.tum.in.jbdd.collections.BitSets;
 import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.Cursor;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.lang.ref.WeakReference;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -102,7 +102,7 @@ class RegressionTests {
         int v2 = bdd.createVariable();
         int and = bdd.and(v1, v2);
 
-        Cursor<BitSet> cursor = bdd.solutionCursor(and);
+        Cursor<NatSet> cursor = bdd.solutionCursor(and);
         while (cursor.valid()) {
             cursor.advance();
         }
@@ -347,7 +347,7 @@ class RegressionTests {
         assertTrue(mt.isUnmanaged(((GcReferenceManager.DdContainer) held.get(0)).function()));
         for (int i = 0; i < held.size(); i++) {
             BddMap<String> map = held.get(i);
-            assertEquals("v" + i, map.evaluate(BitSets.of()));
+            assertEquals("v" + i, map.evaluate(NatSetFixtures.of()));
             assertSame(map, map.valueDomain().of("v" + i));
         }
 
@@ -359,7 +359,7 @@ class RegressionTests {
         // Draining the queue dereferences the saturated terminal once per collected wrapper; that is a
         // no-op, but it must not trip the "dereferencing a value that was never referenced" assertion.
         Values<String> fresh = maps.create();
-        assertEquals("after", fresh.of("after").evaluate(BitSets.of()));
+        assertEquals("after", fresh.of("after").evaluate(NatSetFixtures.of()));
         assertTrue(mt.check());
 
         // The point of the exercise: a saturated function's wrapper is held weakly like any other, so
@@ -368,7 +368,7 @@ class RegressionTests {
     }
 
     private static BddSet cube(BddSetFactory sets, int index) {
-        return sets.of(Cube.of(BitSet.valueOf(new long[] {index}), BitSets.range(0, 13)));
+        return sets.of(Cube.of(NatSetFixtures.valueOf(index), NatSetFixtures.range(0, 13)));
     }
 
     @Test
@@ -430,7 +430,7 @@ class RegressionTests {
         // Reclaims the now-unreferenced values
         assertDoesNotThrow(mt::gc);
 
-        assertEquals("kept", kept.evaluate(BitSets.of()));
+        assertEquals("kept", kept.evaluate(NatSetFixtures.of()));
         assertEquals(java.util.Set.of("kept"), kept.values());
         assertTrue(mt.check());
     }
@@ -448,12 +448,12 @@ class RegressionTests {
 
         IntPredicate isFive = value -> value == 5;
         int solutions = 0;
-        for (Cursor<BitSet> cursor = mt.assignmentCursor(function, isFive); cursor.valid(); cursor.advance()) {
+        for (Cursor<NatSet> cursor = mt.assignmentCursor(function, isFive); cursor.valid(); cursor.advance()) {
             solutions++;
         }
         assertEquals(4, solutions);
 
-        Cursor<BitSet> cursor = mt.assignmentCursor(function, isFive);
+        Cursor<NatSet> cursor = mt.assignmentCursor(function, isFive);
         assertTrue(cursor.valid());
         mt.anyAssignment(function, value -> value == 100);
         assertThrows(AssertionError.class, () -> {
@@ -480,7 +480,7 @@ class RegressionTests {
         int high = mt.reference(mt.of(1, third, second));
         int function = mt.reference(mt.of(0, high, low));
 
-        BitSet splitVariables = BitSets.of(0, 1);
+        NatSet splitVariables = NatSetFixtures.of(0, 1);
         List<Integer> relabeled = new ArrayList<>();
         int result = mt.reference(mt.splitRelabeled(function, splitVariables, residual -> {
             relabeled.add(residual);
@@ -491,7 +491,7 @@ class RegressionTests {
         assertEquals(relabeled.size(), new HashSet<>(relabeled).size());
 
         // Sanity: the relabeled meta-function still distinguishes exactly the three residuals.
-        assertEquals(3, mt.valuesOf(result).cardinality());
+        assertEquals(3, mt.valuesOf(result).size());
         assertEquals(
                 mt.evaluate(result, assignment(false, true, false)),
                 mt.evaluate(result, assignment(true, false, false)));
@@ -544,7 +544,7 @@ class RegressionTests {
         assertFalse(bdd.isValidFunction(freed), "The replacement was not collected");
         for (long mask = 1; mask < 1L << 8 && !bdd.isValidFunction(freed); mask++) {
             // Negative cubes only, so none of them rebuilds the conjunction of positive literals that died.
-            bdd.reference(bdd.of(Cube.negative(BitSet.valueOf(new long[] {mask}))));
+            bdd.reference(bdd.of(Cube.negative(NatSetFixtures.valueOf(mask))));
         }
         assumeTrue(bdd.isValidFunction(freed), "The freed id was never handed out again");
     }
@@ -609,7 +609,7 @@ class RegressionTests {
         assertTrue(old > 1);
         assertTrue(mt.isConstant(mt.of(old)));
         List<BddMap<String>> residuals = new ArrayList<>();
-        BddMap<String> split = map.splitMap(BitSets.of(0), values, residual -> {
+        BddMap<String> split = map.splitMap(NatSetFixtures.of(0), values, residual -> {
             residuals.add(residual);
             if (residuals.size() == 1) {
                 return "old";
@@ -701,8 +701,8 @@ class RegressionTests {
         assertEquals(mt.placeholder(), identity[0]);
 
         int[] constants = {bdd.trueFunction(), bdd.falseFunction(), bdd.placeholder()};
-        BitSet restricted = BitSets.of(0, 1);
-        BitSet restrictedValues = BitSets.of(0);
+        NatSet restricted = NatSetFixtures.of(0, 1);
+        NatSet restrictedValues = NatSetFixtures.of(0);
         assertEquals(
                 mt.restrict(function, Cube.of(restrictedValues, restricted)),
                 mt.registerCompose(constants).applyAsInt(function));
@@ -819,7 +819,7 @@ class RegressionTests {
         assertEquals(combinedThenCofactored, cofactoredThenCombined);
 
         // The cofactor's co-domain is exactly the set of values f takes on the domain.
-        BitSet imageOnDomain = new BitSet();
+        MutableNatSet imageOnDomain = MutableNatSet.create();
         for (int mask = 0; mask < 8; mask++) {
             boolean[] a = assignment((mask & 1) != 0, (mask & 2) != 0, (mask & 4) != 0);
             if (bdd.evaluate(domain, a)) {
@@ -829,7 +829,7 @@ class RegressionTests {
         assertEquals(imageOnDomain, mt.valuesOf(mt.constrain(f, domain)));
 
         // simplify keeps the result's dependencies within f's own; constrain need not.
-        assertTrue(BitSets.isSubset(mt.support(mt.simplify(f, domain)), mt.support(f)));
+        assertTrue(NatSetFixtures.isSubset(mt.support(mt.simplify(f, domain)), mt.support(f)));
     }
 
     @Test
@@ -1079,9 +1079,9 @@ class RegressionTests {
         int v2 = bdd.reference(bdd.createVariable());
         int v3 = bdd.reference(bdd.createVariable());
         int function = bdd.reference(bdd.or(v1, bdd.or(v2, v3)));
-        checkCursorContract(bdd.solutionCursor(function), BitSets::copyOf);
+        checkCursorContract(bdd.solutionCursor(function), MutableNatSet::copyOf);
         checkCursorContract(bdd.pathCursor(function), Cube::copy);
-        checkCursorContract(bdd.solutionCursorIn(function, bdd.or(v1, v2)), BitSets::copyOf);
+        checkCursorContract(bdd.solutionCursorIn(function, bdd.or(v1, v2)), MutableNatSet::copyOf);
     }
 
     @Test
@@ -1096,7 +1096,7 @@ class RegressionTests {
 
     /**
      * {@code initExists} compared the quantified set against the one the previous call was made with, but
-     * stored the caller's {@code BitSet} rather than a copy of it. A caller reusing one set then compared it
+     * stored the caller's {@code NatSet} rather than a copy of it. A caller reusing one set then compared it
      * against itself, so the cache was kept although the quantification had changed.
      */
     @Test
@@ -1107,7 +1107,7 @@ class RegressionTests {
         int v2 = bdd.reference(bdd.createVariable());
         int function = bdd.reference(bdd.and(bdd.and(v0, v1), v2));
 
-        BitSet quantified = new BitSet(3);
+        MutableNatSet quantified = MutableNatSet.dense(3);
         quantified.set(0);
         assertEquals(bdd.and(v1, v2), bdd.exists(function, quantified));
 
@@ -1123,7 +1123,7 @@ class RegressionTests {
         int function = mtbdd.reference(
                 mtbdd.of(0, mtbdd.of(1), mtbdd.of(1, mtbdd.of(2), mtbdd.of(2, mtbdd.of(3), mtbdd.of(0)))));
         checkCursorContract(mtbdd.pathCursor(function), Cube::copy);
-        checkCursorContract(mtbdd.assignmentCursor(function, null), BitSets::copyOf);
+        checkCursorContract(mtbdd.assignmentCursor(function, null), MutableNatSet::copyOf);
     }
 
     /**
@@ -1138,9 +1138,9 @@ class RegressionTests {
                 ImmutableBddConfiguration.builder().initialSize(400_000).build());
         BddSetFactory sets = context.bddSets();
         int variables = 50_000;
-        BitSet support = new BitSet();
+        MutableNatSet support = MutableNatSet.create();
         support.set(0, variables);
-        BitSet valuation = new BitSet();
+        MutableNatSet valuation = MutableNatSet.create();
         for (int variable = 0; variable < variables; variable += 3) {
             valuation.set(variable);
         }
@@ -1167,7 +1167,7 @@ class RegressionTests {
         }
 
         assertTrue(cube[0].contains(valuation));
-        BitSet other = BitSets.copyOf(valuation);
+        MutableNatSet other = NatSetFixtures.copyOf(valuation);
         other.flip(variables - 1);
         assertFalse(cube[0].contains(other));
         assertTrue(context.bdd().evaluate(conjunction[0], support));

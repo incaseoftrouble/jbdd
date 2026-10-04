@@ -19,8 +19,8 @@ package de.tum.in.jbdd;
 import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.IntIntHashMap;
 import de.tum.in.jbdd.collections.IntObjectHashMap;
+import de.tum.in.jbdd.collections.MutableNatSet;
 import java.util.ArrayList;
-import java.util.BitSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -220,8 +220,8 @@ public final class BddUtil {
         IntIntHashMap lengths = new IntIntHashMap();
         int length = shortestPathLength(bdd, function, Integer.MAX_VALUE, lengths);
 
-        BitSet assignment = new BitSet();
-        BitSet support = new BitSet();
+        MutableNatSet assignment = MutableNatSet.create();
+        MutableNatSet support = MutableNatSet.create();
         int node = function;
         for (int remaining = length; remaining > 0; remaining--) {
             int variable = bdd.decisionVariable(node);

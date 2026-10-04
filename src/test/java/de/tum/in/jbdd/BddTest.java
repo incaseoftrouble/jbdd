@@ -23,12 +23,12 @@ import static org.junit.jupiter.api.Assertions.assertThrowsExactly;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.google.common.collect.Lists;
-import de.tum.in.jbdd.collections.BitSets;
 import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.Cursor;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -45,8 +45,8 @@ class BddTest {
     private static final BddConfiguration config =
             ImmutableBddConfiguration.builder().build();
 
-    private static BitSet buildBitSet(String values) {
-        BitSet bitSet = new BitSet(values.length());
+    private static NatSet buildBitSet(String values) {
+        MutableNatSet bitSet = MutableNatSet.dense(values.length());
         char[] characters = values.toCharArray();
         for (int i = 0; i < characters.length; i++) {
             assert characters[i] == '0' || characters[i] == '1';
@@ -55,8 +55,8 @@ class BddTest {
         return bitSet;
     }
 
-    private static BitSet buildBitSet(int bits, int size) {
-        BitSet bitSet = new BitSet(size);
+    private static NatSet buildBitSet(int bits, int size) {
+        MutableNatSet bitSet = MutableNatSet.dense(size);
         for (int i = 0; i < size; i++) {
             if ((bits & (1 << i)) != 0) {
                 bitSet.set(i);
@@ -206,9 +206,9 @@ class BddTest {
         assertThat(bdd.satisfyingFraction(and), is(0.25d));
         bdd.gc();
         assertThat(bdd.satisfyingFraction(and), is(0.25d));
-        List<BitSet> reversed = new ArrayList<>();
+        List<NatSet> reversed = new ArrayList<>();
         for (int variable = bdd.numberOfVariables() - 1; variable >= 0; variable--) {
-            BitSet block = new BitSet();
+            MutableNatSet block = MutableNatSet.create();
             block.set(variable);
             reversed.add(block);
         }
@@ -379,7 +379,7 @@ class BddTest {
         bdd.gc();
         assertThat(bdd.isValidFunction(replacement), is(false));
         for (long mask = 1; mask < 1L << 8 && !bdd.isValidFunction(replacement); mask++) {
-            bdd.reference(bdd.of(Cube.negative(BitSet.valueOf(new long[] {mask}))));
+            bdd.reference(bdd.of(Cube.negative(NatSetFixtures.valueOf(mask))));
         }
         assumeTrue(bdd.isValidFunction(replacement), "The freed id was never handed out again");
 
@@ -396,7 +396,7 @@ class BddTest {
         int[] v = bdd.createVariables(3);
         int f = bdd.reference(bdd.and(bdd.or(v[0], v[1]), bdd.xor(v[1], v[2])));
 
-        BitSet quantified = buildBitSet("010");
+        MutableNatSet quantified = MutableNatSet.copyOf(buildBitSet("010"));
         RegisteredOperation.Unary exists = bdd.registerExists(quantified);
         assertThat(exists.applyAsInt(f), is(bdd.exists(f, quantified)));
         // Invoked twice, the private cache is now warm - the answer must not change.
@@ -405,7 +405,7 @@ class BddTest {
         quantified.set(0);
         assertThat(exists.applyAsInt(f), is(bdd.exists(f, buildBitSet("010"))));
 
-        assertThat(bdd.registerExists(new BitSet()).applyAsInt(f), is(f));
+        assertThat(bdd.registerExists(MutableNatSet.create()).applyAsInt(f), is(f));
         assertThat(bdd.registerExists(buildBitSet("111")).applyAsInt(f), is(bdd.trueFunction()));
         assertThat(bdd.check(), is(true));
     }
@@ -441,7 +441,7 @@ class BddTest {
         int p4 = bdd.reference(bdd.and(bdd.not(v2), v1));
         assertThat(p1, not(p4));
 
-        BitSet valuation = new BitSet(2);
+        MutableNatSet valuation = MutableNatSet.dense(2);
         valuation.set(1);
         assertThat(bdd.evaluate(p1, valuation), is(false));
         assertThat(bdd.evaluate(p2, valuation), is(true));
@@ -453,13 +453,13 @@ class BddTest {
     void testMinimalSolutionsForConstants() {
         BddImpl bdd = new DdContextImpl(config).bdd();
 
-        List<BitSet> falseSolutions = Lists.newArrayList();
-        bdd.forEachPath(bdd.falseFunction(), path -> falseSolutions.add(BitSets.copyOf(path.assignmentUnsafe())));
+        List<NatSet> falseSolutions = Lists.newArrayList();
+        bdd.forEachPath(bdd.falseFunction(), path -> falseSolutions.add(NatSetFixtures.copyOf(path.assignment())));
         assertThat(falseSolutions, is(Collections.emptyList()));
 
-        List<BitSet> trueSolutions = Lists.newArrayList();
-        bdd.forEachPath(bdd.trueFunction(), path -> trueSolutions.add(BitSets.copyOf(path.assignmentUnsafe())));
-        assertThat(trueSolutions, is(Collections.singletonList(new BitSet(0))));
+        List<NatSet> trueSolutions = Lists.newArrayList();
+        bdd.forEachPath(bdd.trueFunction(), path -> trueSolutions.add(NatSetFixtures.copyOf(path.assignment())));
+        assertThat(trueSolutions, is(Collections.singletonList(MutableNatSet.dense(0))));
     }
 
     @Test
@@ -482,8 +482,8 @@ class BddTest {
         // support of each combination equals the variables of the subset.
         List<Integer> subset = new ArrayList<>(variables.size());
         for (int i = 1; i < 1 << variables.size(); i++) {
-            BitSet subsetBitSet = buildBitSet(i, variables.size());
-            subsetBitSet.stream().forEach(setBit -> subset.add(variables.get(setBit)));
+            NatSet subsetBitSet = buildBitSet(i, variables.size());
+            subsetBitSet.intStream().forEach(setBit -> subset.add(variables.get(setBit)));
 
             Iterator<Integer> variableIterator = subset.iterator();
             int variable = variableIterator.next();
@@ -528,9 +528,9 @@ class BddTest {
     void testUniverseCursor() {
         BddImpl bdd = new DdContextImpl(config).bdd();
         bdd.createVariables(5);
-        Set<BitSet> solutions = new HashSet<>();
-        for (Cursor<BitSet> cursor = bdd.solutionCursor(bdd.trueFunction()); cursor.valid(); cursor.advance()) {
-            solutions.add(BitSets.copyOf(cursor.current()));
+        Set<NatSet> solutions = new HashSet<>();
+        for (Cursor<NatSet> cursor = bdd.solutionCursor(bdd.trueFunction()); cursor.valid(); cursor.advance()) {
+            solutions.add(NatSetFixtures.copyOf(cursor.current()));
         }
         assertThat(solutions.size(), is(1 << 5));
     }
@@ -539,12 +539,12 @@ class BddTest {
     void testConjunctionCursor() {
         BddImpl bdd = new DdContextImpl(config).bdd();
         bdd.createVariables(5);
-        BitSet conjunction = new BitSet(5);
+        MutableNatSet conjunction = MutableNatSet.dense(5);
         conjunction.set(0, 5);
         bdd.solutionCursor(bdd.conjunction(conjunction));
-        Set<BitSet> solutions = new HashSet<>();
-        for (Cursor<BitSet> cursor = bdd.solutionCursor(bdd.trueFunction()); cursor.valid(); cursor.advance()) {
-            solutions.add(BitSets.copyOf(cursor.current()));
+        Set<NatSet> solutions = new HashSet<>();
+        for (Cursor<NatSet> cursor = bdd.solutionCursor(bdd.trueFunction()); cursor.valid(); cursor.advance()) {
+            solutions.add(NatSetFixtures.copyOf(cursor.current()));
         }
         assertThat(solutions.size(), is(1 << 5));
     }

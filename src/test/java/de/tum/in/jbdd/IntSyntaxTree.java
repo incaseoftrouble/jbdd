@@ -16,8 +16,8 @@
  */
 package de.tum.in.jbdd;
 
-import de.tum.in.jbdd.collections.BitSets;
-import java.util.BitSet;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.function.IntBinaryOperator;
 import java.util.function.IntUnaryOperator;
 
@@ -26,12 +26,12 @@ import java.util.function.IntUnaryOperator;
  */
 public final class IntSyntaxTree {
     private final IntSyntaxTreeNode root;
-    private final BitSet containedVariables;
+    private final MutableNatSet containedVariables;
     private final int depth;
 
     private IntSyntaxTree(IntSyntaxTreeNode root) {
         this.root = root;
-        this.containedVariables = new BitSet();
+        this.containedVariables = MutableNatSet.create();
         root.gatherVariables(containedVariables);
         this.depth = root.depth();
     }
@@ -68,7 +68,7 @@ public final class IntSyntaxTree {
         return root.evaluate(assignment);
     }
 
-    int evaluate(BitSet assignment) {
+    int evaluate(NatSet assignment) {
         return root.evaluate(assignment);
     }
 
@@ -76,8 +76,8 @@ public final class IntSyntaxTree {
         return depth;
     }
 
-    BitSet containedVariables() {
-        return BitSets.copyOf(containedVariables);
+    NatSet containedVariables() {
+        return NatSetFixtures.copyOf(containedVariables);
     }
 
     @Override
@@ -88,11 +88,11 @@ public final class IntSyntaxTree {
     private abstract static class IntSyntaxTreeNode {
         abstract int evaluate(boolean[] assignment);
 
-        abstract int evaluate(BitSet assignment);
+        abstract int evaluate(NatSet assignment);
 
         abstract int depth();
 
-        abstract void gatherVariables(BitSet set);
+        abstract void gatherVariables(MutableNatSet set);
     }
 
     private static final class Constant extends IntSyntaxTreeNode {
@@ -108,7 +108,7 @@ public final class IntSyntaxTree {
         }
 
         @Override
-        int evaluate(BitSet assignment) {
+        int evaluate(NatSet assignment) {
             return value;
         }
 
@@ -118,7 +118,7 @@ public final class IntSyntaxTree {
         }
 
         @Override
-        void gatherVariables(BitSet set) {
+        void gatherVariables(MutableNatSet set) {
             // No variables in this leaf.
         }
 
@@ -147,8 +147,8 @@ public final class IntSyntaxTree {
         }
 
         @Override
-        int evaluate(BitSet assignment) {
-            return assignment.get(variable) ? trueChild.evaluate(assignment) : falseChild.evaluate(assignment);
+        int evaluate(NatSet assignment) {
+            return assignment.contains(variable) ? trueChild.evaluate(assignment) : falseChild.evaluate(assignment);
         }
 
         @Override
@@ -157,7 +157,7 @@ public final class IntSyntaxTree {
         }
 
         @Override
-        void gatherVariables(BitSet set) {
+        void gatherVariables(MutableNatSet set) {
             set.set(variable);
             trueChild.gatherVariables(set);
             falseChild.gatherVariables(set);
@@ -190,7 +190,7 @@ public final class IntSyntaxTree {
         }
 
         @Override
-        int evaluate(BitSet assignment) {
+        int evaluate(NatSet assignment) {
             return op.applyAsInt(left.evaluate(assignment), right.evaluate(assignment));
         }
 
@@ -200,7 +200,7 @@ public final class IntSyntaxTree {
         }
 
         @Override
-        void gatherVariables(BitSet set) {
+        void gatherVariables(MutableNatSet set) {
             left.gatherVariables(set);
             right.gatherVariables(set);
         }
@@ -230,7 +230,7 @@ public final class IntSyntaxTree {
         }
 
         @Override
-        int evaluate(BitSet assignment) {
+        int evaluate(NatSet assignment) {
             return op.applyAsInt(child.evaluate(assignment));
         }
 
@@ -240,7 +240,7 @@ public final class IntSyntaxTree {
         }
 
         @Override
-        void gatherVariables(BitSet set) {
+        void gatherVariables(MutableNatSet set) {
             child.gatherVariables(set);
         }
 
@@ -269,7 +269,7 @@ public final class IntSyntaxTree {
         }
 
         @Override
-        int evaluate(BitSet assignment) {
+        int evaluate(NatSet assignment) {
             return condition.evaluate(assignment) ? thenChild.evaluate(assignment) : elseChild.evaluate(assignment);
         }
 
@@ -279,7 +279,7 @@ public final class IntSyntaxTree {
         }
 
         @Override
-        void gatherVariables(BitSet set) {
+        void gatherVariables(MutableNatSet set) {
             condition.containedVariables().forEach(set::set);
             thenChild.gatherVariables(set);
             elseChild.gatherVariables(set);

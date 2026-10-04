@@ -16,13 +16,13 @@
  */
 package de.tum.in.jbdd;
 
-import de.tum.in.jbdd.collections.BitSets;
 import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.Cursor;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.ArrayList;
-import java.util.BitSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +52,8 @@ import org.jspecify.annotations.Nullable;
  * result - see {@link #exists}, {@link #conjunction}, {@link #disjunction}, {@link #ifThenElse} and
  * {@link #compose} for that pattern.</p>
  */
+// Coupled to many types because it implements the whole diagram interface over an MTBDD.
+@SuppressWarnings("PMD.CouplingBetweenObjects")
 class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
     private static final int TRUE = 1;
     private static final int FALSE = 0;
@@ -222,18 +224,18 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
     }
 
     @Override
-    public boolean evaluate(int function, BitSet assignment) {
+    public boolean evaluate(int function, NatSet assignment) {
         return mt.evaluate(function, assignment) != FALSE;
     }
 
     @Override
-    public BitSet satisfyingAssignment(int function) {
+    public MutableNatSet satisfyingAssignment(int function) {
         return mt.anyAssignment(function, v -> v != FALSE).orElseThrow();
     }
 
     @Override
-    public Optional<BitSet> satisfyingAssignmentIn(int function, int domain) {
-        return mt.anyAssignment(and(function, domain), v -> v != FALSE);
+    public Optional<NatSet> satisfyingAssignmentIn(int function, int domain) {
+        return mt.anyAssignment(and(function, domain), v -> v != FALSE).map(NatSet.class::cast);
     }
 
     @Override
@@ -242,7 +244,7 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
     }
 
     @Override
-    public BigInteger countSatisfyingAssignments(int function, BitSet support) {
+    public BigInteger countSatisfyingAssignments(int function, NatSet support) {
         return mt.countAssignments(function, v -> v != FALSE, support);
     }
 
@@ -268,22 +270,22 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
     }
 
     @Override
-    public Cursor<BitSet> solutionCursor(int function) {
+    public Cursor<NatSet> solutionCursor(int function) {
         return mt.assignmentCursor(function, v -> v != FALSE);
     }
 
     @Override
-    public Cursor<BitSet> solutionCursor(int function, BitSet support) {
+    public Cursor<NatSet> solutionCursor(int function, NatSet support) {
         return mt.assignmentCursor(function, v -> v != FALSE, support);
     }
 
     @Override
-    public Cursor<BitSet> solutionCursorIn(int function, int domain) {
+    public Cursor<NatSet> solutionCursorIn(int function, int domain) {
         return mt.assignmentCursor(and(function, domain), v -> v != FALSE);
     }
 
     @Override
-    public Cursor<BitSet> solutionCursorIn(int function, int domain, BitSet support) {
+    public Cursor<NatSet> solutionCursorIn(int function, int domain, NatSet support) {
         return mt.assignmentCursor(and(function, domain), v -> v != FALSE, support);
     }
 
@@ -326,12 +328,12 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
     }
 
     @Override
-    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super Cube> action) {
+    public void forEachPartialPath(int function, NatSet relevantSet, Consumer<? super Cube> action) {
         if (function == falseFunction()) {
             return;
         }
         if (function == trueFunction() || relevantSet.isEmpty()) {
-            action.accept(Cube.ofUnsafe(new BitSet(0), new BitSet(0)));
+            action.accept(Cube.ofUnsafe(MutableNatSet.dense(0), MutableNatSet.dense(0)));
             return;
         }
         /* By level, not by variable: the cut-off is "the walk is past everything relevant", which is a
@@ -341,44 +343,44 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
             maxRelevantLevel = Math.max(maxRelevantLevel, mt.levelOfVariable(v));
         }
         int variables = mt.numberOfVariables();
-        Cube path = Cube.ofUnsafe(new BitSet(variables), new BitSet(variables));
+        WalkCube path = new WalkCube(variables);
         forEachPathRecursive(function, relevantSet, maxRelevantLevel, path, action);
     }
 
     private void forEachPathRecursive(
-            int node, BitSet relevantSet, int depthLimit, Cube path, Consumer<? super Cube> action) {
+            int node, NatSet relevantSet, int depthLimit, WalkCube path, Consumer<? super Cube> action) {
         if (node == trueFunction()) {
-            action.accept(path);
+            action.accept(path.cube);
             return;
         }
         int variable = mt.decisionVariable(node);
         if (mt.levelOfVariable(variable) > depthLimit) {
             // There must exist at least one satisfying completion beyond depthLimit.
-            action.accept(path);
+            action.accept(path.cube);
             return;
         }
 
         int low = mt.lowOf(node);
         int high = mt.highOf(node);
-        boolean relevant = relevantSet.get(variable);
+        boolean relevant = relevantSet.contains(variable);
 
         if (relevant) {
-            path.supportUnsafe().set(variable);
+            path.support.set(variable);
         }
         if (low != falseFunction()) {
             forEachPathRecursive(low, relevantSet, depthLimit, path, action);
         }
         if (high != falseFunction()) {
             if (relevant) {
-                path.assignmentUnsafe().set(variable);
+                path.assignment.set(variable);
                 forEachPathRecursive(high, relevantSet, depthLimit, path, action);
-                path.assignmentUnsafe().clear(variable);
+                path.assignment.clear(variable);
             } else {
                 forEachPathRecursive(high, relevantSet, depthLimit, path, action);
             }
         }
         if (relevant) {
-            path.supportUnsafe().clear(variable);
+            path.support.clear(variable);
         }
     }
 
@@ -388,38 +390,38 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
             return false;
         }
         if (function == trueFunction()) {
-            return predicate.test(Cube.ofUnsafe(new BitSet(0), new BitSet(0)));
+            return predicate.test(Cube.ofUnsafe(MutableNatSet.dense(0), MutableNatSet.dense(0)));
         }
         int numberOfVariables = mt.numberOfVariables();
-        Cube path = Cube.ofUnsafe(new BitSet(numberOfVariables), new BitSet(numberOfVariables));
+        WalkCube path = new WalkCube(numberOfVariables);
         return anyPathMatchesRecursive(function, path, predicate);
     }
 
-    private boolean anyPathMatchesRecursive(int node, Cube path, Predicate<? super Cube> predicate) {
+    private boolean anyPathMatchesRecursive(int node, WalkCube path, Predicate<? super Cube> predicate) {
         if (node == trueFunction()) {
-            return predicate.test(path);
+            return predicate.test(path.cube);
         }
         int variable = mt.decisionVariable(node);
         int low = mt.lowOf(node);
         int high = mt.highOf(node);
 
-        path.supportUnsafe().set(variable);
+        path.support.set(variable);
         if (low != falseFunction() && anyPathMatchesRecursive(low, path, predicate)) {
-            path.supportUnsafe().clear(variable);
+            path.support.clear(variable);
             return true;
         }
         boolean matched = false;
         if (high != falseFunction()) {
-            path.assignmentUnsafe().set(variable);
+            path.assignment.set(variable);
             matched = anyPathMatchesRecursive(high, path, predicate);
-            path.assignmentUnsafe().clear(variable);
+            path.assignment.clear(variable);
         }
-        path.supportUnsafe().clear(variable);
+        path.support.clear(variable);
         return matched;
     }
 
     @Override
-    public void forEachSupportVariableFiltered(int function, BitSet filter, IntConsumer action) {
+    public void forEachSupportVariableFiltered(int function, NatSet filter, IntConsumer action) {
         mt.forEachSupportVariableFiltered(function, filter, action);
     }
 
@@ -429,7 +431,7 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
     }
 
     @Override
-    public int conjunction(BitSet variables) {
+    public int conjunction(NatSet variables) {
         int result = mt.reference(trueFunction());
         for (int var = variables.nextSetBit(0); var >= 0; var = variables.nextSetBit(var + 1)) {
             int varFunction = variableFunction(var);
@@ -440,7 +442,7 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
     }
 
     @Override
-    public int disjunction(BitSet variables) {
+    public int disjunction(NatSet variables) {
         int result = mt.reference(falseFunction());
         for (int var = variables.nextSetBit(0); var >= 0; var = variables.nextSetBit(var + 1)) {
             int varFunction = variableFunction(var);
@@ -515,14 +517,14 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
     }
 
     @Override
-    public int exists(int function, BitSet quantifiedVariables) {
+    public int exists(int function, NatSet quantifiedVariables) {
         if (quantifiedVariables.isEmpty()) {
             return function;
         }
         int result = mt.reference(falseFunction());
-        Iterator<BitSet> iterator = BitSets.powerSetIterator(quantifiedVariables);
+        Iterator<NatSet> iterator = NatSetFixtures.powerSetIterator(quantifiedVariables);
         while (iterator.hasNext()) {
-            BitSet assignment = iterator.next();
+            NatSet assignment = iterator.next();
             int restricted = mt.reference(mt.restrict(function, Cube.of(assignment, quantifiedVariables)));
             result = mt.consume(or(result, restricted), result, restricted);
         }
@@ -531,7 +533,7 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
     }
 
     @Override
-    public int forall(int function, BitSet quantifiedVariables) {
+    public int forall(int function, NatSet quantifiedVariables) {
         int notFunction = mt.reference(not(function));
         int existsResult = mt.reference(exists(notFunction, quantifiedVariables));
         mt.dereference(notFunction);
@@ -562,7 +564,7 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
     }
 
     @Override
-    public RegisteredOperation.Unary registerExists(BitSet quantifiedVariables) {
+    public RegisteredOperation.Unary registerExists(NatSet quantifiedVariables) {
         // As registerCompose: this adapter quantifies through the MTBDD engine (see #exists), which has
         // no equivalent registered form.
         throw new UnsupportedOperationException("registerExists is not supported on an MTBDD-backed BinaryDd");

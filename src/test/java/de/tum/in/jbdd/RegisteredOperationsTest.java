@@ -21,8 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import de.tum.in.jbdd.collections.BitSets;
-import java.util.BitSet;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
@@ -49,9 +49,9 @@ class RegisteredOperationsTest {
         // Maps are canonical per (function, numbering), so agreeing means being the very same object.
         assertSame(a.apply(b, sum), registered.apply(a, b));
         assertSame(b.apply(a, sum), registered.apply(b, a));
-        assertEquals(3, registered.apply(a, b).evaluate(BitSets.of(0, 1)));
-        assertEquals(1, registered.apply(a, b).evaluate(BitSets.of(0)));
-        assertEquals(0, registered.apply(a, b).evaluate(BitSets.of()));
+        assertEquals(3, registered.apply(a, b).evaluate(NatSetFixtures.of(0, 1)));
+        assertEquals(1, registered.apply(a, b).evaluate(NatSetFixtures.of(0)));
+        assertEquals(0, registered.apply(a, b).evaluate(NatSetFixtures.of()));
 
         // Repeated use is the point of registering; it has to keep answering the same.
         for (int i = 0; i < 100; i++) {
@@ -111,7 +111,7 @@ class RegisteredOperationsTest {
         assertTrue(
                 a.replaceVariables(mapping).agreement(replacer.replaceIn(a, x0)).containsAll(x0));
 
-        BitSet quantified = BitSets.of(0);
+        NatSet quantified = NatSetFixtures.of(0);
         BddSet.Quantifier exists = sets.registerExists(quantified);
         assertEquals(x0.intersection(x1).exists(quantified), exists.apply(x0.intersection(x1)));
         assertEquals(x0.intersection(x1).exists(quantified), exists.apply(x0.intersection(x1)));
@@ -119,7 +119,7 @@ class RegisteredOperationsTest {
 
         /* A handle is built before it sees a set, so it declares the variables it replaces instead of
          * spelling out a mapping over every variable there happens to be - the rest are left alone. */
-        BitSet replaced = BitSets.of(0);
+        NatSet replaced = NatSetFixtures.of(0);
         BddSet.VariableReplacer relabeler = sets.registerRelabelVariables(replaced, i -> i + 1);
         assertEquals(x0.relabelVariables(i -> i + 1), relabeler.apply(x0));
         assertEquals(x0.relabelVariables(i -> i + 1), relabeler.apply(x0));
@@ -156,9 +156,9 @@ class RegisteredOperationsTest {
         assertSame(strings, replacer.replace(text).valueDomain());
         assertSame(numbers, replacer.replace(count).valueDomain());
 
-        assertEquals("hi", replacer.replace(text).evaluate(BitSets.of(1)));
-        assertEquals("lo", replacer.replace(text).evaluate(BitSets.of(0)));
-        assertEquals(1, replacer.replace(count).evaluate(BitSets.of(1)));
+        assertEquals("hi", replacer.replace(text).evaluate(NatSetFixtures.of(1)));
+        assertEquals("lo", replacer.replace(text).evaluate(NatSetFixtures.of(0)));
+        assertEquals(1, replacer.replace(count).evaluate(NatSetFixtures.of(1)));
         replacer.release();
     }
 
@@ -174,7 +174,7 @@ class RegisteredOperationsTest {
         assertSame(
                 RegisteredOperation.identity(),
                 bdd.registerCompose(new int[] {bdd.variableFunction(0), bdd.variableFunction(1)}));
-        assertSame(RegisteredOperation.identity(), bdd.registerExists(new BitSet()));
+        assertSame(RegisteredOperation.identity(), bdd.registerExists(MutableNatSet.create()));
         assertSame(RegisteredOperation.identity(), ctx.mtBdd().registerCompose(new int[0]));
 
         // A real replacement must not collapse to it.
@@ -185,12 +185,13 @@ class RegisteredOperationsTest {
         assertEquals(function, RegisteredOperation.identity().applyAsInt(function));
 
         // And the object layer passes the recognition through, rather than wrapping a no-op call.
-        BitSet none = new BitSet();
+        MutableNatSet none = MutableNatSet.create();
         assertSame(BddSet.VariableReplacer.identity(), sets.registerRelabelVariables(none, variable -> variable));
         assertSame(
                 BddSet.VariableReplacer.identity(),
-                sets.registerRelabelVariables(BitSets.of(0, 1), variable -> variable));
-        assertNotSame(BddSet.VariableReplacer.identity(), sets.registerRelabelVariables(BitSets.of(0), variable -> 2));
+                sets.registerRelabelVariables(NatSetFixtures.of(0, 1), variable -> variable));
+        assertNotSame(
+                BddSet.VariableReplacer.identity(), sets.registerRelabelVariables(NatSetFixtures.of(0), variable -> 2));
 
         BddSet set = sets.var(0).intersection(sets.var(1));
         assertSame(set, BddSet.VariableReplacer.identity().apply(set));

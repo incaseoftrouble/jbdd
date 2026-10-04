@@ -23,10 +23,10 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import de.tum.in.jbdd.collections.BitSets;
 import de.tum.in.jbdd.collections.Cube;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.ArrayList;
-import java.util.BitSet;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -65,21 +65,21 @@ class BddSetTest {
         BddSet x0 = sets.var(0);
         BddSet x1 = sets.var(1);
         BddSet x2 = sets.var(2);
-        BitSet support = BitSets.range(0, 3);
+        NatSet support = NatSetFixtures.range(0, 3);
 
         BddSet set = x0.intersection(x1).union(x0.complement().intersection(x2));
 
         // Fixing a variable drops it from the support and agrees with the set wherever it held.
-        BddSet fixedTrue = set.restrict(Cube.of(BitSets.of(0), BitSets.of(0)));
-        assertFalse(fixedTrue.support().get(0));
-        assertEquals(x1.restrict(Cube.of(BitSets.of(0), BitSets.of(0))), fixedTrue);
+        BddSet fixedTrue = set.restrict(Cube.of(NatSetFixtures.of(0), NatSetFixtures.of(0)));
+        assertFalse(fixedTrue.support().contains(0));
+        assertEquals(x1.restrict(Cube.of(NatSetFixtures.of(0), NatSetFixtures.of(0))), fixedTrue);
         assertEquals(set.intersection(x0), fixedTrue.intersection(x0));
 
-        BddSet fixedFalse = set.restrict(Cube.of(BitSets.of(), BitSets.of(0)));
+        BddSet fixedFalse = set.restrict(Cube.of(NatSetFixtures.of(), NatSetFixtures.of(0)));
         assertEquals(set.intersection(x0.complement()), fixedFalse.intersection(x0.complement()));
 
         // Restricting everything leaves a constant that says whether the valuation is an element.
-        for (BitSet valuation : List.of(BitSets.of(0, 1), BitSets.of(2), BitSets.of(0))) {
+        for (NatSet valuation : List.of(NatSetFixtures.of(0, 1), NatSetFixtures.of(2), NatSetFixtures.of(0))) {
             BddSet point = set.restrict(Cube.of(valuation, support));
             assertEquals(set.contains(valuation), point.isUniverse());
         }
@@ -99,7 +99,7 @@ class BddSetTest {
         BddSet x1 = sets.var(1);
         BddSet x2 = sets.var(2);
         BddSet set = x0.intersection(x1).union(x2);
-        BitSet quantified = BitSets.of(1);
+        NatSet quantified = NatSetFixtures.of(1);
 
         // x0 & x1 | x2 holds for both values of x1 exactly where x2 holds.
         assertEquals(x2, set.forall(quantified));
@@ -163,7 +163,7 @@ class BddSetTest {
         BddSet x2 = sets.var(2);
 
         // Only the support is fixed; what the valuation says about x1 and x3 is not part of the set.
-        BddSet cube = sets.of(Cube.of(BitSets.of(0, 1, 3), BitSets.of(0, 2)));
+        BddSet cube = sets.of(Cube.of(NatSetFixtures.of(0, 1, 3), NatSetFixtures.of(0, 2)));
         assertEquals(x0.intersection(x2.complement()), cube);
     }
 
@@ -179,9 +179,9 @@ class BddSetTest {
         // Stops at the universe, and creates the variables it names.
         assertEquals(sets.universe(), sets.union(List.of(Cube.empty(), Cube.literal(7, true))));
         assertEquals(
-                sets.of(Cube.of(BitSets.of(0), BitSets.of(0, 1)))
-                        .union(sets.of(Cube.of(BitSets.of(1), BitSets.of(0, 1)))),
-                sets.of(List.of(BitSets.of(0), BitSets.of(1)), BitSets.of(0, 1)));
+                sets.of(Cube.of(NatSetFixtures.of(0), NatSetFixtures.of(0, 1)))
+                        .union(sets.of(Cube.of(NatSetFixtures.of(1), NatSetFixtures.of(0, 1)))),
+                sets.of(List.of(NatSetFixtures.of(0), NatSetFixtures.of(1)), NatSetFixtures.of(0, 1)));
     }
 
     @Test
@@ -274,8 +274,8 @@ class BddSetTest {
             BddSet set = sets.empty();
             for (int valuation = 0; valuation < valuations; valuation++) {
                 if ((truthTable & (1 << valuation)) != 0) {
-                    set = set.union(
-                            sets.of(Cube.of(BitSets.of(bits(valuation, variables)), BitSets.range(0, variables))));
+                    set = set.union(sets.of(Cube.of(
+                            NatSetFixtures.of(bits(valuation, variables)), NatSetFixtures.range(0, variables))));
                 }
             }
 
@@ -283,7 +283,7 @@ class BddSetTest {
             List<Cube> implicants = function.implicants();
 
             for (int valuation = 0; valuation < valuations; valuation++) {
-                BitSet bitSet = BitSets.of(bits(valuation, variables));
+                NatSet bitSet = NatSetFixtures.of(bits(valuation, variables));
                 boolean covered = implicants.stream().anyMatch(cube -> cube.contains(bitSet));
                 assertEquals(function.contains(bitSet), covered, () -> "valuation " + bitSet + " of " + function);
             }
@@ -337,8 +337,8 @@ class BddSetTest {
             BddSet function = sets.empty();
             for (int valuation = 0; valuation < valuations; valuation++) {
                 if ((truthTable & (1 << valuation)) != 0) {
-                    function = function.union(
-                            sets.of(Cube.of(BitSets.of(bits(valuation, variables)), BitSets.range(0, variables))));
+                    function = function.union(sets.of(Cube.of(
+                            NatSetFixtures.of(bits(valuation, variables)), NatSetFixtures.range(0, variables))));
                 }
             }
 
@@ -347,8 +347,9 @@ class BddSetTest {
             for (int support = 0; support < valuations; support++) {
                 for (int assignment = 0; assignment < valuations; assignment++) {
                     if ((assignment & ~support) == 0) {
-                        Cube cube =
-                                Cube.of(BitSets.of(bits(assignment, variables)), BitSets.of(bits(support, variables)));
+                        Cube cube = Cube.of(
+                                NatSetFixtures.of(bits(assignment, variables)),
+                                NatSetFixtures.of(bits(support, variables)));
                         if (sets.of(cube.copy()).subsetOf(function)) {
                             implicants.add(cube);
                         }
@@ -547,8 +548,8 @@ class BddSetTest {
             BddSet function = sets.empty();
             for (int valuation = 0; valuation < valuations; valuation++) {
                 if ((truthTable & (1 << valuation)) != 0) {
-                    function = function.union(
-                            sets.of(Cube.of(BitSets.of(bits(valuation, variables)), BitSets.range(0, variables))));
+                    function = function.union(sets.of(Cube.of(
+                            NatSetFixtures.of(bits(valuation, variables)), NatSetFixtures.range(0, variables))));
                 }
             }
 
@@ -610,13 +611,13 @@ class BddSetTest {
         BddSet set = sets.ifThenElse(x0.union(x1), x2, x3);
         assertEquals(
                 Map.of(x2, x0.union(x1), x3, x0.union(x1).complement()),
-                set.split(BitSets.of(0, 1), residuals).inverse());
+                set.split(NatSetFixtures.of(0, 1), residuals).inverse());
 
         // A split variable below one that stays: the residuals keep x0, the preimages are over x1 alone.
         BddSet interleaved = sets.ifThenElse(x0, x1, x2);
         assertEquals(
                 Map.of(x0.union(x2), x1, x0.complement().intersection(x2), x1.complement()),
-                interleaved.split(BitSets.of(1), residuals).inverse());
+                interleaved.split(NatSetFixtures.of(1), residuals).inverse());
 
         // Assignments leading to the same residual along different paths end up in one preimage.
         BddSet merging =
@@ -627,21 +628,22 @@ class BddSetTest {
                         x0.intersection(x1).union(x0.complement().intersection(x1.complement())),
                         sets.empty(),
                         x0.intersection(x1.complement()).union(x0.complement().intersection(x1))),
-                merging.split(BitSets.of(0, 1), residuals).inverse());
+                merging.split(NatSetFixtures.of(0, 1), residuals).inverse());
 
         // Nothing to split on, or nothing to split: one residual, reached by everything.
         assertEquals(
-                Map.of(set, sets.universe()), set.split(BitSets.of(), residuals).inverse());
+                Map.of(set, sets.universe()),
+                set.split(NatSetFixtures.of(), residuals).inverse());
         assertEquals(
                 Map.of(interleaved, sets.universe()),
-                interleaved.split(BitSets.of(3), residuals).inverse());
+                interleaved.split(NatSetFixtures.of(3), residuals).inverse());
         assertEquals(
                 Map.of(sets.empty(), sets.universe()),
-                sets.empty().split(BitSets.of(0), residuals).inverse());
+                sets.empty().split(NatSetFixtures.of(0), residuals).inverse());
         assertEquals(
                 Map.of(x0, x1, x0.complement(), x1.complement()),
                 sets.ifThenElse(x1, x0, x0.complement())
-                        .split(BitSets.of(1), residuals)
+                        .split(NatSetFixtures.of(1), residuals)
                         .inverse());
     }
 
@@ -671,18 +673,18 @@ class BddSetTest {
                 functions.add(function);
             }
             if (reorder) {
-                ctx.variableOrder().reorderTo(List.of(BitSets.of(6, 4, 2), BitSets.of(0, 1)));
+                ctx.variableOrder().reorderTo(List.of(NatSetFixtures.of(6, 4, 2), NatSetFixtures.of(0, 1)));
             }
             Values<BddSet> residuals = ctx.bddMaps().create();
             for (BddSet function : functions) {
-                BitSet splitVariables = new BitSet();
+                MutableNatSet splitVariables = MutableNatSet.create();
                 for (int variable = 0; variable < variables; variable++) {
                     if (random.nextBoolean()) {
                         splitVariables.set(variable);
                     }
                 }
                 BddMap<BddSet> split = function.split(splitVariables, residuals);
-                BitSet outside = BitSets.copyOf(split.support());
+                MutableNatSet outside = NatSetFixtures.copyOf(split.support());
                 outside.andNot(splitVariables);
                 assertTrue(outside.isEmpty(), "the map decides only split variables");
                 // The int layer's pieces, referenced before any further allocating call.
@@ -691,11 +693,13 @@ class BddSetTest {
                 int raw = ((GcReferenceManager.DdContainer) function).function();
                 MultiTerminalDecisionDiagram.FunctionToFunctionMap pieces = mtBdd.splitBdd(raw, splitVariables);
                 int meta = mtBdd.reference(pieces.function());
-                int[] residualFunctions = pieces.codomain().stream()
+                int[] residualFunctions = pieces.codomain()
+                        .intStream()
                         .map(index -> bdd.reference(pieces.functionFor(index)))
                         .toArray();
-                for (Iterator<BitSet> assignments = BitSets.powerSetIterator(splitVariables); assignments.hasNext(); ) {
-                    BitSet assignment = assignments.next();
+                for (Iterator<NatSet> assignments = NatSetFixtures.powerSetIterator(splitVariables);
+                        assignments.hasNext(); ) {
+                    NatSet assignment = assignments.next();
                     Cube restriction = Cube.of(assignment, splitVariables);
                     BddSet restricted = function.restrict(restriction);
                     assertEquals(restricted, split.evaluate(assignment));

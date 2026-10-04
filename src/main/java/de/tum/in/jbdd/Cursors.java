@@ -17,7 +17,9 @@
 package de.tum.in.jbdd;
 
 import de.tum.in.jbdd.collections.Cursor;
-import java.util.BitSet;
+import de.tum.in.jbdd.collections.NatSet;
+import de.tum.in.jbdd.collections.NatSets;
+import java.util.PrimitiveIterator;
 
 public final class Cursors {
     private Cursors() {}
@@ -34,17 +36,10 @@ public final class Cursors {
 
     /**
      * Counts through every assignment of {@code variables} over their own domains - the multi-valued
-     * counterpart of {@link #powerSet(BitSet)}. The array handed out is the counter itself.
+     * counterpart of {@link NatSets#powerSet(NatSet)}. The array handed out is the counter itself.
      */
-    static Cursor<int[]> powerSet(int[] domains, BitSet variables) {
+    static Cursor<int[]> powerSet(int[] domains, NatSet variables) {
         return new ArrayPowerCursor(domains, variables);
-    }
-
-    /**
-     * Counts through every assignment of {@code variables}. The set handed out is the counter itself.
-     */
-    static Cursor<BitSet> powerSet(BitSet variables) {
-        return new PowerCursor(variables);
     }
 
     private static final class SingletonCursor<E> implements Cursor<E> {
@@ -94,10 +89,10 @@ public final class Cursors {
     private static final class ArrayPowerCursor implements Cursor<int[]> {
         private final int[] assignment;
         private final int[] domains;
-        private final BitSet variables;
+        private final NatSet variables;
         private boolean valid;
 
-        ArrayPowerCursor(int[] domains, BitSet variables) {
+        ArrayPowerCursor(int[] domains, NatSet variables) {
             this.domains = domains;
             this.variables = variables;
             assignment = new int[domains.length];
@@ -121,51 +116,13 @@ public final class Cursors {
             if (!valid) {
                 return false;
             }
-            for (int variable = variables.nextSetBit(0); variable >= 0; variable = variables.nextSetBit(variable + 1)) {
+            PrimitiveIterator.OfInt iterator = variables.iterator();
+            while (iterator.hasNext()) {
+                int variable = iterator.nextInt();
                 if (assignment[variable] == domains[variable] - 1) {
                     assignment[variable] = 0;
                 } else {
                     assignment[variable] += 1;
-                    return true;
-                }
-            }
-            valid = false;
-            return false;
-        }
-    }
-
-    private static final class PowerCursor implements Cursor<BitSet> {
-        private final BitSet assignment;
-        private final BitSet variables;
-        private boolean valid;
-
-        PowerCursor(BitSet variables) {
-            this.variables = variables;
-            assignment = new BitSet(variables.length());
-            valid = true;
-        }
-
-        @Override
-        public boolean valid() {
-            return valid;
-        }
-
-        @Override
-        public BitSet current() {
-            assert valid; // current() is only defined while the cursor is valid
-            return assignment;
-        }
-
-        @Override
-        public boolean advance() {
-            if (!valid) {
-                return false;
-            }
-            for (int variable = variables.nextSetBit(0); variable >= 0; variable = variables.nextSetBit(variable + 1)) {
-                if (assignment.get(variable)) {
-                    assignment.clear(variable);
-                } else {
-                    assignment.set(variable);
                     return true;
                 }
             }

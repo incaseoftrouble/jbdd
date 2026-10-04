@@ -5,7 +5,7 @@ package `de.tum.in.jbdd` (the implementations are intertwined, the interfaces ma
 `de.tum.in.jbdd.collections` (§3) and `de.tum.in.jbdd.io` beside it. GPLv3, `group = de.tum.in`, version `0.7.0` (in `build.gradle.kts` + `README.md`).
 Design goals, in this order: **correctness, simplicity, performance, zero runtime dependencies.**
 
-This file is the whole design reference; `docs/natset-draft.md` is the one plan beside it. Read the relevant
+This file is the whole design reference. Read the relevant
 section before touching memory management, caches, enumeration, reordering or the value numbering — those are the
 areas where a plausible-looking change is silently wrong. Decision diagrams are hard to get right: **prefer
 asking for clarification over guessing.**
@@ -168,7 +168,7 @@ DecisionDiagram                     ids, ref counting, support, statistics, Refe
   `BinaryDecisionDiagram`, and `MtBdd` narrows it covariantly to `Bdd`, so only the facade hands out the
   implementation-side surface.
 - `BooleanTerminalDecisionDiagram<S, P>` is the whole boolean-valued logical API over assignment type `S`
-  and path type `P` (`BitSet`/`Cube` for BDDs, `int[]`/`int[]` for MDDs): `and`, `andNot`, `exists`,
+  and path type `P` (`NatSet`/`Cube` for BDDs, `int[]`/`int[]` for MDDs): `and`, `andNot`, `exists`,
   `forall`, `ifThenElse`, `constrain`/`simplify`, solution and path cursors, the `xyIn` / `xySimplify`
   variants.
 
@@ -255,9 +255,10 @@ Entry points — never `new BddImpl(...)` outside tests:
 - `Cube` (in `collections`) is the one type for a conjunction of literals - equivalently a partial assignment:
   path walks and `BddUtil`'s `implicants` / `primeImplicants` / `shortestPath` hand them out, `restrict` and
   `BddSetFactory.of` take them, `of(Cube)` builds one's function. Its operations return new cubes; a walk's cube
-  is working state (§8). `of` and the accessors `assignment()` / `support()` copy; `ofUnsafe` /
-  `assignmentUnsafe()` / `supportUnsafe()` share the sets, for callers that only read (or give up) them - JBDD's
-  own code included - and `ofUnsafe` checks the assignment against the support by assertion only.
+  is working state (§8). `of` copies what it is given and `ofUnsafe` takes the sets as they are (checking the
+  assignment against the support by assertion only); the accessors `assignment()` / `support()` hand out the
+  cube's own sets, never copies, so a caller keeping one across a walk's step takes `copy()`, a no-op over sets
+  that never change.
 - `io.DimacsReader` parses DIMACS CNF (benchmarks/tests).
 
 ### `de.tum.in.jbdd.collections`
@@ -274,7 +275,8 @@ Collections independent of decision diagrams, public for users too; nothing here
   `Set`'s; `NatSet.ORDER` orders by size, then lexicographically. `shifted(amount)` and
   `MutableNatSet.shift(amount)` move every element, dropping those that would turn negative (a word-wise shift
   with carry, or an add per array element; in place, the array stays an array). `MutableNatSet` has
-  `java.util.BitSet`'s mutators under their names; arguments are checked by assertion only. Not yet used by the core; `docs/natset-draft.md` is the plan for that.
+  `java.util.BitSet`'s mutators under their names; arguments are checked by assertion only. JBDD's API speaks it throughout (a fresh result such as `supportAt` or `anyAssignment` is a
+  `MutableNatSet`); `copyOf(BitSet)`, `toBitSet()` and `copyInto(BitSet)` convert.
 - **Two implementation classes, never more**, so a call site stays at most bimorphic: `ImmutableNatSet` (an
   exact ascending array or words, in one `final` `Object` field told apart by `instanceof` - 24 bytes rather than 32
   for two typed fields; its hash code computed once, on construction; the empty set and the singletons below 128
@@ -293,7 +295,8 @@ Collections independent of decision diagrams, public for users too; nothing here
   bytes at most. An immutable set's representation follows from its elements and its store is exact, so two are equal
   exactly if their stores are; otherwise equal sizes and words equal up to the shorter's end (a mutable set's words
   may run on), or equal array prefixes, decide. A mutable set's bulk and range operations count the change in the
-  words they touch, not every word (asserted).
+  words they touch, not every word (asserted). `Cube`'s `contains`/`implies`/`intersects` work word by word when its
+  sets are words or empty.
 - **Words are walked bit by bit**, one trailing-zero count and one clear per element: `forEach`, `anyMatch`/
   `allMatch`/`noneMatch`, and the primitive `iterator()` as a cursor on a word. Walking run by run, and choosing by
   sampling the runs first, was measured once (a benchmark since removed): runs won 13 to 24% only with runs of twelve elements and more
@@ -302,7 +305,7 @@ Collections independent of decision diagrams, public for users too; nothing here
 - `NatSets`: helpers over `NatSet` - mapped copies and views, `int` encodings, `difference` into a target,
   `increment` (a set as a binary counter over given positions: a contiguous one carries with `nextClearBit`),
   `forEachWithIndex`, and `powerSet`, a `Cursor` handing out that counter.
-- `Cursor` (the enumeration shape of §8), `Cube`, `BitSets` (helpers around `java.util.BitSet`), `IntIntHashMap` / `IntObjectHashMap`.
+- `Cursor` (the enumeration shape of §8), `Cube`, `IntIntHashMap` / `IntObjectHashMap`.
 
 ### Navigation: types that are not in a file of their own
 
@@ -424,7 +427,7 @@ repairing just the buckets containing a dead node — pays off only when few nod
 above now avoids by growing instead.
 
 `MtBddTable` additionally sweeps terminal values in the *same* mark pass via the managed-leaf hooks
-(`markLeafNodeIfManaged`, `anyManagedLeafMarked`, `recurse*`). Leaf marks live in a separate `BitSet
+(`markLeafNodeIfManaged`, `anyManagedLeafMarked`, `recurse*`). Leaf marks live in a separate `MutableNatSet
 markedValues`, so **step order matters**: the leaf sweep must run before `reclaimUnmarkedNodes`, whose
 closing `assert isNoneMarked()` also checks leaf marks. The `includeLeaves` flag threaded through the
 marking family distinguishes a full GC-style mark (liveness depends on leaves) from a dedup-only walk
@@ -517,7 +520,7 @@ consequences that are easy to get wrong:
     assignments neither underflows nor needs exact counts; `satisfyingFractionIn` divides by their sum, where
     the exponent cancels). Nothing extra.
   - **Ephemeral "current parameter"** — the MTBDD `compose` (`int[]` mapping) and `restrict` (a `Cube`),
-    `exists` (a `BitSet`), `apply`/`map`/`mapBoolean`/`applyBoolean` and the n-ary `apply` (an opaque
+    `exists` (a `NatSet`), `apply`/`map`/`mapBoolean`/`applyBoolean` and the n-ary `apply` (an opaque
     operator compared by identity; the paired `*Simplify` cache is invalidated by the same `initX`; the
     n-ary one keys on the cloned operand tuple, as `cartesianProduct` does), `count` (a predicate),
     `canReachMatch` (a predicate), `allMatch` (a predicate, like `applyBoolean`). `initX(...)`
@@ -586,7 +589,7 @@ and `MtBdd#registerApply`/`registerApplySimplify`/`registerMap`/`registerMapSimp
 no cache: the composition's is keyed on its whole context (§6), so they only resolve and protect the mapping
 once. Only the compose forms bind *nodes*, and those own them: `ProtectedOperation` + `ProtectionTracker` reference the operands on
 construction and drop them via a `PhantomReference` when released or unreachable. The rest bind a lambda or
-a `BitSet` and hold nothing. Their private caches grow on usage (`growOnUsage`) rather than tracking table
+a `NatSet` and hold nothing. Their private caches grow on usage (`growOnUsage`) rather than tracking table
 size, and each registers its prune hook with *every* table its entries can name — the two boolean-valued
 MTBDD operations always straddle both, since their results are BDD functions.
 
@@ -654,7 +657,7 @@ megamorphic. Near-duplicate walks are the right trade here.
 
 **A solution enumeration is a path enumeration plus a counter.** A path fixes only the variables the walk
 decides on; everything else in the support is free, and every combination extends that path to a solution.
-The free set is computed once per path (`BitSets.difference`) and counted off with `BitSets.increment`.
+The free set is computed once per path (`NatSets.difference`) and counted off with `NatSets.increment`.
 `forEachSolutionInRecursive` applies the same idea: when neither side branches at a level it records the
 variable and descends *once*, and the leaf runs the accumulated free variables off as a counter — without
 that, k free variables cost 2^k identical descents.
@@ -728,9 +731,9 @@ of them must find it rather than duplicate it.
   abandoning a direction once it has grown past `MAXIMUM_SIFT_GROWTH`. Candidate positions are measured by
   exact live node count, which `parentCount` (live-parent counts, maintained with cascade and
   resurrection) gives for free.
-- `reorder(List<BitSet> groups)` — restrict movement to within already-contiguous blocks; a variable in no
+- `reorder(List<NatSet> groups)` — restrict movement to within already-contiguous blocks; a variable in no
   group stays put.
-- `reorderTo(List<BitSet> blocks)` — *put the order into this shape*: block `i` entirely above block
+- `reorderTo(List<NatSet> blocks)` — *put the order into this shape*: block `i` entirely above block
   `i + 1`, each block a contiguous run. That is the whole specification — a variable in no block is a
   don't-care and is **left alone**. It aims at nothing (the result may be bigger), and its postcondition is
   exactly `reorder(blocks)`'s precondition, so "shape it, then optimise within the shape" is two calls
@@ -826,10 +829,10 @@ in the diagram rather than a branch on `origin` inside the cache.
   `DdVariableOrderImpl.appendVariables`/`insertVariables` write the new variable into `levelToVariable` before
   calling `makeFunction`, which reads it straight back — but only while the order is explicit; a new
   variable goes to the bottom, so it is its own level and the implicit order already says so.
-- **Caller-supplied data inside a recursion.** `compose`'s replacement array and `restrict`'s/`split`'s
-  `BitSet`s are indexed by *variable*, while the descent and its cut-off are by *level*. Each recursion
+- **Caller-supplied data inside a recursion.** `compose`'s replacement array, `restrict`'s cube and `split`'s
+  `NatSet` are indexed by *variable*, while the descent and its cut-off are by *level*. Each recursion
   takes `decisionVariable(node)` for the lookup and `levelOfVariable(variable)` for the ordering, and
-  its cut-off is `maxLevel(...)` — never `BitSet.length() - 1`, which is a variable bound.
+  its cut-off is `maxLevel(...)` — never `NatSet.length() - 1`, which is a variable bound.
 - **A mapping shorter than the variable count.** It leaves the rest unchanged, and under a non-identity
   order one of those can sit *above* the greatest replaced level, so the recursion reaches it. Both
   compose implementations bounds-check before indexing rather than relying on the cut-off.
@@ -951,8 +954,6 @@ entry point (`of`, `ifThenElse`, `cartesianProduct`, `createRelabeling`, `relabe
 - Suppressions are narrow and carry a reason: `@SuppressWarnings("NullAway.Init")` per field on JMH
   `@State` fields, `// NOPMD - <reason>` on deliberate reference comparisons (factory and numbering
   identity is *the* check; `equals` would be wrong) and on `System.out` in benchmark mains.
-  `@SuppressWarnings("PMD.LooseCoupling")` sits on the two `NatSet` classes, whose own concrete types are where
-  the fast paths are.
   `@SuppressWarnings("AssertWithSideEffects")` sits on the classes whose public methods bracket with
   `assert accessGuard.acquire()`.
 - **Assertions carry real work.** `assert accessGuard.acquire(); … assert accessGuard.release();` and

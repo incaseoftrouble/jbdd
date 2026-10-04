@@ -25,8 +25,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.common.collect.Sets;
-import de.tum.in.jbdd.collections.BitSets;
-import java.util.BitSet;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -48,7 +48,7 @@ class BddMapTest {
         assertTrue(sets.universe().isUniverse());
         assertFalse(x0.isEmpty());
         assertFalse(x0.isUniverse());
-        assertEquals(BitSets.of(0), x0.support());
+        assertEquals(NatSetFixtures.of(0), x0.support());
 
         BddSet both = x0.intersection(x1);
         BddSet either = x0.union(x1);
@@ -57,10 +57,10 @@ class BddMapTest {
         assertTrue(x0.subsetOf(either));
         assertFalse(either.subsetOf(x0));
 
-        assertTrue(both.contains(BitSets.of(0, 1)));
-        assertFalse(both.contains(BitSets.of(0)));
-        assertTrue(either.contains(BitSets.of(0)));
-        assertFalse(either.contains(BitSets.of()));
+        assertTrue(both.contains(NatSetFixtures.of(0, 1)));
+        assertFalse(both.contains(NatSetFixtures.of(0)));
+        assertTrue(either.contains(NatSetFixtures.of(0)));
+        assertFalse(either.contains(NatSetFixtures.of()));
 
         assertEquals(either, x0.complement().intersection(x1.complement()).complement());
         assertTrue(x0.intersects(x1));
@@ -68,10 +68,10 @@ class BddMapTest {
     }
 
     /** Every valuation of the first {@code variables} variables. */
-    private static List<BitSet> valuations(int variables) {
-        List<BitSet> valuations = new java.util.ArrayList<>();
+    private static List<NatSet> valuations(int variables) {
+        List<NatSet> valuations = new java.util.ArrayList<>();
         for (long bits = 0; bits < 1L << variables; bits++) {
-            valuations.add(BitSet.valueOf(new long[] {bits}));
+            valuations.add(NatSetFixtures.valueOf(bits));
         }
         return valuations;
     }
@@ -84,13 +84,13 @@ class BddMapTest {
         BddMap<String> map = strings.of("c")
                 .update(sets.var(0).intersection(sets.var(2)), "a")
                 .update(sets.var(1).intersection(sets.var(3)), "b");
-        BitSet splitVariables = BitSets.of(0, 1);
+        NatSet splitVariables = NatSetFixtures.of(0, 1);
 
         Values<List<String>> fused = ctx.bddMaps().create();
         BddMap<List<String>> direct = map.splitMap(
                 splitVariables, fused, residual -> List.copyOf(new java.util.TreeSet<>(residual.values())));
         BddMap<BddMap<String>> meta = map.split(splitVariables, ctx.bddMaps().create());
-        for (BitSet valuation : valuations(4)) {
+        for (NatSet valuation : valuations(4)) {
             BddMap<String> residual = meta.evaluate(valuation);
             assertEquals(List.copyOf(new java.util.TreeSet<>(residual.values())), direct.evaluate(valuation));
             assertEquals(map.evaluate(valuation), residual.evaluate(valuation));
@@ -155,15 +155,15 @@ class BddMapTest {
         BddMap<String> constant = strings.of("lo");
         assertTrue(constant.isConstant());
         assertEquals(Set.of("lo"), constant.values());
-        assertEquals("lo", constant.evaluate(BitSets.of()));
+        assertEquals("lo", constant.evaluate(NatSetFixtures.of()));
 
         BddMap<String> updated = constant.update(x0, "hi-there");
         assertFalse(updated.isConstant());
         assertEquals(Set.of("lo", "hi-there"), updated.values());
-        assertEquals(BitSets.of(0), updated.support());
+        assertEquals(NatSetFixtures.of(0), updated.support());
 
-        assertEquals("hi-there", updated.evaluate(BitSets.of(0)));
-        assertEquals("lo", updated.evaluate(BitSets.of()));
+        assertEquals("hi-there", updated.evaluate(NatSetFixtures.of(0)));
+        assertEquals("lo", updated.evaluate(NatSetFixtures.of()));
 
         assertEquals(x0, updated.domainOf("hi-there"));
         assertTrue(updated.domainOf("nonexistent").isEmpty());
@@ -181,19 +181,19 @@ class BddMapTest {
         BddMap<String> updated = strings.of("lo").update(x0, "hi-there");
 
         BddMap<String> upper = updated.map(String::toUpperCase);
-        assertEquals("LO", upper.evaluate(BitSets.of()));
-        assertEquals("HI-THERE", upper.evaluate(BitSets.of(0)));
+        assertEquals("LO", upper.evaluate(NatSetFixtures.of()));
+        assertEquals("HI-THERE", upper.evaluate(NatSetFixtures.of(0)));
 
         BddMap<String> combined = updated.apply(upper, (a, b) -> String.format("%s/%s", a, b));
-        assertEquals("lo/LO", combined.evaluate(BitSets.of()));
-        assertEquals("hi-there/HI-THERE", combined.evaluate(BitSets.of(0)));
+        assertEquals("lo/LO", combined.evaluate(NatSetFixtures.of()));
+        assertEquals("hi-there/HI-THERE", combined.evaluate(NatSetFixtures.of(0)));
 
         // monoid-aware apply must agree with plain apply - "" is a genuine neutral element for concatenation
         BddMap<String> empty = strings.of("");
         BddMapBinaryOperator<String> concatMonoid = BddMapBinaryOperator.monoid(String::concat, "");
         BddMap<String> viaMonoid = updated.apply(empty, concatMonoid);
-        assertEquals(updated.evaluate(BitSets.of()), viaMonoid.evaluate(BitSets.of()));
-        assertEquals(updated.evaluate(BitSets.of(0)), viaMonoid.evaluate(BitSets.of(0)));
+        assertEquals(updated.evaluate(NatSetFixtures.of()), viaMonoid.evaluate(NatSetFixtures.of()));
+        assertEquals(updated.evaluate(NatSetFixtures.of(0)), viaMonoid.evaluate(NatSetFixtures.of(0)));
     }
 
     @Test
@@ -210,17 +210,17 @@ class BddMapTest {
         BddMap<String> right = strings.of("lo").update(x1, "hi-there");
 
         BddSet agree = left.agreement(right);
-        assertTrue(agree.contains(BitSets.of()));
-        assertTrue(agree.contains(BitSets.of(0, 1)));
-        assertFalse(agree.contains(BitSets.of(0)));
-        assertFalse(agree.contains(BitSets.of(1)));
+        assertTrue(agree.contains(NatSetFixtures.of()));
+        assertTrue(agree.contains(NatSetFixtures.of(0, 1)));
+        assertFalse(agree.contains(NatSetFixtures.of(0)));
+        assertFalse(agree.contains(NatSetFixtures.of(1)));
 
         BddSet diff = left.difference(right);
         assertEquals(agree.complement(), diff);
-        assertFalse(diff.contains(BitSets.of()));
-        assertFalse(diff.contains(BitSets.of(0, 1)));
-        assertTrue(diff.contains(BitSets.of(0)));
-        assertTrue(diff.contains(BitSets.of(1)));
+        assertFalse(diff.contains(NatSetFixtures.of()));
+        assertFalse(diff.contains(NatSetFixtures.of(0, 1)));
+        assertTrue(diff.contains(NatSetFixtures.of(0)));
+        assertTrue(diff.contains(NatSetFixtures.of(1)));
     }
 
     @Test
@@ -232,11 +232,11 @@ class BddMapTest {
         BddMap<String> updated = strings.of("lo").update(x0, "hi-there");
         BddMap<String> renamed = updated.relabelVariables(i -> i == 0 ? 2 : i);
 
-        assertEquals(BitSets.of(2), renamed.support());
-        assertEquals("hi-there", renamed.evaluate(BitSets.of(2)));
-        assertEquals("lo", renamed.evaluate(BitSets.of()));
+        assertEquals(NatSetFixtures.of(2), renamed.support());
+        assertEquals("hi-there", renamed.evaluate(NatSetFixtures.of(2)));
+        assertEquals("lo", renamed.evaluate(NatSetFixtures.of()));
         // no longer depends on x0 at all
-        assertEquals("lo", renamed.evaluate(BitSets.of(0)));
+        assertEquals("lo", renamed.evaluate(NatSetFixtures.of(0)));
 
         // a negative target is rejected, not silently misinterpreted
         assertThrows(IllegalArgumentException.class, () -> updated.relabelVariables(i -> -1));
@@ -252,8 +252,8 @@ class BddMapTest {
         Set<String> ab = Set.of("a", "b");
 
         BddMap<Set<String>> m = setMaps.of(a).update(x0, ab);
-        assertEquals(a, m.evaluate(BitSets.of()));
-        assertEquals(ab, m.evaluate(BitSets.of(0)));
+        assertEquals(a, m.evaluate(NatSetFixtures.of()));
+        assertEquals(ab, m.evaluate(NatSetFixtures.of(0)));
         assertEquals(Set.of(a, ab), m.values());
         assertEquals(x0, m.where(s -> s.size() > 1));
 
@@ -262,8 +262,8 @@ class BddMapTest {
             withC.add("c");
             return Set.copyOf(withC);
         });
-        assertEquals(Set.of("a", "c"), union.evaluate(BitSets.of()));
-        assertEquals(Set.of("a", "b", "c"), union.evaluate(BitSets.of(0)));
+        assertEquals(Set.of("a", "c"), union.evaluate(NatSetFixtures.of()));
+        assertEquals(Set.of("a", "b", "c"), union.evaluate(NatSetFixtures.of(0)));
     }
 
     @Test
@@ -281,16 +281,17 @@ class BddMapTest {
         assertSame(relabeled.valueDomain(), relabeler.into());
 
         // the relabeled map matches Set.of(original value) at every corner of the (x0,x1) domain.
-        for (BitSet assignment : List.of(new BitSet(), BitSets.of(0), BitSets.of(1), BitSets.of(0, 1))) {
+        for (NatSet assignment :
+                List.of(MutableNatSet.create(), NatSetFixtures.of(0), NatSetFixtures.of(1), NatSetFixtures.of(0, 1))) {
             assertEquals(Set.of(original.evaluate(assignment)), relabeled.evaluate(assignment));
         }
         assertEquals(Set.of(Set.of("lo"), Set.of("hi-there"), Set.of("greetings")), relabeled.values());
 
         // the original map must still work correctly after being relabeled - relabeling must not have
         // consumed or corrupted it.
-        assertEquals("lo", original.evaluate(BitSets.of()));
-        assertEquals("hi-there", original.evaluate(BitSets.of(0)));
-        assertEquals("greetings", original.evaluate(BitSets.of(1)));
+        assertEquals("lo", original.evaluate(NatSetFixtures.of()));
+        assertEquals("hi-there", original.evaluate(NatSetFixtures.of(0)));
+        assertEquals("greetings", original.evaluate(NatSetFixtures.of(1)));
         // "hi-there" only survives where x0 holds AND the later x1 update didn't overwrite it.
         assertEquals(x0.difference(x1), original.domainOf("hi-there"));
 
@@ -314,20 +315,20 @@ class BddMapTest {
         BddMap<Set<String>> injected = setMaps.relabelInto(toInject, Set::of);
         assertSame(injected.valueDomain(), existing.valueDomain());
 
-        assertEquals(Set.of("lo"), injected.evaluate(BitSets.of()));
-        assertEquals(Set.of("hi-there"), injected.evaluate(BitSets.of(1)));
+        assertEquals(Set.of("lo"), injected.evaluate(NatSetFixtures.of()));
+        assertEquals(Set.of("hi-there"), injected.evaluate(NatSetFixtures.of(1)));
 
         // since it landed in the SAME numbering as `existing`, it can be combined with it directly.
         //noinspection RedundantTypeArguments
         BddMap<Set<String>> combined = existing.apply(injected, (a, b) -> Set.copyOf(Sets.<String>union(a, b)));
-        assertEquals(Set.of("seed", "lo"), combined.evaluate(BitSets.of()));
-        assertEquals(Set.of("seed", "extra", "lo"), combined.evaluate(BitSets.of(0)));
-        assertEquals(Set.of("seed", "hi-there"), combined.evaluate(BitSets.of(1)));
-        assertEquals(Set.of("seed", "extra", "hi-there"), combined.evaluate(BitSets.of(0, 1)));
+        assertEquals(Set.of("seed", "lo"), combined.evaluate(NatSetFixtures.of()));
+        assertEquals(Set.of("seed", "extra", "lo"), combined.evaluate(NatSetFixtures.of(0)));
+        assertEquals(Set.of("seed", "hi-there"), combined.evaluate(NatSetFixtures.of(1)));
+        assertEquals(Set.of("seed", "extra", "hi-there"), combined.evaluate(NatSetFixtures.of(0, 1)));
 
         // the original (pre-injection) String map still works fine too.
-        assertEquals("lo", toInject.evaluate(BitSets.of()));
-        assertEquals("hi-there", toInject.evaluate(BitSets.of(1)));
+        assertEquals("lo", toInject.evaluate(NatSetFixtures.of()));
+        assertEquals("hi-there", toInject.evaluate(NatSetFixtures.of(1)));
     }
 
     @Test
@@ -345,8 +346,8 @@ class BddMapTest {
         // Distinct tuples stay distinct - the traversal fills one buffer, so what lands in the numbering
         // has to be a copy of it rather than the buffer itself.
         assertEquals(Set.of(List.of("a0", "b0"), List.of("a1", "b1")), product.values());
-        assertEquals(List.of("a0", "b0"), product.evaluate(BitSets.of()));
-        assertEquals(List.of("a1", "b1"), product.evaluate(BitSets.of(0)));
+        assertEquals(List.of("a0", "b0"), product.evaluate(NatSetFixtures.of()));
+        assertEquals(List.of("a1", "b1"), product.evaluate(NatSetFixtures.of(0)));
     }
 
     @Test
@@ -364,8 +365,8 @@ class BddMapTest {
 
         assertNotSame(a, b);
         assertNotEquals(a, b);
-        assertEquals("a", a.evaluate(BitSets.of()));
-        assertEquals("b", b.evaluate(BitSets.of()));
+        assertEquals("a", a.evaluate(NatSetFixtures.of()));
+        assertEquals("b", b.evaluate(NatSetFixtures.of()));
         assertSame(first, a.valueDomain());
         assertSame(second, b.valueDomain());
 
@@ -387,13 +388,14 @@ class BddMapTest {
 
         BddMap<String> adopted = first.adopt(b);
         assertSame(first, adopted.valueDomain());
-        for (BitSet assignment : List.of(new BitSet(), BitSets.of(0), BitSets.of(1), BitSets.of(0, 1))) {
+        for (NatSet assignment :
+                List.of(MutableNatSet.create(), NatSetFixtures.of(0), NatSetFixtures.of(1), NatSetFixtures.of(0, 1))) {
             assertEquals(b.evaluate(assignment), adopted.evaluate(assignment));
         }
 
         // and now the operations that rejected `b` work
         assertEquals(x0.symmetricDifference(x1).complement(), a.agreement(adopted));
-        assertEquals("lo/lo", a.apply(adopted, (l, r) -> l + "/" + r).evaluate(BitSets.of()));
+        assertEquals("lo/lo", a.apply(adopted, (l, r) -> l + "/" + r).evaluate(NatSetFixtures.of()));
 
         // adopting into the map's own numbering is the identity, down to the function id
         assertSame(b, second.adopt(b));
@@ -404,7 +406,7 @@ class BddMapTest {
 
         // b itself is untouched
         assertSame(second, b.valueDomain());
-        assertEquals("hi-there", b.evaluate(BitSets.of(1)));
+        assertEquals("hi-there", b.evaluate(NatSetFixtures.of(1)));
     }
 
     @Test
@@ -424,8 +426,8 @@ class BddMapTest {
     }
 
     /** Every valuation of variables 0..1, which is enough to pin a map built over them. */
-    private static List<BitSet> valuations() {
-        return List.of(new BitSet(), BitSets.of(0), BitSets.of(1), BitSets.of(0, 1));
+    private static List<NatSet> valuations() {
+        return List.of(MutableNatSet.create(), NatSetFixtures.of(0), NatSetFixtures.of(1), NatSetFixtures.of(0, 1));
     }
 
     @Test
@@ -444,7 +446,7 @@ class BddMapTest {
         BddMap<String> b = second.of("hi").update(x1, "lo");
 
         BddSet agree = a.agreement(b);
-        for (BitSet assignment : valuations()) {
+        for (NatSet assignment : valuations()) {
             assertEquals(
                     a.evaluate(assignment).equals(b.evaluate(assignment)),
                     agree.contains(assignment),
@@ -465,7 +467,7 @@ class BddMapTest {
         BddMap<Integer> length = lengths.of(2).update(x1, 5);
 
         BddSet matches = word.where(length, (w, l) -> w.length() == l);
-        for (BitSet assignment : valuations()) {
+        for (NatSet assignment : valuations()) {
             assertEquals(
                     word.evaluate(assignment).length() == length.evaluate(assignment),
                     matches.contains(assignment),
@@ -489,7 +491,7 @@ class BddMapTest {
         BddSet declared = a.where(b, BddMapBinaryPredicate.equivalence(sameParity));
 
         assertEquals(plain, declared);
-        for (BitSet assignment : valuations()) {
+        for (NatSet assignment : valuations()) {
             assertEquals(
                     (a.evaluate(assignment) % 2) == (b.evaluate(assignment) % 2),
                     plain.contains(assignment),
@@ -523,8 +525,8 @@ class BddMapTest {
         // Declared over Object, used on a map of Strings.
         BddMapBinaryPredicate<Object> sameObject = BddMapBinaryPredicate.equivalence(Object::equals);
         BddSet agree = a.where(b, sameObject);
-        assertTrue(agree.contains(BitSets.of()));
-        assertFalse(agree.contains(BitSets.of(0)));
+        assertTrue(agree.contains(NatSetFixtures.of()));
+        assertFalse(agree.contains(NatSetFixtures.of(0)));
         assertEquals(a.agreement(b), agree);
     }
 
@@ -609,14 +611,15 @@ class BddMapTest {
             large = large.update(cube.intersection(sets.var(8 + valuation % 4)), valuation);
         }
         BddMap<Integer> doubled = large.map(value -> 2 * value);
-        assertEquals(2 * large.evaluate(BitSets.of(0, 1, 8)), doubled.evaluate(BitSets.of(0, 1, 8)));
+        assertEquals(2 * large.evaluate(NatSetFixtures.of(0, 1, 8)), doubled.evaluate(NatSetFixtures.of(0, 1, 8)));
 
         // Each small map with a new function invalidates the cache; its clear then resets just the bins written.
         BddMap<Integer> small = numbers.of(1).update(sets.var(0), 2).update(sets.var(1), 3);
         for (int offset = 0; offset < 50; offset++) {
             int shift = offset;
             BddMap<Integer> shifted = small.map(value -> value + shift);
-            for (BitSet valuation : List.of(BitSets.of(), BitSets.of(0), BitSets.of(1), BitSets.of(0, 1))) {
+            for (NatSet valuation :
+                    List.of(NatSetFixtures.of(), NatSetFixtures.of(0), NatSetFixtures.of(1), NatSetFixtures.of(0, 1))) {
                 assertEquals(small.evaluate(valuation) + shift, shifted.evaluate(valuation));
             }
         }

@@ -20,19 +20,21 @@ import static de.tum.in.jbdd.BooleanBase.TWO;
 import static de.tum.in.jbdd.Preconditions.checkState;
 import static java.math.BigInteger.ZERO;
 
-import de.tum.in.jbdd.collections.BitSets;
 import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.Cursor;
 import de.tum.in.jbdd.collections.IntIntHashMap;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
+import de.tum.in.jbdd.collections.NatSets;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
+import java.util.PrimitiveIterator;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.IntPredicate;
@@ -67,7 +69,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     private byte[] valueReferenceCounts;
     private static final byte MAXIMUM_REFERENCE_COUNT = Byte.MAX_VALUE;
     // Convert to sparse bit set?
-    private final BitSet allocatedValues = new BitSet();
+    private final MutableNatSet allocatedValues = MutableNatSet.create();
     private int valuesAllocatedSinceCollection = 0;
     private int valueCollectionThreshold = INITIAL_VALUE_COLLECTION_THRESHOLD;
     private long createdNodesAtCollection = 0L;
@@ -93,12 +95,12 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         // NodeLifecycleObserverGroup#registerStrongly.
         observers.registerStrongly(new NodeTableObserver() {
             @Override
-            public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
+            public void afterGc(DecisionDiagram origin, int reclaimedNodes, NatSet reclaimedValues) {
                 cache.onMultiTerminalNodesInvalidated(reclaimedNodes, reclaimedValues);
             }
 
             @Override
-            public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, NatSet reclaimedValues) {
                 cache.tableSizeChanged(invalidatedNodes, reclaimedValues);
             }
         });
@@ -106,12 +108,12 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         order.registerOwnedObserver(cache);
         bdd.registerOwnedObserver(new NodeTableObserver() {
             @Override
-            public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
+            public void afterGc(DecisionDiagram origin, int reclaimedNodes, NatSet reclaimedValues) {
                 cache.onBooleanNodesInvalidated(reclaimedNodes);
             }
 
             @Override
-            public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, NatSet reclaimedValues) {
                 cache.onBooleanNodesInvalidated(invalidatedNodes);
             }
         });
@@ -143,17 +145,17 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         observers.dispatch(observer -> observer.beforeGc(this));
     }
 
-    void notifyAfterGc(int reclaimedNodes, BitSet reclaimedValues) {
+    void notifyAfterGc(int reclaimedNodes, NatSet reclaimedValues) {
         valuesCollected(reclaimedValues);
         observers.dispatch(observer -> observer.afterGc(this, reclaimedNodes, reclaimedValues));
     }
 
-    void notifyAfterTableGrow(int reclaimedNodes, BitSet reclaimedValues) {
+    void notifyAfterTableGrow(int reclaimedNodes, NatSet reclaimedValues) {
         valuesCollected(reclaimedValues);
         observers.dispatch(observer -> observer.afterTableGrowth(this, reclaimedNodes, reclaimedValues));
     }
 
-    private void valuesCollected(BitSet reclaimedValues) {
+    private void valuesCollected(NatSet reclaimedValues) {
         if (collectingForValues) {
             /* Forcing one and freeing nothing means the values are genuinely live. Trying again at the
              * same count would make a workload holding many of them pay a full mark every threshold
@@ -172,7 +174,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         notifyBeforeGc();
         table.markAllReferencedNodes();
         // Before reclaimUnmarkedNodes, whose closing assertion checks the leaf marks too.
-        BitSet reclaimedValues = table.clearUnreferencedLeaves();
+        NatSet reclaimedValues = table.clearUnreferencedLeaves();
         int reclaimedNodes = table.reclaimUnmarkedNodes();
         assert !Assertions.COSTLY_ASSERTIONS || table().isNoneMarked();
         notifyAfterGc(reclaimedNodes, reclaimedValues);
@@ -292,7 +294,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     }
 
     @Override
-    public void forEachSupportVariableFiltered(int function, BitSet filter, IntConsumer action) {
+    public void forEachSupportVariableFiltered(int function, NatSet filter, IntConsumer action) {
         assert accessGuard.acquire();
         table.forEachVariable(function, filter, action);
         assert accessGuard.release();
@@ -301,9 +303,12 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     @Override
     public int referencedNodeCount() {
         int referencedValues = 0;
-        for (int i = allocatedValues.nextSetBit(0);
-                i < valueReferenceCounts.length && i >= 0;
-                i = allocatedValues.nextSetBit(i + 1)) {
+        PrimitiveIterator.OfInt iterator = allocatedValues.iterator();
+        while (iterator.hasNext()) {
+            int i = iterator.nextInt();
+            if (i >= valueReferenceCounts.length) {
+                break;
+            }
             if (valueReferenceCounts[i] > 0) {
                 referencedValues++;
             }
@@ -314,7 +319,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     @Override
     public int nodeCount() {
         assert accessGuard.acquire();
-        int result = table.nodeCount() + allocatedValues.cardinality();
+        int result = table.nodeCount() + allocatedValues.size();
         assert accessGuard.release();
         return result;
     }
@@ -386,7 +391,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     }
 
     private boolean isValidConstant(int function) {
-        return function < 0 && allocatedValues.get(constantFunctionToValue(function));
+        return function < 0 && allocatedValues.contains(constantFunctionToValue(function));
     }
 
     @Override
@@ -440,12 +445,12 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     }
 
     @Override
-    public int evaluate(int function, BitSet assignment) {
+    public int evaluate(int function, NatSet assignment) {
         assert isValidFunction(function);
         int currentNode = function;
         while (!isConstant(currentNode)) {
             assert table.isValidDecisionNode(currentNode);
-            currentNode = assignment.get(decisionVariable(currentNode)) ? high(currentNode) : low(currentNode);
+            currentNode = assignment.contains(decisionVariable(currentNode)) ? high(currentNode) : low(currentNode);
         }
         return constantFunctionToValue(currentNode);
     }
@@ -461,7 +466,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     private int constant(int value) {
         assert value >= 0;
         int function = valueToConstantFunction(value);
-        if (!allocatedValues.get(value)) {
+        if (!allocatedValues.contains(value)) {
             allocatedValues.set(value);
             valuesAllocatedSinceCollection += 1;
             if (shouldCollectForValues()) {
@@ -613,17 +618,17 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         assert accessGuard.acquire();
         assert table.isNoneMarkedBelowNode(function);
         table.markAllBelowNode(function, true);
-        BitSets.forEach(table.markedValues, action);
+        table.markedValues.forEach(action);
         table.unMarkAllBelowNode(function, true);
         assert table.isNoneMarkedBelowNode(function);
         assert accessGuard.release();
     }
 
     @Override
-    public BitSet valuesOf(int function) {
+    public MutableNatSet valuesOf(int function) {
         assert isValidFunction(function);
         if (isConstant(function)) {
-            return BitSets.of(constantFunctionToValue(function));
+            return MutableNatSet.of(constantFunctionToValue(function));
         }
 
         // The mark phase computes exactly this set as a side effect, so copy it out directly instead of
@@ -631,7 +636,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         assert accessGuard.acquire();
         assert table.isNoneMarkedBelowNode(function);
         table.markAllBelowNode(function, true);
-        BitSet values = BitSets.copyOf(table.markedValues);
+        MutableNatSet values = MutableNatSet.copyOf(table.markedValues);
         table.unMarkAllBelowNode(function, true);
         assert table.isNoneMarkedBelowNode(function);
         assert accessGuard.release();
@@ -653,7 +658,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
 
         if (isConstant(function)) {
             // The single, entirely unconstrained path.
-            BitSet empty = BitSets.of();
+            NatSet empty = NatSet.of();
             return new ValuedCursor.SingletonValuedCursor<>(
                     Cube.ofUnsafe(empty, empty), constantFunctionToValue(function));
         }
@@ -661,18 +666,18 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     }
 
     @Override
-    public Optional<BitSet> anyAssignment(int function, IntPredicate values) {
+    public Optional<MutableNatSet> anyAssignment(int function, IntPredicate values) {
         assert isValidFunction(function);
 
         assert accessGuard.acquire();
         cache.initAnyValueMatches(values);
-        BitSet assigment = new BitSet(numberOfVariables());
+        MutableNatSet assigment = MutableNatSet.dense(numberOfVariables());
         boolean found = anyAssigmentRecursive(function, values, assigment);
         assert accessGuard.release();
         return found ? Optional.of(assigment) : Optional.empty();
     }
 
-    private boolean anyAssigmentRecursive(int function, @Nullable IntPredicate values, BitSet assignment) {
+    private boolean anyAssigmentRecursive(int function, @Nullable IntPredicate values, MutableNatSet assignment) {
         if (isConstant(function)) {
             return values == null || values.test(constantFunctionToValue(function));
         }
@@ -723,9 +728,9 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     }
 
     @Override
-    public BigInteger countAssignments(int function, IntPredicate values, BitSet support) {
-        assert BitSets.isSubset(support(function), support);
-        return countAssignments(function, values).divide(TWO.pow(numberOfVariables() - support.cardinality()));
+    public BigInteger countAssignments(int function, IntPredicate values, NatSet support) {
+        assert support.containsAll(support(function));
+        return countAssignments(function, values).divide(TWO.pow(numberOfVariables() - support.size()));
     }
 
     private BigInteger countSatisfyingAssignmentsRecursive(int node, IntPredicate values) {
@@ -754,34 +759,34 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     }
 
     @Override
-    public ValuedCursor<BitSet> assignmentCursor(int function, @Nullable IntPredicate values) {
+    public ValuedCursor<NatSet> assignmentCursor(int function, @Nullable IntPredicate values) {
         assert isValidFunction(function);
 
-        BitSet support = new BitSet(numberOfVariables());
+        MutableNatSet support = MutableNatSet.dense(numberOfVariables());
         support.set(0, numberOfVariables());
         return assignmentCursor(function, values, support);
     }
 
     @Override
-    public void forEachSolution(int function, @Nullable IntPredicate values, Consumer<? super BitSet> action) {
+    public void forEachSolution(int function, @Nullable IntPredicate values, Consumer<? super NatSet> action) {
         assert isValidFunction(function);
         assert accessGuard.acquire();
-        for (ValuedCursor<BitSet> cursor = assignmentCursor(function, values); cursor.valid(); cursor.advance()) {
+        for (ValuedCursor<NatSet> cursor = assignmentCursor(function, values); cursor.valid(); cursor.advance()) {
             action.accept(cursor.current());
         }
         assert accessGuard.release();
     }
 
     @Override
-    public ValuedCursor<BitSet> assignmentCursor(int function, @Nullable IntPredicate values, BitSet support) {
+    public ValuedCursor<NatSet> assignmentCursor(int function, @Nullable IntPredicate values, NatSet support) {
         assert isValidFunction(function);
-        assert BitSets.isSubset(support(function), support);
+        assert support.containsAll(support(function));
 
         if (isConstant(function)) {
             int value = constantFunctionToValue(function);
             // Every assignment yields the same value, so the whole power set is (or is not) a solution.
             return (values == null || values.test(value))
-                    ? new ValuedCursor.ConstantValuedCursor<>(Cursors.powerSet(support), value)
+                    ? new ValuedCursor.ConstantValuedCursor<>(NatSets.powerSet(support), value)
                     : new ValuedCursor.ConstantValuedCursor<>(Cursors.empty(), value);
         }
         cache.initAnyValueMatches(values);
@@ -1656,13 +1661,13 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
 
         int current = mtbddFunction;
-        while (!isConstant(current) && restriction.supportUnsafe().get(decisionVariable(current))) {
-            current = restriction.assignmentUnsafe().get(decisionVariable(current)) ? high(current) : low(current);
+        while (!isConstant(current) && restriction.support().contains(decisionVariable(current))) {
+            current = restriction.assignment().contains(decisionVariable(current)) ? high(current) : low(current);
         }
         if (isConstant(current)) {
             return current;
         }
-        int maxRestrictedLevel = bdd.maxLevel(restriction.supportUnsafe());
+        int maxRestrictedLevel = bdd.maxLevel(restriction.support());
         if (decisionLevel(current) > maxRestrictedLevel) {
             return current;
         }
@@ -1698,8 +1703,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         int hash = cache.lookupHash();
 
         int result;
-        if (restriction.supportUnsafe().get(nodeVariable)) {
-            int child = restriction.assignmentUnsafe().get(nodeVariable) ? high(mtbddNode) : low(mtbddNode);
+        if (restriction.support().contains(nodeVariable)) {
+            int child = restriction.assignment().contains(nodeVariable) ? high(mtbddNode) : low(mtbddNode);
             result = restrictRecursive(child, restriction, maxRestrictedLevel);
         } else {
             int low = table.pushToWorkStack(restrictRecursive(low(mtbddNode), restriction, maxRestrictedLevel));
@@ -1835,11 +1840,11 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         MultiTerminalDecisionDiagram.Inverse result;
         int falseFunction = bdd.falseFunction();
         if (domainSize <= INVERT_ARRAY_DOMAIN_THRESHOLD) {
-            BitSet values = new BitSet(domainSize);
+            MutableNatSet values = MutableNatSet.dense(domainSize);
             int[] bddFunctions = invertRecursiveArray(
                     mtbddFunction, domainSize, values, 0, new DepthPool<>(() -> new int[domainSize]));
-            assert values.stream().allMatch(i -> bddFunctions[i] != NodeTable.PLACEHOLDER);
-            bdd.table().popFromWorkStack(values.cardinality());
+            assert values.intStream().allMatch(i -> bddFunctions[i] != NodeTable.PLACEHOLDER);
+            bdd.table().popFromWorkStack(values.size());
             result = new FunctionInverse(
                     mtbddFunction,
                     value -> value >= 0 && value < bddFunctions.length && bddFunctions[value] != NodeTable.PLACEHOLDER
@@ -1849,7 +1854,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         } else {
             IntIntHashMap bddFunctions = invertRecursive(mtbddFunction, 0, new DepthPool<>(IntIntHashMap::new));
             bdd.table().popFromWorkStack(bddFunctions.size());
-            BitSet values = new BitSet();
+            MutableNatSet values = MutableNatSet.create();
             bddFunctions.forEach((value, bddFunction) -> values.set(value));
             result = new FunctionInverse(mtbddFunction, v -> bddFunctions.get(v, falseFunction), values);
         }
@@ -1893,7 +1898,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     }
 
     private int[] invertRecursiveArray(
-            int mtbddNode, int domainSize, BitSet values, int depth, DepthPool<int[]> highLeafPool) {
+            int mtbddNode, int domainSize, MutableNatSet values, int depth, DepthPool<int[]> highLeafPool) {
         NodeTable bddTable = bdd.table();
         if (isConstant(mtbddNode)) {
             assert placeholder() == 0;
@@ -1920,7 +1925,9 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
 
         int count = 0;
-        for (int value = values.nextSetBit(0); value >= 0; value = values.nextSetBit(value + 1)) {
+        PrimitiveIterator.OfInt iterator = values.iterator();
+        while (iterator.hasNext()) {
+            int value = iterator.nextInt();
             boolean lowPresent = lowArray[value] != NodeTable.PLACEHOLDER;
             boolean highPresent = highArray[value] != NodeTable.PLACEHOLDER;
             if (!lowPresent && !highPresent) {
@@ -1946,7 +1953,9 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
 
         bddTable.popFromWorkStack(count);
-        for (int value = values.nextSetBit(0); value >= 0; value = values.nextSetBit(value + 1)) {
+        PrimitiveIterator.OfInt remaining = values.iterator();
+        while (remaining.hasNext()) {
+            int value = remaining.nextInt();
             if (lowArray[value] != NodeTable.PLACEHOLDER) {
                 bddTable.pushToWorkStack(lowArray[value]);
             }
@@ -1955,7 +1964,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     }
 
     @Override
-    public FunctionToFunctionMap split(int mtbddFunction, BitSet splitVariables) {
+    public FunctionToFunctionMap split(int mtbddFunction, NatSet splitVariables) {
         assert isValidFunction(mtbddFunction);
         assert accessGuard.acquire();
         assert table.workStacksEmpty();
@@ -1970,8 +1979,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         assert table.workStacksEmpty();
         assert accessGuard.release();
 
-        BitSet indices = new BitSet();
-        indices.set(0, bijection.size());
+        NatSet indices = NatSet.range(0, bijection.size());
         return new FunctionToFunctionMap() {
             @Override
             public int function() {
@@ -1984,14 +1992,14 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             }
 
             @Override
-            public BitSet codomain() {
+            public NatSet codomain() {
                 return indices;
             }
         };
     }
 
     @Override
-    public int splitRelabeled(int mtbddFunction, BitSet splitVariables, IntUnaryOperator relabeler) {
+    public int splitRelabeled(int mtbddFunction, NatSet splitVariables, IntUnaryOperator relabeler) {
         assert isValidFunction(mtbddFunction);
         assert accessGuard.acquire();
         assert table.workStacksEmpty();
@@ -2033,7 +2041,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     }
 
     @Override
-    public FunctionToFunctionMap splitBdd(int bddFunction, BitSet splitVariables) {
+    public FunctionToFunctionMap splitBdd(int bddFunction, NatSet splitVariables) {
         assert bdd.isValidFunction(bddFunction);
         assert accessGuard.acquire();
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
@@ -2044,8 +2052,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
         assert accessGuard.release();
 
-        BitSet indices = new BitSet();
-        indices.set(0, residuals.size());
+        NatSet indices = NatSet.range(0, residuals.size());
         return new FunctionToFunctionMap() {
             @Override
             public int function() {
@@ -2058,14 +2065,14 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             }
 
             @Override
-            public BitSet codomain() {
+            public NatSet codomain() {
                 return indices;
             }
         };
     }
 
     // splitBdd with the residuals relabeled, as splitRelabeled does for split.
-    int splitBddRelabeled(int bddFunction, BitSet splitVariables, IntUnaryOperator relabeler) {
+    int splitBddRelabeled(int bddFunction, NatSet splitVariables, IntUnaryOperator relabeler) {
         assert bdd.isValidFunction(bddFunction);
         assert accessGuard.acquire();
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
@@ -2090,7 +2097,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     }
 
     // The residuals are BDD functions, interned on the BDD's secondary work stack for the whole call.
-    private int splitBdd(int bddFunction, BitSet splitVariables, SplitBijection residuals) {
+    private int splitBdd(int bddFunction, NatSet splitVariables, SplitBijection residuals) {
         cache.initSplitBdd();
         bdd.table().pushToWorkStack(bddFunction);
         int result = splitBddRecursive(bddFunction, splitVariables, bdd.maxLevel(splitVariables), residuals);
@@ -2098,7 +2105,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         return result;
     }
 
-    private int splitBddRecursive(int bddFunction, BitSet splitVariables, int maxSplitLevel, SplitBijection residuals) {
+    private int splitBddRecursive(int bddFunction, NatSet splitVariables, int maxSplitLevel, SplitBijection residuals) {
         int level = bdd.decisionLevelOrMax(bddFunction);
         if (level > maxSplitLevel) {
             return of(residuals.intern(bddFunction));
@@ -2114,7 +2121,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
                 splitBddRecursive(bdd.low(bddFunction), splitVariables, maxSplitLevel, residuals));
         int high = table.pushToWorkStack(
                 splitBddRecursive(bdd.high(bddFunction), splitVariables, maxSplitLevel, residuals));
-        int result = splitVariables.get(bdd.decisionVariable(bddFunction))
+        int result = splitVariables.contains(bdd.decisionVariable(bddFunction))
                 ? makeFunction(level, low, high)
                 : splitBddCombineRecursive(low, high, level, residuals);
         table.popFromWorkStack(2);
@@ -2161,7 +2168,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         return result;
     }
 
-    private int splitRecursive(int mtbddNode, BitSet splitVariables, int maxSplitLevel, SplitBijection bijection) {
+    private int splitRecursive(int mtbddNode, NatSet splitVariables, int maxSplitLevel, SplitBijection bijection) {
         if (isConstant(mtbddNode)) {
             return of(bijection.intern(mtbddNode));
         }
@@ -2181,7 +2188,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         int low = table.pushToWorkStack(splitRecursive(low(mtbddNode), splitVariables, maxSplitLevel, bijection));
         int high = table.pushToWorkStack(splitRecursive(high(mtbddNode), splitVariables, maxSplitLevel, bijection));
 
-        int result = splitVariables.get(nodeVariable)
+        int result = splitVariables.contains(nodeVariable)
                 ? makeFunction(level, low, high)
                 : splitCombineRecursive(low, high, level, bijection);
         table.popFromWorkStack(2);
@@ -2273,8 +2280,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
                 }
 
                 @Override
-                public BitSet codomain() {
-                    return new BitSet();
+                public NatSet codomain() {
+                    return MutableNatSet.create();
                 }
             };
         }
@@ -2297,8 +2304,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         assert table.workStacksEmpty();
         assert accessGuard.release();
 
-        BitSet indices = new BitSet();
-        indices.set(0, bijection.size());
+        NatSet indices = NatSet.range(0, bijection.size());
         return new FunctionToFunctionsMap() {
             @Override
             public int function() {
@@ -2311,7 +2317,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             }
 
             @Override
-            public BitSet codomain() {
+            public NatSet codomain() {
                 return indices;
             }
         };
@@ -2496,7 +2502,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         assert accessGuard.acquire();
         Map<String, Object> statistics = new HashMap<>(table.statistics("mtbdd_"));
         statistics.putAll(cache.statistics());
-        statistics.put("mtbdd_allocated_values", allocatedValues.cardinality());
+        statistics.put("mtbdd_allocated_values", allocatedValues.size());
         statistics.put("mtbdd_value_triggered_collections", valueTriggeredCollectionCount);
         assert accessGuard.release();
         return Util.prefixStatistics(bdd.configuration().name(), statistics);
@@ -2521,8 +2527,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         private final MtBddImpl mtbdd;
         private final @Nullable IntPredicate values;
         private final int[] path;
-        private final BitSet levelAssignment;
-        private final BitSet pathSupportLevels;
+        private final MutableNatSet levelAssignment;
+        private final MutableNatSet pathSupportLevels;
         private final int rootLevel;
         private boolean onPath;
         private int leafNodeLevel;
@@ -2536,8 +2542,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             this.mtbdd = mtbdd;
             this.values = values;
             this.path = new int[variableCount];
-            this.levelAssignment = new BitSet(variableCount);
-            this.pathSupportLevels = new BitSet(variableCount);
+            this.levelAssignment = MutableNatSet.dense(variableCount);
+            this.pathSupportLevels = MutableNatSet.dense(variableCount);
             this.rootLevel = mtbdd.decisionLevel(function);
 
             Arrays.fill(path, NON_PATH_NODE);
@@ -2552,7 +2558,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
 
         /** The levels the current path fixes. */
-        BitSet pathSupportLevels() {
+        MutableNatSet pathSupportLevels() {
             return pathSupportLevels;
         }
 
@@ -2561,7 +2567,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
          * adds the levels the path leaves free to - they are disjoint from the path's own by construction,
          * and a path switch only ever clears a range it has already counted back down to zero.
          */
-        BitSet levelAssignment() {
+        MutableNatSet levelAssignment() {
             return levelAssignment;
         }
 
@@ -2582,13 +2588,13 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         /** Moves to the next path. Returns {@code false} when there are none left. */
         boolean advance() {
             assert IntStream.range(0, path.length)
-                    .allMatch(i -> pathSupportLevels.get(i) == (path[i] != NON_PATH_NODE));
+                    .allMatch(i -> pathSupportLevels.contains(i) == (path[i] != NON_PATH_NODE));
 
             // Backtrack to a node whose high branch we have not taken yet and which can still reach a match.
             int currentNode = path[leafNodeLevel];
             int branchLevel = leafNodeLevel;
 
-            while (levelAssignment.get(branchLevel) || !canReach(mtbdd.table.high(currentNode))) {
+            while (levelAssignment.contains(branchLevel) || !canReach(mtbdd.table.high(currentNode))) {
                 branchLevel = pathSupportLevels.previousSetBit(branchLevel - 1);
                 if (branchLevel == -1) {
                     onPath = false;
@@ -2638,9 +2644,9 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     }
 
     /** A caller's support, as the levels the walk works in. */
-    private static BitSet levelsOf(MtBddImpl mtbdd, BitSet variables) {
-        BitSet levels = new BitSet(mtbdd.numberOfVariables());
-        BitSets.map(variables, levels, mtbdd::levelOfVariable);
+    private static NatSet levelsOf(MtBddImpl mtbdd, NatSet variables) {
+        MutableNatSet levels = MutableNatSet.dense(mtbdd.numberOfVariables());
+        NatSets.map(variables, levels, mtbdd::levelOfVariable);
         return levels;
     }
 
@@ -2655,7 +2661,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         private final MtBddImpl mtbdd;
         private final PathWalk path;
         /** Only on a reordered diagram, where the walk is by level and the caller wants variables. */
-        private final @Nullable Cube translated;
+        private final @Nullable WalkCube translated;
         /** What {@link #current()} hands out: the translation buffer, or the walk's own sets wrapped. */
         private final Cube current;
 
@@ -2666,10 +2672,10 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             this.mtbdd = mtbdd;
             this.path = new PathWalk(mtbdd, function, null);
             this.valid = path.onPath();
-            this.translated =
-                    mtbdd.isReordered() ? Cube.ofUnsafe(new BitSet(variableCount), new BitSet(variableCount)) : null;
-            this.current =
-                    translated == null ? Cube.ofUnsafe(path.levelAssignment(), path.pathSupportLevels()) : translated;
+            this.translated = mtbdd.isReordered() ? new WalkCube(variableCount) : null;
+            this.current = translated == null
+                    ? Cube.ofUnsafe(path.levelAssignment(), path.pathSupportLevels())
+                    : translated.cube;
             if (valid) {
                 translate();
             }
@@ -2706,8 +2712,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
 
         private void translate() {
             if (translated != null) {
-                BitSets.map(path.levelAssignment(), translated.assignmentUnsafe(), mtbdd::variableAtLevel);
-                BitSets.map(path.pathSupportLevels(), translated.supportUnsafe(), mtbdd::variableAtLevel);
+                NatSets.map(path.levelAssignment(), translated.assignment, mtbdd::variableAtLevel);
+                NatSets.map(path.pathSupportLevels(), translated.support, mtbdd::variableAtLevel);
             }
         }
     }
@@ -2717,27 +2723,27 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
      * admits, and for each of them every way of filling in the support variables it leaves free. Only the
      * path decides the terminal, so {@link #value()} stays put across those.
      */
-    private static final class AssignmentCursor implements ValuedCursor<BitSet> {
+    private static final class AssignmentCursor implements ValuedCursor<NatSet> {
         private final MtBddImpl mtbdd;
         private final PathWalk path;
-        private final BitSet supportLevels;
+        private final NatSet supportLevels;
         /** The support levels the current path leaves free; see BddImpl's solution cursor. */
-        private final BitSet freeLevels;
+        private final MutableNatSet freeLevels;
 
-        private final @Nullable BitSet translated;
+        private final @Nullable MutableNatSet translated;
         private boolean valid;
 
-        AssignmentCursor(MtBddImpl mtbdd, int function, @Nullable IntPredicate values, BitSet supportLevels) {
+        AssignmentCursor(MtBddImpl mtbdd, int function, @Nullable IntPredicate values, NatSet supportLevels) {
             assert !mtbdd.isConstant(function);
             assert mtbdd.canReachMatch(function, values) : "The empty walk is the factory's business";
-            assert supportLevels.get(mtbdd.decisionVariable(function));
+            assert supportLevels.contains(mtbdd.decisionVariable(function));
 
             int variableCount = mtbdd.numberOfVariables();
             this.mtbdd = mtbdd;
             boolean translating = mtbdd.isReordered();
             this.supportLevels = translating ? levelsOf(mtbdd, supportLevels) : supportLevels;
-            this.freeLevels = new BitSet(variableCount);
-            this.translated = translating ? new BitSet(variableCount) : null;
+            this.freeLevels = MutableNatSet.dense(variableCount);
+            this.translated = translating ? MutableNatSet.dense(variableCount) : null;
             this.path = new PathWalk(mtbdd, function, values);
             this.valid = path.onPath();
             if (valid) {
@@ -2752,7 +2758,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
 
         @Override
-        public BitSet current() {
+        public NatSet current() {
             assert valid; // current() is only defined while the cursor is valid
             return translated == null ? path.levelAssignment() : translated;
         }
@@ -2772,7 +2778,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             /* Binary addition over the support levels the current path leaves free: every combination of
              * them extends this path to an assignment, all reaching the same terminal. Carrying past the
              * last one leaves them at zero and moves the path on. */
-            if (BitSets.increment(path.levelAssignment(), freeLevels)) {
+            if (NatSets.increment(path.levelAssignment(), freeLevels)) {
                 translate();
                 return true;
             }
@@ -2786,13 +2792,13 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
 
         private void refreshFreeLevels() {
-            BitSets.difference(freeLevels, supportLevels, path.pathSupportLevels());
+            NatSets.difference(freeLevels, supportLevels, path.pathSupportLevels());
         }
 
         /** By level internally, by variable on the way out - see BddImpl's cursors. */
         private void translate() {
             if (translated != null) {
-                BitSets.map(path.levelAssignment(), translated, mtbdd::variableAtLevel);
+                NatSets.map(path.levelAssignment(), translated, mtbdd::variableAtLevel);
             }
             assert mtbdd.evaluate(path.rootFunction(), current()) == path.pathValue();
         }
@@ -2800,7 +2806,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
 
     private static final class MtBddTable extends NodeTable.Binary {
         private final MtBddImpl mtbdd;
-        private final BitSet markedValues = new BitSet();
+        private final MutableNatSet markedValues = MutableNatSet.create();
 
         MtBddTable(MtBddImpl mtbdd, int initialSize) {
             super(initialSize);
@@ -2825,11 +2831,11 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
 
         private boolean isUnmarkedConstant(int node) {
-            return mtbdd.isConstant(node) && !markedValues.get(constantFunctionToValue(node));
+            return mtbdd.isConstant(node) && !markedValues.contains(constantFunctionToValue(node));
         }
 
         private boolean isMarkedConstant(int node) {
-            return mtbdd.isConstant(node) && markedValues.get(constantFunctionToValue(node));
+            return mtbdd.isConstant(node) && markedValues.contains(constantFunctionToValue(node));
         }
 
         @Override
@@ -2881,7 +2887,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
 
         @Override
-        protected void recurseForEachVariable(int node, IntConsumer action, @Nullable BitSet filter, int depthLimit) {
+        protected void recurseForEachVariable(int node, IntConsumer action, @Nullable NatSet filter, int depthLimit) {
             int low = low(node);
             int high = high(node);
             if (!mtbdd.isConstant(low)) {
@@ -2918,19 +2924,19 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
 
         @Override
-        protected void notifyAfterGc(int reclaimedNodes, BitSet reclaimedValues) {
+        protected void notifyAfterGc(int reclaimedNodes, NatSet reclaimedValues) {
             mtbdd.notifyAfterGc(reclaimedNodes, reclaimedValues);
         }
 
         @Override
-        protected void notifyAfterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
+        protected void notifyAfterTableGrowth(int invalidatedNodes, NatSet reclaimedValues) {
             mtbdd.notifyAfterTableGrow(invalidatedNodes, reclaimedValues);
         }
 
         @Override
-        protected BitSet clearUnreferencedLeaves() {
-            assert BitSets.isSubset(markedValues, mtbdd.allocatedValues);
-            BitSet freed = BitSets.copyOf(mtbdd.allocatedValues);
+        protected NatSet clearUnreferencedLeaves() {
+            assert mtbdd.allocatedValues.containsAll(markedValues);
+            MutableNatSet freed = MutableNatSet.copyOf(mtbdd.allocatedValues);
             mtbdd.allocatedValues.andNot(markedValues);
             for (int i = mtbdd.allocatedValues.nextSetBit(0);
                     i >= 0 && i < mtbdd.valueReferenceCounts.length;
@@ -2963,12 +2969,12 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
 
         @Override
         protected boolean isLeafNodeMarkedOrUnmanaged(int leaf) {
-            return markedValues.get(constantFunctionToValue(leaf));
+            return markedValues.contains(constantFunctionToValue(leaf));
         }
 
         @Override
         protected boolean isLeafUnmarkedOrUnmanaged(int leaf) {
-            return !markedValues.get(constantFunctionToValue(leaf));
+            return !markedValues.contains(constantFunctionToValue(leaf));
         }
 
         @Override
@@ -2984,7 +2990,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         for (int value = 0; value < valueReferenceCounts.length; value++) {
             checkState(valueReferenceCounts[value] >= 0);
             checkState(
-                    valueReferenceCounts[value] == 0 || allocatedValues.get(value),
+                    valueReferenceCounts[value] == 0 || allocatedValues.contains(value),
                     "Value %d is referenced but not allocated",
                     value);
         }
@@ -2995,9 +3001,9 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     private static final class FunctionInverse implements Inverse {
         private final int function;
         private final IntUnaryOperator functionFor;
-        private final BitSet values;
+        private final NatSet values;
 
-        public FunctionInverse(int function, IntUnaryOperator functionFor, BitSet values) {
+        public FunctionInverse(int function, IntUnaryOperator functionFor, NatSet values) {
             this.function = function;
             this.functionFor = functionFor;
             this.values = values;
@@ -3014,7 +3020,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
 
         @Override
-        public BitSet codomain() {
+        public NatSet codomain() {
             return values;
         }
     }

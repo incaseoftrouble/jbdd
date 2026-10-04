@@ -16,13 +16,13 @@
  */
 package de.tum.in.jbdd;
 
-import de.tum.in.jbdd.collections.BitSets;
 import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.Cursor;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -31,6 +31,8 @@ import java.util.function.IntConsumer;
 import java.util.function.IntUnaryOperator;
 import java.util.function.Predicate;
 
+// Coupled to many types because it implements the whole diagram interface over an MDD.
+@SuppressWarnings("PMD.CouplingBetweenObjects")
 class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     private final MddImpl mdd;
     private static final int TRUE = 1;
@@ -177,16 +179,16 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     }
 
     @Override
-    public boolean evaluate(int function, BitSet assignment) {
+    public boolean evaluate(int function, NatSet assignment) {
         int[] values = new int[mdd.numberOfVariables()];
-        Arrays.setAll(values, i -> assignment.get(i) ? TRUE : FALSE);
+        Arrays.setAll(values, i -> assignment.contains(i) ? TRUE : FALSE);
         return mdd.evaluate(function, values);
     }
 
     @Override
-    public BitSet satisfyingAssignment(int function) {
+    public MutableNatSet satisfyingAssignment(int function) {
         int[] values = mdd.satisfyingAssignment(function);
-        BitSet set = new BitSet(mdd.numberOfVariables());
+        MutableNatSet set = MutableNatSet.dense(mdd.numberOfVariables());
         for (int i = 0; i < values.length; i++) {
             if (values[i] == TRUE) {
                 set.set(i);
@@ -196,9 +198,9 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     }
 
     @Override
-    public Optional<BitSet> satisfyingAssignmentIn(int function, int domain) {
+    public Optional<NatSet> satisfyingAssignmentIn(int function, int domain) {
         return mdd.satisfyingAssignmentIn(function, domain).map(values -> {
-            BitSet set = new BitSet(mdd.numberOfVariables());
+            MutableNatSet set = MutableNatSet.dense(mdd.numberOfVariables());
             for (int i = 0; i < values.length; i++) {
                 if (values[i] == TRUE) {
                     set.set(i);
@@ -214,7 +216,7 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     }
 
     @Override
-    public BigInteger countSatisfyingAssignments(int function, BitSet support) {
+    public BigInteger countSatisfyingAssignments(int function, NatSet support) {
         return mdd.countSatisfyingAssignments(function, support);
     }
 
@@ -260,8 +262,8 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     }
 
     @Override
-    public Cursor<BitSet> solutionCursor(int function) {
-        BitSet set = new BitSet(mdd.numberOfVariables());
+    public Cursor<NatSet> solutionCursor(int function) {
+        MutableNatSet set = MutableNatSet.dense(mdd.numberOfVariables());
         return map(mdd.solutionCursor(function), a -> {
             //noinspection DataFlowIssue
             for (int i = 0; i < a.length; i++) {
@@ -273,8 +275,8 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     }
 
     @Override
-    public Cursor<BitSet> solutionCursor(int function, BitSet support) {
-        BitSet set = new BitSet(mdd.numberOfVariables());
+    public Cursor<NatSet> solutionCursor(int function, NatSet support) {
+        MutableNatSet set = MutableNatSet.dense(mdd.numberOfVariables());
         return map(mdd.solutionCursor(function, support), a -> {
             //noinspection DataFlowIssue
             for (int i = 0; i < a.length; i++) {
@@ -286,8 +288,8 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     }
 
     @Override
-    public Cursor<BitSet> solutionCursorIn(int function, int domain) {
-        BitSet set = new BitSet(mdd.numberOfVariables());
+    public Cursor<NatSet> solutionCursorIn(int function, int domain) {
+        MutableNatSet set = MutableNatSet.dense(mdd.numberOfVariables());
         return map(mdd.solutionCursorIn(function, domain), a -> {
             for (int i = 0; i < a.length; i++) {
                 assert a[i] == TRUE || a[i] == FALSE;
@@ -298,8 +300,8 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     }
 
     @Override
-    public Cursor<BitSet> solutionCursorIn(int function, int domain, BitSet support) {
-        BitSet set = new BitSet(mdd.numberOfVariables());
+    public Cursor<NatSet> solutionCursorIn(int function, int domain, NatSet support) {
+        MutableNatSet set = MutableNatSet.dense(mdd.numberOfVariables());
         return map(mdd.solutionCursorIn(function, domain, support), a -> {
             for (int i = 0; i < a.length; i++) {
                 assert a[i] == TRUE || a[i] == FALSE;
@@ -310,18 +312,18 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     }
 
     @Override
-    public void forEachSolutionIn(int function, int domain, Consumer<? super BitSet> action) {
-        BitSet set = new BitSet(mdd.numberOfVariables());
+    public void forEachSolutionIn(int function, int domain, Consumer<? super NatSet> action) {
+        MutableNatSet set = MutableNatSet.dense(mdd.numberOfVariables());
         mdd.forEachSolutionIn(function, domain, a -> action.accept(toSolution(a, set)));
     }
 
     @Override
-    public void forEachSolutionIn(int function, int domain, BitSet support, Consumer<? super BitSet> action) {
-        BitSet set = new BitSet(mdd.numberOfVariables());
+    public void forEachSolutionIn(int function, int domain, NatSet support, Consumer<? super NatSet> action) {
+        MutableNatSet set = MutableNatSet.dense(mdd.numberOfVariables());
         mdd.forEachSolutionIn(function, domain, support, a -> action.accept(toSolution(a, set)));
     }
 
-    private static BitSet toSolution(int[] assignment, BitSet set) {
+    private static NatSet toSolution(int[] assignment, MutableNatSet set) {
         for (int i = 0; i < assignment.length; i++) {
             assert assignment[i] == TRUE || assignment[i] == FALSE;
             set.set(i, assignment[i] == TRUE);
@@ -331,8 +333,8 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
 
     @Override
     public Cursor<Cube> pathCursor(int function) {
-        BitSet assignment = new BitSet(mdd.numberOfVariables());
-        BitSet support = new BitSet(mdd.numberOfVariables());
+        MutableNatSet assignment = MutableNatSet.dense(mdd.numberOfVariables());
+        MutableNatSet support = MutableNatSet.dense(mdd.numberOfVariables());
         return map(mdd.pathCursor(function), a -> {
             //noinspection DataFlowIssue
             for (int i = 0; i < a.length; i++) {
@@ -351,21 +353,21 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
 
     @Override
     public void forEachPath(int function, Consumer<? super Cube> action) {
-        BitSet everything = new BitSet();
+        MutableNatSet everything = MutableNatSet.create();
         everything.set(0, mdd.numberOfVariables());
         forEachPartialPath(function, everything, action);
     }
 
     @Override
-    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super Cube> action) {
+    public void forEachPartialPath(int function, NatSet relevantSet, Consumer<? super Cube> action) {
         int variables = mdd.numberOfVariables();
-        BitSet values = new BitSet(variables);
-        BitSet support = new BitSet(variables);
+        MutableNatSet values = MutableNatSet.dense(variables);
+        MutableNatSet support = MutableNatSet.dense(variables);
         Cube bddPath = Cube.ofUnsafe(values, support);
         mdd.forEachPartialPath(function, relevantSet, path -> {
             for (int var = 0; var < path.length; var++) {
                 assert path[var] == -1 || path[var] == TRUE || path[var] == FALSE;
-                if (relevantSet.get(var)) {
+                if (relevantSet.contains(var)) {
                     if (path[var] == -1) {
                         values.clear(var);
                         support.clear(var);
@@ -382,8 +384,8 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     @Override
     public boolean anyPathMatches(int function, Predicate<? super Cube> predicate) {
         int variables = mdd.numberOfVariables();
-        BitSet values = new BitSet(variables);
-        BitSet support = new BitSet(variables);
+        MutableNatSet values = MutableNatSet.dense(variables);
+        MutableNatSet support = MutableNatSet.dense(variables);
         Cube bddPath = Cube.ofUnsafe(values, support);
         return mdd.anyPathMatches(function, path -> {
             for (int var = 0; var < path.length; var++) {
@@ -401,7 +403,7 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     }
 
     @Override
-    public void forEachSupportVariableFiltered(int function, BitSet filter, IntConsumer action) {
+    public void forEachSupportVariableFiltered(int function, NatSet filter, IntConsumer action) {
         mdd.forEachSupportVariableFiltered(function, filter, action);
     }
 
@@ -411,7 +413,7 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     }
 
     @Override
-    public int conjunction(BitSet variables) {
+    public int conjunction(NatSet variables) {
         int function = TRUE;
         for (int var = variables.nextSetBit(0); var >= 0; var = variables.nextSetBit(var + 1)) {
             function = mdd.and(function, variableFunction(var));
@@ -420,7 +422,7 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     }
 
     @Override
-    public int disjunction(BitSet variables) {
+    public int disjunction(NatSet variables) {
         int function = FALSE;
         for (int var = variables.nextSetBit(0); var >= 0; var = variables.nextSetBit(var + 1)) {
             function = mdd.or(function, variableFunction(var));
@@ -444,12 +446,12 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     }
 
     @Override
-    public int exists(int function, BitSet quantifiedVariables) {
+    public int exists(int function, NatSet quantifiedVariables) {
         return mdd.exists(function, quantifiedVariables);
     }
 
     @Override
-    public int forall(int function, BitSet quantifiedVariables) {
+    public int forall(int function, NatSet quantifiedVariables) {
         return mdd.forall(function, quantifiedVariables);
     }
 
@@ -500,7 +502,7 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     }
 
     @Override
-    public RegisteredOperation.Unary registerExists(BitSet quantifiedVariables) {
+    public RegisteredOperation.Unary registerExists(NatSet quantifiedVariables) {
         // As registerCompose: the registered form lives on BddImpl, which this adapter does not have.
         throw new UnsupportedOperationException("registerExists is not supported on an MDD-backed BinaryDd");
     }
@@ -509,7 +511,7 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     public int compose(int function, int[] variableMapping) {
         int[] constantReplacements = new int[mdd.numberOfVariables()];
         Arrays.fill(constantReplacements, -1);
-        BitSet replaced = new BitSet(mdd.numberOfVariables());
+        MutableNatSet replaced = MutableNatSet.dense(mdd.numberOfVariables());
         for (int var = 0; var < variableMapping.length; var++) {
             int replacement = variableMapping[var];
             if (replacement == mdd.placeholder() || (isVariable(replacement) && decisionVariable(replacement) == var)) {
@@ -530,7 +532,7 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
             return base;
         }
 
-        var iterator = BitSets.powerSetIterator(replaced);
+        var iterator = NatSetFixtures.powerSetIterator(replaced);
         int result = falseFunction();
         while (iterator.hasNext()) {
             var assigment = iterator.next();
@@ -539,7 +541,7 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
             int assignment = trueFunction();
             for (int var = replaced.nextSetBit(0); var >= 0; var = replaced.nextSetBit(var + 1)) {
                 int replacement = variableMapping[var];
-                int varFunction = assigment.get(var) ? replacement : not(replacement);
+                int varFunction = assigment.contains(var) ? replacement : not(replacement);
                 assignment = mdd.updateWith(mdd.and(assignment, varFunction), assignment);
             }
 

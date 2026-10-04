@@ -16,7 +16,8 @@
  */
 package de.tum.in.jbdd;
 
-import java.util.BitSet;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.function.IntConsumer;
 
 /**
@@ -145,24 +146,21 @@ public interface DecisionDiagram {
      * all variables which have an influence on its value.
      *
      * @param function The function whose support should be computed.
-     * @return A bit set with bit {@code i} is set iff the {@code i}-th variable is in the support.
+     * @return The support, a fresh set the caller owns.
      */
-    default BitSet support(int function) {
-        return supportTo(function, new BitSet(numberOfVariables()));
+    default MutableNatSet support(int function) {
+        return supportTo(function, MutableNatSet.create());
     }
 
     /**
-     * Computes the <b>support</b> of the given {@code function} and writes it in the {@code bitSet}.
-     * Note that the {@code bitSet} is not cleared, the support variables are added to the set.
+     * Adds the <b>support</b> of {@code function} to {@code target}, which is not cleared first.
      *
-     * @param function The function whose support should be computed.
-     * @param bitSet The BitSet used to store the result.
-     * @return The given bitset, useful for chaining.
+     * @return {@code target}, for chaining
      * @see #support(int)
      */
-    default BitSet supportTo(int function, BitSet bitSet) {
-        forEachSupportVariable(function, bitSet::set);
-        return bitSet;
+    default MutableNatSet supportTo(int function, MutableNatSet target) {
+        forEachSupportVariable(function, target::set);
+        return target;
     }
 
     /**
@@ -171,13 +169,13 @@ public interface DecisionDiagram {
      * @param function The function whose support should be computed.
      */
     default void forEachSupportVariable(int function, IntConsumer action) {
-        BitSet filter = new BitSet(numberOfVariables());
+        MutableNatSet filter = MutableNatSet.dense(numberOfVariables());
         filter.set(0, numberOfVariables());
         forEachSupportVariableFiltered(function, filter, action);
     }
 
-    default BitSet supportFiltered(int function, BitSet filter) {
-        BitSet bitSet = new BitSet(numberOfVariables());
+    default MutableNatSet supportFiltered(int function, NatSet filter) {
+        MutableNatSet bitSet = MutableNatSet.dense(numberOfVariables());
         forEachSupportVariableFiltered(function, filter, bitSet::set);
         return bitSet;
     }
@@ -189,7 +187,7 @@ public interface DecisionDiagram {
      * @param function The function whose support should be computed.
      * @see #forEachSupportVariable(int, IntConsumer)
      */
-    void forEachSupportVariableFiltered(int function, BitSet filter, IntConsumer action);
+    void forEachSupportVariableFiltered(int function, NatSet filter, IntConsumer action);
 
     /**
      * A wrapper class to guard some function in an area where exceptions can occur. It increases

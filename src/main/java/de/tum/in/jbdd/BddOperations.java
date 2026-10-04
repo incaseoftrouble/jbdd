@@ -16,8 +16,8 @@
  */
 package de.tum.in.jbdd;
 
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.Arrays;
-import java.util.BitSet;
 
 final class BddOperations {
     private BddOperations() {}
@@ -26,11 +26,11 @@ final class BddOperations {
 
     static final class Exists implements RegisteredOperation.Unary, NodeTableObserver, VariableOrderObserver {
         private final BddImpl bdd;
-        private final BitSet quantifiedVariables;
-        private BitSet quantifiedLevels;
+        private final NatSet quantifiedVariables;
+        private NatSet quantifiedLevels;
         private final BooleanCache.UnaryToIntCache existsCache;
 
-        Exists(BddImpl bdd, BitSet quantifiedVariables) {
+        Exists(BddImpl bdd, NatSet quantifiedVariables) {
             this.bdd = bdd;
             this.quantifiedVariables = quantifiedVariables;
             this.quantifiedLevels = bdd.variablesToLevels(quantifiedVariables);
@@ -47,7 +47,7 @@ final class BddOperations {
         }
 
         @Override
-        public void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, BitSet movedVariables) {
+        public void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, NatSet movedVariables) {
             // quantifiedVariables is by variable, so the by-level set has to be rebuilt - unless none of
             // them is among the ones that moved, in which case every one of their levels is what it was.
             if (movedVariables.intersects(quantifiedVariables)) {
@@ -72,7 +72,7 @@ final class BddOperations {
             if (bdd.isConstant(function)) {
                 return function;
             }
-            if (quantifiedVariables.cardinality() == bdd.numberOfVariables()) {
+            if (quantifiedVariables.size() == bdd.numberOfVariables()) {
                 return bdd.trueFunction();
             }
             int result = bdd.existsGeneral(function, quantifiedLevels, existsCache);
@@ -81,12 +81,12 @@ final class BddOperations {
         }
 
         @Override
-        public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
+        public void afterGc(DecisionDiagram origin, int reclaimedNodes, NatSet reclaimedValues) {
             pruneInvalidNodes(reclaimedNodes);
         }
 
         @Override
-        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, NatSet reclaimedValues) {
             pruneInvalidNodes(invalidatedNodes);
             growToTableFloor();
         }

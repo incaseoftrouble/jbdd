@@ -24,11 +24,11 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import com.google.common.collect.Streams;
 import de.tum.in.jbdd.Generator.Info;
 import de.tum.in.jbdd.Generator.UnaryDataPoint;
-import de.tum.in.jbdd.collections.BitSets;
 import de.tum.in.jbdd.collections.Cube;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -94,9 +94,9 @@ class MtBddTheories {
     private static final List<Context> reorderStressed;
 
     // Variable indices, so the same for every context.
-    private static final BitSet splitVariables;
-    private static final BitSet restrictedVariables;
-    private static final BitSet restrictedVariableValues;
+    private static final MutableNatSet splitVariables;
+    private static final MutableNatSet restrictedVariables;
+    private static final MutableNatSet restrictedVariableValues;
 
     private static final Collection<IntUnaryDataPoint> intUnary;
     private static final Collection<IntBinaryDataPoint> intBinary;
@@ -136,13 +136,13 @@ class MtBddTheories {
                 new Context("mtbdd-reordered-keeping", true));
         reorderStressed = List.of(contexts.get(1), contexts.get(2));
 
-        splitVariables = new BitSet(variableCount);
+        splitVariables = MutableNatSet.dense(variableCount);
         for (int v = 0; v < variableCount; v += 2) {
             splitVariables.set(v);
         }
 
-        restrictedVariables = new BitSet(variableCount);
-        restrictedVariableValues = new BitSet(variableCount);
+        restrictedVariables = MutableNatSet.dense(variableCount);
+        restrictedVariableValues = MutableNatSet.dense(variableCount);
         for (int v = 0; v < variableCount; v += 2) {
             restrictedVariables.set(v);
             restrictedVariableValues.set(v, v % 4 == 0);
@@ -286,11 +286,11 @@ class MtBddTheories {
         return result;
     }
 
-    private static Iterable<boolean[]> assignmentsOver(int maxVariables, BitSet... variableSets) {
+    private static Iterable<boolean[]> assignmentsOver(int maxVariables, NatSet... variableSets) {
         return ScopedAssignments.of(variableCount, maxVariables, variableSets);
     }
 
-    private static Iterable<boolean[]> assignmentsOver(BitSet... variableSets) {
+    private static Iterable<boolean[]> assignmentsOver(NatSet... variableSets) {
         return assignmentsOver(MAX_ASSIGNMENT_VARIABLES, variableSets);
     }
 
@@ -396,8 +396,8 @@ class MtBddTheories {
     void testBinaryApplyEvaluateAgreement(IntBinaryDataPoint dataPoint) {
         MtBddImpl mt = dataPoint.context.mt;
         assumeTrue(mt.isValidFunction(dataPoint.left) && mt.isValidFunction(dataPoint.right));
-        BitSet relevant =
-                BitSets.union(dataPoint.leftTree.containedVariables(), dataPoint.rightTree.containedVariables());
+        MutableNatSet relevant =
+                NatSetFixtures.union(dataPoint.leftTree.containedVariables(), dataPoint.rightTree.containedVariables());
         for (NamedBinaryOp namedOp : BINARY_OPS) {
             int applied = mt.reference(mt.apply(dataPoint.left, dataPoint.right, namedOp.op));
             for (boolean[] assignment : assignmentsOver(relevant)) {
@@ -416,7 +416,7 @@ class MtBddTheories {
         int[] functions = {dataPoint.first, dataPoint.second, dataPoint.third};
         int applied =
                 mt.reference(mt.apply(functions, values -> (values[0] + values[1] * 2 + values[2] * 3) % valueMod));
-        BitSet relevant = dataPoint.firstTree.containedVariables();
+        MutableNatSet relevant = MutableNatSet.copyOf(dataPoint.firstTree.containedVariables());
         relevant.or(dataPoint.secondTree.containedVariables());
         relevant.or(dataPoint.thirdTree.containedVariables());
         for (boolean[] assignment : assignmentsOver(relevant)) {
@@ -433,7 +433,7 @@ class MtBddTheories {
     @MethodSource("intUnary")
     void testMapEvaluateAgreement(IntUnaryDataPoint dataPoint) {
         MtBddImpl mt = dataPoint.context.mt;
-        BitSet relevant = dataPoint.tree.containedVariables();
+        MutableNatSet relevant = MutableNatSet.copyOf(dataPoint.tree.containedVariables());
         for (NamedUnaryOp namedOp : UNARY_OPS) {
             int mapped = mt.reference(mt.map(dataPoint.function, namedOp.op));
             for (boolean[] assignment : assignmentsOver(relevant)) {
@@ -636,8 +636,8 @@ class MtBddTheories {
         MtBddImpl mt = dataPoint.context.mt;
         BddImpl bdd = dataPoint.context.bdd;
         int agreement = bdd.reference(mt.agreement(dataPoint.left, dataPoint.right));
-        BitSet relevant =
-                BitSets.union(dataPoint.leftTree.containedVariables(), dataPoint.rightTree.containedVariables());
+        MutableNatSet relevant =
+                NatSetFixtures.union(dataPoint.leftTree.containedVariables(), dataPoint.rightTree.containedVariables());
         for (boolean[] assignment : assignmentsOver(relevant)) {
             boolean expected = dataPoint.leftTree.evaluate(assignment) == dataPoint.rightTree.evaluate(assignment);
             assertThat(bdd.evaluate(agreement, assignment), is(expected));
@@ -650,8 +650,8 @@ class MtBddTheories {
     void testAllMatchMatchesApplyBoolean(IntBinaryDataPoint dataPoint) {
         MtBddImpl mt = dataPoint.context.mt;
         BddImpl bdd = dataPoint.context.bdd;
-        BitSet relevant =
-                BitSets.union(dataPoint.leftTree.containedVariables(), dataPoint.rightTree.containedVariables());
+        MutableNatSet relevant =
+                NatSetFixtures.union(dataPoint.leftTree.containedVariables(), dataPoint.rightTree.containedVariables());
         // Every combination of the claims the traversal exploits: both, reflexive, neither, symmetric.
         List<MtBddBinaryPredicate> predicates = List.of(
                 MtBddBinaryPredicate.equality(),
@@ -700,7 +700,7 @@ class MtBddTheories {
         MtBddImpl mt = dataPoint.context.mt;
         BddImpl bdd = dataPoint.context.bdd;
         var values = mt.valuesOf(dataPoint.function);
-        int threshold = values.stream().skip(values.size() / 2).findFirst().orElse(25);
+        int threshold = values.intStream().skip(values.size() / 2).findFirst().orElse(25);
         int mapped = bdd.reference(mt.mapBoolean(dataPoint.function, v -> v < threshold));
         for (boolean[] assignment : assignmentsOver(dataPoint.tree.containedVariables())) {
             assertThat(bdd.evaluate(mapped, assignment), is(dataPoint.tree.evaluate(assignment) < threshold));
@@ -757,7 +757,7 @@ class MtBddTheories {
         MtBddImpl mt = dataPoint.context.mt;
         BddImpl bdd = dataPoint.context.bdd;
         MultiTerminalDecisionDiagram.Inverse inverse = mt.invert(dataPoint.function);
-        BitSet values = mt.valuesOf(dataPoint.function);
+        NatSet values = mt.valuesOf(dataPoint.function);
         for (int value = values.nextSetBit(0); value >= 0; value = values.nextSetBit(value + 1)) {
             int bddFunction = bdd.reference(inverse.functionFor(value));
             for (boolean[] assignment : assignmentsOver(dataPoint.tree.containedVariables())) {
@@ -773,7 +773,7 @@ class MtBddTheories {
         MtBddImpl mt = dataPoint.context.mt;
         BddImpl bdd = dataPoint.context.bdd;
         MultiTerminalDecisionDiagram.Inverse inverse = mt.invert(dataPoint.function);
-        BitSet values = mt.valuesOf(dataPoint.function);
+        NatSet values = mt.valuesOf(dataPoint.function);
         for (int value = values.nextSetBit(0); value >= 0; value = values.nextSetBit(value + 1)) {
             int fixedValue = value;
             int viaInvert = bdd.reference(inverse.functionFor(value));
@@ -789,9 +789,9 @@ class MtBddTheories {
         MtBddImpl mt = dataPoint.context.mt;
         BddImpl bdd = dataPoint.context.bdd;
         MultiTerminalDecisionDiagram.Inverse inverse = mt.invert(dataPoint.function);
-        BitSet values = mt.valuesOf(dataPoint.function);
+        NatSet values = mt.valuesOf(dataPoint.function);
         int outside = values.isEmpty() ? 0 : values.length();
-        assertThat(values.get(outside), is(false));
+        assertThat(values.contains(outside), is(false));
         assertThat(inverse.functionFor(outside), is(bdd.falseFunction()));
     }
 
@@ -801,7 +801,7 @@ class MtBddTheories {
         MtBddImpl mt = dataPoint.context.mt;
         int result = mt.reference(
                 mt.ifThenElse(dataPoint.condition.function, dataPoint.then.function, dataPoint.els.function));
-        BitSet relevant = BitSets.of(dataPoint.condition.tree.containedVariables());
+        MutableNatSet relevant = MutableNatSet.copyOf(dataPoint.condition.tree.containedVariables());
         relevant.or(dataPoint.then.tree.containedVariables());
         relevant.or(dataPoint.els.tree.containedVariables());
         for (boolean[] assignment : assignmentsOver(relevant)) {
@@ -832,7 +832,7 @@ class MtBddTheories {
         MtBddImpl mt = dataPoint.context.mt;
         int value = 17;
         int result = mt.reference(mt.update(dataPoint.then.function, dataPoint.condition.function, value));
-        BitSet relevant = BitSets.of(dataPoint.condition.tree.containedVariables());
+        MutableNatSet relevant = MutableNatSet.copyOf(dataPoint.condition.tree.containedVariables());
         relevant.or(dataPoint.then.tree.containedVariables());
         for (boolean[] assignment : assignmentsOver(relevant)) {
             int expected =
@@ -861,8 +861,8 @@ class MtBddTheories {
         MtBddImpl mt = dataPoint.context.mt;
         int[] rotationMapping = dataPoint.context.rotationMapping;
         int composed = mt.reference(mt.compose(dataPoint.function, rotationMapping));
-        BitSet relevant = new BitSet(variableCount);
-        dataPoint.tree.containedVariables().stream().forEach(v -> relevant.set((v + 1) % variableCount));
+        MutableNatSet relevant = MutableNatSet.dense(variableCount);
+        dataPoint.tree.containedVariables().intStream().forEach(v -> relevant.set((v + 1) % variableCount));
         if (relevant.isEmpty()) {
             assertThat(mt.isConstant(dataPoint.function), is(true));
             assertThat(composed, is(dataPoint.function));
@@ -895,8 +895,8 @@ class MtBddTheories {
                 mt.reference(mt.restrict(dataPoint.function, Cube.of(restrictedVariableValues, restrictedVariables)));
         int[] mapping = new int[variableCount];
         for (int v = 0; v < variableCount; v++) {
-            if (restrictedVariables.get(v)) {
-                mapping[v] = restrictedVariableValues.get(v) ? bdd.trueFunction() : bdd.falseFunction();
+            if (restrictedVariables.contains(v)) {
+                mapping[v] = restrictedVariableValues.contains(v) ? bdd.trueFunction() : bdd.falseFunction();
             } else {
                 mapping[v] = mt.placeholder();
             }
@@ -911,7 +911,7 @@ class MtBddTheories {
     void testSimplifyAgreesWhereDomainHolds(IntConditionalDataPoint dataPoint) {
         MtBddImpl mt = dataPoint.context.mt;
         int simplified = mt.reference(mt.simplify(dataPoint.then.function, dataPoint.condition.function));
-        BitSet relevant = BitSets.of(dataPoint.condition.tree.containedVariables());
+        MutableNatSet relevant = MutableNatSet.copyOf(dataPoint.condition.tree.containedVariables());
         relevant.or(dataPoint.then.tree.containedVariables());
         for (boolean[] assignment : assignmentsOver(relevant)) {
             if (dataPoint.condition.tree.evaluate(assignment)) {
@@ -937,7 +937,7 @@ class MtBddTheories {
         assumeTrue(dataPoint.condition.function != bdd.falseFunction());
 
         int constrained = mt.reference(mt.constrain(dataPoint.then.function, dataPoint.condition.function));
-        BitSet relevant = BitSets.of(dataPoint.condition.tree.containedVariables());
+        MutableNatSet relevant = MutableNatSet.copyOf(dataPoint.condition.tree.containedVariables());
         relevant.or(dataPoint.then.tree.containedVariables());
         for (boolean[] assignment : assignmentsOver(relevant)) {
             if (dataPoint.condition.tree.evaluate(assignment)) {
@@ -960,7 +960,7 @@ class MtBddTheories {
     void testSplitRecombination(IntUnaryDataPoint dataPoint) {
         MtBddImpl mt = dataPoint.context.mt;
         MultiTerminalDecisionDiagram.FunctionToFunctionMap split = mt.split(dataPoint.function, splitVariables);
-        BitSet relevant = BitSets.union(dataPoint.tree.containedVariables(), splitVariables);
+        MutableNatSet relevant = NatSetFixtures.union(dataPoint.tree.containedVariables(), splitVariables);
         for (boolean[] assignment : assignmentsOver(relevant)) {
             int index = mt.evaluate(split.function(), assignment);
             int recombined = split.functionFor(index);
@@ -973,8 +973,8 @@ class MtBddTheories {
     void testSplitMetaFunctionSupportSubset(IntUnaryDataPoint dataPoint) {
         MtBddImpl mt = dataPoint.context.mt;
         MultiTerminalDecisionDiagram.FunctionToFunctionMap split = mt.split(dataPoint.function, splitVariables);
-        BitSet metaSupport = mt.support(split.function());
-        assertThat(BitSets.isSubset(metaSupport, splitVariables), is(true));
+        NatSet metaSupport = mt.support(split.function());
+        assertThat(NatSetFixtures.isSubset(metaSupport, splitVariables), is(true));
     }
 
     @ParameterizedTest(name = "{index}")
@@ -984,7 +984,7 @@ class MtBddTheories {
         MultiTerminalDecisionDiagram.FunctionToFunctionMap split = mt.split(dataPoint.function, splitVariables);
         int index = mt.evaluate(split.function(), new boolean[variableCount]);
         int residual = split.functionFor(index);
-        BitSet residualSupport = mt.support(residual);
+        NatSet residualSupport = mt.support(residual);
         assertThat(residualSupport.intersects(splitVariables), is(false));
     }
 
@@ -994,7 +994,7 @@ class MtBddTheories {
         MtBddImpl mt = dataPoint.context.mt;
         int[] functions = {dataPoint.first, dataPoint.second, dataPoint.third};
         MultiTerminalDecisionDiagram.FunctionToFunctionsMap product = mt.cartesianProduct(functions);
-        BitSet relevant = BitSets.union(
+        MutableNatSet relevant = NatSetFixtures.union(
                 dataPoint.firstTree.containedVariables(),
                 dataPoint.secondTree.containedVariables(),
                 dataPoint.thirdTree.containedVariables());
@@ -1013,7 +1013,7 @@ class MtBddTheories {
         MtBddImpl mt = dataPoint.context.mt;
         int[] functions = {dataPoint.first, dataPoint.second, dataPoint.third};
         MultiTerminalDecisionDiagram.FunctionToFunctionsMap product = mt.cartesianProduct(functions);
-        BitSet relevant = BitSets.union(
+        MutableNatSet relevant = NatSetFixtures.union(
                 dataPoint.firstTree.containedVariables(),
                 dataPoint.secondTree.containedVariables(),
                 dataPoint.thirdTree.containedVariables());
@@ -1091,7 +1091,8 @@ class MtBddTheories {
     @MethodSource("intUnary")
     void testSupportSubsetOfContainedVariables(IntUnaryDataPoint dataPoint) {
         MtBddImpl mt = dataPoint.context.mt;
-        assertThat(BitSets.isSubset(mt.support(dataPoint.function), dataPoint.tree.containedVariables()), is(true));
+        assertThat(
+                NatSetFixtures.isSubset(mt.support(dataPoint.function), dataPoint.tree.containedVariables()), is(true));
     }
 
     @ParameterizedTest(name = "{index}")

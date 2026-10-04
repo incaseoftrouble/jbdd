@@ -17,8 +17,9 @@
 package de.tum.in.jbdd;
 
 import de.tum.in.jbdd.collections.Cursor;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.math.BigInteger;
-import java.util.BitSet;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
@@ -65,7 +66,7 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      * Counts the number of satisfying assignments for the given boolean {@code function}, only considering variables in the
      * {@code support}.
      */
-    BigInteger countSatisfyingAssignments(int function, BitSet support);
+    BigInteger countSatisfyingAssignments(int function, NatSet support);
 
     BigInteger countSatisfyingAssignmentsIn(int function, int domain);
 
@@ -83,17 +84,17 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
         forEachSolutionIn(function, trueFunction(), action);
     }
 
-    default void forEachSolution(int function, BitSet support, Consumer<? super S> action) {
+    default void forEachSolution(int function, NatSet support, Consumer<? super S> action) {
         forEachSolutionIn(function, trueFunction(), support, action);
     }
 
     default void forEachSolutionIn(int function, int domain, Consumer<? super S> action) {
-        BitSet support = new BitSet(numberOfVariables());
+        MutableNatSet support = MutableNatSet.dense(numberOfVariables());
         support.set(0, numberOfVariables());
         forEachSolutionIn(function, domain, support, action);
     }
 
-    default void forEachSolutionIn(int function, int domain, BitSet support, Consumer<? super S> action) {
+    default void forEachSolutionIn(int function, int domain, NatSet support, Consumer<? super S> action) {
         solutionCursorIn(function, domain, support).forEachRemaining(action);
     }
 
@@ -111,13 +112,13 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
     Cursor<S> solutionCursor(int function);
 
     /** As {@link #solutionCursor(int)}, over the given support rather than every variable. */
-    Cursor<S> solutionCursor(int function, BitSet support);
+    Cursor<S> solutionCursor(int function, NatSet support);
 
     /** As {@link #solutionCursor(int)}, restricted to the solutions that also satisfy {@code domain}. */
     Cursor<S> solutionCursorIn(int function, int domain);
 
     /** As {@link #solutionCursorIn(int, int)}, over the given support rather than every variable. */
-    Cursor<S> solutionCursorIn(int function, int domain, BitSet support);
+    Cursor<S> solutionCursorIn(int function, int domain, NatSet support);
 
     /** A {@link Cursor} over the paths of {@code function}; see {@link #solutionCursor(int)}. */
     Cursor<P> pathCursor(int function);
@@ -137,7 +138,7 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      */
     void forEachPath(int function, Consumer<? super P> action);
 
-    void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super P> action);
+    void forEachPartialPath(int function, NatSet relevantSet, Consumer<? super P> action);
 
     boolean anyPathMatches(int function, Predicate<? super P> predicate);
 
@@ -212,7 +213,7 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      *
      * @return The quantified function.
      */
-    int exists(int function, BitSet quantifiedVariables);
+    int exists(int function, NatSet quantifiedVariables);
 
     /**
      * Constructs the function obtained by forall quantification of the boolean {@code function} with all variables
@@ -227,7 +228,7 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      *
      * @return The quantified function.
      */
-    int forall(int function, BitSet quantifiedVariables);
+    int forall(int function, NatSet quantifiedVariables);
 
     /**
      * Constructs the boolean function {@code function1 IMPLIES function2}.

@@ -17,8 +17,8 @@
 package de.tum.in.jbdd;
 
 import de.tum.in.jbdd.collections.Cube;
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.ArrayList;
-import java.util.BitSet;
 import java.util.List;
 import java.util.function.IntFunction;
 import java.util.function.IntUnaryOperator;
@@ -48,7 +48,7 @@ public interface BddSetFactory {
     <E> BddSet of(E expression, ExpressionStructure<E> structure);
 
     /** The union of the cubes fixing {@code support} as each of {@code valuations} assigns it. */
-    default BddSet of(Iterable<BitSet> valuations, BitSet support) {
+    default BddSet of(Iterable<NatSet> valuations, NatSet support) {
         List<Cube> cubes = new ArrayList<>();
         valuations.forEach(valuation -> cubes.add(Cube.of(valuation, support)));
         return union(cubes);
@@ -119,17 +119,17 @@ public interface BddSetFactory {
      * Binds {@code quantifiedVariables} once - see {@link BddSet.Quantifier}. The set is read here and may
      * be changed afterwards.
      */
-    BddSet.Quantifier registerExists(BitSet quantifiedVariables);
+    BddSet.Quantifier registerExists(NatSet quantifiedVariables);
 
     /**
      * Binds {@code mapping} over {@code replacedVariables} once - see {@link BddSet.VariableReplacer}. The
      * handle replaces exactly those variables and leaves every other one alone.
      */
-    BddSet.VariableReplacer registerReplaceVariables(BitSet replacedVariables, IntFunction<BddSet> mapping);
+    BddSet.VariableReplacer registerReplaceVariables(NatSet replacedVariables, IntFunction<BddSet> mapping);
 
     /**
      * Binds {@code mapping} over {@code relabeledVariables} once - see {@link BddSet.VariableReplacer} and
      * {@link #registerReplaceVariables}, whose contract this shares.
      */
-    BddSet.VariableReplacer registerRelabelVariables(BitSet relabeledVariables, IntUnaryOperator mapping);
+    BddSet.VariableReplacer registerRelabelVariables(NatSet relabeledVariables, IntUnaryOperator mapping);
 }

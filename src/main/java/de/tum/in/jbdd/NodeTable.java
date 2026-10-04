@@ -19,13 +19,14 @@ package de.tum.in.jbdd;
 import static de.tum.in.jbdd.Preconditions.checkState;
 import static java.util.Map.entry;
 
-import de.tum.in.jbdd.collections.BitSets;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.ArrayDeque;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.PrimitiveIterator;
 import java.util.Set;
 import java.util.function.IntConsumer;
 import java.util.function.IntPredicate;
@@ -483,10 +484,10 @@ public abstract class NodeTable {
      */
     private int computeLiveParentCounts(int[] counts) {
         Arrays.fill(counts, 0);
-        BitSet live = new BitSet(biggestValidNode + 1);
+        MutableNatSet live = MutableNatSet.dense(biggestValidNode + 1);
         for (int node = FIRST_NODE; node <= biggestValidNode; node++) {
             int data = nodeData[node];
-            if (dataIsValid(data) && dataIsReferencedOrSaturated(data) && !live.get(node)) {
+            if (dataIsValid(data) && dataIsReferencedOrSaturated(data) && !live.contains(node)) {
                 live.set(node);
                 countChildrenBelow(node, counts, live);
             }
@@ -494,7 +495,7 @@ public abstract class NodeTable {
 
         int dead = 0;
         for (int node = FIRST_NODE; node <= biggestValidNode; node++) {
-            if (dataIsValid(nodeData[node]) && !live.get(node)) {
+            if (dataIsValid(nodeData[node]) && !live.contains(node)) {
                 dead += 1;
             }
         }
@@ -545,14 +546,14 @@ public abstract class NodeTable {
     /* Recursive, like every other walk down a diagram here (markAllBelowNode, recurseNoneMarkedBelow,
      * addParent, removeParent): children are strictly deeper than their parent, so the depth is the
      * number of levels. */
-    private void countChildrenBelow(int node, int[] counts, BitSet live) {
+    private void countChildrenBelow(int node, int[] counts, MutableNatSet live) {
         forEachChildPointer(node, child -> {
             int childNode = treeNodeFor(child);
             if (isLeafNode(childNode)) {
                 return;
             }
             counts[childNode] += 1;
-            if (!live.get(childNode)) {
+            if (!live.contains(childNode)) {
                 live.set(childNode);
                 countChildrenBelow(childNode, counts, live);
             }
@@ -950,16 +951,16 @@ public abstract class NodeTable {
     protected abstract void notifyBeforeGc();
 
     /** Notifies the owning diagram after nodes have been reclaimed. */
-    protected abstract void notifyAfterGc(int reclaimedNodes, BitSet reclaimedValues);
+    protected abstract void notifyAfterGc(int reclaimedNodes, NatSet reclaimedValues);
 
     /** Notifies the owning diagram after the table has grown. */
-    protected abstract void notifyAfterTableGrowth(int invalidatedNodes, BitSet reclaimedValues);
+    protected abstract void notifyAfterTableGrowth(int invalidatedNodes, NatSet reclaimedValues);
 
     /**
      * Sweeps managed leaves (i.e. MTBDD terminal values) which are neither marked nor referenced, returning
      * the freed values. Clear all marks on managed leaves.
      */
-    protected abstract BitSet clearUnreferencedLeaves();
+    protected abstract NatSet clearUnreferencedLeaves();
 
     /**
      * Runs integrity checks of the owning diagram (triggered e.g. after GC)
@@ -979,7 +980,7 @@ public abstract class NodeTable {
         NodeTableConfiguration configuration = configuration();
         int currentSize = size();
         int invalidatedNodes = 0;
-        BitSet invalidatedLeaves = BitSets.of();
+        NatSet invalidatedLeaves = NatSet.of();
 
         /* Growing rather than collecting while a rewrite is running - see rewriteDepth. Growing moves no
          * node; it only has to leave the flagged ones out of the chains, which grow does. */
@@ -1006,7 +1007,7 @@ public abstract class NodeTable {
                 /* Only reachable under memory pressure (see liveNodeThreshold): The collection did not even
                  * lift the table above the threshold which triggered it, so try to grow anyway instead of
                  * collecting again on the very next allocation. Nodes and leaves are already reported. */
-                invalidatedLeaves = BitSets.of();
+                invalidatedLeaves = NatSet.of();
             } else {
                 logger.log(Level.FINER, "Not enough free nodes");
                 futileGarbageCollectionCount += 1;
@@ -1469,15 +1470,17 @@ public abstract class NodeTable {
     }
 
     /** The greatest level any variable of {@code variables} sits at, or -1 if there is none. */
-    private int maxLevelOf(BitSet variables) {
+    private int maxLevelOf(NatSet variables) {
         int max = -1;
-        for (int variable = variables.nextSetBit(0); variable >= 0; variable = variables.nextSetBit(variable + 1)) {
+        PrimitiveIterator.OfInt iterator = variables.iterator();
+        while (iterator.hasNext()) {
+            int variable = iterator.nextInt();
             max = Math.max(max, levelOfVariable(variable));
         }
         return max;
     }
 
-    public void forEachVariable(int pointer, BitSet filter, IntConsumer action) {
+    public void forEachVariable(int pointer, NatSet filter, IntConsumer action) {
         assert isValidPointer(pointer);
 
         int depthLimit = maxLevelOf(filter) + 1;
@@ -1493,7 +1496,7 @@ public abstract class NodeTable {
         assert isNoneMarkedBelowNode(node);
     }
 
-    protected void doForEachVariable(int node, IntConsumer action, @Nullable BitSet filter, int depthLimit) {
+    protected void doForEachVariable(int node, IntConsumer action, @Nullable NatSet filter, int depthLimit) {
         assert isValidNode(node);
         if (isLeafNode(node)) {
             return;
@@ -1510,7 +1513,7 @@ public abstract class NodeTable {
         }
         nodeData[node] = markedData;
 
-        if (filter == null || filter.get(variable)) {
+        if (filter == null || filter.contains(variable)) {
             action.accept(variable);
         }
 
@@ -1518,7 +1521,7 @@ public abstract class NodeTable {
     }
 
     protected abstract void recurseForEachVariable(
-            int node, IntConsumer action, @Nullable BitSet filter, int depthLimit);
+            int node, IntConsumer action, @Nullable NatSet filter, int depthLimit);
 
     protected abstract void forEachChildPointer(int node, IntConsumer action);
 
@@ -1663,7 +1666,7 @@ public abstract class NodeTable {
                     deadNodeCount == expectedDead, "Dead node count is %s, should be %s", deadNodeCount, expectedDead);
 
             // Every valid node appears exactly once in its variable's list.
-            BitSet listed = new BitSet();
+            MutableNatSet listed = MutableNatSet.create();
             for (int variable = 0; variable < variableChainSize.length; variable++) {
                 int[] chain = variableChains[variable];
                 for (int index = 0; index < variableChainSize[variable]; index++) {
@@ -1673,17 +1676,17 @@ public abstract class NodeTable {
                             "Node (%s) in the list of variable %s",
                             pointerToStringSupplier(node),
                             variable);
-                    checkState(!listed.get(node), "Node (%s) listed twice", pointerToStringSupplier(node));
+                    checkState(!listed.contains(node), "Node (%s) listed twice", pointerToStringSupplier(node));
                     listed.set(node);
                 }
             }
             for (int node = FIRST_NODE; node <= biggestValidNode; node++) {
                 checkState(
-                        dataIsValid(nodeData[node]) == listed.get(node),
+                        dataIsValid(nodeData[node]) == listed.contains(node),
                         "Node (%s) is %s but %s listed",
                         pointerToStringSupplier(node),
                         dataIsValid(nodeData[node]) ? "valid" : "invalid",
-                        listed.get(node) ? "is" : "is not");
+                        listed.contains(node) ? "is" : "is not");
             }
         }
 

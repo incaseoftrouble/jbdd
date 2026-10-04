@@ -19,8 +19,8 @@ package de.tum.in.jbdd;
 import static de.tum.in.jbdd.MtBddCache.Slot.BDD;
 import static de.tum.in.jbdd.MtBddCache.Slot.MTBDD;
 
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.function.IntPredicate;
 import java.util.function.IntUnaryOperator;
 import org.jspecify.annotations.Nullable;
@@ -87,7 +87,7 @@ final class MtBddOperations {
         }
 
         @Override
-        public void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, BitSet movedVariables) {
+        public void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, NatSet movedVariables) {
             // As BddOperations.Compose: the cut-off it holds is a level, and its caches used the old one.
             maxReplacedLevel = mtbdd.bddImpl().maxReplacedLevel(bddVariableMapping);
             // see BooleanCache#orderChanged
@@ -131,7 +131,7 @@ final class MtBddOperations {
         }
 
         @Override
-        public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
+        public void afterGc(DecisionDiagram origin, int reclaimedNodes, NatSet reclaimedValues) {
             if (isReleased()) {
                 return;
             }
@@ -139,7 +139,7 @@ final class MtBddOperations {
         }
 
         @Override
-        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, NatSet reclaimedValues) {
             if (isReleased()) {
                 return;
             }
@@ -158,7 +158,7 @@ final class MtBddOperations {
         }
 
         @SuppressWarnings({"PMD.CompareObjectsWithEquals", "ObjectEquality"})
-        private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+        private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, NatSet reclaimedValues) {
             if (mtbdd.variableOrder().isReordering()) {
                 // See BooleanCache#onBddNodesInvalidated.
                 invalidateCaches();
@@ -232,12 +232,12 @@ final class MtBddOperations {
         }
 
         @Override
-        public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
+        public void afterGc(DecisionDiagram origin, int reclaimedNodes, NatSet reclaimedValues) {
             pruneInvalidNodes(origin, reclaimedNodes, reclaimedValues);
         }
 
         @Override
-        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, NatSet reclaimedValues) {
             pruneInvalidNodes(origin, invalidatedNodes, reclaimedValues);
             if (origin == mtbdd) { // NOPMD
                 growToTableFloor();
@@ -245,7 +245,7 @@ final class MtBddOperations {
         }
 
         @SuppressWarnings({"PMD.CompareObjectsWithEquals", "ObjectEquality"})
-        private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+        private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, NatSet reclaimedValues) {
             if (mtbdd.variableOrder().isReordering()) {
                 // See BooleanCache#onBddNodesInvalidated.
                 mapCache.invalidate();
@@ -304,12 +304,12 @@ final class MtBddOperations {
         }
 
         @Override
-        public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
+        public void afterGc(DecisionDiagram origin, int reclaimedNodes, NatSet reclaimedValues) {
             pruneInvalidNodes(origin, reclaimedNodes, reclaimedValues);
         }
 
         @Override
-        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, NatSet reclaimedValues) {
             pruneInvalidNodes(origin, invalidatedNodes, reclaimedValues);
             if (origin == mtbdd) { // NOPMD
                 growToTableFloor();
@@ -317,7 +317,7 @@ final class MtBddOperations {
         }
 
         @SuppressWarnings({"PMD.CompareObjectsWithEquals", "ObjectEquality"})
-        private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+        private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, NatSet reclaimedValues) {
             if (mtbdd.variableOrder().isReordering()) {
                 // See BooleanCache#onBddNodesInvalidated.
                 mapBooleanCache.invalidate();
@@ -364,12 +364,12 @@ final class MtBddOperations {
         }
 
         @Override
-        public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
+        public void afterGc(DecisionDiagram origin, int reclaimedNodes, NatSet reclaimedValues) {
             pruneInvalidNodes(origin, reclaimedNodes, reclaimedValues);
         }
 
         @Override
-        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, NatSet reclaimedValues) {
             pruneInvalidNodes(origin, invalidatedNodes, reclaimedValues);
             if (origin == mtbdd) { // NOPMD
                 growToTableFloor();
@@ -377,7 +377,7 @@ final class MtBddOperations {
         }
 
         @SuppressWarnings({"PMD.CompareObjectsWithEquals", "ObjectEquality"})
-        private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+        private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, NatSet reclaimedValues) {
             if (mtbdd.variableOrder().isReordering()) {
                 // See BooleanCache#onBddNodesInvalidated.
                 applyBooleanCache.invalidate();
@@ -445,12 +445,12 @@ final class MtBddOperations {
         }
 
         @Override
-        public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
+        public void afterGc(DecisionDiagram origin, int reclaimedNodes, NatSet reclaimedValues) {
             pruneInvalidNodes(origin, reclaimedNodes, reclaimedValues);
         }
 
         @Override
-        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, NatSet reclaimedValues) {
             pruneInvalidNodes(origin, invalidatedNodes, reclaimedValues);
             if (origin == mtbdd) { // NOPMD
                 growToTableFloor();
@@ -458,7 +458,7 @@ final class MtBddOperations {
         }
 
         @SuppressWarnings({"PMD.CompareObjectsWithEquals", "ObjectEquality"})
-        private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+        private void pruneInvalidNodes(DecisionDiagram origin, int invalidatedNodes, NatSet reclaimedValues) {
             if (mtbdd.variableOrder().isReordering()) {
                 // See BooleanCache#onBddNodesInvalidated.
                 applyCache.invalidate();

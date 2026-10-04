@@ -16,20 +16,21 @@
  */
 package de.tum.in.jbdd;
 
-import de.tum.in.jbdd.collections.BitSets;
 import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.Cursor;
 import de.tum.in.jbdd.collections.IntIntHashMap;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.lang.ref.Reference;
 import java.math.BigInteger;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.PrimitiveIterator;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.IntFunction;
@@ -81,7 +82,7 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
     @Override
     public BddSet of(Cube cube) {
         if (!cube.isEmpty()) {
-            variableFunction(cube.supportUnsafe().length() - 1);
+            variableFunction(cube.support().length() - 1);
         }
         return make(dd.of(cube));
     }
@@ -91,7 +92,7 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         int result = dd.falseFunction();
         for (Cube cube : cubes) {
             if (!cube.isEmpty()) {
-                variableFunction(cube.supportUnsafe().length() - 1);
+                variableFunction(cube.support().length() - 1);
             }
             // The cube is unreferenced, but or protects its operands and nothing allocates in between.
             result = dd.updateWith(dd.or(result, dd.of(cube)), result);
@@ -177,9 +178,9 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
     }
 
     // variableMapping on each variable of support, all of which then exist here; adopt asks once per node.
-    int[] mapSupport(BitSet support, IntUnaryOperator variableMapping) {
+    int[] mapSupport(NatSet support, IntUnaryOperator variableMapping) {
         int[] mapped = new int[support.length()];
-        BitSets.forEach(support, variable -> {
+        support.forEach(variable -> {
             int target = variableMapping.applyAsInt(variable);
             if (target < 0) {
                 throw new IllegalArgumentException(String.format("Invalid mapping %s -> %s", variable, target));
@@ -205,17 +206,17 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
     }
 
     @Override
-    public BddSet.Quantifier registerExists(BitSet quantifiedVariables) {
+    public BddSet.Quantifier registerExists(NatSet quantifiedVariables) {
         return new RegisteredQuantifier(this, dd.registerExists(quantifiedVariables));
     }
 
     @Override
-    public BddSet.VariableReplacer registerReplaceVariables(BitSet replacedVariables, IntFunction<BddSet> mapping) {
+    public BddSet.VariableReplacer registerReplaceVariables(NatSet replacedVariables, IntFunction<BddSet> mapping) {
         int[] substitutions = new int[replacedVariables.length()];
         BddSet[] replacements = new BddSet[substitutions.length];
         Arrays.fill(substitutions, dd.placeholder());
         try {
-            BitSets.forEach(replacedVariables, i -> {
+            replacedVariables.forEach(i -> {
                 replacements[i] = mapping.apply(i);
                 substitutions[i] = functionOf(replacements[i]);
             });
@@ -227,10 +228,12 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
     }
 
     @Override
-    public BddSet.VariableReplacer registerRelabelVariables(BitSet relabeledVariables, IntUnaryOperator mapping) {
+    public BddSet.VariableReplacer registerRelabelVariables(NatSet relabeledVariables, IntUnaryOperator mapping) {
         int[] substitutions = new int[relabeledVariables.length()];
         Arrays.fill(substitutions, dd.placeholder());
-        for (int i = relabeledVariables.nextSetBit(0); i >= 0; i = relabeledVariables.nextSetBit(i + 1)) {
+        PrimitiveIterator.OfInt iterator = relabeledVariables.iterator();
+        while (iterator.hasNext()) {
+            int i = iterator.nextInt();
             int relabeled = mapping.applyAsInt(i);
             if (relabeled < 0) {
                 throw new IllegalArgumentException(String.format("Invalid mapping %s -> %s", i, relabeled));
@@ -375,7 +378,7 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         private final int function;
 
         @Nullable
-        private BitSet supportCache;
+        private NatSet supportCache;
 
         @Nullable
         private Object attachment;
@@ -410,7 +413,7 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         }
 
         @Override
-        public boolean contains(BitSet o) {
+        public boolean contains(NatSet o) {
             return factory.dd.evaluate(function, o);
         }
 
@@ -424,7 +427,7 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         }
 
         @Override
-        public Optional<BitSet> element() {
+        public Optional<MutableNatSet> element() {
             return isEmpty() ? Optional.empty() : Optional.of(factory.dd.satisfyingAssignment(this.function));
         }
 
@@ -444,12 +447,12 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         }
 
         @Override
-        public BddSet exists(BitSet quantifiedVariables) {
+        public BddSet exists(NatSet quantifiedVariables) {
             return make(factory.dd.exists(function, quantifiedVariables));
         }
 
         @Override
-        public BddSet forall(BitSet quantifiedVariables) {
+        public BddSet forall(NatSet quantifiedVariables) {
             return make(factory.dd.forall(function, quantifiedVariables));
         }
 
@@ -465,10 +468,12 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
 
         @Override
         public BddSet relabelVariables(IntUnaryOperator mapping) {
-            BitSet support = support();
+            NatSet support = support();
             int[] substitutions = new int[support.length()];
             Arrays.fill(substitutions, factory.dd.placeholder());
-            for (int i = support.nextSetBit(0); i >= 0; i = support.nextSetBit(i + 1)) {
+            PrimitiveIterator.OfInt iterator = support.iterator();
+            while (iterator.hasNext()) {
+                int i = iterator.nextInt();
                 int j = mapping.applyAsInt(i);
                 if (j < 0) {
                     throw new IllegalArgumentException(String.format("Invalid mapping %s -> %s", i, j));
@@ -495,12 +500,14 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
 
         @Override
         public BddSet replaceVariables(IntFunction<BddSet> mapping) {
-            BitSet support = support();
+            NatSet support = support();
             int[] substitutions = new int[support.length()];
             Arrays.fill(substitutions, factory.dd.placeholder());
             BddSet[] replacements = new BddSet[substitutions.length];
             try {
-                for (int i = support.nextSetBit(0); i >= 0; i = support.nextSetBit(i + 1)) {
+                PrimitiveIterator.OfInt iterator = support.iterator();
+                while (iterator.hasNext()) {
+                    int i = iterator.nextInt();
                     replacements[i] = mapping.apply(i);
                     substitutions[i] = factory.functionOf(replacements[i]);
                 }
@@ -522,7 +529,7 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         }
 
         @Override
-        public BddMap<BddSet> split(BitSet splitVariables, Values<BddSet> destination) {
+        public BddMap<BddSet> split(NatSet splitVariables, Values<BddSet> destination) {
             return ((BddMapFactoryImpl) destination.factory()).split(this, splitVariables, destination);
         }
 
@@ -546,26 +553,26 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         }
 
         @Override
-        public BitSet support() {
+        public NatSet support() {
             if (supportCache == null) {
-                supportCache = factory.dd.support(function);
+                supportCache = NatSet.copyOf(factory.dd.support(function));
             }
             assert supportCache.equals(factory.dd.support(function));
-            return supportCache; // Deliberately not returning a copy for performance
+            return supportCache; // Never changes, so it is shared rather than copied
         }
 
         @Override
-        public BitSet supportAt(BitSet valuation) {
+        public MutableNatSet supportAt(NatSet valuation) {
             return factory.dd.supportAt(function, valuation);
         }
 
         @Override
-        public Cursor<BitSet> cursor(BitSet support) {
+        public Cursor<NatSet> cursor(NatSet support) {
             return factory.dd.solutionCursor(function, support);
         }
 
         @Override
-        public BigInteger size(BitSet support) {
+        public BigInteger size(NatSet support) {
             return factory.dd.countSatisfyingAssignments(function, support);
         }
 
@@ -580,7 +587,7 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         }
 
         @Override
-        public void forEach(BitSet support, Consumer<? super BitSet> consumer) {
+        public void forEach(NatSet support, Consumer<? super NatSet> consumer) {
             factory.dd.forEachSolution(function, support, consumer);
         }
 

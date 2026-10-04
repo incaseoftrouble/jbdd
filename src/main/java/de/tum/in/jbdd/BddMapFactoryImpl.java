@@ -19,14 +19,14 @@ package de.tum.in.jbdd;
 import static de.tum.in.jbdd.RegisteredOperation.*;
 
 import de.tum.in.jbdd.RegisteredOperation.Forwarding;
-import de.tum.in.jbdd.collections.BitSets;
 import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.IntIntHashMap;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.lang.ref.Reference;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Deque;
@@ -37,6 +37,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.OptionalInt;
+import java.util.PrimitiveIterator;
 import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.BiPredicate;
@@ -67,7 +68,7 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
         return new ValuesImpl<>(this);
     }
 
-    BddMap<BddSet> split(BddSetFactoryImpl.BddSetImpl set, BitSet splitVariables, Values<BddSet> destination) {
+    BddMap<BddSet> split(BddSetFactoryImpl.BddSetImpl set, NatSet splitVariables, Values<BddSet> destination) {
         assert set.factory() == bddSets : "Splitting into another context"; // NOPMD
         ValuesImpl<BddSet> residuals = valuesOf(destination);
         int result = dd.splitBddRelabeled(
@@ -419,12 +420,12 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
             MtBddImpl source = foreign.factory.dd;
             MtBddImpl dd = factory.dd;
             int[] variables = factory.bddSets.mapSupport(foreign.support(), variableMapping);
-            BitSet rawValues = source.valuesOf(foreign.function);
+            NatSet rawValues = source.valuesOf(foreign.function);
             int[] indices = new int[rawValues.length()];
             // Each index keeps its terminal referenced, so no collection in between can hand the index out again.
-            List<Integer> terminals = new ArrayList<>(rawValues.cardinality());
+            List<Integer> terminals = new ArrayList<>(rawValues.size());
             try {
-                BitSets.forEach(rawValues, raw -> {
+                rawValues.forEach(raw -> {
                     indices[raw] = getOrAssignIndex(valueMapping.apply(foreign.values.valueOf(raw)));
                     terminals.add(dd.reference(dd.of(indices[raw])));
                 });
@@ -441,16 +442,16 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
         }
 
         @Override
-        public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
+        public void afterGc(DecisionDiagram origin, int reclaimedNodes, NatSet reclaimedValues) {
             forgetReclaimed(reclaimedValues);
         }
 
         @Override
-        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, NatSet reclaimedValues) {
             forgetReclaimed(reclaimedValues);
         }
 
-        private void forgetReclaimed(BitSet reclaimedValues) {
+        private void forgetReclaimed(NatSet reclaimedValues) {
             int first = reclaimedValues.nextSetBit(0);
             // Nothing reclaimed or first reclaim beyond what we use -> Nothing to do
             if (first < 0 || first > biggestAliveIndex) {
@@ -672,7 +673,7 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
         private final ValuesImpl<V> values;
 
         @Nullable
-        private BitSet supportCache;
+        private NatSet supportCache;
 
         @Nullable
         private Set<V> valueCache;
@@ -708,21 +709,21 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
         }
 
         @Override
-        public V evaluate(BitSet assignment) {
+        public V evaluate(NatSet assignment) {
             return values.valueOf(factory.dd.evaluate(function, assignment));
         }
 
         @Override
-        public BitSet support() {
+        public NatSet support() {
             if (supportCache == null) {
-                supportCache = factory.dd.support(function);
+                supportCache = NatSet.copyOf(factory.dd.support(function));
             }
             assert supportCache.equals(factory.dd.support(function));
             return supportCache;
         }
 
         @Override
-        public BitSet supportAt(BitSet assignment) {
+        public MutableNatSet supportAt(NatSet assignment) {
             return factory.dd.supportAt(function, assignment);
         }
 
@@ -735,7 +736,9 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
                 valueCache = Set.copyOf(collected);
             }
             assert !Assertions.COSTLY_ASSERTIONS
-                    || factory.dd.valuesOf(function).stream()
+                    || factory.dd
+                            .valuesOf(function)
+                            .intStream()
                             .mapToObj(values::valueOf)
                             .collect(Collectors.toSet())
                             .equals(valueCache);
@@ -751,9 +754,11 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
         public Map<V, BddSet> inverse() {
             MultiTerminalDecisionDiagram.Inverse inverse = factory.dd.invert(function);
             // The domains are unreferenced until wrapped, and wrapping allocates no node.
-            BitSet codomain = inverse.codomain();
+            NatSet codomain = inverse.codomain();
             Map<V, BddSet> domains = new LinkedHashMap<>();
-            for (int raw = codomain.nextSetBit(0); raw >= 0; raw = codomain.nextSetBit(raw + 1)) {
+            PrimitiveIterator.OfInt iterator = codomain.iterator();
+            while (iterator.hasNext()) {
+                int raw = iterator.nextInt();
                 domains.put(values.valueOf(raw), factory.bddSets.make(inverse.functionFor(raw)));
             }
             return Collections.unmodifiableMap(domains);
@@ -931,10 +936,12 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
 
         @Override
         public BddMap<V> relabelVariables(IntUnaryOperator mapping) {
-            BitSet support = support();
+            NatSet support = support();
             int[] substitutions = new int[support.length()];
             Arrays.fill(substitutions, factory.dd.placeholder());
-            for (int i = support.nextSetBit(0); i >= 0; i = support.nextSetBit(i + 1)) {
+            PrimitiveIterator.OfInt iterator = support.iterator();
+            while (iterator.hasNext()) {
+                int i = iterator.nextInt();
                 int j = mapping.applyAsInt(i);
                 if (j < 0) {
                     throw new IllegalArgumentException(String.format("Invalid mapping %s -> %s", i, j));
@@ -955,18 +962,18 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
         }
 
         @Override
-        public BddMap<BddMap<V>> split(BitSet splitVariables, Values<BddMap<V>> destination) {
+        public BddMap<BddMap<V>> split(NatSet splitVariables, Values<BddMap<V>> destination) {
             return splitMap(splitVariables, destination, Function.identity());
         }
 
         @Override
         public Dag<V> dag() {
             Dag.Builder<V> builder = new Dag.Builder<>();
-            builder.addRoot(dagEntry(function, builder, new IntIntHashMap(), new BitSet(0)));
+            builder.addRoot(dagEntry(function, builder, new IntIntHashMap(), MutableNatSet.dense(0)));
             return builder.build();
         }
 
-        private int dagEntry(int node, Dag.Builder<V> builder, IntIntHashMap entries, BitSet noAssignment) {
+        private int dagEntry(int node, Dag.Builder<V> builder, IntIntHashMap entries, NatSet noAssignment) {
             int known = entries.get(node, -1);
             if (known >= 0) {
                 return known;
@@ -986,7 +993,7 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
 
         @Override
         public <W> BddMap<W> splitMap(
-                BitSet splitVariables, Values<W> destination, Function<? super BddMap<V>, ? extends W> residual) {
+                NatSet splitVariables, Values<W> destination, Function<? super BddMap<V>, ? extends W> residual) {
             ValuesImpl<W> resultValues = factory.valuesOf(destination);
             int result = factory.dd.splitRelabeled(
                     function,

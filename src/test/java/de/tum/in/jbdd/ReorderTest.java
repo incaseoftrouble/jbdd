@@ -24,9 +24,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-import de.tum.in.jbdd.collections.BitSets;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.ArrayList;
-import java.util.BitSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -38,15 +38,17 @@ import org.junit.jupiter.api.Test;
  * Reordering must leave every function meaning exactly what it did, with the very same id - only the
  * shape of the diagram, and {@link ReorderableDd#levelOfVariable}, may change.
  */
+// Coupled to many types because it checks every kind of enumeration across reorderings.
+@SuppressWarnings("PMD.CouplingBetweenObjects")
 class ReorderTest {
     private static final BddConfiguration CONFIG =
             ImmutableBddConfiguration.builder().build();
 
     /** Every valuation of {@code variables}, as the assignment arrays {@code evaluate} takes. */
-    private static List<BitSet> valuations(int variables) {
-        List<BitSet> all = new ArrayList<>();
+    private static List<NatSet> valuations(int variables) {
+        List<NatSet> all = new ArrayList<>();
         for (int mask = 0; mask < (1 << variables); mask++) {
-            BitSet assignment = new BitSet(variables);
+            MutableNatSet assignment = MutableNatSet.dense(variables);
             for (int i = 0; i < variables; i++) {
                 if ((mask & (1 << i)) != 0) {
                     assignment.set(i);
@@ -60,7 +62,7 @@ class ReorderTest {
     /** The truth table of {@code function}, which reordering must preserve exactly. */
     private static List<Boolean> truthTable(Bdd bdd, int function, int variables) {
         List<Boolean> table = new ArrayList<>();
-        for (BitSet assignment : valuations(variables)) {
+        for (NatSet assignment : valuations(variables)) {
             table.add(bdd.evaluate(function, assignment));
         }
         return table;
@@ -223,10 +225,10 @@ class ReorderTest {
         assertNotEquals(identityOrder(variables), currentOrder(bdd, variables));
 
         for (int function : functions) {
-            BitSet dependsOn = new BitSet();
-            for (BitSet assignment : valuations(variables)) {
+            MutableNatSet dependsOn = MutableNatSet.create();
+            for (NatSet assignment : valuations(variables)) {
                 for (int variable = 0; variable < variables; variable++) {
-                    BitSet flipped = (BitSet) assignment.clone();
+                    MutableNatSet flipped = MutableNatSet.copyOf(assignment);
                     flipped.flip(variable);
                     if (bdd.evaluate(function, assignment) != bdd.evaluate(function, flipped)) {
                         dependsOn.set(variable);
@@ -236,9 +238,9 @@ class ReorderTest {
             assertEquals(dependsOn, bdd.support(function), "support of " + function);
 
             boolean[] array = new boolean[variables];
-            for (BitSet assignment : valuations(variables)) {
+            for (NatSet assignment : valuations(variables)) {
                 for (int variable = 0; variable < variables; variable++) {
-                    array[variable] = assignment.get(variable);
+                    array[variable] = assignment.contains(variable);
                 }
                 assertEquals(
                         bdd.evaluate(function, assignment),
@@ -257,24 +259,24 @@ class ReorderTest {
         bdd.variableOrder().reorder();
 
         for (int function : functions) {
-            Set<BitSet> expected = new HashSet<>();
-            for (BitSet assignment : valuations(variables)) {
+            Set<NatSet> expected = new HashSet<>();
+            for (NatSet assignment : valuations(variables)) {
                 if (bdd.evaluate(function, assignment)) {
-                    expected.add((BitSet) assignment.clone());
+                    expected.add(MutableNatSet.copyOf(assignment));
                 }
             }
 
-            BitSet support = bdd.support(function);
-            Set<BitSet> enumerated = new HashSet<>();
+            NatSet support = bdd.support(function);
+            Set<NatSet> enumerated = new HashSet<>();
             bdd.forEachSolution(function, solution -> {
                 // Solutions only fix the support; expand the rest to compare against the truth table.
-                BitSet fixed = (BitSet) solution.clone();
+                MutableNatSet fixed = MutableNatSet.copyOf(solution);
                 fixed.and(support);
-                for (BitSet assignment : valuations(variables)) {
-                    BitSet candidate = (BitSet) assignment.clone();
+                for (NatSet assignment : valuations(variables)) {
+                    MutableNatSet candidate = MutableNatSet.copyOf(assignment);
                     candidate.and(support);
                     if (candidate.equals(fixed)) {
-                        enumerated.add((BitSet) assignment.clone());
+                        enumerated.add(MutableNatSet.copyOf(assignment));
                     }
                 }
             });
@@ -299,25 +301,25 @@ class ReorderTest {
         assertNotEquals(identityOrder(variables), currentOrder(bdd, variables));
 
         for (int function : functions) {
-            Set<BitSet> expected = new HashSet<>();
-            for (BitSet assignment : valuations(variables)) {
+            Set<NatSet> expected = new HashSet<>();
+            for (NatSet assignment : valuations(variables)) {
                 if (bdd.evaluate(function, assignment)) {
-                    expected.add((BitSet) assignment.clone());
+                    expected.add(MutableNatSet.copyOf(assignment));
                 }
             }
 
             // Every path is a cube: the assignments it covers are exactly those agreeing with it on its
             // own support. Together the paths must cover the solutions exactly.
-            Set<BitSet> covered = new HashSet<>();
+            Set<NatSet> covered = new HashSet<>();
             bdd.forEachPath(function, path -> {
-                BitSet pathSupport = path.support();
-                BitSet pathAssignment = path.assignment();
-                for (BitSet assignment : valuations(variables)) {
-                    BitSet masked = (BitSet) assignment.clone();
+                NatSet pathSupport = path.support();
+                NatSet pathAssignment = path.assignment();
+                for (NatSet assignment : valuations(variables)) {
+                    MutableNatSet masked = MutableNatSet.copyOf(assignment);
                     masked.and(pathSupport);
                     if (masked.equals(pathAssignment)) {
                         assertTrue(bdd.evaluate(function, assignment), "path covers a non-solution");
-                        covered.add((BitSet) assignment.clone());
+                        covered.add(MutableNatSet.copyOf(assignment));
                     }
                 }
             });
@@ -363,7 +365,7 @@ class ReorderTest {
         int[] v = bdd.createVariables(variables);
         int f = bdd.reference(bdd.and(bdd.or(v[0], v[3]), bdd.xor(v[1], v[4])));
 
-        BitSet quantified = BitSets.of(1, 3);
+        NatSet quantified = NatSetFixtures.of(1, 3);
         RegisteredOperation.Unary exists = bdd.registerExists(quantified);
 
         int expected = bdd.reference(exists.applyAsInt(f));
@@ -470,7 +472,7 @@ class ReorderTest {
         }
 
         // Three blocks, in level order: {0,1,2} on top, then {3,4}, then {5,6,7}.
-        List<BitSet> groups = List.of(BitSets.of(0, 1, 2), BitSets.of(3, 4), BitSets.of(5, 6, 7));
+        List<NatSet> groups = List.of(NatSetFixtures.of(0, 1, 2), NatSetFixtures.of(3, 4), NatSetFixtures.of(5, 6, 7));
         bdd.variableOrder().reorder(groups);
 
         assertTrue(bdd.check());
@@ -480,8 +482,8 @@ class ReorderTest {
 
         // Every variable is still somewhere inside the run of levels its group started with.
         int blockStart = 0;
-        for (BitSet group : groups) {
-            int blockEnd = blockStart + group.cardinality() - 1;
+        for (NatSet group : groups) {
+            int blockEnd = blockStart + group.size() - 1;
             for (int variable = group.nextSetBit(0); variable >= 0; variable = group.nextSetBit(variable + 1)) {
                 int level = bdd.levelOfVariable(variable);
                 assertTrue(
@@ -505,7 +507,7 @@ class ReorderTest {
         }
 
         // Only levels 2..4 may move; 0, 1, 5 and 6 are in no group and must stay put.
-        bdd.variableOrder().reorder(List.of(BitSets.of(2, 3, 4)));
+        bdd.variableOrder().reorder(List.of(NatSetFixtures.of(2, 3, 4)));
 
         assertTrue(bdd.check());
         for (int variable : new int[] {0, 1, 5, 6}) {
@@ -531,13 +533,13 @@ class ReorderTest {
         // Overlapping
         assertThrows(
                 IllegalStateException.class,
-                () -> bdd.variableOrder().reorder(List.of(BitSets.of(0, 1, 2), BitSets.of(2, 3))));
+                () -> bdd.variableOrder().reorder(List.of(NatSetFixtures.of(0, 1, 2), NatSetFixtures.of(2, 3))));
         // Not a contiguous run of levels
         assertThrows(
                 IllegalStateException.class,
-                () -> bdd.variableOrder().reorder(List.of(BitSets.of(0, 2), BitSets.of(1, 3))));
+                () -> bdd.variableOrder().reorder(List.of(NatSetFixtures.of(0, 2), NatSetFixtures.of(1, 3))));
         // ... including when the straddled variable is simply left out
-        assertThrows(IllegalStateException.class, () -> bdd.variableOrder().reorder(List.of(BitSets.of(0, 2))));
+        assertThrows(IllegalStateException.class, () -> bdd.variableOrder().reorder(List.of(NatSetFixtures.of(0, 2))));
     }
 
     @Test
@@ -573,11 +575,11 @@ class ReorderTest {
         for (int i = 0; i < functions.size(); i++) {
             assertEquals(before.get(i), truthTable(bdd, functions.get(i), variables));
         }
-        assertFalse(bdd.support(functions.get(0)).get(insertedVariable));
+        assertFalse(bdd.support(functions.get(0)).contains(insertedVariable));
 
         // ... and the new variable behaves like any other
         int combined = bdd.reference(bdd.and(functions.get(0), inserted));
-        assertTrue(bdd.support(combined).get(insertedVariable));
+        assertTrue(bdd.support(combined).contains(insertedVariable));
         assertTrue(bdd.check());
     }
 
@@ -699,7 +701,7 @@ class ReorderTest {
 
     private static List<Integer> valueTable(MtBddImpl mtbdd, int function, int variables) {
         List<Integer> table = new ArrayList<>();
-        for (BitSet assignment : valuations(variables)) {
+        for (NatSet assignment : valuations(variables)) {
             table.add(mtbdd.evaluate(function, assignment));
         }
         return table;
@@ -721,7 +723,7 @@ class ReorderTest {
         }
 
         List<String> before = new ArrayList<>();
-        for (BitSet assignment : valuations(variables)) {
+        for (NatSet assignment : valuations(variables)) {
             before.add(map.evaluate(assignment));
         }
 
@@ -730,14 +732,14 @@ class ReorderTest {
         assertTrue(bdd.check());
         assertTrue(mtbdd.check());
         List<String> after = new ArrayList<>();
-        for (BitSet assignment : valuations(variables)) {
+        for (NatSet assignment : valuations(variables)) {
             after.add(map.evaluate(assignment));
         }
         assertEquals(before, after, "the companion MTBDD did not follow the BDD's reordering");
     }
 
-    private static BitSet block(int... variables) {
-        BitSet set = new BitSet();
+    private static NatSet block(int... variables) {
+        MutableNatSet set = MutableNatSet.create();
         for (int variable : variables) {
             set.set(variable);
         }
@@ -745,7 +747,7 @@ class ReorderTest {
     }
 
     /** The levels {@code block} occupies right now, smallest first. */
-    private static List<Integer> levelsOf(Bdd bdd, BitSet block) {
+    private static List<Integer> levelsOf(Bdd bdd, NatSet block) {
         List<Integer> levels = new ArrayList<>();
         for (int variable = block.nextSetBit(0); variable >= 0; variable = block.nextSetBit(variable + 1)) {
             levels.add(bdd.levelOfVariable(variable));
@@ -755,9 +757,9 @@ class ReorderTest {
     }
 
     /** Each block a contiguous run of levels, and the blocks in the order they were listed. */
-    private static void assertBlocksInOrder(Bdd bdd, List<BitSet> blocks) {
+    private static void assertBlocksInOrder(Bdd bdd, List<NatSet> blocks) {
         int previousMaxLevel = -1;
-        for (BitSet block : blocks) {
+        for (NatSet block : blocks) {
             List<Integer> levels = levelsOf(bdd, block);
             assertEquals(
                     levels.get(levels.size() - 1) - levels.get(0) + 1,
@@ -780,7 +782,7 @@ class ReorderTest {
         }
 
         // Deliberately out of order and with two don't-cares (1 and 4) left over.
-        List<BitSet> blocks = List.of(block(5, 2), block(0), block(6, 3));
+        List<NatSet> blocks = List.of(block(5, 2), block(0), block(6, 3));
         bdd.variableOrder().reorderTo(blocks);
 
         assertTrue(bdd.check());
@@ -802,7 +804,7 @@ class ReorderTest {
         BddImpl bdd = new DdContextImpl(CONFIG).bdd();
         List<Integer> functions = randomFunctions(bdd, variables, 10, 141_421L);
 
-        List<BitSet> blocks = List.of(block(6, 1), block(4, 0, 5));
+        List<NatSet> blocks = List.of(block(6, 1), block(4, 0, 5));
         assertThrows(
                 IllegalStateException.class,
                 () -> bdd.variableOrder().reorder(blocks),
@@ -831,7 +833,7 @@ class ReorderTest {
         BddImpl bdd = new DdContextImpl(CONFIG).bdd();
         randomFunctions(bdd, variables, 8, 161_803L);
 
-        List<BitSet> exact = List.of(block(3), block(1), block(4), block(0), block(2));
+        List<NatSet> exact = List.of(block(3), block(1), block(4), block(0), block(2));
         bdd.variableOrder().reorderTo(exact);
 
         assertEquals(List.of(3, 1, 4, 0, 2), currentOrder(bdd, variables));
@@ -846,7 +848,7 @@ class ReorderTest {
         BddImpl bdd = new DdContextImpl(CONFIG).bdd();
         randomFunctions(bdd, variables, 8, 173_205L);
 
-        List<BitSet> blocks = List.of(block(4, 2), block(0, 5));
+        List<NatSet> blocks = List.of(block(4, 2), block(0, 5));
         bdd.variableOrder().reorderTo(blocks);
         List<Integer> order = currentOrder(bdd, variables);
         Object swaps = bdd.statistics().get("reorder_swaps");
@@ -866,7 +868,7 @@ class ReorderTest {
         BddImpl bdd = new DdContextImpl(CONFIG).bdd();
         randomFunctions(bdd, variables, 8, 223_606L);
 
-        List<BitSet> blocks = List.of(block(3, 4));
+        List<NatSet> blocks = List.of(block(3, 4));
         bdd.variableOrder().reorderTo(blocks);
 
         assertEquals(identityOrder(variables), currentOrder(bdd, variables), "don't-cares were moved");
@@ -881,7 +883,7 @@ class ReorderTest {
         BddImpl bdd = new DdContextImpl(CONFIG).bdd();
         randomFunctions(bdd, variables, 8, 449_489L);
 
-        List<BitSet> blocks = List.of(block(1, 3));
+        List<NatSet> blocks = List.of(block(1, 3));
         bdd.variableOrder().reorderTo(blocks);
 
         assertBlocksInOrder(bdd, blocks);
@@ -915,7 +917,7 @@ class ReorderTest {
         mtbdd.dereference(inner);
 
         List<Integer> before = valueTable(mtbdd, f, variables);
-        List<BitSet> blocks = List.of(block(4, 3), block(0));
+        List<NatSet> blocks = List.of(block(4, 3), block(0));
         bdd.variableOrder().reorderTo(blocks);
 
         assertTrue(bdd.check());
@@ -1094,13 +1096,13 @@ class ReorderTest {
 
     /** Records every order change it is told about, so a test can count them and read their content. */
     private static final class OrderRecorder implements VariableOrderObserver {
-        private final List<BitSet> moved = new ArrayList<>();
+        private final List<NatSet> moved = new ArrayList<>();
         private final List<int[]> previous = new ArrayList<>();
         private final List<int[]> current = new ArrayList<>();
 
         @Override
-        public void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, BitSet movedVariables) {
-            moved.add((BitSet) movedVariables.clone());
+        public void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, NatSet movedVariables) {
+            moved.add(MutableNatSet.copyOf(movedVariables));
             previous.add(previousVariableToLevel.clone());
             current.add(currentVariableToLevel.clone());
         }
@@ -1124,15 +1126,15 @@ class ReorderTest {
         // What the listener was told has to be the order before and the order after, in full.
         int[] previous = recorder.previous.get(0);
         int[] current = recorder.current.get(0);
-        BitSet moved = recorder.moved.get(0);
+        NatSet moved = recorder.moved.get(0);
         for (int variable = 0; variable < bdd.numberOfVariables(); variable++) {
             assertEquals(bdd.levelOfVariable(variable), current[variable]);
-            assertEquals(previous[variable] != current[variable], moved.get(variable));
+            assertEquals(previous[variable] != current[variable], moved.contains(variable));
         }
         assertFalse(moved.isEmpty(), "the pass changed the order, so something moved");
 
         // A caller driving swaps itself still hears about each call.
-        BitSet swapped = BitSets.of(bdd.variableAtLevel(0), bdd.variableAtLevel(1));
+        NatSet swapped = NatSetFixtures.of(bdd.variableAtLevel(0), bdd.variableAtLevel(1));
         context.variableOrder().siftDown(0);
         assertEquals(2, recorder.moved.size());
         assertEquals(swapped, recorder.moved.get(1));

@@ -18,13 +18,15 @@ package de.tum.in.jbdd;
 
 import static de.tum.in.jbdd.NodeTable.PLACEHOLDER;
 
-import de.tum.in.jbdd.collections.BitSets;
 import de.tum.in.jbdd.collections.Cursor;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
+import de.tum.in.jbdd.collections.NatSets;
 import java.math.BigInteger;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.NoSuchElementException;
 import java.util.Optional;
+import java.util.PrimitiveIterator;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 import java.util.function.Predicate;
@@ -238,16 +240,16 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     }
 
     @Override
-    public void forEachSolutionIn(int function, int domain, BitSet support, Consumer<? super int[]> action) {
+    public void forEachSolutionIn(int function, int domain, NatSet support, Consumer<? super int[]> action) {
         assert isValidFunction(function) && isValidFunction(domain);
-        assert BitSets.isSubset(support(function), support) && BitSets.isSubset(support(domain), support);
+        assert support.containsAll(support(function)) && support.containsAll(support(domain));
 
         if (function == FALSE || domain == FALSE) {
             return;
         }
 
         assert accessGuard.acquire();
-        int[] variables = support.stream().toArray();
+        int[] variables = support.intStream().toArray();
         forEachSolutionInRecursive(function, domain, variables, 0, new int[numberOfVariables], action);
         assert accessGuard.release();
     }
@@ -289,13 +291,13 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
 
     @Override
     public Cursor<int[]> solutionCursor(int function) {
-        BitSet support = new BitSet(numberOfVariables);
+        MutableNatSet support = MutableNatSet.dense(numberOfVariables);
         support.set(0, numberOfVariables);
         return solutionCursor(function, support);
     }
 
     @Override
-    public Cursor<int[]> solutionCursor(int function, BitSet support) {
+    public Cursor<int[]> solutionCursor(int function, NatSet support) {
         assert isValidFunction(function);
 
         if (function == FALSE) {
@@ -314,7 +316,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     }
 
     @Override
-    public Cursor<int[]> solutionCursorIn(int function, int domain, BitSet support) {
+    public Cursor<int[]> solutionCursorIn(int function, int domain, NatSet support) {
         // TODO Native - see BddImpl, which walks the two together instead of conjoining them
         return solutionCursor(and(function, domain), support);
     }
@@ -357,7 +359,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     }
 
     @Override
-    public void forEachPartialPath(int function, BitSet relevantSet, Consumer<? super int[]> action) {
+    public void forEachPartialPath(int function, NatSet relevantSet, Consumer<? super int[]> action) {
         assert isValidFunction(function);
 
         if (function == FALSE) {
@@ -380,7 +382,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
 
     private void forEachPathRecursive(
             int node,
-            @Nullable BitSet support,
+            @Nullable NatSet support,
             int depthLimit,
             int[] path,
             Consumer<? super int[]> action,
@@ -401,7 +403,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             return;
         }
 
-        boolean relevant = support == null || support.get(variable);
+        boolean relevant = support == null || support.contains(variable);
 
         int[] children = table.childrenUnchecked(node);
         for (int val = 0; val < children.length; val++) {
@@ -493,14 +495,16 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     }
 
     @Override
-    public BigInteger countSatisfyingAssignments(int function, BitSet support) {
-        assert BitSets.isSubset(support(function), support);
+    public BigInteger countSatisfyingAssignments(int function, NatSet support) {
+        assert support.containsAll(support(function));
         if (function == FALSE) {
             return BigInteger.ZERO;
         }
         if (function == TRUE) {
             BigInteger base = BigInteger.ONE;
-            for (int var = support.nextSetBit(0); var >= 0; var = support.nextSetBit(var + 1)) {
+            PrimitiveIterator.OfInt iterator = support.iterator();
+            while (iterator.hasNext()) {
+                int var = iterator.nextInt();
                 base = base.multiply(BigInteger.valueOf(variableDomain[var]));
             }
             return base;
@@ -706,14 +710,14 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     }
 
     @Override
-    public int exists(int function, BitSet quantifiedVariables) {
+    public int exists(int function, NatSet quantifiedVariables) {
         assert isValidFunction(function);
         assert quantifiedVariables.length() - 1 <= numberOfVariables;
 
         if (isConstant(function)) {
             return function;
         }
-        if (quantifiedVariables.cardinality() == numberOfVariables) {
+        if (quantifiedVariables.size() == numberOfVariables) {
             return TRUE;
         }
 
@@ -728,7 +732,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         return result;
     }
 
-    private int existsRecursive(int function, BitSet quantifiedVariables) {
+    private int existsRecursive(int function, NatSet quantifiedVariables) {
         assert isValidFunction(function);
 
         if (isConstant(function)) {
@@ -1166,7 +1170,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         private final int[] path;
         private final boolean[] pathLookingFor;
         private final int[] assignment;
-        private final BitSet pathSupport;
+        private final MutableNatSet pathSupport;
         private final int rootVariable;
         private boolean onPath;
         private int leafNodeVariable;
@@ -1179,7 +1183,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             this.path = new int[variableCount];
             this.pathLookingFor = new boolean[variableCount];
             this.assignment = new int[variableCount];
-            this.pathSupport = new BitSet(variableCount);
+            this.pathSupport = MutableNatSet.dense(variableCount);
             this.rootVariable = mdd.decisionVariable(function);
 
             Arrays.fill(assignment, UNDECIDED);
@@ -1196,7 +1200,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         /** The variables the current path decides. */
-        BitSet pathSupport() {
+        MutableNatSet pathSupport() {
             return pathSupport;
         }
 
@@ -1217,7 +1221,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
 
         /** Moves to the next path. Returns {@code false} when there are none left. */
         boolean advance() {
-            assert IntStream.range(0, path.length).allMatch(i -> pathSupport.get(i) == (path[i] != NON_PATH_NODE));
+            assert IntStream.range(0, path.length).allMatch(i -> pathSupport.contains(i) == (path[i] != NON_PATH_NODE));
 
             /* Backtrack to the deepest node on the path that has a value left to take which does not fall
              * into false, take it, and retract everything the old path had below it. */
@@ -1298,25 +1302,25 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     static final class SolutionCursor implements Cursor<int[]> {
         private final MddImpl mdd;
         private final PathWalk path;
-        private final BitSet support;
+        private final NatSet support;
         /* The support variables the current path leaves free, recomputed whenever the path moves. Worked
          * out once per path rather than rediscovered per solution: there are far more solutions. */
-        private final BitSet freeVariables;
+        private final MutableNatSet freeVariables;
         /** Path values where the path decides, the counter's own where it does not. */
         private final int[] solution;
 
         private boolean valid;
 
-        SolutionCursor(MddImpl mdd, int function, BitSet support) {
+        SolutionCursor(MddImpl mdd, int function, NatSet support) {
             int variableCount = mdd.numberOfVariables();
             // Assignments don't make much sense otherwise
             assert variableCount > 0 && support.length() <= variableCount;
-            assert BitSets.isSubset(mdd.support(function), support);
+            assert support.containsAll(mdd.support(function));
 
             this.mdd = mdd;
             this.path = new PathWalk(mdd, function);
             this.support = support;
-            this.freeVariables = new BitSet(variableCount);
+            this.freeVariables = MutableNatSet.dense(variableCount);
             this.solution = new int[variableCount];
             this.valid = path.onPath();
             if (valid) {
@@ -1345,7 +1349,9 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             /* Addition over the support variables the current path does not decide: those are free, so
              * every combination of their values extends this path to a solution. Carrying past the last
              * one leaves them all at zero and means the path itself has to move on. */
-            for (int var = freeVariables.nextSetBit(0); var >= 0; var = freeVariables.nextSetBit(var + 1)) {
+            PrimitiveIterator.OfInt iterator = freeVariables.iterator();
+            while (iterator.hasNext()) {
+                int var = iterator.nextInt();
                 assert solution[var] < mdd.variableDomain[var];
                 if (solution[var] == mdd.variableDomain[var] - 1) {
                     solution[var] = 0;
@@ -1365,12 +1371,12 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         private void refreshFreeVariables() {
-            BitSets.difference(freeVariables, support, path.pathSupport());
+            NatSets.difference(freeVariables, support, path.pathSupport());
         }
 
         /** Takes the new path's values over, and puts every variable it leaves free back to zero. */
         private void syncPath() {
-            assert BitSets.isSubset(path.pathSupport(), support);
+            assert support.containsAll(path.pathSupport());
             int[] assignment = path.assignment();
             for (int var = 0; var < solution.length; var++) {
                 int decided = assignment[var];
@@ -1489,7 +1495,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         @Override
-        protected void recurseForEachVariable(int node, IntConsumer action, @Nullable BitSet filter, int depthLimit) {
+        protected void recurseForEachVariable(int node, IntConsumer action, @Nullable NatSet filter, int depthLimit) {
             int[] children = tree[node];
             for (int child : children) {
                 int childNode = positive(child);
@@ -1525,18 +1531,18 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         @Override
-        protected void notifyAfterGc(int reclaimedNodes, BitSet reclaimedValues) {
+        protected void notifyAfterGc(int reclaimedNodes, NatSet reclaimedValues) {
             mdd.notifyAfterGc(reclaimedNodes);
         }
 
         @Override
-        protected void notifyAfterTableGrowth(int invalidatedNodes, BitSet reclaimedValues) {
+        protected void notifyAfterTableGrowth(int invalidatedNodes, NatSet reclaimedValues) {
             mdd.notifyAfterTableGrow(invalidatedNodes);
         }
 
         @Override
-        protected BitSet clearUnreferencedLeaves() {
-            return BitSets.of();
+        protected NatSet clearUnreferencedLeaves() {
+            return NatSet.of();
         }
 
         @Override

@@ -567,7 +567,7 @@ public abstract class CacheBase {
         }
     }
 
-    /** A mini BitSet implementation */
+    /** A mini NatSet implementation */
     static final class Bits {
         // Bin b is bit b (modulo 64) of word b >>> WORD_SHIFT.
         private static final int WORD_SHIFT = Integer.numberOfTrailingZeros(Long.SIZE);

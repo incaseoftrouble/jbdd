@@ -16,9 +16,11 @@
  */
 package de.tum.in.jbdd;
 
-import de.tum.in.jbdd.collections.BitSets;
-import java.util.BitSet;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
+import de.tum.in.jbdd.collections.NatSets;
 import java.util.concurrent.TimeUnit;
+import org.jspecify.annotations.Nullable;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -47,17 +49,17 @@ import org.openjdk.jmh.infra.Blackhole;
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 @BenchmarkMode(Mode.AverageTime)
 public class EnumerationBenchmark {
-    private static BitSet levelsOf(BddImpl bdd, BitSet variables) {
-        BitSet levels = new BitSet(bdd.numberOfVariables());
-        BitSets.map(variables, levels, bdd::levelOfVariable);
+    private static NatSet levelsOf(BddImpl bdd, NatSet variables) {
+        MutableNatSet levels = MutableNatSet.dense(bdd.numberOfVariables());
+        NatSets.map(variables, levels, bdd::levelOfVariable);
         return levels;
     }
 
-    /** {@link BitSets#increment}, mirroring each flipped bit into {@code translated}. */
-    private static boolean increment(BddImpl bdd, BitSet levels, BitSet free, BitSet translated) {
+    /** {@link NatSets#increment}, mirroring each flipped bit into {@code translated}. */
+    private static boolean increment(BddImpl bdd, MutableNatSet levels, NatSet free, MutableNatSet translated) {
         for (int level = free.nextSetBit(0); level >= 0; level = free.nextSetBit(level + 1)) {
             int variable = bdd.variableAtLevel(level);
-            if (levels.get(level)) {
+            if (levels.contains(level)) {
                 levels.clear(level);
                 translated.clear(variable);
             } else {
@@ -73,29 +75,30 @@ public class EnumerationBenchmark {
     public void solutionsRebuild(EnumerationState state, Blackhole bh) {
         BddImpl bdd = state.bdd();
         boolean translating = bdd.isReordered();
-        BitSet supportLevels = translating ? levelsOf(bdd, state.support()) : state.support();
-        BitSet translated = translating ? new BitSet(bdd.numberOfVariables()) : null;
-        BitSet free = new BitSet(bdd.numberOfVariables());
+        NatSet supportLevels = translating ? levelsOf(bdd, state.support()) : state.support();
+        MutableNatSet translated =
+                MutableNatSet.copyOf(translating ? MutableNatSet.dense(bdd.numberOfVariables()) : null);
+        MutableNatSet free = MutableNatSet.dense(bdd.numberOfVariables());
 
         BddImpl.PathWalk walk = new BddImpl.PathWalk(bdd, state.function(), bdd.trueFunction());
         if (!walk.onPath()) {
             return;
         }
-        BitSets.difference(free, supportLevels, walk.pathSupportLevels());
+        NatSets.difference(free, supportLevels, walk.pathSupportLevels());
         while (true) {
             if (translated == null) {
                 bh.consume(walk.levelAssignment());
             } else {
-                BitSets.map(walk.levelAssignment(), translated, bdd::variableAtLevel);
+                NatSets.map(walk.levelAssignment(), translated, bdd::variableAtLevel);
                 bh.consume(translated);
             }
-            if (BitSets.increment(walk.levelAssignment(), free)) {
+            if (NatSets.increment(walk.levelAssignment(), free)) {
                 continue;
             }
             if (!walk.advance()) {
                 return;
             }
-            BitSets.difference(free, supportLevels, walk.pathSupportLevels());
+            NatSets.difference(free, supportLevels, walk.pathSupportLevels());
         }
     }
 
@@ -103,31 +106,32 @@ public class EnumerationBenchmark {
     public void solutionsCounter(EnumerationState state, Blackhole bh) {
         BddImpl bdd = state.bdd();
         boolean translating = bdd.isReordered();
-        BitSet supportLevels = translating ? levelsOf(bdd, state.support()) : state.support();
-        BitSet translated = translating ? new BitSet(bdd.numberOfVariables()) : null;
-        BitSet free = new BitSet(bdd.numberOfVariables());
+        NatSet supportLevels = translating ? levelsOf(bdd, state.support()) : state.support();
+        MutableNatSet translated =
+                MutableNatSet.copyOf(translating ? MutableNatSet.dense(bdd.numberOfVariables()) : null);
+        MutableNatSet free = MutableNatSet.dense(bdd.numberOfVariables());
 
         BddImpl.PathWalk walk = new BddImpl.PathWalk(bdd, state.function(), bdd.trueFunction());
         if (!walk.onPath()) {
             return;
         }
-        BitSets.difference(free, supportLevels, walk.pathSupportLevels());
+        NatSets.difference(free, supportLevels, walk.pathSupportLevels());
         if (translated != null) {
-            BitSets.map(walk.levelAssignment(), translated, bdd::variableAtLevel);
+            NatSets.map(walk.levelAssignment(), translated, bdd::variableAtLevel);
         }
         while (true) {
             bh.consume(translated == null ? walk.levelAssignment() : translated);
             if (translated == null
-                    ? BitSets.increment(walk.levelAssignment(), free)
+                    ? NatSets.increment(walk.levelAssignment(), free)
                     : increment(bdd, walk.levelAssignment(), free, translated)) {
                 continue;
             }
             if (!walk.advance()) {
                 return;
             }
-            BitSets.difference(free, supportLevels, walk.pathSupportLevels());
+            NatSets.difference(free, supportLevels, walk.pathSupportLevels());
             if (translated != null) {
-                BitSets.map(walk.levelAssignment(), translated, bdd::variableAtLevel);
+                NatSets.map(walk.levelAssignment(), translated, bdd::variableAtLevel);
             }
         }
     }
@@ -136,26 +140,27 @@ public class EnumerationBenchmark {
     public void solutionsWalk(EnumerationState state, Blackhole bh) {
         BddImpl bdd = state.bdd();
         boolean translating = bdd.isReordered();
-        BitSet supportLevels = translating ? levelsOf(bdd, state.support()) : state.support();
-        BitSet translated = translating ? new BitSet(bdd.numberOfVariables()) : null;
-        BitSet free = new BitSet(bdd.numberOfVariables());
+        NatSet supportLevels = translating ? levelsOf(bdd, state.support()) : state.support();
+        MutableNatSet translated =
+                MutableNatSet.copyOf(translating ? MutableNatSet.dense(bdd.numberOfVariables()) : null);
+        MutableNatSet free = MutableNatSet.dense(bdd.numberOfVariables());
 
         BddImpl.PathWalk walk = new BddImpl.PathWalk(bdd, state.function(), bdd.trueFunction(), translated, null);
         if (!walk.onPath()) {
             return;
         }
-        BitSets.difference(free, supportLevels, walk.pathSupportLevels());
+        NatSets.difference(free, supportLevels, walk.pathSupportLevels());
         while (true) {
             bh.consume(translated == null ? walk.levelAssignment() : translated);
             if (translated == null
-                    ? BitSets.increment(walk.levelAssignment(), free)
+                    ? NatSets.increment(walk.levelAssignment(), free)
                     : increment(bdd, walk.levelAssignment(), free, translated)) {
                 continue;
             }
             if (!walk.advance()) {
                 return;
             }
-            BitSets.difference(free, supportLevels, walk.pathSupportLevels());
+            NatSets.difference(free, supportLevels, walk.pathSupportLevels());
         }
     }
 
@@ -163,8 +168,8 @@ public class EnumerationBenchmark {
     public void pathsRebuild(EnumerationState state, Blackhole bh) {
         BddImpl bdd = state.bdd();
         boolean translating = bdd.isReordered();
-        BitSet assignment = translating ? new BitSet(bdd.numberOfVariables()) : null;
-        BitSet support = translating ? new BitSet(bdd.numberOfVariables()) : null;
+        @Nullable MutableNatSet assignment = translating ? MutableNatSet.dense(bdd.numberOfVariables()) : null;
+        @Nullable MutableNatSet support = translating ? MutableNatSet.dense(bdd.numberOfVariables()) : null;
 
         BddImpl.PathWalk walk = new BddImpl.PathWalk(bdd, state.function(), bdd.trueFunction());
         while (walk.onPath()) {
@@ -173,8 +178,8 @@ public class EnumerationBenchmark {
                 bh.consume(walk.pathSupportLevels());
             } else {
                 assert support != null;
-                BitSets.map(walk.levelAssignment(), assignment, bdd::variableAtLevel);
-                BitSets.map(walk.pathSupportLevels(), support, bdd::variableAtLevel);
+                NatSets.map(walk.levelAssignment(), assignment, bdd::variableAtLevel);
+                NatSets.map(walk.pathSupportLevels(), support, bdd::variableAtLevel);
                 bh.consume(assignment);
                 bh.consume(support);
             }
@@ -186,8 +191,8 @@ public class EnumerationBenchmark {
     public void pathsWalk(EnumerationState state, Blackhole bh) {
         BddImpl bdd = state.bdd();
         boolean translating = bdd.isReordered();
-        BitSet assignment = translating ? new BitSet(bdd.numberOfVariables()) : null;
-        BitSet support = translating ? new BitSet(bdd.numberOfVariables()) : null;
+        @Nullable MutableNatSet assignment = translating ? MutableNatSet.dense(bdd.numberOfVariables()) : null;
+        @Nullable MutableNatSet support = translating ? MutableNatSet.dense(bdd.numberOfVariables()) : null;
 
         BddImpl.PathWalk walk = new BddImpl.PathWalk(bdd, state.function(), bdd.trueFunction(), assignment, support);
         while (walk.onPath()) {

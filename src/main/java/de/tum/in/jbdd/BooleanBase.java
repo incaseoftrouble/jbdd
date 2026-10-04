@@ -16,8 +16,9 @@
  */
 package de.tum.in.jbdd;
 
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.math.BigInteger;
-import java.util.BitSet;
 import java.util.Map;
 import java.util.function.IntConsumer;
 import java.util.stream.Collectors;
@@ -25,7 +26,7 @@ import java.util.stream.Stream;
 
 @SuppressWarnings("AssertWithSideEffects")
 public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>, NodeBasedDd, StatisticsSource {
-    private static final BitSet NO_VALUES = new BitSet(0);
+    private static final MutableNatSet NO_VALUES = MutableNatSet.dense(0);
 
     static final BigInteger TWO = BigInteger.ONE.add(BigInteger.ONE);
     static final int[] EMPTY_INT_ARRAY = new int[0];
@@ -42,12 +43,12 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
         // NodeLifecycleObserverGroup#registerStrongly.
         observers.registerStrongly(new NodeTableObserver() {
             @Override
-            public void afterGc(DecisionDiagram origin, int reclaimedNodes, BitSet reclaimedValues) {
+            public void afterGc(DecisionDiagram origin, int reclaimedNodes, NatSet reclaimedValues) {
                 cache().onBddNodesInvalidated(reclaimedNodes);
             }
 
             @Override
-            public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, BitSet reclaimedValues) {
+            public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, NatSet reclaimedValues) {
                 cache().tableSizeChanged(invalidatedNodes);
             }
         });
@@ -255,7 +256,7 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
     }
 
     @Override
-    public void forEachSupportVariableFiltered(int function, BitSet filter, IntConsumer action) {
+    public void forEachSupportVariableFiltered(int function, NatSet filter, IntConsumer action) {
         assert accessGuard.acquire();
         table().forEachVariable(function, filter, action);
         assert accessGuard.release();
@@ -350,7 +351,7 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
     }
 
     @Override
-    public int forall(int function, BitSet quantifiedVariables) {
+    public int forall(int function, NatSet quantifiedVariables) {
         return complement(exists(complement(function), quantifiedVariables));
     }
 

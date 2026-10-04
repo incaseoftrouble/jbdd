@@ -21,11 +21,11 @@ import static de.tum.in.jbdd.MtBddCache.Slot.MTBDD;
 import static de.tum.in.jbdd.MtBddCache.Slot.PLAIN;
 import static java.util.Map.entry;
 
-import de.tum.in.jbdd.collections.BitSets;
 import de.tum.in.jbdd.collections.Cube;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.math.BigInteger;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
@@ -88,7 +88,7 @@ final class MtBddCache implements VariableOrderObserver {
     private int[] composeArray = EMPTY_INT_ARRAY;
     private final UnaryCache restrictCache;
     private Cube restriction = Cube.empty();
-    private final BitSet noValueMatchesCache = new BitSet();
+    private final MutableNatSet noValueMatchesCache = MutableNatSet.create();
     private @Nullable IntPredicate currentAnyValueMatches;
     private final UnaryCache splitCache;
     private final TernaryCache splitCombineCache;
@@ -171,7 +171,7 @@ final class MtBddCache implements VariableOrderObserver {
                 entry("nary_apply", naryApplyCache),
                 entry("count", satisfactionCache));
 
-        tableSizeChanged(0, BitSets.of());
+        tableSizeChanged(0, NatSet.of());
     }
 
     BinaryCache applyCache() {
@@ -208,7 +208,7 @@ final class MtBddCache implements VariableOrderObserver {
 
     // Size and invalidation
 
-    void tableSizeChanged(int reclaimedNodes, BitSet reclaimedValues) {
+    void tableSizeChanged(int reclaimedNodes, NatSet reclaimedValues) {
         onMultiTerminalNodesInvalidated(reclaimedNodes, reclaimedValues);
 
         BddConfiguration configuration = bdd.configuration();
@@ -264,7 +264,7 @@ final class MtBddCache implements VariableOrderObserver {
      * @see BooleanCache#orderChanged
      */
     @Override
-    public void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, BitSet movedVariables) {
+    public void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, NatSet movedVariables) {
         // see BooleanCache#orderChanged
         invalidate();
     }
@@ -302,7 +302,7 @@ final class MtBddCache implements VariableOrderObserver {
         }
     }
 
-    void onMultiTerminalNodesInvalidated(int invalidatedNodes, BitSet reclaimedValues) {
+    void onMultiTerminalNodesInvalidated(int invalidatedNodes, NatSet reclaimedValues) {
         if (bdd.isReordering()) {
             // See BooleanCache#onBddNodesInvalidated.
             invalidate();
@@ -531,7 +531,7 @@ final class MtBddCache implements VariableOrderObserver {
 
     boolean lookupNoValueMatches(int node) {
         assert mtbdd.isValidFunction(node);
-        return noValueMatchesCache.get(node);
+        return noValueMatchesCache.contains(node);
     }
 
     int lookupSplit(int node) {

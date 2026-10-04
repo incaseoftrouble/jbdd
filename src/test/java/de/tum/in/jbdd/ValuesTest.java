@@ -20,9 +20,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
-import de.tum.in.jbdd.collections.BitSets;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.ArrayList;
-import java.util.BitSet;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -45,15 +45,15 @@ class ValuesTest {
                 .update(x0.intersection(x1), "11");
 
         Values<BddMap<String>> residuals = ctx.bddMaps().create();
-        BddMap<BddMap<String>> meta = map.split(BitSets.of(0), residuals);
+        BddMap<BddMap<String>> meta = map.split(NatSetFixtures.of(0), residuals);
 
         // The meta-map decides on variable 0 only; each of its values is the residual over variable 1.
-        assertEquals(BitSets.of(0), meta.support());
+        assertEquals(NatSetFixtures.of(0), meta.support());
         assertEquals(2, meta.values().size());
-        assertEquals("00", meta.evaluate(BitSets.of()).evaluate(BitSets.of()));
-        assertEquals("01", meta.evaluate(BitSets.of()).evaluate(BitSets.of(1)));
-        assertEquals("10", meta.evaluate(BitSets.of(0)).evaluate(BitSets.of()));
-        assertEquals("11", meta.evaluate(BitSets.of(0)).evaluate(BitSets.of(1)));
+        assertEquals("00", meta.evaluate(NatSetFixtures.of()).evaluate(NatSetFixtures.of()));
+        assertEquals("01", meta.evaluate(NatSetFixtures.of()).evaluate(NatSetFixtures.of(1)));
+        assertEquals("10", meta.evaluate(NatSetFixtures.of(0)).evaluate(NatSetFixtures.of()));
+        assertEquals("11", meta.evaluate(NatSetFixtures.of(0)).evaluate(NatSetFixtures.of(1)));
     }
 
     @Test
@@ -70,8 +70,8 @@ class ValuesTest {
         BddMap<String> product = strings.cartesianProductMap(List.of(a, b), joined, tuple -> String.join("+", tuple));
 
         assertSame(joined, product.valueDomain());
-        assertEquals("a0+b0", product.evaluate(BitSets.of()));
-        assertEquals("a1+b1", product.evaluate(BitSets.of(0)));
+        assertEquals("a0+b0", product.evaluate(NatSetFixtures.of()));
+        assertEquals("a1+b1", product.evaluate(NatSetFixtures.of(0)));
     }
 
     @Test
@@ -93,8 +93,8 @@ class ValuesTest {
         assertEquals(
                 ((GcReferenceManager.DdContainer) map).function(),
                 ((GcReferenceManager.DdContainer) retyped).function());
-        assertEquals("lo", retyped.evaluate(BitSets.of()));
-        assertEquals("hi", retyped.evaluate(BitSets.of(0)));
+        assertEquals("lo", retyped.evaluate(NatSetFixtures.of()));
+        assertEquals("hi", retyped.evaluate(NatSetFixtures.of(0)));
 
         // The two numberings are distinct, so this is a cross-numbering comparison - which is fine.
         assertEquals(ctx.bddSets().universe(), map.where(retyped, String::contentEquals));
@@ -120,11 +120,12 @@ class ValuesTest {
                 map, variable -> variable + 1, value -> target.bddSets().var(value.length()));
 
         assertSame(sets, adopted.valueDomain());
-        assertEquals(BitSets.of(1, 3), adopted.support());
+        assertEquals(NatSetFixtures.of(1, 3), adopted.support());
         assertEquals(2, adopted.values().size());
-        for (BitSet assignment : List.of(BitSets.of(), BitSets.of(0), BitSets.of(2), BitSets.of(0, 2))) {
-            BitSet shifted = new BitSet();
-            BitSets.forEach(assignment, variable -> shifted.set(variable + 1));
+        for (NatSet assignment :
+                List.of(NatSetFixtures.of(), NatSetFixtures.of(0), NatSetFixtures.of(2), NatSetFixtures.of(0, 2))) {
+            MutableNatSet shifted = MutableNatSet.create();
+            NatSetFixtures.forEach(assignment, variable -> shifted.set(variable + 1));
             assertEquals(target.bddSets().var(map.evaluate(assignment).length()), adopted.evaluate(shifted));
         }
     }

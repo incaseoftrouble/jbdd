@@ -17,7 +17,6 @@
 package de.tum.in.jbdd.collections;
 
 import java.util.ArrayList;
-import java.util.BitSet;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -28,39 +27,36 @@ import java.util.Optional;
  * fixed to true among them. Equivalently a partial assignment, standing for all its completions - a minterm
  * being the cube over every variable, the empty cube the constant true.
  *
- * <p>Operations return new cubes and never modify their operands. The plain accessors and {@link #of} copy, so a
- * cube cannot be changed through them. The {@code Unsafe} variants ({@link #ofUnsafe}, {@link #assignmentUnsafe},
- * {@link #supportUnsafe}) hand the sets over as they are, for callers that only read them, or give up the sets
- * they pass: modifying a set obtained or passed that way modifies the cube.
+ * <p>Operations return new cubes and never modify their operands. The accessors hand out the cube's own sets, as
+ * {@link NatSet}s: read, never modified. {@link #of} copies what it is given; {@link #ofUnsafe} takes the sets as
+ * they are, the caller giving them up.
  *
  * <p>A cube handed out by a path walk or cursor is that walk's working state and changes under the caller - see
  * {@link Cursor}; {@link #copy()} it to keep it.
  */
 public final class Cube {
-    private static final Cube EMPTY = new Cube(new BitSet(0), new BitSet(0));
+    private static final Cube EMPTY = new Cube(NatSet.of(), NatSet.of());
 
-    private final BitSet assignment;
-    private final BitSet support;
+    private final NatSet assignment;
+    private final NatSet support;
 
-    // Takes ownership of both sets; the walks mutate them in place.
-    private Cube(BitSet assignment, BitSet support) {
-        assert assignment.stream().allMatch(support::get);
+    // Takes the sets as they are; the walks mutate them in place.
+    private Cube(NatSet assignment, NatSet support) {
+        assert support.containsAll(assignment);
         this.assignment = assignment;
         this.support = support;
     }
 
     /** The cube fixing the variables of {@code support} as {@code valuation} assigns them. Copies both. */
-    public static Cube of(BitSet valuation, BitSet support) {
-        BitSet assignment = BitSets.copyOf(valuation);
-        assignment.and(support);
-        return new Cube(assignment, BitSets.copyOf(support));
+    public static Cube of(NatSet valuation, NatSet support) {
+        return new Cube(valuation.intersection(support), NatSet.copyOf(support));
     }
 
     /**
      * The cube over {@code support} with {@code assignment} (a subset of it, checked by assertion only) true, taking
-     * both sets as they are: the caller gives them up and must not modify them afterwards.
+     * both sets as they are: the caller gives them up, or - a walk's working state - keeps modifying them.
      */
-    public static Cube ofUnsafe(BitSet assignment, BitSet support) {
+    public static Cube ofUnsafe(NatSet assignment, NatSet support) {
         return new Cube(assignment, support);
     }
 
@@ -71,50 +67,43 @@ public final class Cube {
 
     /** The single literal {@code variable} (if {@code value}) or its negation. */
     public static Cube literal(int variable, boolean value) {
-        BitSet support = BitSets.of(variable);
-        return new Cube(value ? BitSets.copyOf(support) : new BitSet(0), support);
+        NatSet support = NatSet.of(variable);
+        return new Cube(value ? support : NatSet.of(), support);
     }
 
     /** The conjunction of all {@code variables}. */
-    public static Cube positive(BitSet variables) {
-        BitSet copy = BitSets.copyOf(variables);
-        // One set for both is safe: nothing modifies a cube's sets but the walk owning it.
+    public static Cube positive(NatSet variables) {
+        NatSet copy = NatSet.copyOf(variables);
         return new Cube(copy, copy);
     }
 
     /** The conjunction of the negations of all {@code variables}. */
-    public static Cube negative(BitSet variables) {
-        return new Cube(new BitSet(0), BitSets.copyOf(variables));
+    public static Cube negative(NatSet variables) {
+        return new Cube(NatSet.of(), NatSet.copyOf(variables));
     }
 
-    /** The variables fixed to true, as a set the caller owns. */
-    public BitSet assignment() {
-        return BitSets.copyOf(assignment);
-    }
-
-    /** The variables fixed to true, the cube's own set: to be read, never modified. */
-    public BitSet assignmentUnsafe() {
+    /** The variables fixed to true. */
+    public NatSet assignment() {
         return assignment;
     }
 
-    /** The variables fixed, as a set the caller owns. */
-    public BitSet support() {
-        return BitSets.copyOf(support);
-    }
-
-    /** The variables fixed, the cube's own set: to be read, never modified. */
-    public BitSet supportUnsafe() {
+    /** The variables fixed. */
+    public NatSet support() {
         return support;
     }
 
-    /** A cube equal to this one that owns its sets - see the class comment. */
+    /** A cube equal to this one whose sets never change - see the class comment. */
     public Cube copy() {
-        return new Cube(BitSets.copyOf(assignment), BitSets.copyOf(support));
+        NatSet assignmentCopy = NatSet.copyOf(assignment);
+        NatSet supportCopy = NatSet.copyOf(support);
+        // Nothing to copy when both sets never change already.
+        boolean unchanged = assignmentCopy == assignment && supportCopy == support; // NOPMD - identity is the point
+        return unchanged ? this : new Cube(assignmentCopy, supportCopy);
     }
 
     /** The number of literals. */
     public int size() {
-        return support.cardinality();
+        return support.size();
     }
 
     /** Whether this cube fixes nothing, i.e. is the constant true. */
@@ -123,65 +112,100 @@ public final class Cube {
     }
 
     public boolean fixes(int variable) {
-        return support.get(variable);
+        return support.contains(variable);
     }
 
     /** The value {@code variable} is fixed to, which it must be. */
     public boolean value(int variable) {
-        if (!support.get(variable)) {
+        if (!support.contains(variable)) {
             throw new IllegalArgumentException("Variable " + variable + " is not fixed by " + this);
         }
-        return assignment.get(variable);
+        return assignment.contains(variable);
     }
 
-    /** The variables fixed to true, as a set the caller owns. */
-    public BitSet positives() {
-        return assignment();
+    /** The variables fixed to true. */
+    public NatSet positives() {
+        return assignment;
     }
 
-    /** The variables fixed to false, as a set the caller owns. */
-    public BitSet negatives() {
-        BitSet negatives = BitSets.copyOf(support);
-        negatives.andNot(assignment);
-        return negatives;
+    /** The variables fixed to false. */
+    public NatSet negatives() {
+        return support.difference(assignment);
     }
 
     /** Whether {@code valuation} (a full assignment) satisfies this cube. */
-    public boolean contains(BitSet valuation) {
-        for (int variable = support.nextSetBit(0); variable >= 0; variable = support.nextSetBit(variable + 1)) {
-            if (valuation.get(variable) != assignment.get(variable)) {
-                return false;
+    public boolean contains(NatSet valuation) {
+        long[] supportWords = NatSetUtil.wordsOrNone(support);
+        long[] assignmentWords = NatSetUtil.wordsOrNone(assignment);
+        long[] valuationWords = NatSetUtil.wordsOrNone(valuation);
+        if (supportWords != null && assignmentWords != null && valuationWords != null) {
+            for (int index = 0; index < supportWords.length; index++) {
+                long fixed = supportWords[index];
+                if (fixed != 0
+                        && ((NatSetUtil.word(valuationWords, index) ^ NatSetUtil.word(assignmentWords, index)) & fixed)
+                                != 0) {
+                    return false;
+                }
             }
+            return true;
         }
-        return true;
+        return support.allMatch(variable -> valuation.contains(variable) == assignment.contains(variable));
     }
 
     /** Whether every valuation of this cube is one of {@code other}'s: every literal of {@code other} is one of these. */
     public boolean implies(Cube other) {
-        BitSet otherSupport = other.support;
-        for (int variable = otherSupport.nextSetBit(0);
-                variable >= 0;
-                variable = otherSupport.nextSetBit(variable + 1)) {
-            if (!support.get(variable) || assignment.get(variable) != other.assignment.get(variable)) {
-                return false;
+        long[] supportWords = NatSetUtil.wordsOrNone(support);
+        long[] assignmentWords = NatSetUtil.wordsOrNone(assignment);
+        long[] otherSupportWords = NatSetUtil.wordsOrNone(other.support);
+        long[] otherAssignmentWords = NatSetUtil.wordsOrNone(other.assignment);
+        if (supportWords != null
+                && assignmentWords != null
+                && otherSupportWords != null
+                && otherAssignmentWords != null) {
+            for (int index = 0; index < otherSupportWords.length; index++) {
+                long fixed = otherSupportWords[index];
+                if (fixed != 0
+                        && ((fixed & ~NatSetUtil.word(supportWords, index)) != 0
+                                || ((NatSetUtil.word(assignmentWords, index)
+                                                        ^ NatSetUtil.word(otherAssignmentWords, index))
+                                                & fixed)
+                                        != 0)) {
+                    return false;
+                }
             }
+            return true;
         }
-        return true;
+        return other.support.allMatch(variable ->
+                support.contains(variable) && assignment.contains(variable) == other.assignment.contains(variable));
     }
 
     /** Whether some valuation satisfies both cubes: they agree wherever both fix a variable. */
     public boolean intersects(Cube other) {
-        // Iterate the smaller support.
-        Cube smaller = support.cardinality() <= other.support.cardinality() ? this : other;
-        Cube larger = smaller == this ? other : this; // NOPMD - identity is the point
-        for (int variable = smaller.support.nextSetBit(0);
-                variable >= 0;
-                variable = smaller.support.nextSetBit(variable + 1)) {
-            if (larger.support.get(variable) && smaller.assignment.get(variable) != larger.assignment.get(variable)) {
-                return false;
+        long[] supportWords = NatSetUtil.wordsOrNone(support);
+        long[] assignmentWords = NatSetUtil.wordsOrNone(assignment);
+        long[] otherSupportWords = NatSetUtil.wordsOrNone(other.support);
+        long[] otherAssignmentWords = NatSetUtil.wordsOrNone(other.assignment);
+        if (supportWords != null
+                && assignmentWords != null
+                && otherSupportWords != null
+                && otherAssignmentWords != null) {
+            int common = Math.min(supportWords.length, otherSupportWords.length);
+            for (int index = 0; index < common; index++) {
+                long bothFix = supportWords[index] & otherSupportWords[index];
+                if (bothFix != 0
+                        && ((NatSetUtil.word(assignmentWords, index) ^ NatSetUtil.word(otherAssignmentWords, index))
+                                        & bothFix)
+                                != 0) {
+                    return false;
+                }
             }
+            return true;
         }
-        return true;
+        // Iterate the smaller support.
+        Cube smaller = support.size() <= other.support.size() ? this : other;
+        Cube larger = smaller == this ? other : this; // NOPMD - identity is the point
+        return smaller.support.noneMatch(variable -> larger.support.contains(variable)
+                && smaller.assignment.contains(variable) != larger.assignment.contains(variable));
     }
 
     /** The conjunction of both cubes, or empty if they contradict each other. */
@@ -189,41 +213,27 @@ public final class Cube {
         if (!intersects(other)) {
             return Optional.empty();
         }
-        BitSet assignment = BitSets.copyOf(this.assignment);
-        assignment.or(other.assignment);
-        BitSet support = BitSets.copyOf(this.support);
-        support.or(other.support);
-        return Optional.of(new Cube(assignment, support));
+        return Optional.of(new Cube(assignment.union(other.assignment), support.union(other.support)));
     }
 
     /** This cube with {@code variable} fixed to {@code value}, replacing whatever it was fixed to. */
     public Cube with(int variable, boolean value) {
-        BitSet assignment = BitSets.copyOf(this.assignment);
-        BitSet support = BitSets.copyOf(this.support);
-        assignment.set(variable, value);
-        support.set(variable);
-        return new Cube(assignment, support);
+        NatSet literal = NatSet.of(variable);
+        return new Cube(value ? assignment.union(literal) : assignment.difference(literal), support.union(literal));
     }
 
     /** This cube without the literal on {@code variable}. */
     public Cube without(int variable) {
-        if (!support.get(variable)) {
+        if (!support.contains(variable)) {
             return this;
         }
-        BitSet assignment = BitSets.copyOf(this.assignment);
-        BitSet support = BitSets.copyOf(this.support);
-        assignment.clear(variable);
-        support.clear(variable);
-        return new Cube(assignment, support);
+        NatSet literal = NatSet.of(variable);
+        return new Cube(assignment.difference(literal), support.difference(literal));
     }
 
     /** This cube's literals on {@code variables} only - existential quantification of all others. */
-    public Cube restrictedTo(BitSet variables) {
-        BitSet assignment = BitSets.copyOf(this.assignment);
-        BitSet support = BitSets.copyOf(this.support);
-        assignment.and(variables);
-        support.and(variables);
-        return new Cube(assignment, support);
+    public Cube restrictedTo(NatSet variables) {
+        return new Cube(assignment.intersection(variables), support.intersection(variables));
     }
 
     /**
@@ -251,7 +261,7 @@ public final class Cube {
 
     /** Calls {@code action} once per literal, in ascending variable order. */
     public void forEachLiteral(LiteralConsumer action) {
-        BitSets.forEach(support, variable -> action.accept(variable, assignment.get(variable)));
+        support.forEach((int variable) -> action.accept(variable, assignment.contains(variable)));
     }
 
     @FunctionalInterface
@@ -262,10 +272,11 @@ public final class Cube {
     /** The literals over {@code [0, support().length())}: {@code 1}, {@code 0}, or {@code ?} for free. */
     @Override
     public String toString() {
-        StringBuilder sb = new StringBuilder(support.length());
-        for (int i = 0; i < support.length(); i++) {
-            if (support.get(i)) {
-                sb.append(assignment.get(i) ? '1' : '0');
+        int length = support.length();
+        StringBuilder sb = new StringBuilder(length);
+        for (int i = 0; i < length; i++) {
+            if (support.contains(i)) {
+                sb.append(assignment.contains(i) ? '1' : '0');
             } else {
                 sb.append('?');
             }

@@ -17,7 +17,8 @@
 package de.tum.in.jbdd;
 
 import de.tum.in.jbdd.collections.Cube;
-import java.util.BitSet;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.Map;
 import java.util.OptionalInt;
 import java.util.Set;
@@ -30,7 +31,7 @@ import java.util.function.Predicate;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Symbolic representation of a {@code Function<BitSet, V>} (total over the domain - every valuation has some value),
+ * Symbolic representation of a {@code Function<NatSet, V>} (total over the domain - every valuation has some value),
  * backed by an {@link MtBdd}.
  */
 public interface BddMap<V> {
@@ -42,14 +43,14 @@ public interface BddMap<V> {
     Values<V> valueDomain();
 
     /** The value at the given valuation. */
-    V evaluate(BitSet assignment);
+    V evaluate(NatSet assignment);
 
     /** The variables this map's value actually depends on. */
-    BitSet support();
+    NatSet support();
 
     /** The variables actually consulted by {@link #evaluate} at {@code assignment} - a witness for that
      * specific valuation, possibly much smaller than {@link #support()}. */
-    BitSet supportAt(BitSet assignment);
+    MutableNatSet supportAt(NatSet assignment);
 
     /** Every value this map actually takes (i.e. its image). */
     Set<V> values();
@@ -192,19 +193,19 @@ public interface BddMap<V> {
      * Splits this map into a meta-map over just {@code splitVariables}, whose value at each valuation of
      * those variables is the residual map over the remaining variables.
      *
-     * @see MtBdd#split(int, BitSet)
+     * @see MtBdd#split(int, NatSet)
      */
-    BddMap<BddMap<V>> split(BitSet splitVariables, Values<BddMap<V>> destination);
+    BddMap<BddMap<V>> split(NatSet splitVariables, Values<BddMap<V>> destination);
 
     /** This map's diagram as a {@link Dag} with one root, its {@link Dag.Kind#VALUE} entries holding its values. */
     Dag<V> dag();
 
     /**
-     * {@link #split(BitSet, Values)} with every residual map passed through {@code residual} on its way into
+     * {@link #split(NatSet, Values)} with every residual map passed through {@code residual} on its way into
      * {@code destination}.
      */
     <W> BddMap<W> splitMap(
-            BitSet splitVariables, Values<W> destination, Function<? super BddMap<V>, ? extends W> residual);
+            NatSet splitVariables, Values<W> destination, Function<? super BddMap<V>, ? extends W> residual);
 
     /**
      * A value transform applying to every map over one numbering at once, created by

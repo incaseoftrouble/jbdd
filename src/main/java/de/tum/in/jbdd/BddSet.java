@@ -18,8 +18,9 @@ package de.tum.in.jbdd;
 
 import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.Cursor;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.math.BigInteger;
-import java.util.BitSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
@@ -30,7 +31,7 @@ import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 
 /**
- * Symbolic representation of a {@code Set<BitSet>}. Deliberately exposes no operation that assumes or
+ * Symbolic representation of a {@code Set<NatSet>}. Deliberately exposes no operation that assumes or
  * reveals a fixed variable universe (e.g. no size/iteration without an explicit {@code support}, no
  * structural/node-count introspection) - callers must always be explicit about which variables they mean,
  * so no code accidentally depends on how many variables happen to exist.
@@ -46,7 +47,7 @@ public interface BddSet {
     boolean isUniverse();
 
     /** Whether {@code valuation} is an element of this set. */
-    boolean contains(BitSet valuation);
+    boolean contains(NatSet valuation);
 
     /** Whether every element of {@code valuationSet} is also an element of this set. */
     boolean containsAll(BddSet valuationSet);
@@ -57,7 +58,7 @@ public interface BddSet {
     }
 
     /** Any element of this set, if non-empty. */
-    Optional<BitSet> element();
+    Optional<MutableNatSet> element();
 
     /** The complement, i.e. every valuation not in this set. */
     BddSet complement();
@@ -86,10 +87,10 @@ public interface BddSet {
     }
 
     /** Projects out {@code quantifiedVariables}, i.e. an element remains iff some value for them exists. */
-    BddSet exists(BitSet quantifiedVariables);
+    BddSet exists(NatSet quantifiedVariables);
 
     /** Universally quantifies {@code quantifiedVariables}, i.e. an element remains iff it does for every value of them. */
-    BddSet forall(BitSet quantifiedVariables);
+    BddSet forall(NatSet quantifiedVariables);
 
     /** Elements in exactly one of this set and {@code other}. */
     BddSet symmetricDifference(BddSet other);
@@ -154,22 +155,22 @@ public interface BddSet {
      * partitions the valuations of {@code splitVariables} by residual. {@code destination} must belong to
      * this set's context.
      *
-     * @see BddMap#split(BitSet, Values)
+     * @see BddMap#split(NatSet, Values)
      */
-    BddMap<BddSet> split(BitSet splitVariables, Values<BddSet> destination);
+    BddMap<BddSet> split(NatSet splitVariables, Values<BddSet> destination);
 
-    /** The variables this set actually depends on. Cached and handed out as-is, so callers must not modify it. */
-    BitSet support();
+    /** The variables this set actually depends on, cached: the same immutable set on every call. */
+    NatSet support();
 
-    /** The variables actually consulted by {@link #contains(BitSet)} at {@code valuation} - a witness for
+    /** The variables actually consulted by {@link #contains(NatSet)} at {@code valuation} - a witness for
      * that specific valuation, possibly much smaller than {@link #support()}. */
-    BitSet supportAt(BitSet valuation);
+    MutableNatSet supportAt(NatSet valuation);
 
     /** Walks elements, treating every variable outside {@code support} as "don't care" (doubling the count). */
-    Cursor<BitSet> cursor(BitSet support);
+    Cursor<NatSet> cursor(NatSet support);
 
-    /** Counts elements the same way {@link #cursor(BitSet)} does. */
-    BigInteger size(BitSet support);
+    /** Counts elements the same way {@link #cursor(NatSet)} does. */
+    BigInteger size(NatSet support);
 
     /**
      * The fraction of all valuations in this set, independent of how many variables exist. Best-effort, see {@link
@@ -186,7 +187,7 @@ public interface BddSet {
     double satisfyingFractionIn(BddSet domain);
 
     /** Calls {@code consumer} once per element, treating variables outside {@code support} as "don't care". */
-    void forEach(BitSet support, Consumer<? super BitSet> consumer);
+    void forEach(NatSet support, Consumer<? super NatSet> consumer);
 
     /**
      * Calls {@code action} once per path of the diagram to a true leaf, read as the cube fixing
@@ -212,7 +213,7 @@ public interface BddSet {
     boolean anyPathMatches(Predicate<? super Cube> predicate);
 
     /**
-     * A pre-built {@link BddSet#exists(BitSet)} over a fixed variable set, created by
+     * A pre-built {@link BddSet#exists(NatSet)} over a fixed variable set, created by
      * {@link BddSetFactory#registerExists} - see {@link RegisteredOperation} for when to prefer one.
      */
     @FunctionalInterface

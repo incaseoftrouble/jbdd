@@ -16,8 +16,9 @@
  */
 package de.tum.in.jbdd;
 
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.ArrayList;
-import java.util.BitSet;
 import java.util.List;
 import org.openjdk.jmh.annotations.Level;
 import org.openjdk.jmh.annotations.Param;
@@ -57,7 +58,7 @@ public class EnumerationState {
     private int function;
 
     @SuppressWarnings("NullAway.Init")
-    private BitSet support;
+    private MutableNatSet support;
 
     public enum Shape {
         MANY_FREE(20),
@@ -85,12 +86,12 @@ public class EnumerationState {
 
         if (order == Order.ODDS_FIRST) {
             // On the empty diagram, so the swaps rewrite nothing and only the order is left behind.
-            BitSet odds = new BitSet(variables);
-            BitSet evens = new BitSet(variables);
+            MutableNatSet odds = MutableNatSet.dense(variables);
+            MutableNatSet evens = MutableNatSet.dense(variables);
             for (int variable = 0; variable < variables; variable++) {
                 (variable % 2 == 0 ? evens : odds).set(variable);
             }
-            List<BitSet> blocks = new ArrayList<>(2);
+            List<NatSet> blocks = new ArrayList<>(2);
             blocks.add(odds);
             blocks.add(evens);
             diagram.variableOrder().reorderTo(blocks);
@@ -98,7 +99,7 @@ public class EnumerationState {
 
         this.bdd = (BddImpl) diagram;
         this.function = bdd.reference(build(bdd, shape));
-        this.support = new BitSet(variables);
+        this.support = MutableNatSet.dense(variables);
         this.support.set(0, variables);
 
         if (order == Order.ODDS_FIRST && !bdd.isReordered()) {
@@ -107,7 +108,7 @@ public class EnumerationState {
     }
 
     /** Every variable is in the support handed to the cursor, whether the function reads it or not. */
-    public BitSet support() {
+    public MutableNatSet support() {
         return support;
     }
 

@@ -17,9 +17,9 @@
 package de.tum.in.jbdd;
 
 import de.tum.in.jbdd.collections.Cube;
+import de.tum.in.jbdd.collections.MutableNatSet;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -47,8 +47,8 @@ public class RandomBenchmark extends BaseBddBenchmark {
             n -> n.add(n.bdd.ifThenElse(n.get(), n.get(), n.get())),
             n -> {
                 int variables = n.bdd.numberOfVariables();
-                BitSet mask = new BitSet(variables);
-                BitSet values = new BitSet(variables);
+                MutableNatSet mask = MutableNatSet.dense(variables);
+                MutableNatSet values = MutableNatSet.dense(variables);
                 for (int i = 0; i < Math.min(variables, 10); i++) {
                     if (n.random.nextBoolean()) {
                         mask.set(i);
@@ -64,7 +64,7 @@ public class RandomBenchmark extends BaseBddBenchmark {
             },
             n -> {
                 int variables = n.bdd.numberOfVariables();
-                BitSet mask = new BitSet(variables);
+                MutableNatSet mask = MutableNatSet.dense(variables);
                 for (int i = 0; i < Math.min(variables, 10); i++) {
                     if (n.random.nextBoolean()) {
                         mask.set(i);
@@ -77,7 +77,7 @@ public class RandomBenchmark extends BaseBddBenchmark {
             n -> n.bdd.countSatisfyingAssignments(n.get()),
             n -> {
                 int node = n.get();
-                if (n.bdd.support(node).cardinality() < 8) {
+                if (n.bdd.support(node).size() < 8) {
                     n.bdd.forEachPath(node, path -> {});
                 }
             });
