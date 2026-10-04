@@ -1438,7 +1438,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
 
         assert accessGuard.acquire();
-        BddImpl.ComposeAnalysis analysis = bdd.analyzeCompose(bddVariableMapping);
+        int[] resolved = bddVariableMapping.clone();
+        BddImpl.ComposeAnalysis analysis = bdd.analyzeCompose(resolved);
         if (analysis.maxReplacedLevel == -1) {
             int result = simplify(mtbddFunction, bddDomain);
             assert accessGuard.release();
@@ -1450,7 +1451,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         NodeTable bddTable = bdd.table();
         int bddWorkStackCount = 0;
         if (bddDomain != bdd.trueFunction()) {
-            for (int replacement : bddVariableMapping) {
+            for (int replacement : resolved) {
                 assert bdd.isValidFunction(replacement);
                 if (!bdd.isUnmanaged(replacement)) {
                     bddTable.pushToWorkStack(replacement);
@@ -1459,11 +1460,11 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             }
         }
 
-        cache.initCompose(bddVariableMapping);
+        cache.initCompose(resolved);
         int result = composeGeneral(
                 mtbddFunction,
                 bddDomain,
-                bddVariableMapping,
+                resolved,
                 analysis.maxReplacedLevel,
                 cache.composeCache(),
                 cache.composeSimplifyCache());

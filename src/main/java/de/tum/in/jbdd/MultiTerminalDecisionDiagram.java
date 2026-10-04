@@ -186,14 +186,13 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
     void forEachValue(int function, IntConsumer action);
 
     /**
-     * Constructs the <i>composition</i> of the given {@code function} with the boolean functions in {@code variableNodes}.
-     * Formally, if {@code function} is {@code f(x_1, x_2, ..., x_n)}, this method returns
-     * {@code f(f_1(x_1, ..., x_n), ..., f_n(x_1, ..., x_n))}, where {@code f_i = variableNodes[i]}.
+     * Constructs the <i>composition</i> of the given {@code function} with the boolean functions in
+     * {@code variableMapping}. Formally, if {@code function} is {@code f(x_1, x_2, ..., x_n)}, this method returns
+     * {@code f(f_1(x_1, ..., x_n), ..., f_n(x_1, ..., x_n))}, where {@code f_i = variableMapping[i]}.
      *
-     * <p>The {@code variableNodes} array can contain less than {@code n} entries, then only the first variables are replaced.
-     * Furthermore, {@code placeholder} can be used as an entry to denote "don't replace this variable" (which semantically
-     * is the same as saying "replace this variable by itself"). After the call, the {@code placeholder} entries will be
-     * replaced by the actual corresponding variable nodes. </p>
+     * <p>The {@code variableMapping} array can contain less than {@code n} entries, then only the first variables are
+     * replaced. Furthermore, {@link #placeholder()} can be used as an entry to denote "don't replace this variable"
+     * (which semantically is the same as saying "replace this variable by itself"). The array is only read.</p>
      *
      * @param function
      *     The MTBDD function to be composed.

@@ -1059,7 +1059,8 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         }
 
         assert accessGuard.acquire();
-        ComposeAnalysis analysis = analyzeCompose(variableMapping);
+        int[] resolved = variableMapping.clone();
+        ComposeAnalysis analysis = analyzeCompose(resolved);
         if (analysis.maxReplacedLevel == -1) {
             int result = simplify(function, domain);
             assert accessGuard.release();
@@ -1075,7 +1076,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         assert table.workStacksEmpty();
 
         int arrayWorkStackCount = 0;
-        for (int j : variableMapping) {
+        for (int j : resolved) {
             assert isValidFunction(j);
             int node = positive(j);
             if (node != TRUE && !table.isSaturatedNode(node)) {
@@ -1084,7 +1085,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             }
         }
 
-        int result = computeCompose(function, domain, variableMapping);
+        int result = computeCompose(function, domain, resolved);
         table.popFromWorkStack(arrayWorkStackCount);
         assert table.workStacksEmpty();
         assert accessGuard.release();
@@ -1638,9 +1639,9 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
 
         assert accessGuard.acquire();
         assert table.workStacksEmpty();
-        complementAll(functions);
-        int result = not(computeAndAll(functions));
-        complementAll(functions);
+        int[] complemented = functions.clone();
+        complementAll(complemented);
+        int result = not(computeAndAll(complemented));
         assert table.workStacksEmpty();
         assert accessGuard.release();
         return result;

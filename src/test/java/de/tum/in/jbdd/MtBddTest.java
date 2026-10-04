@@ -723,13 +723,13 @@ class MtBddTest {
         mapping[2] = mt.placeholder(); // x2 -> x2 (identity)
 
         int composed = mt.compose(f, mapping);
-        // compose() placeholder-fills mapping in place, so every entry is now a real Bdd function -
-        // evaluating mapping[i] at an assignment gives exactly the value substituted for variable i.
+        // Evaluating mapping[i] at an assignment gives exactly the value substituted for variable i.
         for (int mask = 0; mask < (1 << numVars); mask++) {
             boolean[] assignment = maskToAssignment(mask, numVars);
             boolean[] substituted = new boolean[numVars];
             for (int i = 0; i < numVars; i++) {
-                substituted[i] = bdd.evaluate(mapping[i], assignment);
+                int replacement = mapping[i] == mt.placeholder() ? bdd.variableFunction(i) : mapping[i];
+                substituted[i] = bdd.evaluate(replacement, assignment);
             }
             assertEquals(mt.evaluate(f, substituted), mt.evaluate(composed, assignment));
         }
