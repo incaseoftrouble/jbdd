@@ -54,7 +54,7 @@ public interface NatSet {
         return ImmutableNatSet.singleton(element);
     }
 
-    /** The set of {@code elements}, in any order and with repetitions. */
+    /** The set of {@code elements} (they may be in any order and with repetitions). */
     static NatSet of(int... elements) {
         return ImmutableNatSet.of(elements);
     }

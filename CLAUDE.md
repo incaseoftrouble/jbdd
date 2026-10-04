@@ -400,10 +400,29 @@ Three load-bearing properties:
   with `MEMORY_SAFETY_FACTOR = 1.25`). `bytesPerSlot` is the subclass's `structuralBytesPerSlot` plus
   `parentCount` while live — ignoring it sizes a slot at 20 bytes when it costs 24. Per-variable node
   lists are deliberately *not* in there: they hold valid nodes, not slots, and a grow does not touch them.
-  Used memory includes uncollected JVM garbage, so the estimate is pessimistic on purpose. When the larger
-  table would not fit, the live threshold rises to 0.9 (`MEMORY_PRESSURE_LIVE_NODE_THRESHOLD`) — a dense
-  table collected often beats being unable to allocate — and if even that leaves the table full,
-  `ensureCapacity` fails loudly rather than handing `makeNode` a table with no free node.
+  Used memory includes uncollected JVM garbage, and garbage-inflated readings made a table collect every few
+  percent of allocations instead of growing (22 against 3.4 work per created node, with 600 MB of garbage in a
+  1 GB heap). So `nextSize`, where the reading falls short, asks the JVM for a collection
+  (`collectedAvailableMemory`, `Runtime.gc()`) and reads again - at most once per table size, so a really full
+  heap does not pay one per table collection. The heap is read at most once per `ensureCapacity`, and only where
+  it decides: memory can only raise the live threshold, so after the mark it is asked only when more than the
+  configured share is live, and otherwise only before a growth.
+  No reading sees through the garbage without a collection: the memory pools' current usage sums to the
+  `Runtime` reading, their usage after the last collection misses everything that reached the old generation
+  since (a freshly grown table included, so growing on it risks a real `OutOfMemoryError`), and counting eden as
+  free needs the collector's pool roles. Allocating and catching the `OutOfMemoryError` would be exact, but trips
+  `-XX:+ExitOnOutOfMemoryError` and heap dumps. The case above is the only evidence for the collection: under the
+  Parallel collector (queens 12, `-Xmx1g`, live ballast and churn between operations) it never helped and once
+  hurt (8.4M slots at 8.7 work per created node against 10.0M at 7.75 without it). When the larger table would
+  not fit, the live threshold rises to 0.9
+  (`MEMORY_PRESSURE_LIVE_NODE_THRESHOLD`) — a dense table beats being unable to allocate. A growth smaller
+  than a sixteenth of the table (`MINIMUM_GROWTH_DIVISOR`) is not taken: it would buy a few allocations per
+  full mark. A table that cannot grow collects instead, and then collects again only once half of what that
+  left free is used (`denseFreeThreshold`) - without that, every allocation below the quarter-free trigger
+  was a full mark, and a synthesis workload ran for hours. If a collection leaves under a thirty-second free
+  (`MINIMUM_FREE_DIVISOR`), `ensureCapacity` throws `OutOfMemoryError`. Whether the table can grow is decided
+  *before* choosing between reclaiming and the futile path, since the futile path's invalidation is valid only
+  right before `grow()`.
 
 `invalidateUnmarkedNodes()` deliberately does *not* fix the free list or counts — it is valid only
 immediately before `grow()`, which rebuilds both. It does reset the dead-node counter (like
@@ -443,7 +462,8 @@ created nodes — is the one number capturing whether memory management pays for
 `node_table_gc_collected_nodes` does *not*: a table collected twice as often collects **more** nodes, not
 fewer. Read it with `node_table_slots_per_live_node` (the memory being spent to keep it low) and
 `node_table_gc_yield`. `node_table_futile_gc_count` counts marks thrown away by a subsequent grow;
-`node_table_memory_limited_grow_count` says the heap, not the configuration, is picking the table size.
+`node_table_memory_limited_grow_count` says the heap, not the configuration, is picking the table size;
+`node_table_jvm_gc_request_count` counts the JVM collections asked for before deciding that.
 All O(1) per collection; nothing on the hot path.
 
 ## 5. The recursive-operation skeleton

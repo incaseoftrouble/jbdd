@@ -67,6 +67,12 @@ public abstract class NodeTable {
     /* Live node ratio accepted before growing when the table cannot be grown within the available memory -
      * a densely packed table which is collected often is still better than not being able to allocate. */
     private static final double MEMORY_PRESSURE_LIVE_NODE_THRESHOLD = 0.9;
+    /* The smallest growth worth rehashing the table for, as a fraction of its size: under memory pressure,
+     * growing by a few slots would only buy a few allocations before the next full collection. */
+    private static final int MINIMUM_GROWTH_DIVISOR = 16;
+    /* A table that cannot grow carries on densely packed only while a collection leaves at least this fraction
+     * free; below it, every few allocations would cost a full mark, so it gives up instead. */
+    private static final int MINIMUM_FREE_DIVISOR = 32;
 
     static {
         //noinspection ConstantValue
@@ -149,6 +155,14 @@ public abstract class NodeTable {
     private int futileGarbageCollectionCount = 0;
     /* Growths which were limited (possibly to nothing) by the available memory. */
     private int memoryLimitedGrowthCount = 0;
+    /* Collections asked of the JVM to read the available memory exactly, see collectedAvailableMemory. */
+    private int jvmGcRequestCount = 0;
+    /* The table size at which the JVM was last asked for a collection, -1 if never. */
+    private int jvmGcRequestSize = -1;
+    /* While the table cannot grow because of memory limits: the free node count at which ensureCapacity
+     * next acts, half of what the last collection left, so each full mark is paid for by as many
+     * allocations. -1 while the table can grow. */
+    private int denseFreeThreshold = -1;
     /* The share of the counters above spent while the variable order was being changed, so reordering's
      * cost can be told apart from the operations'. Taken as differences between a snapshot at the start of
      * each reordering and its end, so nothing on the hot path pays for the distinction. */
@@ -973,7 +987,8 @@ public abstract class NodeTable {
      * @return Whether the table has grown (and hence hash values have to be recomputed).
      */
     final boolean ensureCapacity() {
-        if (freeNodeCount() > size() / 4) {
+        int threshold = denseFreeThreshold >= 0 ? denseFreeThreshold : size() / 4;
+        if (freeNodeCount() > threshold) {
             return false;
         }
 
@@ -981,6 +996,9 @@ public abstract class NodeTable {
         int currentSize = size();
         int invalidatedNodes = 0;
         NatSet invalidatedLeaves = NatSet.of();
+        // The heap is read at most once, and only where it decides between collecting and growing.
+        int newSize = -1;
+        boolean collected = false;
 
         /* Growing rather than collecting while a rewrite is running - see rewriteDepth. Growing moves no
          * node; it only has to leave the flagged ones out of the chains, which grow does. */
@@ -988,31 +1006,46 @@ public abstract class NodeTable {
             // Perform any pre-gc cleanup, e.g. releasing phantom references
             notifyBeforeGc();
 
-            logger.log(Level.FINE, "Running GC on {0} of size {1}", new Object[] {this, currentSize});
-
-            // Leaves all live nodes marked
+            logger.log(Level.FINE, "Attempting GC on {0} of size {1}", new Object[] {this, currentSize});
+            // Mark all live nodes to find out whether we want to clean up or grow
             int liveNodes = markAllReferencedNodes();
             invalidatedLeaves = clearUnreferencedLeaves();
 
+            // The fraction of live nodes above which we grow instead of completing the gc:
+            // If we have many live nodes, clearing the invalid nodes alone is not worth it
+            double liveNodeThreshold = configuration.gcLiveNodeThreshold();
+            if (liveNodes > currentSize * liveNodeThreshold) {
+                // Too many live nodes, so we want to grow; determine how much we want to grow
+                newSize = nextSize(currentSize, configuration);
+                if (newSize < desiredSize(currentSize, configuration)) {
+                    // We want more than we can get, so we are under memory pressure
+                    liveNodeThreshold = Math.max(liveNodeThreshold, MEMORY_PRESSURE_LIVE_NODE_THRESHOLD);
+                }
+            }
             @SuppressWarnings("NumericCastThatLosesPrecision")
-            int maximumLiveNodes = (int) (currentSize * liveNodeThreshold(configuration));
-            if (liveNodes <= maximumLiveNodes) {
+            int maximumLiveNodes = (int) (currentSize * liveNodeThreshold);
+            if (liveNodes <= maximumLiveNodes || newSize <= currentSize) {
+                // Either enough dead nodes or we cannot afford growing at all:
+                // Reclaim dead nodes and rebuild
                 int reclaimedNodes = reclaimUnmarkedNodes();
                 logger.log(Level.FINE, "Collected {0} nodes", reclaimedNodes);
                 notifyAfterGc(reclaimedNodes, invalidatedLeaves);
-                if (freeNodeCount() > size() / 4) {
+                collected = true;
+                if (freeNodeCount() > threshold) {
+                    // Collected enough, reset the pressure
+                    denseFreeThreshold = -1;
                     assert rewriteDepth > 0 || checkOwner();
                     return false;
                 }
-                /* Only reachable under memory pressure (see liveNodeThreshold): The collection did not even
-                 * lift the table above the threshold which triggered it, so try to grow anyway instead of
-                 * collecting again on the very next allocation. Nodes and leaves are already reported. */
+                // Reachable under memory pressure: We have little room, but collecting did not collect much.
+                // So, as a last resort, we try to grow anyway instead of collecting again on the next request.
+
+                // Nodes and leaves are already reported.
                 invalidatedLeaves = NatSet.of();
             } else {
                 logger.log(Level.FINER, "Not enough free nodes");
                 futileGarbageCollectionCount += 1;
-                /* Drop the dead nodes anyway - they are of no use in the grown table, and rebuilding
-                 * their hash chain entries is the most expensive part of growing. */
+                // We don't rebuild the hash chains, but we know which nodes are dead, so use this information
                 int[] nodeData = this.nodeData;
                 int invalidatedCount = 0;
                 approximateDeadNodeCount = 0;
@@ -1041,10 +1074,27 @@ public abstract class NodeTable {
             }
         }
 
-        int newSize = nextSize(currentSize, configuration);
+        // We need to grow
+
+        if (newSize < 0) {
+            newSize = nextSize(currentSize, configuration);
+        }
         if (newSize <= currentSize) {
+            // Memory pressure: We cannot grow at all.
+
+            int freeNodes = freeNodeCount();
+            if (collected && freeNodes < currentSize / MINIMUM_FREE_DIVISOR) {
+                // We attempted collection, it did not free enough, and we cannot grow
+                throw new OutOfMemoryError(String.format(
+                        "Node table %s is full: %d of %d nodes live after collecting, and the heap (%d bytes"
+                                + " available) does not allow growing it",
+                        this, currentSize - freeNodes, currentSize, availableMemory()));
+            }
             // Growing is not possible - carry on with a densely packed table for as long as we can
-            checkState(freeNodeCount() > 0, "Node table %s is full and cannot grow", this);
+            checkState(freeNodes > 0, "Node table %s is full and cannot grow", this);
+
+            // Don't go through this whole procedure again, allow the table to grow fuller
+            denseFreeThreshold = freeNodes / 2;
             assert rewriteDepth > 0 || checkOwner();
             return false;
         }
@@ -1053,22 +1103,6 @@ public abstract class NodeTable {
         notifyAfterTableGrowth(invalidatedNodes, invalidatedLeaves);
         assert rewriteDepth > 0 || checkOwner();
         return true;
-    }
-
-    /*
-     * The fraction of the table which may be live for a garbage collection to be worth it (as opposed to
-     * growing the table). Reclaiming has to leave enough headroom to be worth its cost: A collection is only triggered at
-     * 25% free nodes and costs a full mark (which is a random access traversal of all live nodes) plus a
-     * sweep of the whole table.
-     */
-    private double liveNodeThreshold(NodeTableConfiguration configuration) {
-        double threshold = configuration.gcLiveNodeThreshold();
-        if (threshold >= MEMORY_PRESSURE_LIVE_NODE_THRESHOLD) {
-            return threshold;
-        }
-        //noinspection NumericCastThatLosesPrecision
-        long required = (long) requiredSizeBytes(desiredSize(size(), configuration));
-        return required <= availableMemory() ? threshold : MEMORY_PRESSURE_LIVE_NODE_THRESHOLD;
     }
 
     /** Storage per node slot of the columns this table's shape defines, ignoring the reordering ones. */
@@ -1093,8 +1127,7 @@ public abstract class NodeTable {
 
     /**
      * Approximation of the memory still available for allocation. Note that used memory includes garbage
-     * which the JVM has not collected yet, so this is an under-approximation - which is the safe direction,
-     * as it biases towards reclaiming instead of growing.
+     * which the JVM has not collected yet, so this is an under-approximation.
      */
     private static long availableMemory() {
         Runtime runtime = Runtime.getRuntime();
@@ -1106,6 +1139,23 @@ public abstract class NodeTable {
         return maximum - (runtime.totalMemory() - runtime.freeMemory());
     }
 
+    /**
+     * {@link #availableMemory()} after asking the JVM for a collection, at most once per table size. The used memory
+     * includes garbage the JVM has not collected yet, so a shortage may not be real; one full JVM collection costs
+     * less than collecting a dense table every few allocations, growing it by too little, or giving up needlessly.
+     * Once per size, so a heap that is really full does not pay a JVM collection per table collection.
+     */
+    private long collectedAvailableMemory() {
+        int size = size();
+        if (jvmGcRequestSize != size) {
+            jvmGcRequestSize = size;
+            jvmGcRequestCount += 1;
+            //noinspection CallToSystemGC
+            Runtime.getRuntime().gc(); // NOPMD - the point: an exact reading, see above
+        }
+        return availableMemory();
+    }
+
     private static long desiredSize(int currentSize, NodeTableConfiguration configuration) {
         //noinspection NumericCastThatLosesPrecision
         return Math.min(MAXIMAL_NODE_COUNT, (long) (currentSize * configuration.growthFactor()));
@@ -1115,25 +1165,29 @@ public abstract class NodeTable {
     private int nextSize(int currentSize, NodeTableConfiguration configuration) {
         long desired = desiredSize(currentSize, configuration);
         long available = availableMemory();
-
-        long size;
         if (available == Long.MAX_VALUE || requiredSizeBytes(desired) <= available) {
-            size = desired;
-        } else {
-            // Grow by as much as we can still afford
-            size = Math.min(desired, (long) (available / (bytesPerSlot() * MEMORY_SAFETY_FACTOR)));
-            memoryLimitedGrowthCount += 1;
-            logger.log(Level.FINE, "Limiting growth of {0} to {1} nodes, {2} bytes available", new Object[] {
-                this, size, available
-            });
+            return (int) desired;
         }
-        return size <= currentSize ? currentSize : (int) size;
+        // We currently don't have enough space on the heap, but maybe GC didn't run
+        long collected = collectedAvailableMemory();
+        if (requiredSizeBytes(desired) <= collected) {
+            return (int) desired;
+        }
+
+        // Grow by as much as we can still afford, if that is worth a rehash
+        memoryLimitedGrowthCount += 1;
+        long affordable = Math.min(desired, (long) (collected / (bytesPerSlot() * MEMORY_SAFETY_FACTOR)));
+        logger.log(Level.FINE, "Limiting growth of {0} to {1} nodes, {2} bytes available", new Object[] {
+            this, affordable, collected
+        });
+        return affordable < currentSize + currentSize / MINIMUM_GROWTH_DIVISOR ? currentSize : (int) affordable;
     }
 
     public void grow(int size) {
         int currentSize = size();
 
         growCount += 1;
+        denseFreeThreshold = -1;
         // Clamp before searching for a prime - nextPrime has no upper bound and would overflow
         int newSize = Primes.nextPrime(Math.min(MAXIMAL_NODE_COUNT, size));
         checkState(currentSize < newSize, "Got new size %s with old size %s", newSize, currentSize);
@@ -1922,6 +1976,7 @@ public abstract class NodeTable {
                 entry(prefix + "node_table_peak_live_nodes", String.valueOf(peakLiveNodeCount)),
                 entry(prefix + "node_table_futile_gc_count", String.valueOf(futileGarbageCollectionCount)),
                 entry(prefix + "node_table_memory_limited_grow_count", String.valueOf(memoryLimitedGrowthCount)),
+                entry(prefix + "node_table_jvm_gc_request_count", String.valueOf(jvmGcRequestCount)),
                 /* The cost of memory management, amortized over the nodes produced, prime indicator
                  * for regressions; rises sharply if the table is collected too often. */
                 entry(
