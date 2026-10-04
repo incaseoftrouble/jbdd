@@ -582,6 +582,11 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     }
 
     @Override
+    public Map<String, StatisticDescription> describeStatistics() {
+        return mdd.describeStatistics();
+    }
+
+    @Override
     public void invalidateCache() {
         mdd.invalidateCache();
     }

@@ -21,7 +21,6 @@ import java.util.Map;
 /**
  * Reports statistics of an object. The keys may change between versions; the values are numbers.
  */
-@FunctionalInterface
 public interface StatisticsSource {
     /**
      * A snapshot of the statistics, read to the given {@code detail}.
@@ -32,4 +31,9 @@ public interface StatisticsSource {
     default Map<String, Object> statistics() {
         return statistics(StatisticsDetail.FULL);
     }
+
+    /**
+     * What each key of {@link #statistics()} means: its kind, which says how readings combine, and a sentence.
+     */
+    Map<String, StatisticDescription> describeStatistics();
 }

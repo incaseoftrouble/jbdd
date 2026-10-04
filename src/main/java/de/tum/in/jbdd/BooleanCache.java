@@ -24,20 +24,22 @@ import de.tum.in.jbdd.collections.NatSet;
 import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.jspecify.annotations.Nullable;
 
-final class BooleanCache implements VariableOrderObserver {
-
+final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
     private static final Logger logger = Logger.getLogger(BooleanCache.class.getName());
 
     private static final int[] EMPTY_INT_ARRAY = new int[0];
     private static final Object[] EMPTY_OBJECT_ARRAY = new Object[0];
     private static final double[] EMPTY_DOUBLE_ARRAY = new double[0];
+    private static final Statistic EXISTS_REUSE_COUNT = Statistic.counter(
+            "exists_reuse_count", "quantifications that reused the exists cache of the previous variable set");
+    private static final Statistic AND_EXISTS_REUSE_COUNT = Statistic.counter(
+            "and_exists_reuse_count", "relational products that reused the cache of the previous variable set");
 
     private final BooleanBase<?, ?> bdd;
     private int existsReuseCount = 0;
@@ -468,15 +470,14 @@ final class BooleanCache implements VariableOrderObserver {
 
     // Utility
 
-    Map<String, Object> statistics() {
-        Map<String, Object> statistics = new HashMap<>();
-        caches.forEach((name, cache) -> statistics.putAll(cache.statistics("cache_" + name)));
-        statistics.putAll(composeTupleCache.statistics("cache_compose_tuple"));
-        statistics.putAll(andAllCache.statistics("cache_and_all"));
-        statistics.putAll(restrictCubeCache.statistics("cache_restrict_cube"));
-        statistics.put("exists_reuse_count", existsReuseCount);
-        statistics.put("and_exists_reuse_count", andExistsReuseCount);
-        return statistics;
+    @Override
+    public void report(StatisticsReport report, StatisticsDetail detail) {
+        caches.forEach((name, cache) -> cache.report(report.about("cache_", name), detail));
+        composeTupleCache.report(report.about("cache_", "compose_tuple"), detail);
+        andAllCache.report(report.about("cache_", "and_all"), detail);
+        restrictCubeCache.report(report.about("cache_", "restrict_cube"), detail);
+        report.put(EXISTS_REUSE_COUNT, existsReuseCount);
+        report.put(AND_EXISTS_REUSE_COUNT, andExistsReuseCount);
     }
 
     abstract static class IntCache extends CacheBase.IntKeys {

@@ -25,7 +25,6 @@ import de.tum.in.jbdd.collections.NatSet;
 import de.tum.in.jbdd.collections.NatSets;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 import java.util.PrimitiveIterator;
 import org.jspecify.annotations.Nullable;
 
@@ -35,11 +34,35 @@ import org.jspecify.annotations.Nullable;
  * why this owns the bijection rather than either diagram.
  */
 @SuppressWarnings("AssertWithSideEffects")
-public final class DdVariableOrderImpl implements DdVariableOrder {
+public final class DdVariableOrderImpl implements DdVariableOrder, StatisticsReporter {
     /* How much sifting is allowed to grow the node count at most */
     private static final double MAXIMUM_SIFT_GROWTH = 1.2;
     /* Unreachable fraction of a table a swap tolerates before collecting - see swapWithNextLevel. */
     private static final double MAXIMUM_SIFT_GARBAGE = 0.40;
+
+    private static final Statistic REORDER_COUNT = Statistic.counter("reorder_count", "reorderings");
+    private static final Statistic REORDER_SAVED_NODES =
+            Statistic.counter("reorder_saved_nodes", "nodes the reorderings saved");
+    private static final Statistic REORDER_TIME =
+            Statistic.counter("reorder_time_milliseconds", "time spent reordering");
+    private static final Statistic REORDER_SWAPS = Statistic.counter("reorder_swaps", "swaps of adjacent levels");
+    private static final Statistic REORDER_NOTIFICATIONS =
+            Statistic.counter("reorder_notifications", "notifications of observers about a reordering");
+    private static final Statistic REORDER_REWRITTEN_NODES =
+            Statistic.counter("reorder_rewritten_nodes", "nodes rewritten by the swaps");
+    private static final Statistic REORDER_COLLECTIONS =
+            Statistic.counter("reorder_collections", "collections during reordering");
+    private static final Statistic REORDER_ABANDONED_DIRECTIONS = Statistic.counter(
+            "reorder_abandoned_directions", "sifting directions abandoned because the diagrams grew too much");
+    private static final Statistic REORDER_IDENTITY_REVERTS =
+            Statistic.counter("reorder_identity_reverts", "reorderings undone because they saved nothing");
+    /* The one ratio that says whether sifting is earning its keep, the way node_table_work_per_created_node does
+     * for memory management. */
+    private static final Statistic.Ratio REORDER_WORK_PER_SAVED_NODE = Statistic.ratio(
+            "reorder_work_per_saved_node",
+            "nodes rewritten per node saved",
+            List.of(REORDER_REWRITTEN_NODES),
+            List.of(REORDER_SAVED_NODES));
 
     /* The diagrams are reached through the context rather than held here: this is built before they are,
      * and nothing on the hot path (levelOfVariable, variableAtLevel) touches them at all. */
@@ -655,20 +678,18 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
     }
 
     /** Reported by the BDD, which is where a caller looks for them - there is only one order. */
-    Map<String, Object> reorderStatistics() {
-        return Map.of(
-                "reorder_count", reorderCount,
-                "reorder_saved_nodes", reorderSavedNodes,
-                "reorder_time_milliseconds", reorderTimeMilliseconds,
-                "reorder_swaps", reorderSwaps,
-                "reorder_notifications", reorderNotifications,
-                "reorder_rewritten_nodes", reorderRewrittenNodes,
-                "reorder_collections", reorderCollections,
-                "reorder_abandoned_directions", reorderAbandonedDirections,
-                "reorder_identity_reverts", reorderIdentityReverts,
-                /* Nodes rewritten per node saved - the one ratio that says whether sifting is earning its
-                 * keep, the way node_table_work_per_created_node does for memory management. */
-                "reorder_work_per_saved_node", Util.ratio(reorderRewrittenNodes, reorderSavedNodes));
+    @Override
+    public void report(StatisticsReport report, StatisticsDetail detail) {
+        report.put(REORDER_COUNT, reorderCount);
+        report.put(REORDER_SAVED_NODES, reorderSavedNodes);
+        report.put(REORDER_TIME, reorderTimeMilliseconds);
+        report.put(REORDER_SWAPS, reorderSwaps);
+        report.put(REORDER_NOTIFICATIONS, reorderNotifications);
+        report.put(REORDER_REWRITTEN_NODES, reorderRewrittenNodes);
+        report.put(REORDER_COLLECTIONS, reorderCollections);
+        report.put(REORDER_ABANDONED_DIRECTIONS, reorderAbandonedDirections);
+        report.put(REORDER_IDENTITY_REVERTS, reorderIdentityReverts);
+        report.ratio(REORDER_WORK_PER_SAVED_NODE);
     }
 
     @Override

@@ -19,13 +19,11 @@ package de.tum.in.jbdd;
 import de.tum.in.jbdd.collections.MutableNatSet;
 import de.tum.in.jbdd.collections.NatSet;
 import java.math.BigInteger;
-import java.util.Map;
 import java.util.function.IntConsumer;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 @SuppressWarnings("AssertWithSideEffects")
-public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagram<S, P>, NodeBasedDd, StatisticsSource {
+public abstract class BooleanBase<S, P>
+        implements BooleanTerminalDecisionDiagram<S, P>, NodeBasedDd, StatisticsReporter.Source {
     private static final MutableNatSet NO_VALUES = MutableNatSet.dense(0);
 
     static final BigInteger TWO = BigInteger.ONE.add(BigInteger.ONE);
@@ -78,24 +76,19 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
     abstract String statisticsPrefix();
 
     @Override
-    public Map<String, Object> statistics(StatisticsDetail detail) {
+    public void report(StatisticsReport report, StatisticsDetail detail) {
         // COUNTERS may be read from another thread, which the access guard would take for a second user.
         boolean guarded = detail == StatisticsDetail.FULL;
         assert !guarded || accessGuard.acquire();
-        Map<String, Object> statistics = Stream.of(
-                        table().statistics(statisticsPrefix(), detail).entrySet().stream(),
-                        cache().statistics().entrySet().stream(),
-                        ownStatistics().entrySet().stream())
-                .flatMap(stream -> stream)
-                .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+        StatisticsReport named = report.named(configuration().name());
+        table().report(named.prefixed(statisticsPrefix()), detail);
+        cache().report(named, detail);
+        reportOwn(named, detail);
         assert !guarded || accessGuard.release();
-        return Statistics.prefixStatistics(configuration().name(), statistics);
     }
 
     /** Whatever the concrete diagram wants to report beyond its table's and its caches'. */
-    Map<String, Object> ownStatistics() {
-        return Map.of();
-    }
+    abstract void reportOwn(StatisticsReport report, StatisticsDetail detail);
 
     @Override
     public String treeToString(int function) {

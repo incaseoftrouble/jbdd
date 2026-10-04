@@ -26,7 +26,6 @@ import de.tum.in.jbdd.collections.NatSet;
 import de.tum.in.jbdd.collections.NatSets;
 import java.math.BigInteger;
 import java.util.Arrays;
-import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.PrimitiveIterator;
@@ -237,8 +236,8 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
     }
 
     @Override
-    Map<String, Object> ownStatistics() {
-        return order.reorderStatistics();
+    void reportOwn(StatisticsReport report, StatisticsDetail detail) {
+        order.report(report, detail);
     }
 
     @Override

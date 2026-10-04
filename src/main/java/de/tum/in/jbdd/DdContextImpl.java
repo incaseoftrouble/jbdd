@@ -19,15 +19,12 @@ package de.tum.in.jbdd;
 import static de.tum.in.jbdd.BooleanBase.EMPTY_INT_ARRAY;
 import static de.tum.in.jbdd.Preconditions.checkState;
 
-import java.util.HashMap;
-import java.util.Map;
-
 /**
  * The two diagrams sharing one variable universe, and the creation of the variables in it. The order
  * those variables are laid out in is {@link DdVariableOrderImpl}'s; everything that moves it lives there.
  */
 @SuppressWarnings("AssertWithSideEffects")
-public final class DdContextImpl implements DdContext {
+public final class DdContextImpl implements DdContext, StatisticsReporter.Source {
     private final BddConfiguration configuration;
     private final DdVariableOrderImpl order;
     private final BddImpl bdd;
@@ -150,13 +147,9 @@ public final class DdContextImpl implements DdContext {
     }
 
     @Override
-    public Map<String, Object> statistics(StatisticsDetail detail) {
-        Map<String, Object> statistics = new HashMap<>(bdd.statistics(detail));
-        Map<String, Object> mtbddStatistics = mtbdd.statistics(detail);
-        assert mtbddStatistics.keySet().stream().noneMatch(statistics::containsKey)
-                : "The two diagrams report overlapping statistics";
-        statistics.putAll(mtbddStatistics);
-        return Map.copyOf(statistics);
+    public void report(StatisticsReport report, StatisticsDetail detail) {
+        bdd.report(report, detail);
+        mtbdd.report(report, detail);
     }
 
     @Override

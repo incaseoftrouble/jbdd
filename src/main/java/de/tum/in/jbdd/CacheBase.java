@@ -17,14 +17,11 @@
 package de.tum.in.jbdd;
 
 import java.util.Arrays;
-import java.util.Map;
 import java.util.function.BooleanSupplier;
 import java.util.function.IntPredicate;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import org.jspecify.annotations.Nullable;
 
-public abstract class CacheBase {
+public abstract class CacheBase implements StatisticsReporter {
     private static final double USAGE_GROWTH_LOAD_FACTOR = 0.75;
     private static final int USAGE_GROWTH_FACTOR = 2;
     private static final int MINIMUM_SIZE = 16;
@@ -180,11 +177,10 @@ public abstract class CacheBase {
         }
     }
 
-    public Map<String, Object> statistics(String name) {
-        Map<String, Object> data = Map.of("size", size, "load_factor", loadFactor());
-        return Stream.concat(data.entrySet().stream(), statistics.data().entrySet().stream())
-                .collect(Collectors.toUnmodifiableMap(
-                        e -> String.format("%s_%s", name, e.getKey()), Map.Entry::getValue));
+    /** Writes this cache's statistics into {@code report}, the scope of its name. */
+    @Override
+    public void report(StatisticsReport report, StatisticsDetail detail) {
+        statistics.report(report, size, loadFactor());
     }
 
     /**

@@ -208,11 +208,19 @@ Entry points — never `new BddImpl(...)` outside tests:
   `variableOrder()`), the two `createVariable*AtLevel` forms, and **the** `statistics()`: both diagrams,
   their tables and caches, and the order, in one map. It is the only public accessor over a pair — neither
   `Bdd` nor `MtBdd` reports its own, since a partial view of one key space is what made the numbers hard to
-  find. The accessor is the public `StatisticsSource`, which `DdContext` and `Mdd` extend; each contributor
-  implements it too (the two tables prefix their keys `bdd_`/`mtbdd_` through `statisticsPrefix()`, so the
-  spaces stay disjoint and the merge loses nothing). `Statistics` holds the public `formatStatistics` and the
-  package-private `prefixStatistics` (by the configuration's `name()`). `Mdd` keeps an accessor of its own: it
-  is its own variable universe, with no context above it. `statistics(StatisticsDetail)` reads to a detail: `COUNTERS` are the fields the
+  find. The accessor is the public `StatisticsSource` (`statistics(StatisticsDetail)`, `describeStatistics()`),
+  which `DdContext` and `Mdd` extend; `Mdd` keeps one of its own: it is its own variable universe, with no
+  context above it. **A key exists only as a `Statistic` constant** next to the counter it reads - name, kind
+  (`COUNTER` summed, `GAUGE` the current value, `MAXIMUM`, `RATIO` recomputed from its parts, never averaged) and
+  a sentence; a `Statistic.Ratio` names its parts and is computed from them, never handed a value. Every
+  structure writing statistics (tables, caches, the order, the wrapper managers) implements the package-private
+  `StatisticsReporter`, whose one `report(report, detail)` writes into a `StatisticsReport`; the public sources
+  implement `StatisticsReporter.Source`, which reads both the snapshot and the descriptions from one such report,
+  so a key cannot go undescribed and a ratio cannot disagree with its parts. `StatisticsReport` is public only
+  because those classes are, and opaque outside the package. Scopes carry the prefixes - the configuration's `name()`, the
+  table's `bdd_`/`mtbdd_`/`mdd_` (`statisticsPrefix()`), `cache_<name>_`, `set_`/`map_` - and the name `{name}`
+  in a sentence stands for; a key written twice fails an assertion. `Statistics.formatStatistics` renders a
+  snapshot. `statistics(StatisticsDetail)` reads to a detail: `COUNTERS` are the fields the
   structures keep as they run (no pass, no write, no access guard - the one level another thread may read,
   best effort), `FULL` (what `statistics()` reads) adds a read-only pass over each table (valid, referenced
   and saturated nodes, the nodes below the referenced ones, counted with a visited `NatSet` of its own, never
@@ -938,7 +946,7 @@ in the diagram rather than a branch on `origin` inside the cache.
   order one of those can sit *above* the greatest replaced level, so the recursion reaches it. Both
   compose implementations bounds-check before indexing rather than relying on the cut-off.
 
-Statistics (`DdVariableOrderImpl.reorderStatistics`, folded into the BDD's contribution to the context's
+Statistics (`DdVariableOrderImpl.report`, folded into the BDD's contribution to the context's
 map and prefixed with `configuration().name()`, which is empty by default): `reorder_saved_nodes` against `reorder_swaps` /
 `reorder_rewritten_nodes` is the benefit-vs-cost pair, summarised as `reorder_work_per_saved_node`.
 `reorder_collections` says whether `MAXIMUM_SIFT_GARBAGE` is set sensibly,
@@ -1104,7 +1112,8 @@ the prose that is carrying something.
   intertwined with the rest of the structure. `NodeTable`'s field comments are the model for the second:
   each states an invariant relating that field to others, which is not recoverable by reading any single
   method.
-- Statistics fields get a comment saying what question the number answers.
+- A statistic is a `Statistic` constant next to its counter (§3), and its sentence says what question the number
+  answers.
 
 ### Performance is not standard-Java performance here
 

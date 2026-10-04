@@ -17,16 +17,14 @@
 package de.tum.in.jbdd;
 
 import static de.tum.in.jbdd.Preconditions.checkState;
-import static java.util.Map.entry;
 
 import de.tum.in.jbdd.collections.MutableNatSet;
 import de.tum.in.jbdd.collections.NatSet;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Deque;
-import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Map;
+import java.util.List;
 import java.util.PrimitiveIterator;
 import java.util.Set;
 import java.util.function.IntConsumer;
@@ -36,7 +34,7 @@ import java.util.logging.Logger;
 import org.jspecify.annotations.Nullable;
 
 @SuppressWarnings("PMD.TooManyFields")
-public abstract class NodeTable {
+public abstract class NodeTable implements StatisticsReporter {
     private static final Logger logger = Logger.getLogger(NodeTable.class.getName());
     private static final int[] EMPTY_INT_ARRAY = new int[0];
     private static final int[][] EMPTY_INT_ARRAY_ARRAY = new int[0][];
@@ -137,6 +135,87 @@ public abstract class NodeTable {
      * still reachable" is an O(1) question instead of a mark from the roots. */
     private int[] parentCount = EMPTY_INT_ARRAY;
     private int deadNodeCount = 0;
+
+    private static final Statistic SIZE = Statistic.gauge("node_table_size", "slots of the node table");
+    private static final Statistic BIGGEST_REFERENCED_NODE = Statistic.gauge(
+            "biggest_referenced_node", "an upper bound of the topmost referenced node, exact after each collection");
+    private static final Statistic CREATED_NODES =
+            Statistic.counter("created_nodes", "nodes created since the table was built");
+    private static final Statistic LOOKUPS =
+            Statistic.counter("hash_table_lookups", "lookups of a node in the hash chains");
+    private static final Statistic LOOKUP_LENGTH =
+            Statistic.counter("hash_table_lookup_length", "chain nodes those lookups visited");
+    private static final Statistic.Ratio LOOKUP_AVERAGE_LENGTH = Statistic.ratio(
+            "hash_table_lookup_average_length",
+            "chain nodes visited per lookup",
+            List.of(LOOKUP_LENGTH),
+            List.of(LOOKUPS));
+    private static final Statistic GC_COUNT = Statistic.counter("node_table_gc_count", "collections of the table");
+    private static final Statistic GC_TIME =
+            Statistic.counter("node_table_gc_time_milliseconds", "time spent collecting");
+    private static final Statistic GC_MARKED_NODES =
+            Statistic.counter("node_table_gc_marked_nodes", "nodes marked by the collections");
+    private static final Statistic GC_SWEPT_NODES =
+            Statistic.counter("node_table_gc_swept_nodes", "slots the collections swept");
+    private static final Statistic GC_COLLECTED_NODES =
+            Statistic.counter("node_table_gc_collected_nodes", "nodes the collections freed");
+    private static final Statistic FUTILE_GC_COUNT = Statistic.counter(
+            "node_table_futile_gc_count", "collections that freed too little, so that the table grew instead");
+    private static final Statistic GROW_COUNT = Statistic.counter("node_table_grow_count", "times the table grew");
+    private static final Statistic GROW_REHASHED_NODES =
+            Statistic.counter("node_table_grow_rehashed_nodes", "nodes rehashed into a grown table");
+    private static final Statistic MEMORY_LIMITED_GROW_COUNT = Statistic.counter(
+            "node_table_memory_limited_grow_count", "growths sized by the heap left rather than the growth factor");
+    private static final Statistic JVM_GC_REQUEST_COUNT =
+            Statistic.counter("node_table_jvm_gc_request_count", "JVM collections asked for before limiting a growth");
+    private static final Statistic PEAK_LIVE_NODES =
+            Statistic.maximum("node_table_peak_live_nodes", "the most live nodes a collection found");
+    private static final Statistic REORDER_CREATED_NODES =
+            Statistic.counter("node_table_reorder_created_nodes", "nodes created by reordering");
+    private static final Statistic REORDER_GC_COUNT =
+            Statistic.counter("node_table_reorder_gc_count", "collections during reordering");
+    private static final Statistic REORDER_GC_COLLECTED_NODES =
+            Statistic.counter("node_table_reorder_gc_collected_nodes", "nodes those collections freed");
+    private static final Statistic REORDER_GC_TIME =
+            Statistic.counter("node_table_reorder_gc_time_milliseconds", "time those collections took");
+    /* The cost of memory management, amortized over the nodes produced, prime indicator for regressions; rises
+     * sharply if the table is collected too often. */
+    private static final Statistic.Ratio WORK_PER_CREATED_NODE = Statistic.ratio(
+            "node_table_work_per_created_node",
+            "memory management's work (marked, swept and rehashed nodes) per created node",
+            List.of(GC_MARKED_NODES, GC_SWEPT_NODES, GROW_REHASHED_NODES),
+            List.of(CREATED_NODES));
+    /* Complements the above: keeping the work per created node low by simply growing the table shows up as a low
+     * yield. */
+    private static final Statistic.Ratio GC_YIELD = Statistic.ratio(
+            "node_table_gc_yield",
+            "fraction of the swept slots the collections freed",
+            List.of(GC_COLLECTED_NODES),
+            List.of(GC_SWEPT_NODES));
+    /* The memory paid for the work per created node above. The live node count is only sampled during mark phases,
+     * so this is 0 for a table which never collected. */
+    private static final Statistic.Ratio SLOTS_PER_LIVE_NODE = Statistic.ratio(
+            "node_table_slots_per_live_node",
+            "table slots per live node at its peak",
+            List.of(SIZE),
+            List.of(PEAK_LIVE_NODES));
+    // What only a pass over the table reads (StatisticsDetail.FULL).
+    private static final Statistic VALID_NODES =
+            Statistic.gauge("valid_nodes", "nodes in the table, live or not yet collected (FULL)");
+    private static final Statistic REFERENCED_NODES =
+            Statistic.gauge("referenced_nodes", "nodes with a positive or saturated reference count (FULL)");
+    private static final Statistic SATURATED_NODES = Statistic.gauge(
+            "saturated_nodes", "nodes whose reference count saturated, so that no collection frees them (FULL)");
+    private static final Statistic CHILDREN_COUNT =
+            Statistic.gauge("children_count", "nodes at or below a referenced one - the live nodes (FULL)");
+    private static final Statistic HASH_LOAD_FACTOR =
+            Statistic.gauge("hash_table_load_factor", "nodes per hash chain start (FULL)");
+    private static final Statistic HASH_DISTINCT_CHAINS =
+            Statistic.gauge("hash_table_distinct_chains", "hash chains holding a node (FULL)");
+    private static final Statistic HASH_AVERAGE_CHAIN_LENGTH =
+            Statistic.gauge("hash_table_average_chain_length", "nodes per non-empty hash chain (FULL)");
+    private static final Statistic HASH_LONGEST_CHAIN =
+            Statistic.gauge("hash_table_longest_chain", "nodes in the longest hash chain (FULL)");
 
     /* Statistics. Counters describing the cost of memory management (marked / swept / rehashed nodes) are
      * the interesting ones to watch: Collected node count alone says nothing about efficiency - a table
@@ -1922,19 +2001,20 @@ public abstract class NodeTable {
         return createdNodes;
     }
 
-    public Map<String, Object> statistics(String prefix, StatisticsDetail detail) {
-        Map<String, Object> statistics = new HashMap<>(counterStatistics(prefix));
+    /** Writes this table's statistics into {@code report}, the scope of its diagram. */
+    @Override
+    public void report(StatisticsReport report, StatisticsDetail detail) {
+        reportCounters(report);
         if (detail == StatisticsDetail.FULL) {
-            statistics.putAll(structureStatistics(prefix));
+            reportStructure(report);
         }
-        return statistics;
     }
 
     /*
      * What only a pass over the table tells. It only reads: the nodes below the referenced ones are counted with a
      * visited set of their own, not the mark bits, which a collection or a walk may be using.
      */
-    private Map<String, Object> structureStatistics(String prefix) {
+    private void reportStructure(StatisticsReport report) {
         int childrenCount = 0;
         int saturatedNodes = 0;
         int referencedNodes = 0;
@@ -1999,15 +2079,14 @@ public abstract class NodeTable {
             }
         }
 
-        return Map.ofEntries(
-                entry(prefix + "valid_nodes", validNodes),
-                entry(prefix + "referenced_nodes", referencedNodes),
-                entry(prefix + "saturated_nodes", saturatedNodes),
-                entry(prefix + "children_count", childrenCount),
-                entry(prefix + "hash_table_load_factor", chainLengthSum * 1.0 / size()),
-                entry(prefix + "hash_table_distinct_chains", distinctChains),
-                entry(prefix + "hash_table_average_chain_length", Util.ratio(chainLengthSum, distinctChains)),
-                entry(prefix + "hash_table_longest_chain", maximumChainLength));
+        report.put(VALID_NODES, validNodes);
+        report.put(REFERENCED_NODES, referencedNodes);
+        report.put(SATURATED_NODES, saturatedNodes);
+        report.put(CHILDREN_COUNT, childrenCount);
+        report.put(HASH_LOAD_FACTOR, chainLengthSum * 1.0 / size());
+        report.put(HASH_DISTINCT_CHAINS, distinctChains);
+        report.put(HASH_AVERAGE_CHAIN_LENGTH, Util.ratio(chainLengthSum, distinctChains));
+        report.put(HASH_LONGEST_CHAIN, maximumChainLength);
     }
 
     /** The decision nodes at and below root not in visited yet, which it adds to visited. */
@@ -2027,40 +2106,31 @@ public abstract class NodeTable {
         return count;
     }
 
-    private Map<String, Object> counterStatistics(String prefix) {
-        return Map.ofEntries(
-                entry(prefix + "node_table_size", size()),
-                entry(prefix + "biggest_referenced_node", biggestReferencedNode),
-                entry(prefix + "created_nodes", createdNodes),
-                entry(prefix + "hash_table_lookups", hashChainLookups),
-                entry(prefix + "hash_table_lookup_average_length", Util.ratio(hashChainLookupLength, hashChainLookups)),
-                entry(prefix + "node_table_gc_count", garbageCollectionCount),
-                entry(prefix + "node_table_reorder_created_nodes", reorderCreatedNodes),
-                entry(prefix + "node_table_reorder_gc_count", reorderGarbageCollectionCount),
-                entry(prefix + "node_table_reorder_gc_collected_nodes", reorderGarbageCollectedNodeCount),
-                entry(prefix + "node_table_reorder_gc_time_milliseconds", reorderGarbageCollectionTime),
-                entry(prefix + "node_table_gc_time_milliseconds", garbageCollectionTime),
-                entry(prefix + "node_table_gc_collected_nodes", garbageCollectedNodeCount),
-                entry(prefix + "node_table_grow_count", growCount),
-                entry(prefix + "node_table_gc_marked_nodes", markedNodeCount),
-                entry(prefix + "node_table_gc_swept_nodes", sweptNodeCount),
-                entry(prefix + "node_table_grow_rehashed_nodes", rehashedNodeCount),
-                entry(prefix + "node_table_peak_live_nodes", peakLiveNodeCount),
-                entry(prefix + "node_table_futile_gc_count", futileGarbageCollectionCount),
-                entry(prefix + "node_table_memory_limited_grow_count", memoryLimitedGrowthCount),
-                entry(prefix + "node_table_jvm_gc_request_count", jvmGcRequestCount),
-                /* The cost of memory management, amortized over the nodes produced, prime indicator
-                 * for regressions; rises sharply if the table is collected too often. */
-                entry(
-                        prefix + "node_table_work_per_created_node",
-                        Util.ratio(markedNodeCount + sweptNodeCount + rehashedNodeCount, createdNodes)),
-                /* Fraction of each swept table which was actually reclaimed. Complements the above: keeping
-                 * the work per created node low by simply growing the table shows up as a low yield. */
-                entry(prefix + "node_table_gc_yield", Util.ratio(garbageCollectedNodeCount, sweptNodeCount)),
-                /* Table slots held per live node, i.e. the memory paid for the work per created node above.
-                 * Note that the live node count is only sampled during mark phases, so this and
-                 * node_table_peak_live_nodes are 0 for a table which never collected. */
-                entry(prefix + "node_table_slots_per_live_node", Util.ratio(size(), peakLiveNodeCount)));
+    private void reportCounters(StatisticsReport report) {
+        report.put(SIZE, size());
+        report.put(BIGGEST_REFERENCED_NODE, biggestReferencedNode);
+        report.put(CREATED_NODES, createdNodes);
+        report.put(LOOKUPS, hashChainLookups);
+        report.put(LOOKUP_LENGTH, hashChainLookupLength);
+        report.ratio(LOOKUP_AVERAGE_LENGTH);
+        report.put(GC_COUNT, garbageCollectionCount);
+        report.put(GC_TIME, garbageCollectionTime);
+        report.put(GC_MARKED_NODES, markedNodeCount);
+        report.put(GC_SWEPT_NODES, sweptNodeCount);
+        report.put(GC_COLLECTED_NODES, garbageCollectedNodeCount);
+        report.put(FUTILE_GC_COUNT, futileGarbageCollectionCount);
+        report.put(GROW_COUNT, growCount);
+        report.put(GROW_REHASHED_NODES, rehashedNodeCount);
+        report.put(MEMORY_LIMITED_GROW_COUNT, memoryLimitedGrowthCount);
+        report.put(JVM_GC_REQUEST_COUNT, jvmGcRequestCount);
+        report.put(PEAK_LIVE_NODES, peakLiveNodeCount);
+        report.put(REORDER_CREATED_NODES, reorderCreatedNodes);
+        report.put(REORDER_GC_COUNT, reorderGarbageCollectionCount);
+        report.put(REORDER_GC_COLLECTED_NODES, reorderGarbageCollectedNodeCount);
+        report.put(REORDER_GC_TIME, reorderGarbageCollectionTime);
+        report.ratio(WORK_PER_CREATED_NODE);
+        report.ratio(GC_YIELD);
+        report.ratio(SLOTS_PER_LIVE_NODE);
     }
 
     private static final class FunctionToStringSupplier {

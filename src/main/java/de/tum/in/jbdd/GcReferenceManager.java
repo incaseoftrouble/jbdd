@@ -19,7 +19,6 @@ package de.tum.in.jbdd;
 import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
-import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.jspecify.annotations.Nullable;
@@ -29,12 +28,18 @@ import org.jspecify.annotations.Nullable;
  * as long as it lives: wrappers are held weakly, and the {@link ReferenceQueue} hands a collected one's reference
  * back, which the next miss drains and dereferences.
  */
-public class GcReferenceManager<V extends GcReferenceManager.DdContainer, DD extends DecisionDiagram> {
+public class GcReferenceManager<V extends GcReferenceManager.DdContainer, DD extends DecisionDiagram>
+        implements StatisticsReporter {
     private static final Logger logger = Logger.getLogger(GcReferenceManager.class.getName());
 
     // Function 0 is PLACEHOLDER, never a function, so no key space ever produces key 0.
     private static final long EMPTY = 0L;
     private static final int INITIAL_CAPACITY_BITS = 6;
+    private static final Statistic WRAPPER_COUNT = Statistic.gauge("wrapper_count", "live {name} wrappers");
+    private static final Statistic WRAPPER_DRAINED_COUNT =
+            Statistic.counter("wrapper_drained_count", "collected {name} wrappers whose reference was released");
+    private static final Statistic WRAPPER_DRAINED_BEFORE_GC_COUNT = Statistic.counter(
+            "wrapper_drained_before_gc_count", "collected {name} wrappers released right before a table collection");
 
     protected final DD dd;
     private final ReferenceQueue<V> queue = new ReferenceQueue<>();
@@ -69,11 +74,11 @@ public class GcReferenceManager<V extends GcReferenceManager.DdContainer, DD ext
     }
 
     /** The live wrappers and the collected ones drained, in total and right before a table collection. */
-    Map<String, Object> wrapperStatistics(String prefix) {
-        return Map.of(
-                prefix + "wrapper_count", size,
-                prefix + "wrapper_drained_count", drainedCount,
-                prefix + "wrapper_drained_before_gc_count", drainedBeforeGcCount);
+    @Override
+    public void report(StatisticsReport report, StatisticsDetail detail) {
+        report.put(WRAPPER_COUNT, size);
+        report.put(WRAPPER_DRAINED_COUNT, drainedCount);
+        report.put(WRAPPER_DRAINED_BEFORE_GC_COUNT, drainedBeforeGcCount);
     }
 
     protected V protect(V container) {

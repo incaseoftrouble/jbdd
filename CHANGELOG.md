@@ -49,6 +49,7 @@
 * MTBDD terminal reference counts are `short`s (saturating at 32767) rather than bytes
 * The n-ary MTBDD `apply` over two operands keeps the operator's neutral and absorbing values
 * Dereferencing the topmost referenced node no longer searches the table downwards for the next one
+* `StatisticsSource.describeStatistics()`: what each statistics key means - its kind (counter, gauge, maximum, or a ratio with the keys it is computed from) and a sentence; `hash_table_lookup_length` is reported, so the average lookup length can be recomputed
 * `StatisticsSource.statistics(StatisticsDetail)`, on `DdContext` and `Mdd`: `COUNTERS` reads only the fields kept as the diagrams run (no pass over a table, readable from another thread), `FULL` (`statistics()`) adds a pass over each table, which no longer uses the mark bits
 * Removed `BddConfiguration.logStatisticsOnShutdown()`: its output went through `java.util.logging`, whose own shutdown hook resets the handlers first, so nothing was ever printed - read `DdContext.statistics()` from a shutdown hook of your own instead
 * Packages: `Cube`, `Cursor`, `NatSets`, the maps and `NatSet` live in `de.tum.in.jbdd.collections`, `DimacsReader` in `de.tum.in.jbdd.io`; `Cube.ofUnsafe` checks its arguments by assertion only

@@ -30,14 +30,4 @@ public final class Statistics {
                 .map(e -> String.format("%s=%s", e.getKey(), e.getValue()))
                 .collect(Collectors.joining("\n"));
     }
-
-    /** Puts {@code name} in front of every key, so several structures can be read side by side. */
-    static Map<String, Object> prefixStatistics(String name, Map<String, Object> statistics) {
-        if (name.isEmpty()) {
-            return statistics;
-        }
-        return statistics.entrySet().stream()
-                .collect(Collectors.toUnmodifiableMap(
-                        e -> String.format("%s_%s", name, e.getKey()), Map.Entry::getValue));
-    }
 }

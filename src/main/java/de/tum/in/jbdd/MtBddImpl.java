@@ -47,10 +47,14 @@ import org.jspecify.annotations.Nullable;
  *  - In a generic MTBDD we have no commutativity and neutral elements, hence much more "base case" branching is required
  */
 @SuppressWarnings({"PMD", "AssignmentToMethodParameter", "AssertWithSideEffects"})
-public class MtBddImpl implements MtBdd, StatisticsSource {
+public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
     /** {@link #agreement}'s predicate: raw terminal equality, which within one numbering is value
      * equality. Fixed, so its cache never needs an init. */
     private static final MtBddBinaryPredicate EQUALITY = MtBddBinaryPredicate.equality();
+
+    private static final Statistic ALLOCATED_VALUES = Statistic.gauge("allocated_values", "terminal values allocated");
+    private static final Statistic VALUE_TRIGGERED_COLLECTIONS = Statistic.counter(
+            "value_triggered_collections", "collections forced by values alone, with no node allocation");
 
     private static final int INVERT_ARRAY_DOMAIN_THRESHOLD = 64;
     private static final int INITIAL_VALUE_CAPACITY = 1024;
@@ -2499,16 +2503,16 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     }
 
     @Override
-    public Map<String, Object> statistics(StatisticsDetail detail) {
+    public void report(StatisticsReport report, StatisticsDetail detail) {
         // COUNTERS may be read from another thread, which the access guard would take for a second user.
         boolean guarded = detail == StatisticsDetail.FULL;
         assert !guarded || accessGuard.acquire();
-        Map<String, Object> statistics = new HashMap<>(table.statistics("mtbdd_", detail));
-        statistics.putAll(cache.statistics());
-        statistics.put("mtbdd_allocated_values", allocatedValues.size());
-        statistics.put("mtbdd_value_triggered_collections", valueTriggeredCollectionCount);
+        StatisticsReport mtbddReport = report.named(bdd.configuration().name()).prefixed("mtbdd_");
+        table.report(mtbddReport, detail);
+        cache.report(mtbddReport, detail);
+        mtbddReport.put(ALLOCATED_VALUES, allocatedValues.size());
+        mtbddReport.put(VALUE_TRIGGERED_COLLECTIONS, valueTriggeredCollectionCount);
         assert !guarded || accessGuard.release();
-        return Statistics.prefixStatistics(bdd.configuration().name(), statistics);
     }
 
     /**

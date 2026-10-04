@@ -27,7 +27,6 @@ import de.tum.in.jbdd.collections.NatSet;
 import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
 import java.util.function.IntPredicate;
@@ -48,7 +47,7 @@ import org.jspecify.annotations.Nullable;
  * {@code initMapBoolean}.
  */
 @SuppressWarnings({"PMD.TooManyFields", "PMD.CouplingBetweenObjects"})
-final class MtBddCache implements VariableOrderObserver {
+final class MtBddCache implements VariableOrderObserver, StatisticsReporter {
     private static final int[] EMPTY_INT_ARRAY = new int[0];
     private static final Object[] EMPTY_OBJECT_ARRAY = new Object[0];
 
@@ -654,29 +653,30 @@ final class MtBddCache implements VariableOrderObserver {
 
     // Utility
 
-    Map<String, Object> statistics() {
-        Map<String, Object> statistics = new HashMap<>();
-        caches.forEach((name, cache) -> statistics.putAll(cache.statistics("mtbdd_cache_" + name)));
-        statistics.put("mtbdd_cache_apply_reuse_count", applyReuseCount);
-        statistics.put("mtbdd_cache_map_reuse_count", mapReuseCount);
-        statistics.put("mtbdd_cache_map_boolean_reuse_count", mapBooleanReuseCount);
-        statistics.put("mtbdd_cache_apply_boolean_reuse_count", applyBooleanReuseCount);
-        statistics.put("mtbdd_cache_all_match_reuse_count", allMatchReuseCount);
-        statistics.put("mtbdd_cache_compose_reuse_count", composeReuseCount);
-        statistics.put("mtbdd_cache_restrict_reuse_count", restrictReuseCount);
-        statistics.put("mtbdd_cache_reaches_match_reuse_count", reachesMatchReuseCount);
-        statistics.put("mtbdd_cache_count_reuse_count", countReuseCount);
-        return statistics;
+    @Override
+    public void report(StatisticsReport report, StatisticsDetail detail) {
+        caches.forEach((name, cache) -> cache.report(report.about("cache_", name), detail));
+        reportReuse(report, "apply", applyReuseCount);
+        reportReuse(report, "map", mapReuseCount);
+        reportReuse(report, "map_boolean", mapBooleanReuseCount);
+        reportReuse(report, "apply_boolean", applyBooleanReuseCount);
+        reportReuse(report, "all_match", allMatchReuseCount);
+        reportReuse(report, "compose", composeReuseCount);
+        reportReuse(report, "restrict", restrictReuseCount);
+        reportReuse(report, "reaches_match", reachesMatchReuseCount);
+        reportReuse(report, "count", countReuseCount);
     }
 
-    interface MtbddCacheStorage {
+    private static void reportReuse(StatisticsReport report, String cache, int reuseCount) {
+        report.about("cache_", cache).put(CacheStatistics.REUSE_COUNT, reuseCount);
+    }
+
+    interface MtbddCacheStorage extends StatisticsReporter {
         void invalidate();
 
         void clearInvalidMtbddNodes(boolean preserve);
 
         void clearInvalidBddNodes(boolean preserve);
-
-        Map<String, Object> statistics(String name);
     }
 
     /** What a slot of a bin holds - it decides which collection can make the entry stale. */

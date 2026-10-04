@@ -567,6 +567,11 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
     }
 
     @Override
+    public Map<String, StatisticDescription> describeStatistics() {
+        return mt.describeStatistics();
+    }
+
+    @Override
     public String toString() {
         String name = mt.bddImpl().configuration().name();
         return name.isEmpty() ? "mtbdd" : name;

@@ -16,11 +16,9 @@
  */
 package de.tum.in.jbdd;
 
-import java.util.HashMap;
-import java.util.Map;
 import java.util.function.Function;
 
-final class BinaryFactoryContextImpl implements BinaryFactoryContext {
+final class BinaryFactoryContextImpl implements BinaryFactoryContext, StatisticsReporter.Source {
     private final DdContextImpl context;
     private final BddSetFactoryImpl bddSets;
     private final BddMapFactoryImpl bddMaps;
@@ -57,11 +55,10 @@ final class BinaryFactoryContextImpl implements BinaryFactoryContext {
     }
 
     @Override
-    public Map<String, Object> statistics(StatisticsDetail detail) {
-        Map<String, Object> statistics = new HashMap<>(context.statistics(detail));
-        statistics.putAll(bddSets.wrapperStatistics("set_"));
-        statistics.putAll(bddMaps.wrapperStatistics("map_"));
-        return Map.copyOf(statistics);
+    public void report(StatisticsReport report, StatisticsDetail detail) {
+        context.report(report, detail);
+        bddSets.report(report.about("", "set"), detail);
+        bddMaps.report(report.about("", "map"), detail);
     }
 
     @Override

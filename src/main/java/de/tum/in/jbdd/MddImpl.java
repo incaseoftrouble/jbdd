@@ -74,6 +74,11 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         return "mdd_";
     }
 
+    @Override
+    void reportOwn(StatisticsReport report, StatisticsDetail detail) {
+        // An MDD has no order, so its table and caches are all there is.
+    }
+
     // Nodes
 
     @Override
