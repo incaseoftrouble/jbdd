@@ -13,7 +13,16 @@ can settle; `CLAUDE.md` §11 is explicit that reasoning about these paths has re
 
 - **[KEY-COPY] `MtBddImpl#cartesianProductRecursive` and `#computeNaryApply` - do the memos pay for the key copy?**
   Both recursions rewrite their operand array in place, so a cache key has to be a clone (§6). Whether the
-  hit rate covers an allocation per node needs a benchmark with many-operand products and applies.
+  hit rate covers an allocation per node needs a benchmark with many-operand products and applies;
+  `MtBddBenchmark.unionAll` is one for the apply.
+- **[NARY-APPLY] `MtBddImpl#apply(int[], MtBddNaryOperator)` - slower than the pairwise fold it stands for.**
+  `MtBddBenchmark`: uniting 256 edge trees under a registered union is 23 ms as a pairwise fold and 66 ms as one
+  n-ary application (the result has 61,000 nodes and 39,000 distinct values; the fold's order, left, balanced or
+  deepest first, moves it by a few ms at most). The n-ary recursion carries the whole tuple to every node - a
+  cofactor array and a cloned cache key of 256 ints per step - where the fold's steps each see two operands and
+  the shared apply cache. The BDD `andAll` shrinks its tuple along the path and falls back to pairwise where
+  operands do not share top variables (§5); the MTBDD apply does neither. Whether a neutral-dropping, shrinking
+  tuple or a plain pairwise fold inside `apply(int[], ...)` wins is the measurement to make before touching it.
 - **[NARY-SPLIT] `BddImpl#computeAndAll` - when a step switches to pairwise.** Every step goes pairwise for its
   whole subtree once its operands do not outnumber their distinct top levels four to one. Measured against making
   that choice at the entry only (2026-10-06, ms per conjunction): operands sharing only their first variable over

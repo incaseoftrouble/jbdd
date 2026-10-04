@@ -98,6 +98,9 @@ jmh {
   if (isRequested("jmhNary")) {
     includes.add("NaryBenchmark*")
   }
+  if (isRequested("jmhMtBdd")) {
+    includes.add("MtBddBenchmark*")
+  }
 }
 
 tasks.register<Task>("jmhRandom") {
@@ -127,6 +130,11 @@ tasks.register<Task>("jmhEnumeration") {
 
 tasks.register<Task>("jmhNary") {
   description = "Run the n-ary conjunction benchmarks"
+  finalizedBy("jmh")
+}
+
+tasks.register<Task>("jmhMtBdd") {
+  description = "Run the MTBDD map workload"
   finalizedBy("jmh")
 }
 

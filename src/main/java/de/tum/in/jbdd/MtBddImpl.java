@@ -1081,6 +1081,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
 
     @Override
     public int apply(int[] functions, MtBddNaryOperator operator) {
+        // TODO [NARY-APPLY] slower than a pairwise fold over many operands
         assert functions.length == operator.arity : "Operator declares arity " + operator.arity;
 
         if (functions.length == 0) {

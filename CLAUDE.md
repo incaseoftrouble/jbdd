@@ -42,7 +42,7 @@ asking for clarification over guessing.**
 ./gradlew test --tests 'de.tum.in.jbdd.RegressionTests'    # quick loop
 ./gradlew compileJava compileTestJava -q                   # quickest check
 ./gradlew spotlessApply    # palantir-java-format, 120 cols; pre-commit hook runs spotlessCheck
-./gradlew jmhRandom | jmhSynthetic | jmhDimacs | jmhEnumeration | jmhNary | jmhNatSet | jmh
+./gradlew jmhRandom | jmhSynthetic | jmhDimacs | jmhEnumeration | jmhNary | jmhMtBdd | jmhNatSet | jmh
 ```
 
 Gotchas that have cost real time:
@@ -1167,6 +1167,7 @@ comments and the changelog are expected to be backed by these; **measure before 
 | `jmhDimacs` | `DimacsBenchmark`: CNF instances conjoined clause by clause |
 | `jmhEnumeration` | `EnumerationBenchmark`: solution and path cursors over `EnumerationState`'s shapes (many free variables, some, none, long paths), on the identity order and on one every cursor translates |
 | `jmhNary` | `NaryBenchmark`: `or(int[])` over guarded cubes, `and(int[])` over clauses, cold |
+| `jmhMtBdd` | `MtBddBenchmark`: the object layer's maps as a synthesis tool uses them - edge trees united under a registered operator, mapped, split on the inputs, paired, inverted, filtered |
 | `jmhNatSet` | `NatSetBenchmark`: the set operations a synthesis tool spends its time in, per shape |
 
 `NatSetBenchmark` sits in `collections` and times each operation over a pool of 1024 random sets of one shape
