@@ -331,7 +331,7 @@ class RegressionTests {
     }
 
     @Test
-    void testSaturatedTerminalWrappersStayCollectible() {
+    void testSaturatedTerminalWrappersStayCollectible() throws InterruptedException {
         BddImpl bdd = new DdContextImpl(config).bdd();
         BddSetFactoryImpl sets = new BddSetFactoryImpl(bdd);
         BddMapFactoryImpl maps = new BddMapFactoryImpl(sets);
@@ -363,13 +363,23 @@ class RegressionTests {
 
         // Draining the queue dereferences the saturated terminal once per collected wrapper; that is a
         // no-op, but it must not trip the "dereferencing a value that was never referenced" assertion.
+        // Collected wrappers are queued asynchronously (by the JVM's reference handler, after the collection
+        // cleared them), and only a new wrapper drains the queue: every miss creates one, counted in created.
         Values<String> fresh = maps.create();
         assertEquals("after", fresh.of("after").evaluate(NatSetFixtures.of()));
+        int created = 1;
+        for (int miss = 0; miss < 1000 && maps.protectedObjectCount() - created >= 10; miss++) {
+            Thread.sleep(1);
+            fresh.of("after " + miss);
+            created += 1;
+        }
         assertTrue(mt.check());
 
         // The point of the exercise: a saturated function's wrapper is held weakly like any other, so
         // dropping it releases both the wrapper and the numbering it points at.
-        assertTrue(maps.protectedObjectCount() < 10, "wrappers were pinned: " + maps.protectedObjectCount());
+        assertTrue(
+                maps.protectedObjectCount() - created < 10,
+                "wrappers were pinned: " + maps.protectedObjectCount() + " (" + created + " created after)");
     }
 
     private static BddSet cube(BddSetFactory sets, int index) {
