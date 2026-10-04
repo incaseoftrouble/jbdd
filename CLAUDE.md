@@ -270,7 +270,7 @@ Collections independent of decision diagrams, public for users too; nothing here
   `MutableNatSet` is the holder's own - what a method returning a copy returns, and what `MutableNatSet.copyOf` makes.
   Equality, hash code and `toString` are `Set<Integer>`'s; `NatSet.ORDER` orders by size, then
   lexicographically. `MutableNatSet` has `java.util.BitSet`'s mutators under their names and exceptions. Not yet
-  used by the core; `docs/natset-draft.md` is the plan for that and for SemML.
+  used by the core; `docs/natset-draft.md` is the plan for that.
 - **Two implementation classes, never more**, so a call site stays at most bimorphic: `ImmutableNatSet` (an
   exact ascending array or words, whichever is smaller, in one `final` `Object` field told apart by `instanceof` -
   24 bytes rather than 32 for two typed fields; its hash code computed once; the empty set and the singletons
@@ -520,8 +520,8 @@ consequences that are easy to get wrong:
 clears it. Every write goes through `CacheBase.putBin`, which records the bin while fewer than size / 32 were
 written since the last clear, so the clear resets just those (`sparse_clear_count`); past that, or after a growth
 that rehashed entries, it fills the whole array. The ephemeral and per-call caches above need this: they keep
-the size of their largest call, and most later calls write a handful of entries (SemML's hard samples: the MTBDD
-`map` cache cleared 1.3M times, ~16,000 bins for ~38 entries each - 3% of synthesis time before). A write
+the size of their largest call, and most later calls write a handful of entries (a synthesis workload clears the MTBDD
+`map` cache 1.3M times, ~16,000 bins for ~38 entries each; full fills were 3% of its run time). A write
 bypassing `putBin` would survive a clear; `ensureValid` asserts the cache empty after every clear.
 
 **Simplify-fused operations.** `andSimplify` (BDD) and `applySimplify`/`mapSimplify`/
@@ -846,7 +846,7 @@ entry point (`of`, `ifThenElse`, `cartesianProduct`, `createRelabeling`, `relabe
 
 - **Scope is the caller's knob.** One numbering shared by many maps gives subtree sharing between them and
   makes every operation between them raw and cheap; a narrow numbering per map is denser but makes every
-  operation cross-numbering. Neither is imposed. Per-automaton and per-SCC are the scopes worth measuring.
+  operation cross-numbering. Neither is imposed.
 - **Same numbering ⇒ raw int operations.** `agreement` is raw terminal equality on its own cache;
   `ifThenElse`, `update`, `where`, `domainOf` never unwrap a value. Maps are canonicalized on
   `(function, values)` (the numbering's key space in the high half of the key, §3), so `equals` is `==` and
@@ -939,7 +939,7 @@ entry point (`of`, `ifThenElse`, `cartesianProduct`, `createRelabeling`, `relabe
   on it. An assertion auditing a *whole* structure where the operation touches one part of it - a table
   `check()`, `isNoneMarked()`, a full cache scan - is written `assert !Assertions.COSTLY_ASSERTIONS || …`:
   it runs only with the system property `JBDD_COSTLY_ASSERTIONS`, which JBDD's own test tasks set. Without it
-  a user's `-ea` run would be quadratic (a caller once saw an HOA test go from 2 s to 700 s); with `-ea`
+  a user's `-ea` run would be quadratic (a client's test went from 2 s to 700 s); with `-ea`
   alone, a cache still checks every entry it hands out, and audits itself fully after each prune. Keep validation in assertions, not in runtime checks, on hot paths — with `-ea` off, invalid
   arguments corrupt the structure quietly rather than throwing.
 - **An exception inside an operation, including one a callback throws, is fatal.** Nothing is written to
@@ -1108,8 +1108,8 @@ one are `// TODO`s in the source, with their reasoning in `TODO.md`.
   interner is unaffected, but "exactly once" would be false), and specify low-first explicitly rather than
   only "deterministic", so an injective `apply`'s output is provably already canonical and the pass can be
   skipped. `computeApply` and `computeMap` both recurse low-then-high; write it down. The deciding
-  measurement: with a per-automaton numbering, how much structural sharing is lost against a canonicalized
-  per-state numbering?
+  measurement: with one numbering shared by a group of maps, how much structural sharing is lost against a
+  canonicalized numbering per map?
 - **`invert` sizes its array-vs-`HashMap` path from a global watermark.** `MtBddImpl.invert` takes
   `domainSize = allocatedValues.length()` — monotone and global — to decide a *per-function* operation, so
   one high-out-degree map permanently forces every later `invert` onto the `HashMap` path. `domainSize`

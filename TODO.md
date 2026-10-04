@@ -55,5 +55,5 @@ and DIMACS instances here do not stand in for it.
   question with it. What it would take: a Shannon step over k operands (cofactor those on the top level,
   drop `TRUE`s, stop on `FALSE` or a complementary pair), and a cache keyed on the operand tuple — sorted,
   so the key is canonical, and cloned before descending like `cartesianProduct`'s (§6). Worth it only if a
-  benchmark with many operands per call (SemML's equivalence classes are the motivating workload) shows the
+  benchmark with many operands per call shows the
   fold's intermediates dominating.

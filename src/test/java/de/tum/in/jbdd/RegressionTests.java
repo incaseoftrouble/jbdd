@@ -1127,8 +1127,8 @@ class RegressionTests {
 
     /**
      * Cubes were conjoined literal by literal in variable order, each step walking the whole partial cube:
-     * as deep as the cube is long, which overflowed the stack for the thousands of state bits of an
-     * encoded controller. Built bottom-up, a cube needs no recursion, so a small stack must suffice - as
+     * as deep as the cube is long, which overflowed the stack for a cube over thousands of variables.
+     * Built bottom-up, a cube needs no recursion, so a small stack must suffice - as
      * long as no collection runs, whose mark is recursive by design; the table is sized so none does.
      */
     @Test
