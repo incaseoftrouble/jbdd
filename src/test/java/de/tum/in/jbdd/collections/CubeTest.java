@@ -77,7 +77,7 @@ class CubeTest {
         assertTrue(CUBE.value(0));
         assertFalse(CUBE.value(2));
         assertThrows(IllegalArgumentException.class, () -> CUBE.value(1));
-        assertEquals(NatSet.of(0), CUBE.positives());
+        assertEquals(NatSet.of(0), CUBE.assignment());
         assertEquals(NatSet.of(2), CUBE.negatives());
 
         assertTrue(CUBE.contains(NatSet.of(0, 1)));

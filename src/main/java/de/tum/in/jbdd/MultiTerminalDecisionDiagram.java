@@ -168,16 +168,12 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
     /**
      * Determines whether all values in the co-domain of the given {@code function} match the {@code predicate}.
      */
-    default boolean allValuesMatch(int function, IntPredicate predicate) {
-        return valuesOf(function).intStream().allMatch(predicate);
-    }
+    boolean allValuesMatch(int function, IntPredicate predicate);
 
     /**
      * Determines whether any value in the co-domain of the given {@code function} matches the {@code predicate}.
      */
-    default boolean anyValueMatches(int function, IntPredicate predicate) {
-        return !allValuesMatch(function, predicate.negate());
-    }
+    boolean anyValueMatches(int function, IntPredicate predicate);
 
     /**
      * Calls the given {@code action} for each value in the co-domain of the given {@code function}

@@ -240,7 +240,7 @@ public abstract class BooleanBase<S, P> implements BooleanTerminalDecisionDiagra
 
     @Override
     public int nodeReferenceCount(int node) {
-        return table().nodeReferenceCount(node);
+        return node == TRUE ? -1 : table().nodeReferenceCount(node);
     }
 
     @Override

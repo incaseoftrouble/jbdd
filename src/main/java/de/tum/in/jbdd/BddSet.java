@@ -139,14 +139,14 @@ public interface BddSet {
     /**
      * A cover of this set by implicants, cubes whose union is exactly this set.
      *
-     * @see BinaryDecisionDiagram#implicants(int)
+     * @see BddUtil#implicants(BinaryDecisionDiagram, int)
      */
     List<Cube> implicants();
 
     /**
      * All prime implicants of this set, independent of the variable order.
      *
-     * @see BinaryDecisionDiagram#primeImplicants(int)
+     * @see BddUtil#primeImplicants(BinaryDecisionDiagram, int)
      */
     List<Cube> primeImplicants();
 
@@ -201,7 +201,7 @@ public interface BddSet {
     /**
      * The shortest of the {@link #forEachPath paths}, the first of them in that order; empty for the empty set.
      *
-     * @see BinaryDecisionDiagram#shortestPath(int)
+     * @see BddUtil#shortestPath(BinaryDecisionDiagram, int)
      */
     Optional<Cube> shortestPath();
 

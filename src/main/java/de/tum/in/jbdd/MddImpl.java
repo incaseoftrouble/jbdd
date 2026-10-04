@@ -885,7 +885,6 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         assert values[maxReplacedVariable] != -1;
 
         table.pushToWorkStack(function);
-        // cache.initRemapping(values, maxReplacedVariable);
         int result = computeRestrict(function, values, maxReplacedVariable);
         table.popFromWorkStack();
         assert table.workStacksEmpty();
@@ -908,11 +907,6 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         int node = positive(function);
         boolean isComplemented = node != function;
 
-        //        if (cache.lookupRemapping(node)) {
-        //            return complementIf(cache.lookupResult(), isComplemented);
-        //        }
-        //        int hash = cache.lookupHash();
-
         int[] children = table.childrenUnchecked(node);
         int domain = children.length;
         int resultNode;
@@ -929,7 +923,6 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         } else {
             resultNode = computeRestrict(children[variableReplacementValue], values, maxReplacedVariable);
         }
-        // cache.putRemapping(hash, node, resultNode);
         return complementIf(resultNode, isComplemented);
     }
 
@@ -1405,7 +1398,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
     }
 
-    public static class MddTable extends NodeTable.Multi {
+    public static final class MddTable extends NodeTable.Multi {
         private final MddImpl mdd;
 
         MddTable(MddImpl mdd, int initialSize) {

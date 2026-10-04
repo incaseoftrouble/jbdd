@@ -89,12 +89,12 @@ public final class IntObjectHashMap<V> {
      * must return non-null and must not modify this map.
      */
     public V computeIfAbsent(int key, IntFunction<? extends V> mapping) {
-        V present = get(key);
-        if (present != null) {
-            return present;
+        int slot = find(key);
+        if (keys[slot] == key) {
+            return valueAt(slot);
         }
-        V value = mapping.apply(key);
-        put(key, value);
+        V value = Objects.requireNonNull(mapping.apply(key), "value");
+        insert(slot, key, value);
         return value;
     }
 

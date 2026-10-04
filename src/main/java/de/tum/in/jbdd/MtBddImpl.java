@@ -2820,7 +2820,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         protected int levelOfVariable(int variable) {
             // The MTBDD shares its companion BDD's variable order; that is what lets a cross-table
             // recursion expand on a single topmost variable.
-            return mtbdd.bdd().levelOfVariable(variable);
+            return mtbdd.order.levelOfVariable(variable);
         }
 
         @Override

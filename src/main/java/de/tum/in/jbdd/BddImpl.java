@@ -630,7 +630,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
 
     @Override
     public int of(Cube path) {
-        assert path.support().intStream().allMatch(this::isValidVariable);
+        assert path.support().allMatch(this::isValidVariable);
         assert accessGuard.acquire();
         int node = cubeFunction(path);
         assert accessGuard.release();
@@ -1593,7 +1593,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
 
     @Override
     public int conjunction(NatSet variables) {
-        assert variables.intStream().allMatch(this::isValidVariable);
+        assert variables.allMatch(this::isValidVariable);
         assert accessGuard.acquire();
         int node = cubeFunction(Cube.ofUnsafe(variables, variables));
         assert accessGuard.release();
@@ -1602,7 +1602,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
 
     @Override
     public int disjunction(NatSet variables) {
-        assert variables.intStream().allMatch(this::isValidVariable);
+        assert variables.allMatch(this::isValidVariable);
         assert accessGuard.acquire();
         // x1 | ... | xn is !(!x1 & ... & !xn)
         int node = not(cubeFunction(Cube.ofUnsafe(MutableNatSet.dense(0), variables)));

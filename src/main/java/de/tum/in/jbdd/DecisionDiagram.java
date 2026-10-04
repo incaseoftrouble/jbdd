@@ -83,8 +83,8 @@ public interface DecisionDiagram {
      * @param functions The to be de-referenced functions
      */
     default void dereference(int... functions) {
-        for (int node : functions) {
-            dereference(node);
+        for (int function : functions) {
+            dereference(function);
         }
     }
 

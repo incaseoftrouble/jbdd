@@ -20,8 +20,6 @@ final class HashUtil {
     private HashUtil() {}
 
     static int hash(int key) {
-        // int h = key * 0x9E3779B1;
-        // return h & Integer.MAX_VALUE;
         return key;
     }
 

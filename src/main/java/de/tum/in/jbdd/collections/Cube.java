@@ -123,11 +123,6 @@ public final class Cube {
         return assignment.contains(variable);
     }
 
-    /** The variables fixed to true. */
-    public NatSet positives() {
-        return assignment;
-    }
-
     /** The variables fixed to false. */
     public NatSet negatives() {
         return support.difference(assignment);

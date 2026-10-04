@@ -36,9 +36,8 @@ import java.util.stream.IntStream;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Operation cache for {@link MtBddImpl}, mirroring {@link BooleanCache}'s design (see
- * {@code MTBDD_CACHE_PLAN.md} for the reasoning) but its own family (not extending {@link BooleanCache}
- * itself - only the shared {@link CacheBase.IntKeys} hashing/growth/prune engine), since every entry
+ * Operation cache for {@link MtBddImpl}, mirroring {@link BooleanCache}'s design but its own family (not extending
+ * {@link BooleanCache} itself - only the shared {@link CacheBase.IntKeys} hashing/growth/prune engine), since every entry
  * here potentially straddles two independent {@link NodeTable}s: {@code mtbdd}'s own and the companion
  * {@code bdd}'s. Every concrete cache below knows, per key/result slot, which of the two tables that slot
  * belongs to (a {@code BooleanCache} entry only ever has one). Validity is checked reactively (on prune,

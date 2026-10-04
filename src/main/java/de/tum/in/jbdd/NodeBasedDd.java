@@ -37,10 +37,10 @@ public interface NodeBasedDd extends DecisionDiagram {
     boolean isSaturatedNode(int node);
 
     /**
-     * Returns whether the given {@code node} is referenced.
+     * Returns whether the node of the given {@code function} is referenced.
      */
-    default boolean nodeIsReferenced(int node) {
-        return nodeReferenceCount(nodeFor(node)) > 0;
+    default boolean nodeIsReferenced(int function) {
+        return nodeReferenceCount(nodeFor(function)) > 0;
     }
 
     /**

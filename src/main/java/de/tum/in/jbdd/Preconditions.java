@@ -24,7 +24,7 @@ final class Preconditions {
 
     static void checkState(boolean state) {
         if (!state) {
-            throw new IllegalStateException("");
+            throw new IllegalStateException();
         }
     }
 
