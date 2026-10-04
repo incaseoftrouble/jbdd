@@ -387,6 +387,34 @@ class RegressionTests {
     }
 
     @Test
+    void testTableCollectionDrainsCollectedWrappersFirst() throws InterruptedException {
+        // A wrapper the JVM collected keeps its function referenced until its reference is drained; a table
+        // collection drains first, so the dropped cubes' nodes go without any new wrapper being made.
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BddSetFactoryImpl sets = (BddSetFactoryImpl) ctx.bddSets();
+        BddImpl bdd = (BddImpl) ctx.bdd();
+        List<BddSet> held = new ArrayList<>();
+        for (int i = 0; i < 200; i++) {
+            held.add(cube(sets, i));
+        }
+        int wrappers = sets.protectedObjectCount();
+        held.clear();
+        forceJvmGarbageCollection();
+
+        // The references are queued asynchronously after the collection cleared them.
+        int reclaimed = 0;
+        for (int miss = 0; miss < 1000 && sets.protectedObjectCount() > wrappers - 150; miss++) {
+            Thread.sleep(1);
+            reclaimed += bdd.gc();
+        }
+        assertTrue(
+                sets.protectedObjectCount() <= wrappers - 150,
+                "collected wrappers stayed: " + sets.protectedObjectCount() + " of " + wrappers);
+        assertTrue(reclaimed > 0);
+        assertTrue((long) ctx.statistics().get("set_wrapper_drained_before_gc_count") >= 150);
+    }
+
+    @Test
     void testWrapperTableStaysCanonicalThroughCollections() throws InterruptedException {
         // Enough wrappers to grow the table several times, half of them collected, so lookups probe across the
         // holes the backward-shift deletion closes - and a function and its complement are separate keys.

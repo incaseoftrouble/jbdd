@@ -16,6 +16,7 @@
  */
 package de.tum.in.jbdd;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Function;
 
@@ -57,7 +58,10 @@ final class BinaryFactoryContextImpl implements BinaryFactoryContext {
 
     @Override
     public Map<String, Object> statistics() {
-        return context.statistics();
+        Map<String, Object> statistics = new HashMap<>(context.statistics());
+        statistics.putAll(bddSets.wrapperStatistics("set_"));
+        statistics.putAll(bddMaps.wrapperStatistics("map_"));
+        return Map.copyOf(statistics);
     }
 
     @Override

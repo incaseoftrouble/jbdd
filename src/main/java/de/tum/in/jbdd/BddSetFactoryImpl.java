@@ -48,6 +48,7 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
 
     BddSetFactoryImpl(BddImpl dd) {
         super(dd);
+        dd.registerObserver(drainBeforeGc);
         empty = make(dd.falseFunction());
         universe = make(dd.trueFunction());
     }

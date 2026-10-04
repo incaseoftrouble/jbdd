@@ -9,7 +9,7 @@
 * Significant renaming / restructuring of the API: Distinguish between boolean function (what a BDD node abstracts) and internal structure (nodes) to reduce mixing of these now different concepts
 * Remove iterative implementation: On some benchmarks about ~10% slower, tedious to maintain, and increasing stack size is cheap
 * Separate out the node table structure to have a unified base for BDDs, MTBDDs, MDDs, etc.
-* Slightly improved usability of automatic reference management; its wrappers are canonical through a primitive-keyed table, so a lookup allocates nothing (`DdContainer.canonicalKey` is a `long`)
+* Slightly improved usability of automatic reference management; its wrappers are canonical through a primitive-keyed table, so a lookup allocates nothing (`DdContainer.canonicalKey` is a `long`); collected wrappers are also drained before every table collection, so their nodes are not kept
 * New methods:
   * `andNot`
   * `forall` quantification, also on `BddSet`

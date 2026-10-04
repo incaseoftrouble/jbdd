@@ -60,6 +60,7 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
     BddMapFactoryImpl(BddSetFactoryImpl bddSets) {
         super(bddSets.dd.mtbdd());
         this.bddSets = bddSets;
+        dd.registerObserver(drainBeforeGc);
     }
 
     @Override

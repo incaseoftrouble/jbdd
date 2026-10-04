@@ -238,7 +238,10 @@ Entry points — never `new BddImpl(...)` outside tests:
   backward-shift deletion, key `0` empty because `PLACEHOLDER` is never a function), so a lookup allocates
   nothing. **Never split it per key space**: the table is what keeps the weak references reachable, and a
   `Reference` that is itself unreachable is never enqueued - its function would stay referenced for good.
-  A wrapper collected but not yet queued is replaced in place, the new one inheriting its reference. The table
+  A wrapper collected but not yet queued is replaced in place, the new one inheriting its reference. The queue is
+  drained on every miss and before every collection of the owner's table (`drainBeforeGc`, registered by both
+  factories), so a queued wrapper's nodes are not counted live; `BinaryFactoryContext.statistics()` reports
+  `set_`/`map_` `wrapper_count`, `wrapper_drained_count` and `wrapper_drained_before_gc_count`. The table
   grows at 2/3 load and shrinks when a drain leaves it below 1/8.
 - A caller wrapping sets in its own type binds it with `BinaryFactoryContext.attachToSets` (an
   `Attachment<BddSet, A>`) - one slot per `BddSetImpl`, built lazily, living exactly as long as the set -
@@ -400,7 +403,7 @@ and is `final`; each table supplies hooks (`configuration`, `notifyBeforeGc`/`no
 per-table copy is how one table silently loses a step (draining `ProtectionTracker` before marking, say).
 
 ```
-drain phantom refs (notifyBeforeGc), then
+drain phantom refs and queued wrappers (notifyBeforeGc), then
 mark everything reachable from referenced|saturated nodes and both work stacks
   ├─ live ≤ gcLiveNodeThreshold (default 0.5) → reclaim the rest, notify afterGc
   └─ else                                     → invalidate the unmarked, grow, notify afterTableGrowth

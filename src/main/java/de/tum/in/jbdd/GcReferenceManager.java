@@ -19,6 +19,7 @@ package de.tum.in.jbdd;
 import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
+import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.jspecify.annotations.Nullable;
@@ -46,6 +47,18 @@ public class GcReferenceManager<V extends GcReferenceManager.DdContainer, DD ext
     private @Nullable DdReference<V>[] references = newReferences(1 << INITIAL_CAPACITY_BITS);
     private int shift = Long.SIZE - INITIAL_CAPACITY_BITS;
     private int size = 0;
+    private long drainedCount = 0;
+    private long drainedBeforeGcCount = 0;
+
+    /* Drains the queue before the owning diagram collects its table: a wrapper the JVM collected and queued would
+     * otherwise keep its function referenced until the next miss, and the collection would count its nodes live.
+     * The owner registers it with its diagram; held here, since the diagram holds observers weakly. */
+    final NodeTableObserver drainBeforeGc = new NodeTableObserver() {
+        @Override
+        public void beforeGc(DecisionDiagram origin) {
+            drainedBeforeGcCount += drain();
+        }
+    };
 
     public GcReferenceManager(DD dd) {
         this.dd = dd;
@@ -53,6 +66,14 @@ public class GcReferenceManager<V extends GcReferenceManager.DdContainer, DD ext
 
     int protectedObjectCount() {
         return size;
+    }
+
+    /** The live wrappers and the collected ones drained, in total and right before a table collection. */
+    Map<String, Object> wrapperStatistics(String prefix) {
+        return Map.of(
+                prefix + "wrapper_count", size,
+                prefix + "wrapper_drained_count", drainedCount,
+                prefix + "wrapper_drained_before_gc_count", drainedBeforeGcCount);
     }
 
     protected V protect(V container) {
@@ -94,6 +115,7 @@ public class GcReferenceManager<V extends GcReferenceManager.DdContainer, DD ext
                 count += 1;
             }
         }
+        drainedCount += count;
         if (count > 0) {
             logger.log(Level.FINEST, "Cleared {0} references", count);
             if (keys.length > 1 << INITIAL_CAPACITY_BITS && 8 * size < keys.length) {
