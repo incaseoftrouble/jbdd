@@ -58,6 +58,19 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
     private static final int FRACTION = 0;
     private static final int COMPLEMENT_FRACTION = 1;
     private static final int EXPONENT = 2;
+    /*
+     * The n-ary recursion pays for every operand at every node it builds, which pays off only when the tuple shrinks
+     * as the path decides variables - operands that share their top variables, like cubes over the same variables or
+     * clauses over few variables, drop out or split level by level.
+     * Operands over distinct variables (a formula's conjuncts, each a different sub-formula's set) stay in the tuple
+     * all the way down, and pairwise is cheaper by a factor of their number: the operands per top level decide, at
+     * every step, since operands sharing only their first variables are independent below them.
+     */
+    private static final int NARY_MINIMUM_OPERANDS_PER_TOP_LEVEL = 4;
+    private static final long[] NO_KEYS = new long[0];
+    // One cube per literal, for the joint composition's restrictions.
+    private Cube[] literalCubes = new Cube[0];
+    private int[] literalCubeHashes = EMPTY_INT_ARRAY;
 
     private int[] variableNodes;
     private final DdVariableOrderImpl order;
@@ -1129,9 +1142,6 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
 
     // Joint composition
 
-    private Cube[] literalCubes = new Cube[0];
-    private int[] literalCubeHashes = EMPTY_INT_ARRAY;
-
     private Cube literalCube(int variable, boolean value) {
         int index = 2 * variable + (value ? 1 : 0);
         Cube[] cubes = literalCubes;
@@ -1698,9 +1708,55 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
 
         assert accessGuard.acquire();
         assert table.workStacksEmpty();
-        int result = computeAndAll(functions);
+        int result = andAll(functions);
         assert table.workStacksEmpty();
         assert accessGuard.release();
+        return result;
+    }
+
+    private int andAll(int[] functions) {
+        long[] keys = new long[functions.length];
+        int count = 0;
+        for (int function : functions) {
+            if (function == FALSE) {
+                return FALSE;
+            }
+            if (function != TRUE) {
+                keys[count] = operandKey(function, decisionLevel(function));
+                count += 1;
+            }
+        }
+        int[] operands = canonicalOperands(keys, count, NO_KEYS);
+        if (operands == null) {
+            return FALSE;
+        }
+        if (operands.length == 1) {
+            return operands[0];
+        }
+        table.pushToWorkStack(operands);
+        int result;
+        if (operands.length == 2) {
+            result = computeAnd(operands[0], operands[1]);
+        } else {
+            result = computeAndAll(operands);
+        }
+        table.popFromWorkStack(operands.length);
+        return result;
+    }
+
+    // Deepest top level first, which is from the end of the sorted operands: the accumulator stays in the lower levels
+    // while it is built and each shallower operand adds on top, instead of being dragged through every level at each
+    // step.
+    private int computeAndAllPairwise(int[] operands) {
+        int result = TRUE;
+        for (int i = operands.length - 1; i >= 0; i--) {
+            table.pushToWorkStack(result);
+            result = computeAnd(result, operands[i]);
+            table.popFromWorkStack();
+            if (result == FALSE) {
+                break;
+            }
+        }
         return result;
     }
 
@@ -1712,7 +1768,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         assert table.workStacksEmpty();
         int[] complemented = functions.clone();
         complementAll(complemented);
-        int result = not(computeAndAll(complemented));
+        int result = not(andAll(complemented));
         assert table.workStacksEmpty();
         assert accessGuard.release();
         return result;
@@ -1724,39 +1780,145 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         }
     }
 
-    // Deepest top level first: the accumulator stays in the lower levels while it is built and each shallower
-    // operand adds on top, instead of being dragged through every level at each step. Constants sort first, so
-    // a false operand ends the fold at once.
-    // TODO True n-ary conjunction
-    private int computeAndAll(int[] functions) {
-        if (functions.length == 1) {
-            return functions[0];
+    // A node is below 2^31, so node and sign fill the low word and the level sorts above them.
+    private static long operandKey(int function, int level) {
+        return ((long) level << Integer.SIZE) | ((long) positive(function) << 1) | (function < 0 ? 1 : 0);
+    }
+
+    /*
+     * The canonical operand tuple of a conjunction, which is what the n-ary cache keys on: no constants, no
+     * duplicates, sorted by top level, then by node, then by sign - so that a complementary pair is adjacent, the
+     * operands deciding the next step lead, and the deepest close the tuple. Made of the operands with keys[0, count),
+     * sorted here in place, and those with the keys of sorted, which are in order already and merged in. Null for a
+     * conjunction that is false (a complementary pair), an empty array for one that is true.
+     */
+    @SuppressWarnings("PMD.ReturnEmptyCollectionRatherThanNull") // null says false; the empty tuple says true
+    private static int @Nullable [] canonicalOperands(long[] keys, int count, long[] sorted) {
+        int total = count + sorted.length;
+        if (total == 0) {
+            return EMPTY_INT_ARRAY;
         }
-        if (functions.length == 2) {
-            table.pushToWorkStack(functions[0], functions[1]);
-            int result = computeAnd(functions[0], functions[1]);
-            table.popFromWorkStack(2);
-            return result;
+        Arrays.sort(keys, 0, count);
+        int[] operands = new int[total];
+        int size = 0;
+        int previous = 0;
+        int next = 0;
+        int nextSorted = 0;
+        while (next < count || nextSorted < sorted.length) {
+            long key;
+            if (nextSorted == sorted.length || (next < count && keys[next] < sorted[nextSorted])) {
+                key = keys[next];
+                next += 1;
+            } else {
+                key = sorted[nextSorted];
+                nextSorted += 1;
+            }
+            // A node has one level, so equal nodes are equal above the sign bit.
+            int functionReverse = (int) (key & Integer.MAX_VALUE);
+            int node = functionReverse >>> 1;
+            if (size > 0 && node == (previous >>> 1)) {
+                if (functionReverse == previous) {
+                    // Equal functions
+                    continue;
+                }
+                // Complementary functions -- important short-circuit
+                return null;
+            }
+            operands[size] = (functionReverse & 1) == 0 ? node : -node;
+            size += 1;
+            previous = functionReverse;
+        }
+        return size == total ? operands : Arrays.copyOf(operands, size);
+    }
+
+    /*
+     * The true n-ary conjunction: one recursion over the operand tuple, expanding on the minimal top level, every
+     * cofactored tuple canonicalized again so operands that became true drop out and a false one or a complementary
+     * pair ends the branch. Nothing but the result is built, and the tuple cache shares a sub-conjunction reached
+     * along several paths. The operands are protected by the caller; the cofactors are their children. Against a
+     * pairwise fold (deepest top level first) on unions of hundreds to thousands of cubes over the same variables: a
+     * quarter to an eighth of the nodes created.
+     */
+    @SuppressWarnings("PMD.VariableDeclarationUsageDistance") // the hash is read before the recursion overwrites it
+    private int computeAndAll(int[] operands) {
+        int count = operands.length;
+        if (count == 0) {
+            return TRUE;
+        }
+        if (count == 1) {
+            return operands[0];
+        }
+        if (count == 2) {
+            return computeAnd(operands[0], operands[1]);
         }
 
-        long[] operands = new long[functions.length];
-        for (int i = 0; i < functions.length; i++) {
-            int function = functions[i];
-            table.pushToWorkStack(function);
-            operands[i] = ((long) (Integer.MAX_VALUE - decisionLevelOrMax(function)) << 32) | (function & 0xFFFF_FFFFL);
+        BooleanCache.OperandTupleCache andAllCache = cache.andAllCache();
+        int lookup = andAllCache.lookup(operands);
+        if (lookup != placeholder()) {
+            return lookup;
         }
-        Arrays.sort(operands);
+        int hash = andAllCache.lookupHash;
 
-        int result = TRUE;
-        for (long operand : operands) {
-            table.pushToWorkStack(result);
-            result = computeAnd(result, (int) operand);
-            table.popFromWorkStack();
-            if (result == FALSE) {
-                break;
+        // The tuple is sorted by top level: the operands deciding this step lead, the rest pass into both
+        // cofactors unchanged and in order, so only the deciding ones' children are sorted, then merged in.
+        int level = decisionLevel(operands[0]);
+        int deciding = 1;
+        while (deciding < count && decisionLevel(operands[deciding]) == level) {
+            deciding += 1;
+        }
+        long[] passing = new long[count - deciding];
+        for (int i = deciding; i < count; i++) {
+            passing[i - deciding] = operandKey(operands[i], decisionLevel(operands[i]));
+        }
+        // Where the operands lie at mostly distinct levels, nothing shrinks along the path any more and pairwise is
+        // cheaper - for the whole subtree, which never comes back to the n-ary.
+        // TODO Tune when to switch: a flat ratio, applied at every step, also switches deep tuples that
+        //   would still have shrunk.
+        int distinct = 1;
+        for (int i = 0; i < passing.length; i++) {
+            if (i == 0 || (passing[i] >>> Integer.SIZE) != (passing[i - 1] >>> Integer.SIZE)) {
+                distinct += 1;
             }
         }
-        table.popFromWorkStack(functions.length);
+        if ((long) distinct * NARY_MINIMUM_OPERANDS_PER_TOP_LEVEL > count) {
+            int pairwise = computeAndAllPairwise(operands);
+            andAllCache.put(hash, operands, pairwise);
+            return pairwise;
+        }
+        long[] lowKeys = new long[deciding];
+        long[] highKeys = new long[deciding];
+        int lowCount = 0;
+        int highCount = 0;
+        boolean lowIsFalse = false;
+        boolean highIsFalse = false;
+        for (int i = 0; i < deciding; i++) {
+            if (!lowIsFalse) {
+                int lowChild = low(operands[i]);
+                if (lowChild == FALSE) {
+                    lowIsFalse = true;
+                } else if (lowChild != TRUE) {
+                    lowKeys[lowCount] = operandKey(lowChild, decisionLevel(lowChild));
+                    lowCount += 1;
+                }
+            }
+            if (!highIsFalse) {
+                int highChild = high(operands[i]);
+                if (highChild == FALSE) {
+                    highIsFalse = true;
+                } else if (highChild != TRUE) {
+                    highKeys[highCount] = operandKey(highChild, decisionLevel(highChild));
+                    highCount += 1;
+                }
+            }
+        }
+        int[] lowTuple = lowIsFalse ? null : canonicalOperands(lowKeys, lowCount, passing);
+        int low = lowTuple == null ? FALSE : table.pushToWorkStack(computeAndAll(lowTuple));
+        int[] highTuple = highIsFalse ? null : canonicalOperands(highKeys, highCount, passing);
+        int high = highTuple == null ? FALSE : table.pushToWorkStack(computeAndAll(highTuple));
+        int result = makeFunction(level, low, high);
+        //noinspection VariableNotUsedInsideIf
+        table.popFromWorkStack((lowTuple == null ? 0 : 1) + (highTuple == null ? 0 : 1));
+        andAllCache.put(hash, operands, result);
         return result;
     }
 

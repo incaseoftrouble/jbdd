@@ -42,7 +42,7 @@ asking for clarification over guessing.**
 ./gradlew test --tests 'de.tum.in.jbdd.RegressionTests'    # quick loop
 ./gradlew compileJava compileTestJava -q                   # quickest check
 ./gradlew spotlessApply    # palantir-java-format, 120 cols; pre-commit hook runs spotlessCheck
-./gradlew jmhRandom | jmhSynthetic | jmhDimacs | jmhEnumeration | jmh
+./gradlew jmhRandom | jmhSynthetic | jmhDimacs | jmhEnumeration | jmhNary | jmh
 ```
 
 Gotchas that have cost real time:
@@ -509,6 +509,25 @@ Every `compute*` / `*Recursive` follows six steps; deviations are where bugs liv
 
 The stashed hash stays valid across the recursion because the keys it came from stay alive (work stack).
 If the table grew meanwhile, the hash still lands in a legal bin — a wasted slot, not corruption.
+
+**`and(int[])` / `or(int[])` are one n-ary recursion**, not a fold: the operand tuple is canonicalized (no
+constants, no duplicates, sorted by top level, then node, then sign - one `long` key per operand, the level in the
+high word - so a complementary pair is adjacent and means false, the operands deciding the step lead and the deepest
+close the tuple). The step expands on the first operand's level; the rest pass into both cofactors unchanged and in
+order, so each cofactored tuple is the deciding operands' children, sorted, merged into that rest - an operand that
+became true drops out and the tuple shrinks along the path. Sorting each whole cofactored tuple instead cost twice
+as much on `jmhNary`'s clauses. Results are cached on the tuple (`OperandTupleCache`, keyed and pruned like the
+compose tuple cache). On unions of thousands of cubes over the same variables it creates a quarter to an eighth of
+the nodes a pairwise fold does. It pays only where the tuple shrinks along the path, i.e. where operands
+share their top variables (cubes over the same variables, clauses); operands over distinct variables (a
+formula's conjuncts) stay in the tuple to the bottom and cost their number per node, so a step whose operands do
+not outnumber their distinct top levels four to one (`NARY_MINIMUM_OPERANDS_PER_TOP_LEVEL`; a client's formula
+build 6.9 → 12.0 s n-ary, 6.4 s with the choice) finishes its tuple pairwise, folding it from its end (deepest top
+level first). The choice is made at every step, not only at the entry: operands sharing only their first variables
+(`x0 ∨ gᵢ`, the `gᵢ` independent) look shared at the entry and are 5 to 12 times slower n-ary below it. A switch is
+for the whole subtree, which never comes back to the n-ary; it costs up to a fifth on dense random clauses, whose
+deep tuples would still have shrunk (`TODO.md`).
+`NaryBenchmark` (`jmhNary`) times both shapes.
 
 **MTBDD-specific constraint:** the combining function is an **opaque caller lambda with no assumed
 algebra**. There is no `f == g ⇒ f` shortcut and no idempotence — `apply(f, f, op)` must fully recurse.
@@ -1137,7 +1156,7 @@ intuitions transfer badly. Two habits follow:
 `src/jmh/java/...`, JMH, DIMACS instances in `src/jmh/resources`. Performance claims in comments and the
 changelog are expected to be backed by these; **measure before tuning a constant.** `RandomBenchmark`,
 `SyntheticBenchmark`, `SyntheticSetBenchmark`, `DimacsBenchmark`, `EnumerationBenchmark`,
-`HashSchemeBenchmark`.
+`HashSchemeBenchmark`, `NaryBenchmark`.
 
 ## 14. Where the sharp edges are
 

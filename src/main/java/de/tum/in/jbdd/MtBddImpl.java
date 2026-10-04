@@ -1103,9 +1103,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
 
         assert table.workStacksEmpty();
-        for (int function : functions) {
-            table.pushToWorkStack(function);
-        }
+        table.pushToWorkStack(functions);
         int[] copy = Arrays.copyOf(functions, functions.length);
         if (operator.commutative) {
             // Canonicalize for caching
@@ -2292,9 +2290,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         assert accessGuard.acquire();
         assert table.workStacksEmpty();
         cache.initCartesianProduct();
-        for (int function : functions) {
-            table.pushToWorkStack(function);
-        }
+        table.pushToWorkStack(functions);
         int[] values = new int[functions.length];
         IntTupleBijection bijection = new IntTupleBijection();
         int mtbddFunction = cartesianProductRecursive(

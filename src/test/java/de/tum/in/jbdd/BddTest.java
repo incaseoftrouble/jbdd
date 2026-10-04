@@ -19,6 +19,7 @@ package de.tum.in.jbdd;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.core.Is.is;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrowsExactly;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -610,5 +611,71 @@ class BddTest {
         bdd.gc();
         assertThat(bdd.isValidFunction(ite), is(false));
         assertThat(table.referencedNodeCount(), is(3));
+    }
+
+    /**
+     * The n-ary conjunction against a pairwise fold on random operand sets, with duplicates, complements and
+     * constants.
+     */
+    @Test
+    void testNaryConjunctionAgreesWithTheFold() {
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int[] v = bdd.createVariables(10);
+        java.util.Random random = new java.util.Random(5);
+        List<Integer> pool = new ArrayList<>();
+        for (int variable : v) {
+            pool.add(variable);
+            pool.add(bdd.not(variable));
+        }
+        for (int i = 0; i < 40; i++) {
+            int left = pool.get(random.nextInt(pool.size()));
+            int right = pool.get(random.nextInt(pool.size()));
+            int kind = random.nextInt(3);
+            int function = kind == 0 ? bdd.and(left, right) : kind == 1 ? bdd.or(left, right) : bdd.xor(left, right);
+            pool.add(bdd.reference(function));
+            pool.add(bdd.reference(bdd.not(function)));
+        }
+        pool.add(bdd.trueFunction());
+        // Operands with distinct top variables, one per variable, so that both the n-ary and the pairwise path run.
+        List<Integer> distinct = new ArrayList<>();
+        for (int i = 0; i < v.length; i++) {
+            int below = i + 1 < v.length
+                    ? pool.get(2 * (i + 1) + random.nextInt(pool.size() - 2 * (i + 1)))
+                    : bdd.trueFunction();
+            distinct.add(bdd.reference(bdd.ifThenElse(v[i], below, bdd.not(below))));
+        }
+        for (int round = 0; round < 200; round++) {
+            int count = 1 + random.nextInt(12);
+            int[] operands = new int[count];
+            if (round % 2 == 0) {
+                for (int i = 0; i < count; i++) {
+                    operands[i] = pool.get(random.nextInt(pool.size()));
+                }
+            } else {
+                for (int i = 0; i < count; i++) {
+                    int function = distinct.get(random.nextInt(distinct.size()));
+                    operands[i] = random.nextBoolean() ? function : bdd.not(function);
+                }
+            }
+            if (random.nextInt(10) == 0) {
+                operands[random.nextInt(count)] = bdd.falseFunction();
+            }
+            int fold = bdd.trueFunction();
+            for (int operand : operands) {
+                fold = bdd.updateWith(bdd.and(fold, operand), fold);
+            }
+            int nary = bdd.and(operands);
+            assertEquals(fold, nary, "conjunction of " + Arrays.toString(operands));
+            assertEquals(bdd.not(bdd.and(complemented(operands))), bdd.or(operands));
+            bdd.dereference(fold);
+        }
+    }
+
+    private static int[] complemented(int[] functions) {
+        int[] result = functions.clone();
+        for (int i = 0; i < result.length; i++) {
+            result[i] = -result[i];
+        }
+        return result;
     }
 }

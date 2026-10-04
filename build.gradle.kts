@@ -92,6 +92,9 @@ jmh {
   if (isRequested("jmhEnumeration")) {
     includes.add("EnumerationBenchmark*")
   }
+  if (isRequested("jmhNary")) {
+    includes.add("NaryBenchmark*")
+  }
 }
 
 tasks.register<Task>("jmhRandom") {
@@ -111,6 +114,11 @@ tasks.register<Task>("jmhDimacs") {
 
 tasks.register<Task>("jmhEnumeration") {
   description = "Run solution/path enumeration benchmarks"
+  finalizedBy("jmh")
+}
+
+tasks.register<Task>("jmhNary") {
+  description = "Run the n-ary conjunction benchmarks"
   finalizedBy("jmh")
 }
 

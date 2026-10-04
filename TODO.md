@@ -19,6 +19,15 @@ and DIMACS instances here do not stand in for it.
   The recursion rewrites its operand array in place, so the cache key has to be a clone (§6). The question
   is whether the hit rate covers the allocation per node. Needs a cartesian-product benchmark, which does
   not exist; `invert`'s `INVERT_ARRAY_DOMAIN_THRESHOLD` would want the same harness.
+- **`BddImpl#computeAndAll` — when a step switches to pairwise.** Every step goes pairwise for its whole subtree
+  once its operands do not outnumber their distinct top levels four to one. Measured against making that choice at
+  the entry only (2026-10-06, ms per conjunction): operands sharing only their first variable over independent rest
+  (`x0 ∨ gᵢ`) 0.216 → 0.018 at 200 operands and 0.019 → 0.004 at 50; independent operands 0.029 → 0.020;
+  guarded cubes unchanged; random 3-clauses over 22 variables 0.035 → 0.041 (`NaryBenchmark`, 200 clauses) and
+  0.013 → 0.016 on another instance. The clauses lose because their deep tuples, a few operands at distinct levels,
+  would still have shrunk; switching only tuples of eight operands and more recovered the second instance (0.014)
+  but not the first (0.041). A ratio relative to the levels left below the tuple, rather than a flat four, is the
+  next thing to try — against more than two random instances.
 
 ## Worth doing
 
@@ -41,12 +50,3 @@ and DIMACS instances here do not stand in for it.
   the merging `map` must never index the tuples (§10) — which is why the current code routes through `apply`
   instead. Pairs with the benchmark question above; there is no point optimising this path before one
   exists.
-- **`BddImpl#computeAndAll` — a true n-ary conjunction.** Today `and(int[])`/`or(int[])` (and the set
-  layer's `intersection`/`union` on top of them) are a left fold of binary `and`s, deepest top level first,
-  which only keeps each intermediate small.
-  One recursion over all operands at once builds no intermediate diagram at all, and takes the order
-  question with it. What it would take: a Shannon step over k operands (cofactor those on the top level,
-  drop `TRUE`s, stop on `FALSE` or a complementary pair), and a cache keyed on the operand tuple — sorted,
-  so the key is canonical, and cloned before descending like `cartesianProduct`'s (§6). Worth it only if a
-  benchmark with many operands per call shows the
-  fold's intermediates dominating.

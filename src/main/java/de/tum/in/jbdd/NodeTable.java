@@ -911,6 +911,17 @@ public abstract class NodeTable {
         workStackIndex += 4;
     }
 
+    // Not varargs, so that a call with a single function never lands here by accident.
+    void pushToWorkStack(int[] functions) {
+        assert Arrays.stream(functions).allMatch(this::isValidFunction);
+        int end = workStackIndex + functions.length;
+        if (end > workStack.length) {
+            workStack = Arrays.copyOf(workStack, Math.max(workStack.length * 2, end));
+        }
+        System.arraycopy(functions, 0, workStack, workStackIndex, functions.length);
+        workStackIndex = end;
+    }
+
     // Secondary work stack
 
     private void ensureSecondaryWorkStackSize(int size) {

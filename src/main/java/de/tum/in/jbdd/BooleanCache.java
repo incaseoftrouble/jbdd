@@ -61,6 +61,7 @@ final class BooleanCache implements VariableOrderObserver {
     private final FractionCache fractionCache;
     private final FractionInCache fractionInCache;
     private final ComposeTupleCache composeTupleCache;
+    private final OperandTupleCache andAllCache;
     private final RestrictCubeCache restrictCubeCache;
 
     private int lookupHash;
@@ -88,6 +89,7 @@ final class BooleanCache implements VariableOrderObserver {
         fractionCache = new FractionCache(bdd);
         fractionInCache = new FractionInCache(bdd);
         composeTupleCache = new ComposeTupleCache(bdd);
+        andAllCache = new OperandTupleCache(bdd);
         restrictCubeCache = new RestrictCubeCache(bdd);
 
         caches = Map.ofEntries(
@@ -130,6 +132,10 @@ final class BooleanCache implements VariableOrderObserver {
         return composeTupleCache;
     }
 
+    OperandTupleCache andAllCache() {
+        return andAllCache;
+    }
+
     RestrictCubeCache restrictCubeCache() {
         return restrictCubeCache;
     }
@@ -152,6 +158,7 @@ final class BooleanCache implements VariableOrderObserver {
         fractionCache.grow(unarySize);
 
         composeTupleCache.grow(size);
+        andAllCache.grow(size);
         restrictCubeCache.grow(size);
         fractionInCache.grow(size);
         andCache.grow(size);
@@ -201,6 +208,7 @@ final class BooleanCache implements VariableOrderObserver {
     void invalidate() {
         caches().forEach(IntCache::invalidate);
         composeTupleCache.invalidate();
+        andAllCache.invalidate();
         restrictCubeCache.invalidate();
     }
 
@@ -221,6 +229,7 @@ final class BooleanCache implements VariableOrderObserver {
             cache.clearInvalidNodes(preserve);
         }
         composeTupleCache.clearInvalidNodes(preserve);
+        andAllCache.clearInvalidNodes(preserve);
         restrictCubeCache.clearInvalidNodes(preserve);
     }
 
@@ -444,6 +453,7 @@ final class BooleanCache implements VariableOrderObserver {
         Map<String, Object> statistics = new HashMap<>();
         caches.forEach((name, cache) -> statistics.putAll(cache.statistics("cache_" + name)));
         statistics.putAll(composeTupleCache.statistics("cache_compose_tuple"));
+        statistics.putAll(andAllCache.statistics("cache_and_all"));
         statistics.putAll(restrictCubeCache.statistics("cache_restrict_cube"));
         statistics.put("exists_reuse_count", existsReuseCount);
         return statistics;
@@ -775,6 +785,78 @@ final class BooleanCache implements VariableOrderObserver {
             // The node and the domain, then the variables, then their replacements.
             for (int index = 2 + (key.length - 2) / 2; index < key.length; index++) {
                 if (!bdd.isValidFunction(key[index])) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        @Override
+        protected int[][] newArray(int size) {
+            return new int[size][];
+        }
+
+        @Override
+        protected int hashOf(int[] key) {
+            return Arrays.hashCode(key);
+        }
+
+        @Override
+        protected void growInto(int newSize, int[][] newCache, boolean preserve) {
+            if (preserve) {
+                int[] newValues = new int[newSize];
+                rehashInto(newSize, newCache, (oldBin, newBin) -> newValues[newBin] = values[oldBin]);
+                this.values = newValues;
+            } else {
+                this.values = new int[newSize];
+            }
+        }
+
+        void clearInvalidNodes(boolean attemptPruning) {
+            prune(attemptPruning, this::isValid);
+        }
+
+        int lookup(int[] key) {
+            ensureValid();
+            int hash = Arrays.hashCode(key);
+            lookupHash = hash;
+            int index = binIndex(hash);
+            if (Arrays.equals(key, cache[index])) {
+                assert isValid(index);
+                statistics.hit();
+                return values[index];
+            }
+            statistics.miss();
+            return bdd.placeholder();
+        }
+
+        void put(int hash, int[] key, int result) {
+            ensureValid();
+            assert hash == Arrays.hashCode(key);
+            int index = putBin(hash);
+            cache[index] = key;
+            values[index] = result;
+        }
+    }
+
+    /** An n-ary conjunction keyed on its canonical operand tuple (every entry a function), the result an int. */
+    static final class OperandTupleCache extends CacheBase.ObjectKeys<int[]> {
+        private final BooleanBase<?, ?> bdd;
+        private int[] values = EMPTY_INT_ARRAY;
+        int lookupHash;
+
+        OperandTupleCache(BooleanBase<?, ?> bdd) {
+            this.bdd = bdd;
+        }
+
+        @Override
+        protected boolean isValid(int binStart) {
+            int[] key = cache[binStart];
+            if (key == null || !bdd.isValidFunction(values[binStart])) {
+                return false;
+            }
+            for (int operand : key) {
+                if (!bdd.isValidNonConstantFunction(operand)) {
                     return false;
                 }
             }
