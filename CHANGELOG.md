@@ -34,6 +34,7 @@
   * A `NatSet` equals other `NatSet`s only and hashes by its words; `boxed()` is a `Set<Integer>` view with `Set`'s equality and hash code
 * The API takes and returns `NatSet` where it took and returned `java.util.BitSet`; a fresh result is a `MutableNatSet`, a cached one (`BddSet.support()`) an immutable `NatSet`
 * Node tables under memory pressure: a JVM collection (at most once per table size) before memory decides against growing, no growth by less than an eighth, a table that cannot grow collects again only after using half of what it freed, and `OutOfMemoryError` once a collection leaves under a twentieth free - instead of a full mark every few allocations
+* An MDD's `solutionCursorIn` walks the function and the domain together, like the BDD's; it used to walk their unreferenced conjunction, which a collection in between reclaimed under the cursor. Its `forEachSolution` runs over that cursor, so both enumerate in the same order
 * `constrain` is `BinaryDecisionDiagram`'s and `MultiTerminalDecisionDiagram`'s: an n-valued variable has no nearest domain value, so an MDD offers `simplify` only
 * `MtBdd.invert` returns a `FunctionToFunctionMap`; `Inverse` was the same type under another name
 * `MtBdd.apply` over no operands is the operator's value on the empty tuple, and `cartesianProduct` of no functions the constant naming the empty tuple; both returned the placeholder

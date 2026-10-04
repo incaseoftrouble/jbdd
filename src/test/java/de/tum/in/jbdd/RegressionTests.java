@@ -1215,6 +1215,38 @@ class RegressionTests {
         }
     }
 
+    /**
+     * An MDD's {@code solutionCursorIn} walks the conjunction of its arguments, an intermediate the caller cannot
+     * reference: a collection between creating and draining the cursor used to reclaim it under the walk.
+     */
+    @Test
+    void testMddSolutionCursorInSurvivesACollection() {
+        MddImpl mdd = new MddImpl(config);
+        int a = mdd.declareVariable(3);
+        int b = mdd.declareVariable(3);
+        int c = mdd.declareVariable(3);
+        int fa = mdd.reference(mdd.makeVariableFunction(a, new boolean[] {false, true, true}));
+        int fb = mdd.reference(mdd.makeVariableFunction(b, new boolean[] {true, false, true}));
+        int fc = mdd.reference(mdd.makeVariableFunction(c, new boolean[] {true, true, false}));
+        int function = mdd.reference(mdd.or(fa, fb));
+        int domain = mdd.reference(mdd.or(fb, fc));
+        int expected = mdd.countSatisfyingAssignmentsIn(function, domain).intValueExact();
+
+        Cursor<int[]> cursor = mdd.solutionCursorIn(function, domain);
+        mdd.gc();
+        for (int i = 0; i < 64; i++) {
+            mdd.reference(mdd.xor(mdd.and(fa, fc), i % 2 == 0 ? fb : mdd.not(fb)));
+        }
+        int solutions = 0;
+        while (cursor.valid()) {
+            assertTrue(mdd.evaluate(function, cursor.current()) && mdd.evaluate(domain, cursor.current()));
+            solutions++;
+            cursor.advance();
+        }
+        assertEquals(expected, solutions);
+        assertTrue(mdd.check());
+    }
+
     @Test
     void testNaryApplyOfTwoOperandsKeepsTheDeclaredProperties() {
         BddImpl bdd = new DdContextImpl(config).bdd();
@@ -1235,5 +1267,63 @@ class RegressionTests {
         assertEquals(function, mt.apply(new int[] {mt.of(0), function}, sum));
         assertEquals(mt.of(1000), mt.apply(new int[] {function, mt.of(1000)}, sum));
         assertEquals(0, calls[0]);
+    }
+
+    private static int randomMddFunction(MddImpl mdd, int[] variables, java.util.Random random, int depth) {
+        if (depth == 0) {
+            return variables[random.nextInt(variables.length)];
+        }
+        int left = mdd.reference(randomMddFunction(mdd, variables, random, depth - 1));
+        int right = mdd.reference(randomMddFunction(mdd, variables, random, depth - 1));
+        int result = random.nextBoolean() ? mdd.and(left, right) : mdd.or(left, mdd.not(right));
+        mdd.reference(result);
+        mdd.dereference(left);
+        mdd.dereference(right);
+        return mdd.dereference(result);
+    }
+
+    /** The MDD product walk against brute force: pairs that are jointly unsatisfiable in some branches dead-end it. */
+    @Test
+    void testMddSolutionCursorInWalksBothDiagrams() {
+        MddImpl mdd = new MddImpl(config);
+        int[] domains = {2, 3, 2, 4, 3};
+        int[] variables = new int[domains.length];
+        for (int i = 0; i < domains.length; i++) {
+            int variable = mdd.declareVariable(domains[i]);
+            boolean[] values = new boolean[domains[i]];
+            values[i % domains[i]] = true;
+            values[(i + 1) % domains[i]] = true;
+            variables[i] = mdd.reference(mdd.makeVariableFunction(variable, values));
+        }
+        java.util.Random random = new java.util.Random(11);
+        int combinations = 2 * 3 * 2 * 4 * 3;
+        for (int round = 0; round < 40; round++) {
+            int function = mdd.reference(randomMddFunction(mdd, variables, random, 4));
+            int domain = mdd.reference(randomMddFunction(mdd, variables, random, 4));
+            List<String> expected = new ArrayList<>();
+            int[] assignment = new int[domains.length];
+            for (int code = 0; code < combinations; code++) {
+                int rest = code;
+                for (int i = domains.length - 1; i >= 0; i--) {
+                    assignment[i] = rest % domains[i];
+                    rest /= domains[i];
+                }
+                if (mdd.evaluate(function, assignment) && mdd.evaluate(domain, assignment)) {
+                    expected.add(Arrays.toString(assignment));
+                }
+            }
+            List<String> walked = new ArrayList<>();
+            for (Cursor<int[]> cursor = mdd.solutionCursorIn(function, domain); cursor.valid(); cursor.advance()) {
+                walked.add(Arrays.toString(cursor.current()));
+            }
+            // Order: the decided variables vary slowest and the free ones are counted underneath, so compare as sets.
+            assertEquals(expected.size(), walked.size(), "function " + function + ", domain " + domain);
+            assertEquals(new HashSet<>(expected), new HashSet<>(walked), "function " + function + ", domain " + domain);
+            assertEquals(
+                    expected.size(),
+                    mdd.countSatisfyingAssignmentsIn(function, domain).intValueExact());
+            mdd.dereference(function);
+            mdd.dereference(domain);
+        }
     }
 }

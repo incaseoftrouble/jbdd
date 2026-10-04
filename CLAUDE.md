@@ -696,7 +696,7 @@ Each engine has one **walk** plus thin cursors over it:
 
 ```
 BddImpl    PathWalk(function, domain) → SolutionCursor, PathCursor
-MddImpl    PathWalk(function)         → SolutionCursor, PathCursor
+MddImpl    PathWalk(function, domain) → SolutionCursor, PathCursor
 MtBddImpl  PathWalk(function, values) → AssignmentCursor, PathCursor   (both ValuedCursor)
 ```
 
@@ -721,7 +721,9 @@ retract and carry on, including on the very first descent. With the domain at `T
 carrying it costs ~5 ns/path, amortizing to nothing on solutions.
 
 Order is lexicographic ascending **by level**: the variables the walk decides on vary slowest, the free
-ones are counted underneath. `forEachSolution` and the cursors agree on it.
+ones are counted underneath, the lowest level fastest. `forEachSolution` and the cursors agree on it: the BDD's
+recursion counts the free variables the same way, and the MDD's `forEachSolution` is the interface's default
+over its cursor (MDDs see little use, and the cursors are on par with a recursion).
 
 Everything above is by level; `current()` is by variable. On a diagram that has never reordered the two
 coincide and the cursor hands out the walk's own sets directly; after a reorder it hands out a
@@ -1164,9 +1166,10 @@ Ranked by how much time they cost when you get them wrong:
 Ordered by how much they block. These are the items with no natural line to sit on; the ones that do have
 one are `// TODO`s in the source, with their reasoning in `TODO.md`.
 
-- **`solutionCursorIn` is native only on `BddImpl`.** `MddImpl.solutionCursorIn` still materializes
-  `and(function, domain)` (both overloads carry a `// TODO Native`). The BDD product walk (§8) is the
-  template; the MDD version needs the same dead-end backtracking over n-ary children. `MtBddImpl` has no
+- **`MddImpl.satisfyingAssignmentIn` and `countSatisfyingAssignmentsIn` materialize `and(function, domain)`.**
+  Deliberately: MDDs see little use and are kept at a minimum. Only the cursor walks the pair natively,
+  because a cursor over an intermediate nothing references is a use-after-free waiting for a collection;
+  `forEachSolution` runs over it, as the interface's default. `MtBddImpl` has no
   domain-restricted enumeration at all — `assignmentCursor`'s predicate is over terminals, a different
   question.
 - **A dedicated single-diagram path walk.** `PathCursor` pays ~5 ns/path to carry a domain it never uses.
