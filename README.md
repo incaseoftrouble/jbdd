@@ -17,9 +17,13 @@ Compared to other libraries, JBDD beats most Java implementations and even is on
 
 ## Features
 
-Some more fancy BDD features and variants are missing.
-Most notably, these are ZDDs and variable reordering.
-They might get added over time, but if you require such features, consider using [CUDD](http://vlsi.colorado.edu/~fabio/) or [Sylvan](http://fmt.cs.utwente.nl/tools/sylvan/) instead.
+* Reduced ordered BDDs with complement edges, over an `int` API with manual reference counting, and an object layer (`BddSet`) with automatic reference management
+* MTBDDs over the same variables (`MtBdd`, and `BddMap<V>` over caller-chosen value numberings), MDDs over n-valued variables (`Mdd`)
+* The usual operations plus domain-restricted (`xyIn`) and simplifying (`xySimplify`) variants, `compose`, `restrict`, quantification, `constrain`/`simplify`, satisfying counts and fractions, implicants and prime implicants, solution and path cursors, registered operations with private caches
+* Dynamic variable reordering by sifting, over both diagrams of a context at once
+* DIMACS CNF input
+
+ZDDs are not implemented; for those, consider [CUDD](http://vlsi.colorado.edu/~fabio/) or [Sylvan](http://fmt.cs.utwente.nl/tools/sylvan/).
 
 ## Usage
 
@@ -42,11 +46,10 @@ implementation("de.tum.in:jbdd:0.7.0")
 
 A few JVM flags worth trying out:
 
-- `-Xss128m` or similar high values, the implementation is very recursive 
+- `-Xss128m` or similar high values, the implementation is very recursive
 - High values for `-Xms` and `-XX:+AlwaysPreTouch` to avoid repeated heap growth
 - `-XX:+UseParallelGC` -- low latency is not required
 - `-XX:+UseTransparentHugePages`
-- `-XX:AutoBoxCacheMax=2048` -- The MTBDD implementation requires boxed values at a few places
 - `-XX:TypeProfileLevel=222` and `-XX:TypeProfileWidth=4`
 
 ## Building
