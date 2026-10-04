@@ -526,7 +526,7 @@ build 6.9 → 12.0 s n-ary, 6.4 s with the choice) finishes its tuple pairwise, 
 level first). The choice is made at every step, not only at the entry: operands sharing only their first variables
 (`x0 ∨ gᵢ`, the `gᵢ` independent) look shared at the entry and are 5 to 12 times slower n-ary below it. A switch is
 for the whole subtree, which never comes back to the n-ary; it costs up to a fifth on dense random clauses, whose
-deep tuples would still have shrunk (`TODO.md`).
+deep tuples would still have shrunk (`TODO.md` [NARY-SPLIT]).
 `NaryBenchmark` (`jmhNary`) times both shapes.
 
 **MTBDD-specific constraint:** the combining function is an **opaque caller lambda with no assumed

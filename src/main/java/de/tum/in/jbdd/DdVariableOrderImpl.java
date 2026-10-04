@@ -611,7 +611,7 @@ public final class DdVariableOrderImpl implements DdVariableOrder {
         int bestSize = liveNodeCount();
         // Stop exploring a direction once it has cost more than this - the usual bound, without which
         // every variable pays for a full sweep of a range that was never going to win.
-        // TODO It may pay off to instead use "current best * factor" as high mark, but needs benchmarking
+        // TODO [SIFT-BOUND] It may pay off to instead use "current best * factor" as high mark, but needs benchmarking
         int limit = (int) Math.min(Integer.MAX_VALUE, (long) (bestSize * MAXIMUM_SIFT_GROWTH));
 
         int current = start;

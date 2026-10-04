@@ -1163,7 +1163,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
         int hash = cache.lookupHash();
         // The operand array is rewritten in place below, so the cache needs one of its own.
-        // TODO Copying is costly; can we do it better? Write in a DepthPool?
+        // TODO [KEY-COPY] Copying is costly; can we do it better? Write in a DepthPool?
         //   The array only needs to survive until the cache put
         int[] key = Arrays.copyOf(functions, functions.length);
 
@@ -1673,7 +1673,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
         assert accessGuard.acquire();
         assert table.workStacksEmpty();
-        // TODO Unclear if this (and the BDD parallel) really is beneficial for caching as the decent depth
+        // TODO [RESTRICT-PREFIX] Unclear if this (and the BDD parallel) really is beneficial for caching as the decent
+        // depth
         //  probably depends on the structure of the current argument
         Cube remaining = order.literalsBelow(restriction, decisionLevel(current));
         cache.initRestrict(remaining);
@@ -2338,7 +2339,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
         int hash = cache.lookupHash();
 
-        // TODO Measure whether caching here pays for the copy this forces
+        // TODO [KEY-COPY] Measure whether caching here pays for the copy this forces
         // The operand array is rewritten in place below, so the cache needs one of its own.
         int[] key = Arrays.copyOf(functions, functions.length);
 

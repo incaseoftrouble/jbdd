@@ -31,7 +31,7 @@ import java.util.function.IntUnaryOperator;
  * occur with invalid arguments. Especially, the BDD may appear to be in a working state for a long
  * time after an invalid call.</p>
  */
-// TODO AndExistsSimplify and similar (quantify + apply + simplify at the same time)
+// TODO [AND-EXISTS] AndExistsSimplify and similar (quantify + apply + simplify at the same time)
 public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTerminalDecisionDiagram<NatSet, Cube> {
     /** A satisfying assignment, fresh and the caller's own. */
     @Override

@@ -22,7 +22,7 @@ import java.util.Arrays;
 final class BddOperations {
     private BddOperations() {}
 
-    // TODO Registerable restrict?
+    // TODO [RESTRICT-REGISTER] A registered restrict?
 
     static final class Exists implements RegisteredOperation.Unary, NodeTableObserver, VariableOrderObserver {
         private final BddImpl bdd;

@@ -331,7 +331,7 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
             //noinspection Java9CollectionFactory
             List<V> unmodifiableView = Collections.unmodifiableList(Arrays.asList(scratch));
 
-            // TODO Use "native" cartesian product?
+            // TODO [PRODUCT-NATIVE] Use the native cartesian product?
             int result = factory.dd.apply(functions, rawValues -> {
                 for (int i = 0; i < rawValues.length; i++) {
                     scratch[i] = valueOf(rawValues[i]);
@@ -365,7 +365,7 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
                 Values<W> other, BiFunction<? super V, ? super W, ? extends O> combiner, Values<O> destination) {
             ValuesImpl<W> otherValues = factory.valuesOf(other);
             ValuesImpl<O> resultValues = factory.valuesOf(destination);
-            // TODO if (otherValues == thisValue == resultValues) { specialize }
+            // TODO [COMBINE-SHARED] Specialise when the three numberings coincide
             // Different numberings means we cannot use any property
             IntBinaryOperator rawOp = (rawV, rawW) ->
                     resultValues.getOrAssignIndex(combiner.apply(valueOf(rawV), otherValues.valueOf(rawW)));

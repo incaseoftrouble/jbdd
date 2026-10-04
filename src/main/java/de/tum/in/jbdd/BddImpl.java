@@ -1303,7 +1303,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
                 table.popFromWorkStack(pushed);
                 return function;
             }
-            // TODO Maybe better to gather all decided replacements and replace / project once?
+            // TODO [COMPOSE-GATHER] Maybe better to gather all decided replacements and replace / project once?
             //   Could save several support computations
             int decided = -1;
             for (int index = 0; index < replacements.length; index++) {
@@ -1411,7 +1411,8 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             int branchVariable,
             boolean branchValue) {
         int[] childVariables = replacedIn(supportArray(child), replaced);
-        // TODO We don't reuse replacements later; we can use a depth-pool construction to avoid reallocation
+        // TODO [COMPOSE-POOL] We don't reuse replacements later; we can use a depth-pool construction to avoid
+        // reallocation
         int[] childReplacements = new int[childVariables.length];
         int source = 0;
         for (int index = 0; index < childVariables.length; index++) {
@@ -1872,7 +1873,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         }
         // Where the operands lie at mostly distinct levels, nothing shrinks along the path any more and pairwise is
         // cheaper - for the whole subtree, which never comes back to the n-ary.
-        // TODO Tune when to switch: a flat ratio, applied at every step, also switches deep tuples that
+        // TODO [NARY-SPLIT] Tune when to switch: a flat ratio, applied at every step, also switches deep tuples that
         //   would still have shrunk.
         int distinct = 1;
         for (int i = 0; i < passing.length; i++) {
