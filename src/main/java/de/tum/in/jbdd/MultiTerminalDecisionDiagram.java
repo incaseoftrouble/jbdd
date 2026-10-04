@@ -526,8 +526,9 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
      * caller must protect (reference) before making any further call, immediately relabels each residual
      * sub-function via {@code relabeler} (called at most once per distinct sub-function) and returns the
      * combined result directly - equivalent to {@code map(split(function, splitVariables).function(), v ->
-     * relabeler.applyAsInt(split(function, splitVariables).functionFor(v)))}, except the whole computation
-     * happens as a single traversal, so no intermediate function is ever exposed unprotected.
+     * relabeler.applyAsInt(split(function, splitVariables).functionFor(v)))}, except that no intermediate function is
+     * ever exposed unprotected. The relabeler runs outside any operation, every residual referenced meanwhile, so it
+     * may start operations of its own.
      */
     int splitRelabeled(int function, NatSet splitVariables, IntUnaryOperator relabeler);
 

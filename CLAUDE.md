@@ -514,8 +514,15 @@ Callers opt into properties explicitly via `MtBddBinaryOperator`/`MtBddNaryOpera
 
 **Callbacks run inside the traversal.** An `apply` operator, a `map` function, a `where` predicate and the
 like are invoked with the work stacks loaded, so each must be a pure function of its arguments and must
-not start another operation on the diagram — one that does trips the `workStacksEmpty()` assertion.
-Purity is the general contract; a method's javadoc should document only a *deviation* from it.
+not start another operation on the diagram — one that does trips the `workStacksEmpty()` assertion. The
+work stack itself would survive a nested, balanced operation; what would not are the ephemeral caches (a
+nested `apply` with another operator re-initialises the cache the outer one is still filling, so its
+results land under the wrong operator) and the mark bits a value walk (`forEachValue`, `allValuesMatch`)
+holds while a nested collection marks and clears everything. Purity is the general contract; a method's
+javadoc should document only a *deviation* from it. The deviations: `splitRelabeled` /
+`splitBddRelabeled` (and so `BddMap.splitMap`, `BddSet.split`) run their relabeler *between* the split and
+the mapping, with the meta-function and every residual referenced rather than on a stack, so it may build
+functions, and `Values.adopt` maps its values before the pass.
 
 ## 6. Operation caches
 

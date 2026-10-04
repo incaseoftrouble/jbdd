@@ -2008,39 +2008,45 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         assert accessGuard.acquire();
         assert table.workStacksEmpty();
 
-        // Relabel in two passes for simplicity: For one pass, we would need to be careful not to call the
-        // relabeler on intermediate nodes, which is tough to determine
-
         cache.initSplit();
         int maxSplitLevel = bdd.maxLevel(splitVariables);
         SplitBijection bijection = new SplitBijection(table);
         table.pushToWorkStack(mtbddFunction);
-        int mtbddG = splitRecursive(mtbddFunction, splitVariables, maxSplitLevel, bijection);
+        int mtbddG = reference(splitRecursive(mtbddFunction, splitVariables, maxSplitLevel, bijection));
         table.popFromWorkStack();
-
-        table.pushToWorkStack(mtbddG);
-        // Relabel every residual up front, once per distinct residual - which is what this method
-        // promises. Doing it inside the map callback instead would call the relabeler once per *edge*
-        // into a constant, since computeMap short-circuits constants before its cache lookup; a relabeler
-        // with side effects (the interesting case - see BddMap#split) would then see the same
-        // sub-function twice.
+        // Referenced rather than on a stack from here on: the relabeler runs between the split and the mapping, outside
+        // any operation, so it may start operations of its own. Thus, we need to reference instead of call stack
         int residualCount = bijection.size();
+        for (int index = 0; index < residualCount; index++) {
+            reference(bijection.getFunction(index));
+        }
+        table.popFromSecondaryWorkStack(residualCount);
+        assert table.workStacksEmpty();
+        assert accessGuard.release();
+
+        // Once per distinct residual, which is what this method promises: inside the mapping the relabeler would run
+        // once per edge into a constant, as computeMap short-circuits constants before its cache lookup. Each value is
+        // handed out before any node holds it, so its terminal is referenced until the result has been built.
         int[] relabeledResiduals = new int[residualCount];
+        int[] terminals = new int[residualCount];
         for (int index = 0; index < residualCount; index++) {
             relabeledResiduals[index] = relabeler.applyAsInt(bijection.getFunction(index));
-            // Handed out before any node holds it, so protected until computeMap has built it in. Every one is a
-            // terminal of the result, so this keeps nothing alive the result would not, and a terminal is no node.
-            table.pushToWorkStack(of(relabeledResiduals[index]));
+            terminals[index] = reference(of(relabeledResiduals[index]));
         }
 
+        assert accessGuard.acquire();
+        assert table.workStacksEmpty();
         IntUnaryOperator combined = value -> relabeledResiduals[value];
         cache.initMap(combined);
         int result = computeMap(mtbddG, bdd.trueFunction(), combined, cache.mapCache(), cache.mapSimplifyCache());
-        table.popFromWorkStack(residualCount + 1);
-
-        table.popFromSecondaryWorkStack(bijection.size());
         assert table.workStacksEmpty();
         assert accessGuard.release();
+
+        dereference(mtbddG);
+        for (int index = 0; index < residualCount; index++) {
+            dereference(bijection.getFunction(index));
+            dereference(terminals[index]);
+        }
         return result;
     }
 
@@ -2075,28 +2081,42 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         };
     }
 
-    // splitBdd with the residuals relabeled, as splitRelabeled does for split.
+    // splitBdd with the residuals relabeled, as splitRelabeled does for split - the residuals are the BDD's functions.
     int splitBddRelabeled(int bddFunction, NatSet splitVariables, IntUnaryOperator relabeler) {
         assert bdd.isValidFunction(bddFunction);
         assert accessGuard.acquire();
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
 
         SplitBijection residuals = new SplitBijection(bdd.table());
-        int mtbddG = table.pushToWorkStack(splitBdd(bddFunction, splitVariables, residuals));
-        // As in splitRelabeled: once per distinct residual, up front.
-        int[] relabeledResiduals = new int[residuals.size()];
-        for (int index = 0; index < relabeledResiduals.length; index++) {
-            relabeledResiduals[index] = relabeler.applyAsInt(residuals.getFunction(index));
-            table.pushToWorkStack(of(relabeledResiduals[index]));
+        int mtbddG = reference(splitBdd(bddFunction, splitVariables, residuals));
+        int residualCount = residuals.size();
+        for (int index = 0; index < residualCount; index++) {
+            bdd.reference(residuals.getFunction(index));
         }
+        bdd.table().popFromSecondaryWorkStack(residualCount);
+        assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
+        assert accessGuard.release();
+
+        int[] relabeledResiduals = new int[residualCount];
+        int[] terminals = new int[residualCount];
+        for (int index = 0; index < residualCount; index++) {
+            relabeledResiduals[index] = relabeler.applyAsInt(residuals.getFunction(index));
+            terminals[index] = reference(of(relabeledResiduals[index]));
+        }
+
+        assert accessGuard.acquire();
+        assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
         IntUnaryOperator combined = value -> relabeledResiduals[value];
         cache.initMap(combined);
         int result = computeMap(mtbddG, bdd.trueFunction(), combined, cache.mapCache(), cache.mapSimplifyCache());
-        table.popFromWorkStack(relabeledResiduals.length + 1);
-
-        bdd.table().popFromSecondaryWorkStack(residuals.size());
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
         assert accessGuard.release();
+
+        dereference(mtbddG);
+        for (int index = 0; index < residualCount; index++) {
+            bdd.dereference(residuals.getFunction(index));
+            dereference(terminals[index]);
+        }
         return result;
     }
 

@@ -36,6 +36,7 @@
 * Node tables under memory pressure: a JVM collection (at most once per table size) before memory decides against growing, no growth by less than an eighth, a table that cannot grow collects again only after using half of what it freed, and `OutOfMemoryError` once a collection leaves under a twentieth free - instead of a full mark every few allocations
 * `constrain` is `BinaryDecisionDiagram`'s and `MultiTerminalDecisionDiagram`'s: an n-valued variable has no nearest domain value, so an MDD offers `simplify` only
 * `compose` reads its mapping and `or(int[])` its operands without writing to the array; `compose` used to resolve placeholders in place
+* The relabeler of `MtBdd.splitRelabeled`, `BddMap.splitMap` and `BddSet.split` runs outside the operation and may build functions
 * MTBDD terminal reference counts are `short`s (saturating at 32767) rather than bytes
 * The n-ary MTBDD `apply` over two operands keeps the operator's neutral and absorbing values
 * Dereferencing the topmost referenced node no longer searches the table downwards for the next one

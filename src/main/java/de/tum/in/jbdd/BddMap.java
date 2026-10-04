@@ -206,7 +206,7 @@ public interface BddMap<V> {
 
     /**
      * {@link #split(NatSet, Values)} with every residual map passed through {@code residual} on its way into
-     * {@code destination}.
+     * {@code destination}. {@code residual} runs outside any operation, so it may build sets and maps.
      */
     <W> BddMap<W> splitMap(
             NatSet splitVariables, Values<W> destination, Function<? super BddMap<V>, ? extends W> residual);
