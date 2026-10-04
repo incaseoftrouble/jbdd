@@ -646,7 +646,7 @@ Object layer: handle types bound once and applied repeatedly — `BddMap.Operato
   binding means both live. The root declares no abstract method, so a handle that also extends a
   `java.util.function` type (`BinaryOperator`, `UnaryOperator`, `Function`, `BiFunction`) stays a valid
   `@FunctionalInterface` — keep it that way when adding one. The implementations get `release()` by
-  extending `RegisteredOperation.Forwarding<V>`, which holds the int-layer operation as `operation` and
+  extending `RegisteredOperations.Forwarding<V>`, which holds the int-layer operation as `operation` and
   forwards to it; `RegisteredApply` is the one that does not, because it also pins
   constants. `BddMap.Relabeler` deliberately does not:
   it is created by `createRelabeling`, not registered, and holds a destination numbering that outlives

@@ -18,7 +18,7 @@ package de.tum.in.jbdd;
 
 import static de.tum.in.jbdd.RegisteredOperation.*;
 
-import de.tum.in.jbdd.RegisteredOperation.Forwarding;
+import de.tum.in.jbdd.RegisteredOperations.Forwarding;
 import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.MutableNatSet;
 import de.tum.in.jbdd.collections.NatSet;

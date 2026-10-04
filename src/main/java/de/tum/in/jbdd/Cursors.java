@@ -21,6 +21,7 @@ import de.tum.in.jbdd.collections.NatSet;
 import de.tum.in.jbdd.collections.NatSets;
 import java.util.PrimitiveIterator;
 
+/** Cursors that are not a diagram's own walks. */
 public final class Cursors {
     private Cursors() {}
 
@@ -32,6 +33,21 @@ public final class Cursors {
     /** A cursor over exactly one element. */
     static <E> Cursor<E> singleton(E element) {
         return new SingletonCursor<>(element);
+    }
+
+    /** A valued cursor over nothing. */
+    public static <E> ValuedCursor<E> emptyValued() {
+        return new EmptyValuedCursor<>();
+    }
+
+    /** A valued cursor over exactly one element, leading to {@code value}. */
+    static <E> ValuedCursor<E> singletonValued(E element, int value) {
+        return new SingletonValuedCursor<>(element, value);
+    }
+
+    /** {@code cursor}'s elements, each leading to {@code value} - what a constant function enumerates. */
+    static <E> ValuedCursor<E> constantValued(Cursor<E> cursor, int value) {
+        return new ConstantValuedCursor<>(cursor, value);
     }
 
     /**
@@ -83,6 +99,93 @@ public final class Cursors {
         @Override
         public boolean advance() {
             return false;
+        }
+    }
+
+    private static final class EmptyValuedCursor<E> implements ValuedCursor<E> {
+        @Override
+        public boolean valid() {
+            return false;
+        }
+
+        @Override
+        public E current() {
+            throw new IllegalStateException("Cursor is not valid");
+        }
+
+        @Override
+        public int value() {
+            throw new IllegalStateException("Cursor is not valid");
+        }
+
+        @Override
+        public boolean advance() {
+            return false;
+        }
+    }
+
+    private static final class SingletonValuedCursor<E> implements ValuedCursor<E> {
+        private final E element;
+        private final int value;
+        private boolean valid = true;
+
+        SingletonValuedCursor(E element, int value) {
+            this.element = element;
+            this.value = value;
+        }
+
+        @Override
+        public boolean valid() {
+            return valid;
+        }
+
+        @Override
+        public E current() {
+            assert valid; // current() is only defined while the cursor is valid
+            return element;
+        }
+
+        @Override
+        public int value() {
+            assert valid; // value() is only defined while the cursor is valid
+            return value;
+        }
+
+        @Override
+        public boolean advance() {
+            valid = false;
+            return false;
+        }
+    }
+
+    private static final class ConstantValuedCursor<E> implements ValuedCursor<E> {
+        private final Cursor<E> cursor;
+        private final int value;
+
+        ConstantValuedCursor(Cursor<E> cursor, int value) {
+            this.cursor = cursor;
+            this.value = value;
+        }
+
+        @Override
+        public boolean valid() {
+            return cursor.valid();
+        }
+
+        @Override
+        public E current() {
+            return cursor.current();
+        }
+
+        @Override
+        public int value() {
+            assert cursor.valid(); // value() is only defined while the cursor is valid
+            return value;
+        }
+
+        @Override
+        public boolean advance() {
+            return cursor.advance();
         }
     }
 

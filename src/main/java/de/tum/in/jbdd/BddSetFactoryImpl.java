@@ -325,7 +325,7 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         return String.format("F{%s}", dd);
     }
 
-    private static final class RegisteredQuantifier extends RegisteredOperation.Forwarding<RegisteredOperation.Unary>
+    private static final class RegisteredQuantifier extends RegisteredOperations.Forwarding<RegisteredOperation.Unary>
             implements BddSet.Quantifier {
         private final BddSetFactoryImpl factory;
 
@@ -340,7 +340,7 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         }
     }
 
-    private static final class RegisteredReplacer extends RegisteredOperation.Forwarding<RegisteredOperation.Unary>
+    private static final class RegisteredReplacer extends RegisteredOperations.Forwarding<RegisteredOperation.Unary>
             implements BddSet.VariableReplacer {
         private final BddSetFactoryImpl factory;
 

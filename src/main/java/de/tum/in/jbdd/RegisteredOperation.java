@@ -38,7 +38,7 @@ public interface RegisteredOperation {
      * The operation returning its operand unchanged.
      */
     static Unary identity() {
-        return Identity.INSTANCE;
+        return RegisteredOperations.IDENTITY;
     }
 
     @FunctionalInterface
@@ -50,28 +50,5 @@ public interface RegisteredOperation {
     @FunctionalInterface
     interface Ternary extends RegisteredOperation {
         int applyAsInt(int operand1, int operand2, int operand3);
-    }
-
-    /** The single instance behind {@link #identity()}; an enum so that it stays one. */
-    enum Identity implements Unary {
-        INSTANCE;
-
-        @Override
-        public int applyAsInt(int operand) {
-            return operand;
-        }
-    }
-
-    class Forwarding<V extends RegisteredOperation> implements RegisteredOperation {
-        protected final V operation;
-
-        public Forwarding(V operation) {
-            this.operation = operation;
-        }
-
-        @Override
-        public void release() {
-            operation.release();
-        }
     }
 }

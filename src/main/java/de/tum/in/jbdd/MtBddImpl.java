@@ -659,8 +659,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         if (isConstant(function)) {
             // The single, entirely unconstrained path.
             NatSet empty = NatSet.of();
-            return new ValuedCursor.SingletonValuedCursor<>(
-                    Cube.ofUnsafe(empty, empty), constantFunctionToValue(function));
+            return Cursors.singletonValued(Cube.ofUnsafe(empty, empty), constantFunctionToValue(function));
         }
         return new PathCursor(this, function);
     }
@@ -786,13 +785,13 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
             int value = constantFunctionToValue(function);
             // Every assignment yields the same value, so the whole power set is (or is not) a solution.
             return (values == null || values.test(value))
-                    ? new ValuedCursor.ConstantValuedCursor<>(NatSets.powerSet(support), value)
-                    : new ValuedCursor.ConstantValuedCursor<>(Cursors.empty(), value);
+                    ? Cursors.constantValued(NatSets.powerSet(support), value)
+                    : Cursors.constantValued(Cursors.empty(), value);
         }
         cache.initAnyValueMatches(values);
         if (!canReachMatch(function, values)) {
             // Nothing matches anywhere, so there is nothing to walk - and no value to ever report.
-            return ValuedCursor.emptyValued();
+            return Cursors.emptyValued();
         }
         return new AssignmentCursor(this, function, values, support);
     }
