@@ -159,10 +159,13 @@ class IntHashMapTest {
             List<String> cursorValues = new ArrayList<>();
             for (IntObjectHashMap.EntryCursor<String> cursor = map.cursor(); cursor.valid(); cursor.advance()) {
                 cursorKeys.add(cursor.key());
-                cursorValues.add(cursor.value());
+                cursorValues.add(cursor.current());
             }
             assertEquals(keys, cursorKeys);
             assertEquals(values, cursorValues);
+            List<String> remaining = new ArrayList<>();
+            map.cursor().forEachRemaining(remaining::add);
+            assertEquals(values, remaining);
 
             map.clear();
             assertTrue(map.isEmpty());

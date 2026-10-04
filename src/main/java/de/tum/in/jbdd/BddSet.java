@@ -17,6 +17,7 @@
 package de.tum.in.jbdd;
 
 import de.tum.in.jbdd.collections.Cube;
+import de.tum.in.jbdd.collections.Cursor;
 import java.math.BigInteger;
 import java.util.BitSet;
 import java.util.List;

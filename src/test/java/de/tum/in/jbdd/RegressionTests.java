@@ -29,6 +29,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import de.tum.in.jbdd.collections.BitSets;
 import de.tum.in.jbdd.collections.Cube;
+import de.tum.in.jbdd.collections.Cursor;
 import java.lang.ref.WeakReference;
 import java.math.BigInteger;
 import java.util.ArrayList;

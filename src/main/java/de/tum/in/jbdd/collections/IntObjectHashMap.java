@@ -281,12 +281,12 @@ public final class IntObjectHashMap<V> {
     }
 
     /**
-     * A walk over the entries of a map in the shape of {@code Cursor}: positioned on creation, its key and value
-     * defined while {@link #valid()} holds.
+     * A cursor over the entries of a map: {@link #current()} is the value of the entry it stands on, {@link #key()}
+     * its key.
      *
      * @param <V> the type of the values
      */
-    public static final class EntryCursor<V> {
+    public static final class EntryCursor<V> implements Cursor<V> {
         private final int[] keys;
         private final @Nullable Object[] values;
         private int slot = -1;
@@ -297,6 +297,7 @@ public final class IntObjectHashMap<V> {
             advance();
         }
 
+        @Override
         public boolean valid() {
             return slot < keys.length;
         }
@@ -306,14 +307,15 @@ public final class IntObjectHashMap<V> {
             return keys[slot];
         }
 
+        @Override
         @SuppressWarnings("unchecked")
-        public V value() {
+        public V current() {
             Object value = values[slot];
             assert value != null;
             return (V) value;
         }
 
-        /** Moves to the next entry, returning what {@link #valid()} now reports. */
+        @Override
         public boolean advance() {
             int next = slot + 1;
             while (next < keys.length && keys[next] == FREE) {

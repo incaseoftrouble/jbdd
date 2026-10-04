@@ -16,7 +16,6 @@
  */
 package de.tum.in.jbdd.collections;
 
-import de.tum.in.jbdd.Cursor;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Collection;

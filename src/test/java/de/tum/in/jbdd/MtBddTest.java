@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import de.tum.in.jbdd.collections.BitSets;
 import de.tum.in.jbdd.collections.Cube;
+import de.tum.in.jbdd.collections.Cursor;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;

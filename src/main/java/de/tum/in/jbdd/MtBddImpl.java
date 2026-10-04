@@ -22,6 +22,7 @@ import static java.math.BigInteger.ZERO;
 
 import de.tum.in.jbdd.collections.BitSets;
 import de.tum.in.jbdd.collections.Cube;
+import de.tum.in.jbdd.collections.Cursor;
 import de.tum.in.jbdd.collections.IntIntHashMap;
 import java.math.BigInteger;
 import java.util.ArrayList;

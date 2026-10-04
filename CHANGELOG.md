@@ -32,7 +32,7 @@
   * `NatSet.shifted` / `MutableNatSet.shift`: every element moved by an amount, those that would turn negative dropped
   * A `NatSet` equals other `NatSet`s only and hashes by its words; `boxed()` is a `Set<Integer>` view with `Set`'s equality and hash code
 * Removed `BddConfiguration.logStatisticsOnShutdown()`: its output went through `java.util.logging`, whose own shutdown hook resets the handlers first, so nothing was ever printed - read `DdContext.statistics()` from a shutdown hook of your own instead
-* Packages: `Cube`, `BitSets`, the maps and `NatSet` live in `de.tum.in.jbdd.collections`, `DimacsReader` in `de.tum.in.jbdd.io`; `Cube.ofUnsafe` checks its arguments by assertion only
+* Packages: `Cube`, `Cursor`, `BitSets`, the maps and `NatSet` live in `de.tum.in.jbdd.collections`, `DimacsReader` in `de.tum.in.jbdd.io`; `Cube.ofUnsafe` checks its arguments by assertion only
   * `BddUtil`: what is computed from a `BinaryDecisionDiagram`'s public operations alone - `implicants`, `primeImplicants`, `shortestPath` and a generic `adopt` - as static methods rather than interface defaults
   * `shortestPath` (`BddUtil` and `BddSet`): the path to true with the fewest decisions, the first such in `forEachPath` order - a memoised recursion bounded by the best path found so far, not a walk over every path
   * `primeImplicants` (`BinaryDecisionDiagram` and `BddSet`): all prime implicants, the Blake canonical form - the same cubes under any variable order, where `implicants` is a cover that depends on the diagram

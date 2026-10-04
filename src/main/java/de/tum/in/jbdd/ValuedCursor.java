@@ -16,6 +16,8 @@
  */
 package de.tum.in.jbdd;
 
+import de.tum.in.jbdd.collections.Cursor;
+
 /**
  * A {@link Cursor} that also reports the terminal the element it stands on leads to.
  */

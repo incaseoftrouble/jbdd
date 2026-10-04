@@ -247,8 +247,9 @@ public final class IntIntHashMap {
     }
 
     /**
-     * A walk over the entries of a map in the shape of {@code Cursor}: positioned on creation, its key and value
-     * defined while {@link #valid()} holds.
+     * A walk over the entries of a map in the shape of {@link Cursor}: positioned on creation, its key and value
+     * defined while {@link #valid()} holds. Not a {@code Cursor}: an entry is two {@code int}s, which a
+     * {@link Cursor#current()} could hand out only boxed or in a pair allocated per step.
      */
     public static final class EntryCursor {
         private final int[] keys;

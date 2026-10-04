@@ -16,6 +16,7 @@
  */
 package de.tum.in.jbdd;
 
+import de.tum.in.jbdd.collections.Cursor;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BiFunction;
