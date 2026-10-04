@@ -42,7 +42,7 @@ asking for clarification over guessing.**
 ./gradlew test --tests 'de.tum.in.jbdd.RegressionTests'    # quick loop
 ./gradlew compileJava compileTestJava -q                   # quickest check
 ./gradlew spotlessApply    # palantir-java-format, 120 cols; pre-commit hook runs spotlessCheck
-./gradlew jmhRandom | jmhSynthetic | jmhDimacs | jmhEnumeration | jmhNary | jmhMtBdd | jmhReorder | jmhNatSet | jmh
+./gradlew jmhRandom | jmhSynthetic | jmhDimacs | jmhEnumeration | jmhNary | jmhMtBdd | jmhReorder | jmhRelational | jmhNatSet | jmh
 ```
 
 Gotchas that have cost real time:
@@ -173,7 +173,8 @@ DecisionDiagram                     ids, ref counting, support, statistics, Refe
   `forall`, `ifThenElse`, `simplify`, solution and path cursors, the `xyIn` / `xySimplify` variants.
   `constrain`, the generalized cofactor, is `BinaryDecisionDiagram`'s and `MultiTerminalDecisionDiagram`'s only:
   it needs a "nearest" domain-satisfying value, which an n-valued variable does not have, so `MddImpl` offers
-  `simplify` alone.
+  `simplify` alone. So is the relational product `andExists` (with its dual `orForall` and `registerAndExists`):
+  the interface's defaults build the conjunction, `BddImpl` fuses (§6).
 
 Implementations (public, like most of the package - visibility here is deliberately open, so a client can build
 on `GcReferenceManager` or `NodeTable`; still, construct the diagrams only through the factories):
@@ -592,7 +593,7 @@ consequences that are easy to get wrong:
     assignments neither underflows nor needs exact counts; `satisfyingFractionIn` divides by their sum, where
     the exponent cancels). Nothing extra.
   - **Ephemeral "current parameter"** — the MTBDD `compose` (`int[]` mapping) and `restrict` (a `Cube`),
-    `exists` (a `NatSet`), `apply`/`map`/`mapBoolean`/`applyBoolean` and the n-ary `apply` (an opaque
+    `exists` and `andExists` (a `NatSet` each), `apply`/`map`/`mapBoolean`/`applyBoolean` and the n-ary `apply` (an opaque
     operator compared by identity; the paired `*Simplify` cache is invalidated by the same `initX`; the
     n-ary one keys on the cloned operand tuple, as `cartesianProduct` does), `count` (a predicate),
     `canReachMatch` (a predicate), `allMatch` (a predicate, like `applyBoolean`). `initX(...)`
@@ -633,6 +634,20 @@ sound because a *larger* domain constrains more; cofactoring the domain on a var
 that variable means the same on both sides — for the MTBDD's `composeSimplify` only when it maps to itself
 (`aligned`), since the domain speaks about *post*-substitution variables.
 
+**The relational product is one recursion** (`BddImpl#andExists`, CUDD's `bddAndAbstract`): on the pair, by
+level, as `computeAnd`; at a quantified level the result is the `or` of the two cofactor results, low first, and
+the high one is skipped when the low one is true or equals a high cofactor (a result has no quantified variable, so
+that cofactor has none either and bounds the high result) - low first like every other recursion here, which on
+`jmhRelational` took a quarter to a third less time than CUDD's high first on the 16-bit relations and the same
+within noise on the 32-bit ones; below the last quantified level it is `computeAnd`, on
+the `and` cache; a constant or repeated operand leaves `existsRecursive`. That last exit is why `andExists` inits
+both the `and_exists` cache (binary, ordered operands) and the plain `exists` one for its set, and why the
+registered handle carries both. The conjunction is never built: on the preimages of `jmhRelational` (§13) the
+fused form creates 2.3 to 4.7 times fewer nodes and takes 0.4 to 0.85 of the time of `and` then `exists` (the
+random transitions gaining least).
+`orForall` is its complement. `BddTheories.testAndExists` pins it, both operand orders, registered and dual, to
+the composition and the syntax trees.
+
 **The BDD compose is a joint descent** (`computeCompose`, also `composeSimplify` and both registered forms). Its
 state is the function and the domain restricted to the path, with each replaced variable the function still
 reads and that replacement restricted to the path. That tuple is the whole context, so results go to the
@@ -655,8 +670,9 @@ survives alternation between operations. A plain call hands the diagram a freshl
 every invocation; the diagram reads that as a different operator and drops the shared ephemeral cache, so
 repeating one operation never reuses an entry.
 
-Int layer: `registerCompose`/`registerComposeSimplify` on both `Bdd` and `MtBdd`, `Bdd#registerExists`,
-and `MtBdd#registerApply`/`registerApplySimplify`/`registerMap`/`registerMapSimplify`/`registerMapBoolean`/
+Int layer: `registerCompose`/`registerComposeSimplify` on both `Bdd` and `MtBdd`, `Bdd#registerExists` and
+`registerAndExists` (one `BddOperations.Exists`, unary the exists, binary the and-exists, each with its private
+cache; an unused cache is never allocated, `CacheBase` sizing lazily), and `MtBdd#registerApply`/`registerApplySimplify`/`registerMap`/`registerMapSimplify`/`registerMapBoolean`/
 `registerApplyBoolean`, returning `RegisteredOperation.Unary`/`Binary`/`Ternary`. The BDD compose forms hold
 no cache: the composition's is keyed on its whole context (§6), so they only resolve and protect the mapping
 once. Only the compose forms bind *nodes*, and those own them: `ProtectedOperation` + `ProtectionTracker` reference the operands on
@@ -667,7 +683,7 @@ MTBDD operations always straddle both, since their results are BDD functions.
 
 Object layer: handle types bound once and applied repeatedly — `BddMap.Operator<V>` (plus `applyIn`),
 `BddMap.VariableReplacer` (plus `replaceIn`), `BddMap.Mapper<V, O>`, `BddMap.Combiner<V, W, O>`,
-`BddMap.Selector<V>`, `BddMap.Relation<V>`, `BddSet.Quantifier`, `BddSet.VariableReplacer`.
+`BddMap.Selector<V>`, `BddMap.Relation<V>`, `BddSet.Quantifier`, `BddSet.RelationalProduct`, `BddSet.VariableReplacer`.
 
 - **Each extends `RegisteredOperation`**, which is where `release()` and the one statement of what
   binding means both live. The root declares no abstract method, so a handle that also extends a
@@ -684,7 +700,8 @@ Object layer: handle types bound once and applied repeatedly — `BddMap.Operato
   `@SuppressWarnings("PMD.ImplicitFunctionalInterface")`.
 - **A registration that turns out to be a no-op is a shared singleton.** `registerCompose` over a mapping
   that replaces nothing, and `registerExists` over no variable, return exactly
-  `RegisteredOperation.identity()`; `BddSetFactory`'s two variable replacements recognise that and return
+  `RegisteredOperation.identity()` (`registerAndExists` over no variable is a plain `and`, not a no-op);
+  `BddSetFactory`'s two variable replacements recognise that and return
   `BddSet.VariableReplacer.identity()` rather than wrapping a call that would do nothing. The point is the
   reference: a caller can test for it and skip the operation entirely, which no freshly built lambda
   allows. Keep it a singleton (both are enums) when adding a case.
@@ -1169,6 +1186,7 @@ comments and the changelog are expected to be backed by these; **measure before 
 | `jmhNary` | `NaryBenchmark`: `or(int[])` over guarded cubes, `and(int[])` over clauses, cold |
 | `jmhMtBdd` | `MtBddBenchmark`: the object layer's maps as a synthesis tool uses them - edge trees united under a registered operator, mapped, split on the inputs, paired, inverted, filtered |
 | `jmhReorder` | `ReorderBenchmark`: sifting, sifting in groups and `reorderTo` over 8 queens and a 24-bit adder, with and without the kept bookkeeping |
+| `jmhRelational` | `RelationalProductBenchmark`: preimages `exists next. R & S`, cold, over a counter, a twisted shift register and a union of random transitions (current and next state interleaved, 16 and 32 bits), sixteen targets each |
 | `jmhNatSet` | `NatSetBenchmark`: the set operations a synthesis tool spends its time in, per shape |
 
 `NatSetBenchmark` sits in `collections` and times each operation over a pool of 1024 random sets of one shape

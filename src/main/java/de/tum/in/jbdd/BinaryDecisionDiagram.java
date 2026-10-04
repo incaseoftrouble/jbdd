@@ -31,7 +31,7 @@ import java.util.function.IntUnaryOperator;
  * occur with invalid arguments. Especially, the BDD may appear to be in a working state for a long
  * time after an invalid call.</p>
  */
-// TODO [AND-EXISTS] AndExistsSimplify and similar (quantify + apply + simplify at the same time)
+// TODO [AND-EXISTS] AndExistsSimplify and the other fused forms (quantify + apply + simplify at the same time)
 public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTerminalDecisionDiagram<NatSet, Cube> {
     /** A satisfying assignment, fresh and the caller's own. */
     @Override
@@ -265,6 +265,34 @@ public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTe
      * @see #exists(int, NatSet)
      */
     RegisteredOperation.Unary registerExists(NatSet quantifiedVariables);
+
+    /**
+     * {@code exists(and(function1, function2), quantifiedVariables)}, the relational product, in one traversal where
+     * the implementation has one - which never builds the conjunction.
+     */
+    default int andExists(int function1, int function2, NatSet quantifiedVariables) {
+        int conjunction = reference(and(function1, function2));
+        int result = exists(conjunction, quantifiedVariables);
+        dereference(conjunction);
+        return result;
+    }
+
+    /** {@code forall(or(function1, function2), quantifiedVariables)}, the dual of {@link #andExists}. */
+    default int orForall(int function1, int function2, NatSet quantifiedVariables) {
+        int disjunction = reference(or(function1, function2));
+        int result = forall(disjunction, quantifiedVariables);
+        dereference(disjunction);
+        return result;
+    }
+
+    /**
+     * Registers an {@link #andExists} operation bound to a fixed set of {@code quantifiedVariables} - see
+     * {@link RegisteredOperation}. The set is read here and may be changed afterwards.
+     */
+    default RegisteredOperation.Binary registerAndExists(NatSet quantifiedVariables) {
+        NatSet bound = NatSet.copyOf(quantifiedVariables);
+        return (function1, function2) -> andExists(function1, function2, bound);
+    }
 
     /**
      * The function of the cube {@code path}: {@link Cube#support()} fixed to

@@ -465,6 +465,64 @@ class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
+    void testAndExists(BinaryDataPoint<BinaryDd> dataPoint) {
+        BinaryDd bdd = dataPoint.bdd;
+        int function1 = dataPoint.left;
+        int function2 = dataPoint.right;
+        assumeTrue(bdd.isValidFunction(function1));
+        assumeTrue(bdd.isValidFunction(function2));
+
+        // Densities from none to every variable, so both the plain conjunction and the full projection come up.
+        Random quantificationRandom = new Random(31L * function1 + function2);
+        int density = quantificationRandom.nextInt(bdd.numberOfVariables() + 1);
+        MutableNatSet quantified = MutableNatSet.dense(bdd.numberOfVariables());
+        for (int i = 0; i < bdd.numberOfVariables(); i++) {
+            if (quantificationRandom.nextInt(bdd.numberOfVariables()) < density) {
+                quantified.set(i);
+            }
+        }
+
+        int conjunction = bdd.reference(bdd.and(function1, function2));
+        int expected = bdd.reference(bdd.exists(conjunction, quantified));
+        bdd.dereference(conjunction);
+
+        int andExists = bdd.reference(bdd.andExists(function1, function2, quantified));
+        assertThat(andExists, is(expected));
+        assertThat(bdd.andExists(function2, function1, quantified), is(expected));
+        RegisteredOperation.Binary registered = bdd.registerAndExists(quantified);
+        assertThat(registered.applyAsInt(function1, function2), is(expected));
+        assertThat(registered.applyAsInt(function2, function1), is(expected));
+
+        int disjunction = bdd.reference(bdd.or(function1, function2));
+        int expectedForall = bdd.reference(bdd.forall(disjunction, quantified));
+        bdd.dereference(disjunction);
+        assertThat(bdd.orForall(function1, function2, quantified), is(expectedForall));
+        assertThat(bdd.orForall(function2, function1, quantified), is(expectedForall));
+        bdd.dereference(expectedForall);
+
+        // Against the syntax trees, wherever the quantified part of the support is small enough to enumerate.
+        MutableNatSet support = MutableNatSet.copyOf(bdd.support(function1));
+        support.or(bdd.support(function2));
+        MutableNatSet quantifiedSupport = MutableNatSet.copyOf(support);
+        quantifiedSupport.and(quantified);
+        if (quantifiedSupport.size() <= 5) {
+            MutableNatSet unquantifiedSupport = MutableNatSet.copyOf(support);
+            unquantifiedSupport.andNot(quantified);
+            for (boolean[] valuation : assignmentsOver(unquantifiedSupport)) {
+                boolean[] extended = valuation.clone();
+                boolean someWitness = Iterators.any(NatSetFixtures.powerSetIterator(quantifiedSupport), witness -> {
+                    Objects.requireNonNull(witness);
+                    quantifiedSupport.forEach(i -> extended[i] = witness.contains(i));
+                    return dataPoint.leftTree.evaluate(extended) && dataPoint.rightTree.evaluate(extended);
+                });
+                assertThat(bdd.evaluate(andExists, valuation), is(someWitness));
+            }
+        }
+        bdd.dereference(andExists, expected);
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("binary")
     void testAndNot(BinaryDataPoint<BinaryDd> dataPoint) {
         BinaryDd bdd = dataPoint.bdd;
         int function1 = dataPoint.left;

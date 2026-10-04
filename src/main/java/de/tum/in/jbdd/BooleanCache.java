@@ -41,6 +41,7 @@ final class BooleanCache implements VariableOrderObserver {
 
     private final BooleanBase<?, ?> bdd;
     private int existsReuseCount = 0;
+    private int andExistsReuseCount = 0;
 
     private final BinaryToIntCache andCache;
     private final TernaryToIntCache andSimplifyCache;
@@ -53,6 +54,8 @@ final class BooleanCache implements VariableOrderObserver {
     private final QuaternaryToIntCache iteSimplifyCache;
     private final UnaryToIntCache existsCache;
     private NatSet existsVariables = NatSet.of();
+    private final BinaryToIntCache andExistsCache;
+    private NatSet andExistsVariables = NatSet.of();
     private final UnaryToObjectCache<BigInteger> satisfactionCache;
     private final BinaryToObjectCache<BigInteger> satisfactionInCache;
     private final Map<String, IntCache> caches;
@@ -80,6 +83,7 @@ final class BooleanCache implements VariableOrderObserver {
         iteCache = new TernaryToIntCache(bdd);
         iteSimplifyCache = new QuaternaryToIntCache(bdd);
         existsCache = new UnaryToIntCache(bdd);
+        andExistsCache = new BinaryToIntCache(bdd);
         satisfactionCache = new UnaryToObjectCache<>(bdd);
         satisfactionInCache = new BinaryToObjectCache<>(bdd);
 
@@ -107,7 +111,8 @@ final class BooleanCache implements VariableOrderObserver {
                 entry("intersects", intersectsCache),
                 entry("simplify", simplifyCache),
                 entry("constrain", constrainCache),
-                entry("exists", existsCache));
+                entry("exists", existsCache),
+                entry("and_exists", andExistsCache));
 
         tableSizeChanged(0);
     }
@@ -144,6 +149,10 @@ final class BooleanCache implements VariableOrderObserver {
         return existsCache;
     }
 
+    BinaryToIntCache andExistsCache() {
+        return andExistsCache;
+    }
+
     // Size and invalidation
 
     void tableSizeChanged(int invalidatedNodes) {
@@ -171,6 +180,7 @@ final class BooleanCache implements VariableOrderObserver {
         iteCache.grow(size);
         iteSimplifyCache.grow(size);
         existsCache.grow(size);
+        andExistsCache.grow(size);
     }
 
     void variablesChanged() {
@@ -242,6 +252,15 @@ final class BooleanCache implements VariableOrderObserver {
         }
         this.existsVariables = NatSet.copyOf(quantifiedVariables);
         existsCache.invalidate();
+    }
+
+    void initAndExists(NatSet quantifiedVariables) {
+        if (quantifiedVariables.equals(this.andExistsVariables)) {
+            andExistsReuseCount += 1;
+            return;
+        }
+        this.andExistsVariables = NatSet.copyOf(quantifiedVariables);
+        andExistsCache.invalidate();
     }
 
     int lookupAnd(int function1, int function2) {
@@ -456,6 +475,7 @@ final class BooleanCache implements VariableOrderObserver {
         statistics.putAll(andAllCache.statistics("cache_and_all"));
         statistics.putAll(restrictCubeCache.statistics("cache_restrict_cube"));
         statistics.put("exists_reuse_count", existsReuseCount);
+        statistics.put("and_exists_reuse_count", andExistsReuseCount);
         return statistics;
     }
 

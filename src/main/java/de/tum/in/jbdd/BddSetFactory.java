@@ -124,6 +124,12 @@ public interface BddSetFactory {
     BddSet.Quantifier registerExists(NatSet quantifiedVariables);
 
     /**
+     * Binds {@code quantifiedVariables} once - see {@link BddSet.RelationalProduct}. The set is read here and may
+     * be changed afterwards.
+     */
+    BddSet.RelationalProduct registerAndExists(NatSet quantifiedVariables);
+
+    /**
      * Binds {@code mapping} over {@code replacedVariables} once - see {@link BddSet.VariableReplacer}. The
      * handle replaces exactly those variables and leaves every other one alone.
      */

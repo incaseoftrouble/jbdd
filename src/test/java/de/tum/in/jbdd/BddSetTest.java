@@ -108,6 +108,24 @@ class BddSetTest {
     }
 
     @Test
+    void testBddSetRelationalProduct() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BddSetFactory sets = ctx.bddSets();
+        BddSet x0 = sets.var(0);
+        BddSet x1 = sets.var(1);
+        BddSet x2 = sets.var(2);
+        // x0 -> x1' as a relation from x0 to x1, and the target x1 & x2.
+        BddSet relation = x0.complement().union(x1);
+        BddSet target = x1.intersection(x2);
+        NatSet quantified = NatSetFixtures.of(1);
+
+        assertEquals(x2, relation.andExists(target, quantified));
+        assertEquals(relation.intersection(target).exists(quantified), target.andExists(relation, quantified));
+        assertEquals(relation.union(target).forall(quantified), relation.orForall(target, quantified));
+        assertEquals(x0.complement(), relation.orForall(x0.complement(), quantified));
+    }
+
+    @Test
     void testPinnedSetSurvivesItsReferences() {
         BinaryFactoryContext ctx = BinaryFactoryContext.create();
         BddSetFactoryImpl sets = (BddSetFactoryImpl) ctx.bddSets();

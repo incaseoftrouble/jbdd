@@ -13,6 +13,7 @@
 * New methods:
   * `andNot`
   * `forall` quantification, also on `BddSet`
+  * `andExists` (`BinaryDecisionDiagram`, `BddSet`, registered as `registerAndExists`): the relational product `exists(and(f, g), vars)` in one recursion that never builds the conjunction; `orForall` its dual
   * `forEachPath` now has a version with `support` as parameter (replacing the previous `highestVariable`)
   * `anyPathMatches`: check if any path matches a given predicate 
   * `intersects`: check if `and(f, g) != FALSE`

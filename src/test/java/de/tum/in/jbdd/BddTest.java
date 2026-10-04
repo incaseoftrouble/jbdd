@@ -34,6 +34,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -412,6 +413,103 @@ class BddTest {
     }
 
     @Test
+    void testRegisteredAndExistsMatchesTheDirectCall() {
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int[] v = bdd.createVariables(3);
+        int f = bdd.reference(bdd.or(v[0], v[1]));
+        int g = bdd.reference(bdd.xor(v[1], v[2]));
+
+        MutableNatSet quantified = MutableNatSet.copyOf(buildBitSet("010"));
+        RegisteredOperation.Binary andExists = bdd.registerAndExists(quantified);
+        int expected = bdd.andExists(f, g, quantified);
+        assertThat(andExists.applyAsInt(f, g), is(expected));
+        // Invoked twice, the private cache is now warm - the answer must not change.
+        assertThat(andExists.applyAsInt(g, f), is(expected));
+        // The set is read at registration, so changing it afterwards must not be noticed.
+        quantified.set(0);
+        assertThat(andExists.applyAsInt(f, g), is(bdd.andExists(f, g, buildBitSet("010"))));
+
+        assertThat(bdd.registerAndExists(MutableNatSet.create()).applyAsInt(f, g), is(bdd.and(f, g)));
+        assertThat(bdd.registerAndExists(buildBitSet("111")).applyAsInt(f, g), is(bdd.trueFunction()));
+        int contradiction = bdd.reference(bdd.and(v[1], v[2]));
+        assertThat(bdd.andExists(contradiction, g, buildBitSet("111")), is(bdd.falseFunction()));
+        assertThat(bdd.andExists(contradiction, g, buildBitSet("100")), is(bdd.falseFunction()));
+        assertThat(bdd.check(), is(true));
+    }
+
+    @Test
+    void testAndExistsComputesPreimagesUnderCollections() {
+        // The minimal table collects and grows inside the recursions, which is what the work stack has to survive.
+        BddImpl bdd = new DdContextImpl(
+                        ImmutableBddConfiguration.builder().initialSize(1).build())
+                .bdd();
+        int bits = 10;
+        // Current-state x_i is variable 2i, next-state x'_i is 2i + 1.
+        bdd.createVariables(2 * bits);
+        MutableNatSet next = MutableNatSet.create();
+        for (int i = 0; i < bits; i++) {
+            next.set(2 * i + 1);
+        }
+
+        // A twisted shift register: x'_i <-> x_{i-1}, x'_0 <-> !x_{n-1}.
+        int relation = bdd.reference(bdd.trueFunction());
+        for (int i = 0; i < bits; i++) {
+            int source = i == 0 ? bdd.not(bdd.variableFunction(2 * bits - 2)) : bdd.variableFunction(2 * i - 2);
+            int step = bdd.reference(bdd.equivalence(bdd.variableFunction(2 * i + 1), source));
+            relation = bdd.consume(bdd.and(relation, step), relation, step);
+        }
+
+        RegisteredOperation.Binary preimage = bdd.registerAndExists(next);
+        Random random = new Random(0L);
+        for (int round = 0; round < 60; round++) {
+            int target = bdd.reference(bdd.falseFunction());
+            for (int cube = 0; cube < 1 + random.nextInt(6); cube++) {
+                int conjunction = bdd.reference(bdd.trueFunction());
+                for (int i = 0; i < bits; i++) {
+                    if (random.nextInt(3) == 0) {
+                        int literal = bdd.variableFunction(2 * i + 1);
+                        int signed = random.nextBoolean() ? literal : bdd.not(literal);
+                        conjunction = bdd.updateWith(bdd.and(conjunction, signed), conjunction);
+                    }
+                }
+                target = bdd.consume(bdd.or(target, conjunction), target, conjunction);
+            }
+
+            MutableNatSet quantified = MutableNatSet.create();
+            if (round % 3 == 0) {
+                quantified.or(next);
+            } else {
+                for (int variable = 0; variable < 2 * bits; variable++) {
+                    if (random.nextInt(3) == 0) {
+                        quantified.set(variable);
+                    }
+                }
+            }
+            int product = bdd.reference(bdd.and(relation, target));
+            int expected = bdd.reference(bdd.exists(product, quantified));
+            bdd.dereference(product);
+
+            assertEquals(expected, bdd.andExists(relation, target, quantified));
+            // A plain exists over another set in between drops the shared exists entries.
+            bdd.exists(target, buildBitSet(random.nextInt(1 << 8), 8));
+            assertEquals(expected, bdd.andExists(target, relation, quantified));
+            if (round % 3 == 0) {
+                assertEquals(expected, preimage.applyAsInt(relation, target));
+            }
+            int disjunction = bdd.reference(bdd.or(relation, target));
+            int expectedForall = bdd.reference(bdd.forall(disjunction, quantified));
+            bdd.dereference(disjunction);
+            assertEquals(expectedForall, bdd.orForall(target, relation, quantified));
+
+            bdd.dereference(target, expected, expectedForall);
+            if (round % 5 == 0) {
+                bdd.gc();
+            }
+        }
+        assertThat(bdd.check(), is(true));
+    }
+
+    @Test
     void testIfThenElse() {
         BddImpl bdd = new DdContextImpl(config).bdd();
         int v1 = bdd.createVariable();
@@ -621,7 +719,7 @@ class BddTest {
     void testNaryConjunctionAgreesWithTheFold() {
         BddImpl bdd = new DdContextImpl(config).bdd();
         int[] v = bdd.createVariables(10);
-        java.util.Random random = new java.util.Random(5);
+        Random random = new Random(5);
         List<Integer> pool = new ArrayList<>();
         for (int variable : v) {
             pool.add(variable);

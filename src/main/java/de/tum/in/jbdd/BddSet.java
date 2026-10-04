@@ -24,6 +24,7 @@ import java.math.BigInteger;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.function.BinaryOperator;
 import java.util.function.Consumer;
 import java.util.function.IntFunction;
 import java.util.function.IntUnaryOperator;
@@ -91,11 +92,27 @@ public interface BddSet {
         return result;
     }
 
+    /*
+     * Quantification (exists, forall, andExists, orForall and their registered forms) and restriction take existing
+     * variables only and throw an IllegalArgumentException for one that does not exist.
+     */
+
     /** Projects out {@code quantifiedVariables}, i.e. an element remains iff some value for them exists. */
     BddSet exists(NatSet quantifiedVariables);
 
     /** Universally quantifies {@code quantifiedVariables}, i.e. an element remains iff it does for every value of them. */
     BddSet forall(NatSet quantifiedVariables);
+
+    /**
+     * {@code intersection(other).exists(quantifiedVariables)}, the relational product, without building the
+     * intersection.
+     *
+     * @see BinaryDecisionDiagram#andExists(int, int, NatSet)
+     */
+    BddSet andExists(BddSet other, NatSet quantifiedVariables);
+
+    /** {@code union(other).forall(quantifiedVariables)}, the dual of {@link #andExists}. */
+    BddSet orForall(BddSet other, NatSet quantifiedVariables);
 
     /** Elements in exactly one of this set and {@code other}. */
     BddSet symmetricDifference(BddSet other);
@@ -244,6 +261,16 @@ public interface BddSet {
     interface Quantifier extends UnaryOperator<BddSet>, RegisteredOperation {
         @Override
         BddSet apply(BddSet set);
+    }
+
+    /**
+     * A pre-built {@link BddSet#andExists(BddSet, NatSet)} over a fixed variable set, created by
+     * {@link BddSetFactory#registerAndExists} - see {@link RegisteredOperation} for when to prefer one.
+     */
+    @FunctionalInterface
+    interface RelationalProduct extends BinaryOperator<BddSet>, RegisteredOperation {
+        @Override
+        BddSet apply(BddSet set, BddSet other);
     }
 
     /**

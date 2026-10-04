@@ -383,6 +383,34 @@ class ReorderTest {
     }
 
     @Test
+    void testRegisteredAndExistsFollowsAReordering() {
+        int variables = 6;
+        DdContextImpl context = new DdContextImpl(CONFIG);
+        BddImpl bdd = context.bdd();
+        int[] v = bdd.createVariables(variables);
+        int f = bdd.reference(bdd.or(v[0], v[3]));
+        int g = bdd.reference(bdd.and(bdd.xor(v[1], v[4]), bdd.equivalence(v[3], v[5])));
+
+        NatSet quantified = NatSetFixtures.of(1, 3);
+        RegisteredOperation.Binary andExists = bdd.registerAndExists(quantified);
+
+        int expected = bdd.reference(andExists.applyAsInt(f, g));
+        List<Boolean> before = truthTable(bdd, expected, variables);
+
+        context.variableOrder().siftDown(0);
+        context.variableOrder().siftDown(3);
+        context.variableOrder().siftDown(1);
+
+        int after = andExists.applyAsInt(f, g);
+        assertEquals(before, truthTable(bdd, after, variables), "registered and-exists went stale on reordering");
+        assertEquals(expected, after, "and it should find the very same node");
+        assertEquals(bdd.andExists(g, f, quantified), after);
+        int conjunction = bdd.reference(bdd.and(f, g));
+        assertEquals(bdd.exists(conjunction, quantified), after);
+        assertTrue(bdd.check());
+    }
+
+    @Test
     void testReorderReportsWhatItSaved() {
         int pairs = 6;
         int variables = 2 * pairs;

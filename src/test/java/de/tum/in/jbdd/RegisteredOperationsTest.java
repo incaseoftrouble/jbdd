@@ -31,6 +31,7 @@ import org.junit.jupiter.api.Test;
  * the operation it stands for, however much bookkeeping it owns, and keeps doing so once its own cache is
  * warm.
  */
+@SuppressWarnings("PMD.CouplingBetweenObjects")
 class RegisteredOperationsTest {
     @Test
     void testRegisteredApplyAgreesWithThePlainOne() {
@@ -116,6 +117,12 @@ class RegisteredOperationsTest {
         assertEquals(x0.intersection(x1).exists(quantified), exists.apply(x0.intersection(x1)));
         assertEquals(x0.intersection(x1).exists(quantified), exists.apply(x0.intersection(x1)));
         exists.release();
+
+        BddSet.RelationalProduct andExists = sets.registerAndExists(quantified);
+        assertEquals(x0.intersection(x1).exists(quantified), andExists.apply(x0, x1));
+        assertEquals(x0.intersection(x1).exists(quantified), andExists.apply(x1, x0));
+        assertEquals(x0.andExists(x1, quantified), andExists.apply(x0, x1));
+        andExists.release();
 
         /* A handle is built before it sees a set, so it declares the variables it replaces instead of
          * spelling out a mapping over every variable there happens to be - the rest are left alone. */

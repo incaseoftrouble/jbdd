@@ -2356,6 +2356,135 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
     }
 
     @Override
+    public int andExists(int function1, int function2, NatSet quantifiedVariables) {
+        assert isValidFunction(function1) && isValidFunction(function2);
+        checkVariablesExist(quantifiedVariables, numberOfVariables());
+
+        if (quantifiedVariables.isEmpty()) {
+            return and(function1, function2);
+        }
+        if (quantifiedVariables.size() == numberOfVariables()) {
+            return intersects(function1, function2) ? TRUE : FALSE;
+        }
+
+        assert accessGuard.acquire();
+        // A constant operand leaves exists, so the recursion shares the plain exists cache.
+        cache.initExists(quantifiedVariables);
+        cache.initAndExists(quantifiedVariables);
+        int result = andExistsGeneral(
+                function1,
+                function2,
+                variablesToLevels(quantifiedVariables),
+                cache.andExistsCache(),
+                cache.existsCache());
+        assert accessGuard.release();
+        return result;
+    }
+
+    @Override
+    public int orForall(int function1, int function2, NatSet quantifiedVariables) {
+        return complement(andExists(complement(function1), complement(function2), quantifiedVariables));
+    }
+
+    @Override
+    public RegisteredOperation.Binary registerAndExists(NatSet quantifiedVariables) {
+        checkVariablesExist(quantifiedVariables, numberOfVariables());
+        if (quantifiedVariables.isEmpty()) {
+            return this::and;
+        }
+        return new BddOperations.Exists(this, MutableNatSet.copyOf(quantifiedVariables));
+    }
+
+    int andExistsGeneral(
+            int function1,
+            int function2,
+            NatSet quantifiedLevels,
+            BooleanCache.BinaryToIntCache andExistsCache,
+            BooleanCache.UnaryToIntCache existsCache) {
+        assert accessGuard.acquire();
+        assert table.workStacksEmpty();
+        table.pushToWorkStack(function1, function2);
+        int result = andExistsRecursive(function1, function2, quantifiedLevels, andExistsCache, existsCache);
+        table.popFromWorkStack(2);
+        assert table.workStacksEmpty();
+        assert accessGuard.release();
+        return result;
+    }
+
+    private int andExistsRecursive(
+            int function1,
+            int function2,
+            NatSet quantifiedLevels,
+            BooleanCache.BinaryToIntCache andExistsCache,
+            BooleanCache.UnaryToIntCache existsCache) {
+        if (function1 == FALSE || function2 == FALSE || function1 == complement(function2)) {
+            return FALSE;
+        }
+        if (function1 == TRUE || function1 == function2) {
+            return existsRecursive(function2, quantifiedLevels, existsCache);
+        }
+        if (function2 == TRUE) {
+            return existsRecursive(function1, quantifiedLevels, existsCache);
+        }
+
+        assert !isConstant(function1) && !isConstant(function2);
+
+        int fun1Level = decisionLevel(function1);
+        int fun2Level = decisionLevel(function2);
+        int level = Math.min(fun1Level, fun2Level);
+        int nextQuantifiedLevel = quantifiedLevels.nextSetBit(level);
+        if (nextQuantifiedLevel == -1) {
+            return computeAnd(function1, function2);
+        }
+
+        if (function1 > function2) {
+            int swap = function1;
+            function1 = function2;
+            function2 = swap;
+            int levelSwap = fun1Level;
+            fun1Level = fun2Level;
+            fun2Level = levelSwap;
+        }
+
+        int lookup = andExistsCache.lookup(function1, function2);
+        if (lookup != placeholder()) {
+            return lookup;
+        }
+        int hash = andExistsCache.lookupHash();
+
+        int low1 = lowIf(function1, fun1Level == level);
+        int low2 = lowIf(function2, fun2Level == level);
+        int high1 = highIf(function1, fun1Level == level);
+        int high2 = highIf(function2, fun2Level == level);
+
+        int result;
+        if (nextQuantifiedLevel == level) {
+            int lowResult = andExistsRecursive(low1, low2, quantifiedLevels, andExistsCache, existsCache);
+            /* The low result has no quantified variable, so if it equals a high cofactor, that cofactor has none
+             * either and bounds the high result: the disjunction is the low result. */
+            if (lowResult == TRUE || lowResult == high1 || lowResult == high2) {
+                result = lowResult;
+            } else {
+                table.pushToWorkStack(lowResult);
+                int highResult = table.pushToWorkStack(
+                        andExistsRecursive(high1, high2, quantifiedLevels, andExistsCache, existsCache));
+                result = computeOr(lowResult, highResult);
+                table.popFromWorkStack(2);
+            }
+        } else {
+            int lowResult = table.pushToWorkStack(
+                    andExistsRecursive(low1, low2, quantifiedLevels, andExistsCache, existsCache));
+            int highResult = table.pushToWorkStack(
+                    andExistsRecursive(high1, high2, quantifiedLevels, andExistsCache, existsCache));
+            result = makeFunction(level, lowResult, highResult);
+            table.popFromWorkStack(2);
+        }
+
+        andExistsCache.put(hash, function1, function2, result);
+        return result;
+    }
+
+    @Override
     public int ifThenElse(int ifFunction, int thenFunction, int elseFunction) {
         assert isValidFunction(ifFunction) && isValidFunction(thenFunction) && isValidFunction(elseFunction);
 

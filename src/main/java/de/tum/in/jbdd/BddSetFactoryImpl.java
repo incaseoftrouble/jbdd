@@ -217,6 +217,11 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
     }
 
     @Override
+    public BddSet.RelationalProduct registerAndExists(NatSet quantifiedVariables) {
+        return new RegisteredRelationalProduct(this, dd.registerAndExists(quantifiedVariables));
+    }
+
+    @Override
     public BddSet.VariableReplacer registerReplaceVariables(NatSet replacedVariables, IntFunction<BddSet> mapping) {
         int[] substitutions = new int[replacedVariables.length()];
         BddSet[] replacements = new BddSet[substitutions.length];
@@ -340,6 +345,21 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         }
     }
 
+    private static final class RegisteredRelationalProduct
+            extends RegisteredOperations.Forwarding<RegisteredOperation.Binary> implements BddSet.RelationalProduct {
+        private final BddSetFactoryImpl factory;
+
+        RegisteredRelationalProduct(BddSetFactoryImpl factory, RegisteredOperation.Binary operation) {
+            super(operation);
+            this.factory = factory;
+        }
+
+        @Override
+        public BddSet apply(BddSet set, BddSet other) {
+            return factory.make(operation.applyAsInt(factory.functionOf(set), factory.functionOf(other)));
+        }
+    }
+
     private static final class RegisteredReplacer extends RegisteredOperations.Forwarding<RegisteredOperation.Unary>
             implements BddSet.VariableReplacer {
         private final BddSetFactoryImpl factory;
@@ -460,6 +480,16 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         @Override
         public BddSet forall(NatSet quantifiedVariables) {
             return make(factory.dd.forall(function, quantifiedVariables));
+        }
+
+        @Override
+        public BddSet andExists(BddSet other, NatSet quantifiedVariables) {
+            return make(factory.dd.andExists(function, factory.functionOf(other), quantifiedVariables));
+        }
+
+        @Override
+        public BddSet orForall(BddSet other, NatSet quantifiedVariables) {
+            return make(factory.dd.orForall(function, factory.functionOf(other), quantifiedVariables));
         }
 
         @Override

@@ -104,6 +104,9 @@ jmh {
   if (isRequested("jmhReorder")) {
     includes.add("ReorderBenchmark*")
   }
+  if (isRequested("jmhRelational")) {
+    includes.add("RelationalProductBenchmark*")
+  }
 }
 
 tasks.register<Task>("jmhRandom") {
@@ -143,6 +146,11 @@ tasks.register<Task>("jmhMtBdd") {
 
 tasks.register<Task>("jmhReorder") {
   description = "Run the reordering workload"
+  finalizedBy("jmh")
+}
+
+tasks.register<Task>("jmhRelational") {
+  description = "Run the relational product workload"
   finalizedBy("jmh")
 }
 
