@@ -27,9 +27,6 @@ public class BddState {
     @Param({"1"})
     private float cacheSizeFactor;
 
-    @Param({"true"})
-    private boolean preserveCache;
-
     @Param({"false"})
     private boolean emulateMdd;
 
@@ -40,11 +37,7 @@ public class BddState {
     @Setup(Level.Iteration)
     public void setUpBdd() {
         BddConfiguration configuration = ImmutableBddConfiguration.builder()
-                .cacheUnaryDivider((int) (BddConfiguration.DEFAULT_CACHE_UNARY_DIVIDER / cacheSizeFactor))
-                .cacheBinaryDivider((int) (BddConfiguration.DEFAULT_CACHE_BINARY_DIVIDER / cacheSizeFactor))
-                .cacheTernaryDivider((int) (BddConfiguration.DEFAULT_CACHE_TERNARY_DIVIDER / cacheSizeFactor))
-                .cacheEphemeralMultiplier((int) (BddConfiguration.DEFAULT_CACHE_EPHEMERAL_MULTIPLIER * cacheSizeFactor))
-                .useCachePreserve(preserveCache)
+                .cacheSizeDivider((int) (BddConfiguration.DEFAULT_CACHE_SIZE_DIVIDER / cacheSizeFactor))
                 .build();
         bdd = emulateMdd ? new MddAsBinaryDd(new MddImpl(configuration)) : BddFactory.buildBdd(configuration);
     }

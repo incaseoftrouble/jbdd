@@ -39,6 +39,7 @@
 * `MtBdd.apply` over no operands is the operator's value on the empty tuple, and `cartesianProduct` of no functions the constant naming the empty tuple; both returned the placeholder
 * `compose` reads its mapping and `or(int[])` its operands without writing to the array; `compose` used to resolve placeholders in place
 * The relabeler of `MtBdd.splitRelabeled`, `BddMap.splitMap` and `BddSet.split` runs outside the operation and may build functions
+* `BddConfiguration` is down to one cache knob, `cacheSizeDivider` (the eight per-arity dividers, `registeredOperationDivider` and `useCachePreserve` are gone - caches always keep their valid entries), `initialSize` / `mtbddInitialSize` (no `bddInitialSize`), `keepReorderingStructures` and the two collection knobs; tables always double (`growthFactor` is gone)
 * MTBDD terminal reference counts are `short`s (saturating at 32767) rather than bytes
 * The n-ary MTBDD `apply` over two operands keeps the operator's neutral and absorbing values
 * Dereferencing the topmost referenced node no longer searches the table downwards for the next one

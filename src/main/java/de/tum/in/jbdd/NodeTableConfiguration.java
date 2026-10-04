@@ -25,19 +25,12 @@ import org.immutables.value.Value;
  */
 @SuppressWarnings({"MethodReturnAlwaysConstant", "PMD.AbstractClassWithoutAbstractMethod"})
 public abstract class NodeTableConfiguration {
-    public static final double DEFAULT_NODE_TABLE_GROWTH_FACTOR = 2.0d;
     public static final double DEFAULT_GC_LIVE_NODE_THRESHOLD = 0.5d;
 
     /** Whether dead nodes should be collected at all, as opposed to only ever growing the table. */
     @Value.Default
     public boolean useGarbageCollection() {
         return true;
-    }
-
-    /** The factor by which the node table grows whenever it cannot be collected (far) enough. */
-    @Value.Default
-    public double growthFactor() {
-        return DEFAULT_NODE_TABLE_GROWTH_FACTOR;
     }
 
     /**

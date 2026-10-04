@@ -39,7 +39,7 @@ final class MtBddOperations {
 
     private static boolean preserveEntries(MtBddImpl mtbdd, boolean mtbddOrigin, int invalidatedNodes) {
         int tableSize = mtbddOrigin ? mtbdd.tableSize() : mtbdd.bddImpl().tableSize();
-        return mtbdd.bddImpl().configuration().useCachePreserve() && invalidatedNodes < tableSize / 2;
+        return invalidatedNodes < tableSize / 2;
     }
 
     static final class Compose extends ProtectedOperation
@@ -77,9 +77,8 @@ final class MtBddOperations {
         }
 
         private void growToTableFloor() {
-            BddConfiguration configuration = mtbdd.bddImpl().configuration();
             int floor = mtbdd.tableSize()
-                    / (configuration.mtbddCacheEphemeralMultiplier() * configuration.registeredOperationDivider());
+                    / (mtbdd.bddImpl().configuration().cacheSizeDivider() * CacheBase.REGISTERED_OPERATION_DIVIDER);
             composeCache.grow(floor);
             if (composeSimplifyCache != null) {
                 composeSimplifyCache.grow(floor);
@@ -203,9 +202,8 @@ final class MtBddOperations {
         }
 
         private void growToTableFloor() {
-            BddConfiguration configuration = mtbdd.bddImpl().configuration();
             int floor = mtbdd.tableSize()
-                    / (configuration.mtbddCacheEphemeralMultiplier() * configuration.registeredOperationDivider());
+                    / (mtbdd.bddImpl().configuration().cacheSizeDivider() * CacheBase.REGISTERED_OPERATION_DIVIDER);
             mapCache.grow(floor);
             if (mapSimplifyCache != null) {
                 mapSimplifyCache.grow(floor);
@@ -291,9 +289,8 @@ final class MtBddOperations {
         }
 
         private void growToTableFloor() {
-            BddConfiguration configuration = mtbdd.bddImpl().configuration();
             mapBooleanCache.grow(mtbdd.tableSize()
-                    / (configuration.mtbddCacheEphemeralMultiplier() * configuration.registeredOperationDivider()));
+                    / (mtbdd.bddImpl().configuration().cacheSizeDivider() * CacheBase.REGISTERED_OPERATION_DIVIDER));
         }
 
         @Override
@@ -351,9 +348,8 @@ final class MtBddOperations {
         }
 
         private void growToTableFloor() {
-            BddConfiguration configuration = mtbdd.bddImpl().configuration();
             applyBooleanCache.grow(mtbdd.tableSize()
-                    / (configuration.mtbddCacheEphemeralMultiplier() * configuration.registeredOperationDivider()));
+                    / (mtbdd.bddImpl().configuration().cacheSizeDivider() * CacheBase.REGISTERED_OPERATION_DIVIDER));
         }
 
         @Override
@@ -416,9 +412,8 @@ final class MtBddOperations {
         }
 
         private void growToTableFloor() {
-            BddConfiguration configuration = mtbdd.bddImpl().configuration();
             int floor = mtbdd.tableSize()
-                    / (configuration.mtbddCacheEphemeralMultiplier() * configuration.registeredOperationDivider());
+                    / (mtbdd.bddImpl().configuration().cacheSizeDivider() * CacheBase.REGISTERED_OPERATION_DIVIDER);
             applyCache.grow(floor);
             if (applySimplifyCache != null) {
                 applySimplifyCache.grow(floor);

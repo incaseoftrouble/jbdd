@@ -211,38 +211,31 @@ final class MtBddCache implements VariableOrderObserver {
     void tableSizeChanged(int reclaimedNodes, NatSet reclaimedValues) {
         onMultiTerminalNodesInvalidated(reclaimedNodes, reclaimedValues);
 
-        BddConfiguration configuration = bdd.configuration();
-        int size = mtbdd.tableSize();
+        int size = mtbdd.tableSize() / bdd.configuration().cacheSizeDivider();
 
-        int unarySize = size / configuration.mtbddCacheUnaryDivider();
-        mapBooleanCache.grow(unarySize);
-        satisfactionCache.grow(unarySize);
+        mapBooleanCache.grow(size / 2);
+        satisfactionCache.grow(size / 2);
 
-        int binarySize = size / configuration.mtbddCacheBinaryDivider();
-        agreementCache.grow(binarySize);
-        simplifyCache.grow(binarySize);
-        constrainCache.grow(binarySize);
-
-        int ternarySize = size / configuration.mtbddCacheTernaryDivider();
-        updateCache.grow(ternarySize);
-        ifThenElseCache.grow(ternarySize);
-        splitCombineCache.grow(ternarySize);
-        splitBddCombineCache.grow(ternarySize);
-
-        int ephemeralSize = size / configuration.mtbddCacheEphemeralMultiplier();
-        applyCache.grow(ephemeralSize);
-        applyBooleanCache.grow(ephemeralSize);
-        allMatchCache.grow(ephemeralSize);
-        applySimplifyCache.grow(ephemeralSize);
-        mapCache.grow(ephemeralSize);
-        mapSimplifyCache.grow(ephemeralSize);
-        composeCache.grow(ephemeralSize);
-        composeSimplifyCache.grow(ephemeralSize);
-        restrictCache.grow(ephemeralSize);
-        splitCache.grow(ephemeralSize);
-        splitBddCache.grow(ephemeralSize);
-        cartesianProductCache.grow(ephemeralSize);
-        naryApplyCache.grow(ephemeralSize);
+        agreementCache.grow(size);
+        simplifyCache.grow(size);
+        constrainCache.grow(size);
+        updateCache.grow(size);
+        ifThenElseCache.grow(size);
+        splitCombineCache.grow(size);
+        splitBddCombineCache.grow(size);
+        applyCache.grow(size);
+        applyBooleanCache.grow(size);
+        allMatchCache.grow(size);
+        applySimplifyCache.grow(size);
+        mapCache.grow(size);
+        mapSimplifyCache.grow(size);
+        composeCache.grow(size);
+        composeSimplifyCache.grow(size);
+        restrictCache.grow(size);
+        splitCache.grow(size);
+        splitBddCache.grow(size);
+        cartesianProductCache.grow(size);
+        naryApplyCache.grow(size);
     }
 
     void variablesChanged() {
@@ -251,13 +244,11 @@ final class MtBddCache implements VariableOrderObserver {
         // them.
         satisfactionCache.invalidate();
 
-        BddConfiguration configuration = bdd.configuration();
-        satisfactionCache.grow(mtbdd.tableSize() / configuration.mtbddCacheUnaryDivider());
-
-        int ephemeralSize = mtbdd.tableSize() / configuration.mtbddCacheEphemeralMultiplier();
-        composeCache.grow(ephemeralSize);
-        composeSimplifyCache.grow(ephemeralSize);
-        restrictCache.grow(ephemeralSize);
+        int size = mtbdd.tableSize() / bdd.configuration().cacheSizeDivider();
+        satisfactionCache.grow(size / 2);
+        composeCache.grow(size);
+        composeSimplifyCache.grow(size);
+        restrictCache.grow(size);
     }
 
     /**
@@ -296,7 +287,7 @@ final class MtBddCache implements VariableOrderObserver {
             return;
         }
         // If we reclaimed a lot of nodes, we won't be able to save much, so don't try
-        boolean preserve = bdd.configuration().useCachePreserve() && invalidatedNodes < bdd.tableSize() / 2;
+        boolean preserve = invalidatedNodes < bdd.tableSize() / 2;
         for (MtbddCacheStorage cache : caches()) {
             cache.clearInvalidBddNodes(preserve);
         }
@@ -311,7 +302,7 @@ final class MtBddCache implements VariableOrderObserver {
         if (invalidatedNodes == 0 && reclaimedValues.isEmpty()) {
             return;
         }
-        boolean preserve = bdd.configuration().useCachePreserve() && invalidatedNodes < mtbdd.tableSize() / 2;
+        boolean preserve = invalidatedNodes < mtbdd.tableSize() / 2;
         for (MtbddCacheStorage cache : caches()) {
             cache.clearInvalidMtbddNodes(preserve);
         }
@@ -747,11 +738,6 @@ final class MtBddCache implements VariableOrderObserver {
         }
 
         @Override
-        protected boolean useCachePreserve() {
-            return bdd.configuration().useCachePreserve();
-        }
-
-        @Override
         public void clearInvalidBddNodes(boolean attemptPruning) {
             prune(attemptPruning, this::isValidBdd);
         }
@@ -919,11 +905,6 @@ final class MtBddCache implements VariableOrderObserver {
         @Override
         protected int[][] newArray(int size) {
             return new int[size][];
-        }
-
-        @Override
-        protected boolean useCachePreserve() {
-            return bdd.configuration().useCachePreserve();
         }
 
         @Override

@@ -142,32 +142,27 @@ final class BooleanCache implements VariableOrderObserver {
         onBddNodesInvalidated(invalidatedNodes);
 
         logger.log(Level.FINER, "Growing caches if necessary");
-        BddConfiguration configuration = bdd.configuration();
+        int size = bdd.tableSize() / bdd.configuration().cacheSizeDivider();
 
-        int unarySize = bdd.tableSize() / configuration.cacheUnaryDivider();
+        int unarySize = size / 2;
         satisfactionCache.grow(unarySize);
         satisfactionInCache.grow(unarySize);
         supportCache.grow(unarySize);
         fractionCache.grow(unarySize);
 
-        int binarySize = bdd.tableSize() / configuration.cacheBinaryDivider();
-        composeTupleCache.grow(binarySize);
-        restrictCubeCache.grow(binarySize);
-        fractionInCache.grow(binarySize);
-        andCache.grow(binarySize);
-        xorCache.grow(binarySize);
-        simplifyCache.grow(binarySize);
-        constrainCache.grow(binarySize);
-        intersectsCache.grow(binarySize);
-
-        int ternarySize = bdd.tableSize() / configuration.cacheTernaryDivider();
-        andSimplifyCache.grow(ternarySize);
-        xorSimplifyCache.grow(ternarySize);
-        iteCache.grow(ternarySize);
-        iteSimplifyCache.grow(ternarySize);
-
-        int ephemeralSize = bdd.tableSize() / configuration.cacheEphemeralMultiplier();
-        existsCache.grow(ephemeralSize);
+        composeTupleCache.grow(size);
+        restrictCubeCache.grow(size);
+        fractionInCache.grow(size);
+        andCache.grow(size);
+        xorCache.grow(size);
+        simplifyCache.grow(size);
+        constrainCache.grow(size);
+        intersectsCache.grow(size);
+        andSimplifyCache.grow(size);
+        xorSimplifyCache.grow(size);
+        iteCache.grow(size);
+        iteSimplifyCache.grow(size);
+        existsCache.grow(size);
     }
 
     void variablesChanged() {
@@ -178,13 +173,10 @@ final class BooleanCache implements VariableOrderObserver {
         satisfactionCache.invalidate();
         satisfactionInCache.invalidate();
 
-        BddConfiguration configuration = bdd.configuration();
-        int unarySize = bdd.tableSize() / configuration.cacheUnaryDivider();
-        satisfactionCache.grow(unarySize);
-        satisfactionInCache.grow(unarySize);
-
-        int ephemeralSize = bdd.tableSize() / configuration.cacheEphemeralMultiplier();
-        existsCache.grow(ephemeralSize);
+        int size = bdd.tableSize() / bdd.configuration().cacheSizeDivider();
+        satisfactionCache.grow(size / 2);
+        satisfactionInCache.grow(size / 2);
+        existsCache.grow(size);
     }
 
     @Override
@@ -223,7 +215,7 @@ final class BooleanCache implements VariableOrderObserver {
             return;
         }
         // If we reclaimed a lot of nodes, we won't be able to save much, so don't try
-        boolean preserve = bdd.configuration().useCachePreserve() && invalidatedNodes < bdd.tableSize() / 2;
+        boolean preserve = invalidatedNodes < bdd.tableSize() / 2;
         for (IntCache cache : caches()) {
             cache.clearInvalidNodes(preserve);
         }
@@ -477,11 +469,6 @@ final class BooleanCache implements VariableOrderObserver {
                 }
             }
             return isValidResult(binStart);
-        }
-
-        @Override
-        protected boolean useCachePreserve() {
-            return bdd.configuration().useCachePreserve();
         }
 
         void clearInvalidNodes(boolean attemptPruning) {
@@ -799,11 +786,6 @@ final class BooleanCache implements VariableOrderObserver {
         }
 
         @Override
-        protected boolean useCachePreserve() {
-            return bdd.configuration().useCachePreserve();
-        }
-
-        @Override
         protected int hashOf(int[] key) {
             return Arrays.hashCode(key);
         }
@@ -882,11 +864,6 @@ final class BooleanCache implements VariableOrderObserver {
         @Override
         protected RestrictKey[] newArray(int size) {
             return new RestrictKey[size];
-        }
-
-        @Override
-        protected boolean useCachePreserve() {
-            return bdd.configuration().useCachePreserve();
         }
 
         @Override

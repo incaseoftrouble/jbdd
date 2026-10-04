@@ -21,15 +21,7 @@ import org.immutables.value.Value;
 @SuppressWarnings("MethodReturnAlwaysConstant")
 @Value.Immutable
 public class BddConfiguration extends NodeTableConfiguration {
-    public static final int DEFAULT_CACHE_UNARY_DIVIDER = 64;
-    public static final int DEFAULT_CACHE_BINARY_DIVIDER = 32;
-    public static final int DEFAULT_CACHE_TERNARY_DIVIDER = 32;
-    public static final int DEFAULT_CACHE_EPHEMERAL_MULTIPLIER = 32;
-    public static final int DEFAULT_MTBDD_CACHE_UNARY_DIVIDER = 64;
-    public static final int DEFAULT_MTBDD_CACHE_BINARY_DIVIDER = 32;
-    public static final int DEFAULT_MTBDD_CACHE_TERNARY_DIVIDER = 32;
-    public static final int DEFAULT_MTBDD_CACHE_EPHEMERAL_MULTIPLIER = 32;
-    public static final int DEFAULT_REGISTERED_OPERATION_DIVIDER = 8;
+    public static final int DEFAULT_CACHE_SIZE_DIVIDER = 32;
 
     /** An optional, human-readable name for this configuration's instance: it prefixes the keys of its
      * statistics, so several can be read side by side; empty by default. */
@@ -38,15 +30,10 @@ public class BddConfiguration extends NodeTableConfiguration {
         return "";
     }
 
+    /** The initial size of the BDD's node table, which grows as needed. */
     @Value.Default
     public int initialSize() {
         return 1024;
-    }
-
-    /** Initial node-table size of the boolean diagram; defaults to {@link #initialSize()}. */
-    @Value.Default
-    public int bddInitialSize() {
-        return initialSize();
     }
 
     /**
@@ -69,55 +56,13 @@ public class BddConfiguration extends NodeTableConfiguration {
         return initialSize();
     }
 
+    /**
+     * The operation caches, as a fraction of the node table they serve: a binary, ternary or ephemeral cache has
+     * {@code table size / cacheSizeDivider()} bins, a unary one half that, a registered operation's an eighth, and
+     * they grow with the table. The one knob of the caches - a larger divider trades hits for memory.
+     */
     @Value.Default
-    public int cacheUnaryDivider() {
-        return DEFAULT_CACHE_UNARY_DIVIDER;
-    }
-
-    @Value.Default
-    public int cacheBinaryDivider() {
-        return DEFAULT_CACHE_BINARY_DIVIDER;
-    }
-
-    @Value.Default
-    public int cacheTernaryDivider() {
-        return DEFAULT_CACHE_TERNARY_DIVIDER;
-    }
-
-    @Value.Default
-    public int cacheEphemeralMultiplier() {
-        return DEFAULT_CACHE_EPHEMERAL_MULTIPLIER;
-    }
-
-    @Value.Default
-    public int mtbddCacheUnaryDivider() {
-        return DEFAULT_MTBDD_CACHE_UNARY_DIVIDER;
-    }
-
-    @Value.Default
-    public int mtbddCacheBinaryDivider() {
-        return DEFAULT_MTBDD_CACHE_BINARY_DIVIDER;
-    }
-
-    @Value.Default
-    public int mtbddCacheTernaryDivider() {
-        return DEFAULT_MTBDD_CACHE_TERNARY_DIVIDER;
-    }
-
-    @Value.Default
-    public int mtbddCacheEphemeralMultiplier() {
-        return DEFAULT_MTBDD_CACHE_EPHEMERAL_MULTIPLIER;
-    }
-
-    /** Further divides down a registered operation's (see {@link RegisteredOperation}) initial cache size
-     * relative to the base ephemeral cache it would otherwise match. */
-    @Value.Default
-    public int registeredOperationDivider() {
-        return DEFAULT_REGISTERED_OPERATION_DIVIDER;
-    }
-
-    @Value.Default
-    public boolean useCachePreserve() {
-        return true;
+    public int cacheSizeDivider() {
+        return DEFAULT_CACHE_SIZE_DIVIDER;
     }
 }

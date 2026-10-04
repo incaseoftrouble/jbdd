@@ -32,6 +32,8 @@ public abstract class CacheBase {
     // cheaper than filling the whole array.
     private static final int WRITTEN_FRACTION = 32;
     private static final int[] NO_BINS = new int[0];
+    /** A registered operation's cache starts at this fraction of an ephemeral one and grows on usage. */
+    static final int REGISTERED_OPERATION_DIVIDER = 8;
 
     int size = 0;
     CacheStatistics statistics = new CacheStatistics();
@@ -150,7 +152,7 @@ public abstract class CacheBase {
 
     private void growToSize() {
         int newSize = Primes.nextPrime(desiredSize);
-        boolean preserve = !cacheInvalid && useCachePreserve() && statistics.putCountSinceClear() > size / 8;
+        boolean preserve = !cacheInvalid && statistics.putCountSinceClear() > size / 8;
         doGrowToSize(newSize, preserve);
         size = newSize;
         written = newSize / WRITTEN_FRACTION == 0 ? NO_BINS : new int[newSize / WRITTEN_FRACTION];
@@ -164,8 +166,6 @@ public abstract class CacheBase {
         assert !cacheInvalid || isEmpty();
         cacheInvalid = false;
     }
-
-    protected abstract boolean useCachePreserve();
 
     protected abstract void doClear();
 

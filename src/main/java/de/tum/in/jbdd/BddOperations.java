@@ -41,9 +41,8 @@ final class BddOperations {
         }
 
         private void growToTableFloor() {
-            BddConfiguration configuration = bdd.configuration();
             existsCache.grow(bdd.tableSize()
-                    / (configuration.cacheEphemeralMultiplier() * configuration.registeredOperationDivider()));
+                    / (bdd.configuration().cacheSizeDivider() * CacheBase.REGISTERED_OPERATION_DIVIDER));
         }
 
         @Override
@@ -100,7 +99,7 @@ final class BddOperations {
             if (invalidatedNodes == 0) {
                 return;
             }
-            boolean preserve = bdd.configuration().useCachePreserve() && invalidatedNodes < bdd.tableSize() / 2;
+            boolean preserve = invalidatedNodes < bdd.tableSize() / 2;
             existsCache.clearInvalidNodes(preserve);
         }
     }

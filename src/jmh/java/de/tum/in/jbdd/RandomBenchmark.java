@@ -187,10 +187,8 @@ public class RandomBenchmark extends BaseBddBenchmark {
     }
 
     public static void main(String[] args) {
-        BddImpl bdd = new DdContextImpl(ImmutableBddConfiguration.builder()
-                        .growthFactor(4)
-                        .initialSize(65_536)
-                        .build())
+        BddImpl bdd = new DdContextImpl(
+                        ImmutableBddConfiguration.builder().initialSize(65_536).build())
                 .bdd();
         var nodes = new BddNodes(bdd, new Random(1234));
         nodes.createVariables(64);

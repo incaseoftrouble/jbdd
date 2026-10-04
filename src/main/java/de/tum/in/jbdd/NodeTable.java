@@ -62,6 +62,8 @@ public abstract class NodeTable {
     private static final int MINIMUM_VARIABLE_SLOTS = 16;
     private static final int MINIMUM_CHAIN_SLOTS = 8;
     private static final int MAXIMAL_NODE_COUNT = Integer.MAX_VALUE / 2 - 8;
+    /* How much a table grows when it cannot be collected far enough; the heap caps it, see nextSize. */
+    private static final double GROWTH_FACTOR = 2.0;
     /* Margin applied to the estimated memory requirement of a larger table, see availableMemory(). */
     private static final double MEMORY_SAFETY_FACTOR = 1.25;
     /* Live node ratio accepted before growing when the table cannot be grown within the available memory -
@@ -1010,8 +1012,8 @@ public abstract class NodeTable {
             double liveNodeThreshold = configuration.gcLiveNodeThreshold();
             if (liveNodes > currentSize * liveNodeThreshold) {
                 // Too many live nodes, so we want to grow; determine how much we want to grow
-                newSize = nextSize(currentSize, configuration);
-                if (newSize < desiredSize(currentSize, configuration)) {
+                newSize = nextSize(currentSize);
+                if (newSize < desiredSize(currentSize)) {
                     // We want more than we can get, so we are under memory pressure
                     liveNodeThreshold = Math.max(liveNodeThreshold, MEMORY_PRESSURE_LIVE_NODE_THRESHOLD);
                 }
@@ -1075,7 +1077,7 @@ public abstract class NodeTable {
         // We need to grow
 
         if (newSize < 0) {
-            newSize = nextSize(currentSize, configuration);
+            newSize = nextSize(currentSize);
         }
         if (newSize <= currentSize) {
             // Memory pressure: We cannot grow at all.
@@ -1154,14 +1156,14 @@ public abstract class NodeTable {
         return availableMemory();
     }
 
-    private static long desiredSize(int currentSize, NodeTableConfiguration configuration) {
+    private static long desiredSize(int currentSize) {
         //noinspection NumericCastThatLosesPrecision
-        return Math.min(MAXIMAL_NODE_COUNT, (long) (currentSize * configuration.growthFactor()));
+        return Math.min(MAXIMAL_NODE_COUNT, (long) (currentSize * GROWTH_FACTOR));
     }
 
     @SuppressWarnings("NumericCastThatLosesPrecision")
-    private int nextSize(int currentSize, NodeTableConfiguration configuration) {
-        long desired = desiredSize(currentSize, configuration);
+    private int nextSize(int currentSize) {
+        long desired = desiredSize(currentSize);
         long available = availableMemory();
         if (available == Long.MAX_VALUE || requiredSizeBytes(desired) <= available) {
             return (int) desired;

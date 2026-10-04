@@ -218,8 +218,12 @@ Entry points — never `new BddImpl(...)` outside tests:
 - `BinaryFactoryContext.create(...)` — a context plus the object-layer factories `bddSets()`, `bddMaps()`
   (one each per context).
 - `BddConfiguration` — an `org.immutables` `@Value.Immutable` generating `ImmutableBddConfiguration`:
-  initial table sizes (`bddInitialSize()`/`mtbddInitialSize()` separately), cache dividers, growth factor,
-  GC knobs. It extends `NodeTableConfiguration`, which is all `NodeTable` ever sees.
+  the initial table sizes (`initialSize()` for the BDD, `mtbddInitialSize()` defaulting to it), one
+  `cacheSizeDivider()` for every operation cache (a binary, ternary or ephemeral cache is `table / divider`
+  bins, a unary one half that, a registered operation's an eighth - `CacheBase.REGISTERED_OPERATION_DIVIDER`),
+  `keepReorderingStructures()`, and the two GC knobs `useGarbageCollection()` / `gcLiveNodeThreshold()`.
+  Deliberately nothing else: users do not tune caches, tables double, and a cache always keeps what is
+  still valid across a collection. It extends `NodeTableConfiguration`, which is all `NodeTable` ever sees.
 
 ### Object layer — wrappers with automatic reference management
 

@@ -69,7 +69,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         // Store the reference for speed
         this.order = context.variableOrder();
         this.configuration = context.configuration();
-        this.table = new BddTable(this, configuration.bddInitialSize());
+        this.table = new BddTable(this, configuration.initialSize());
 
         cache = new BooleanCache(this);
         variableNodes = new int[32];

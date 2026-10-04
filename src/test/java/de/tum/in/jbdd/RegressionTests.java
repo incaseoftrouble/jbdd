@@ -721,11 +721,10 @@ class RegressionTests {
 
     @Test
     void testRegisterComposeWithATinyCacheBudget() {
-        // The desired cache size is the table size divided by two configured dividers, which can round
-        // down to zero - a cache still needs at least one bin.
-        BddConfiguration tiny = ImmutableBddConfiguration.builder()
-                .registeredOperationDivider(1 << 20)
-                .build();
+        // The desired cache size is the table size divided by the configured divider and a constant, which can
+        // round down to zero - a cache still needs at least one bin.
+        BddConfiguration tiny =
+                ImmutableBddConfiguration.builder().cacheSizeDivider(1 << 20).build();
         BddImpl bdd = new DdContextImpl(tiny).bdd();
         int[] v = bdd.createVariables(3);
         int function = bdd.reference(bdd.and(v[0], v[2]));
