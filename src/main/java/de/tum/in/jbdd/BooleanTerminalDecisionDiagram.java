@@ -209,7 +209,8 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      * @param function
      *     The function representing the basis of the quantification.
      * @param quantifiedVariables
-     *     The variables which should be quantified over.
+     *     The variables which should be quantified over; each must exist ({@link IllegalArgumentException}
+     *     otherwise).
      *
      * @return The quantified function.
      */
@@ -224,7 +225,8 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
      * @param function
      *     The function representing the basis of the quantification.
      * @param quantifiedVariables
-     *     The variables which should be quantified over.
+     *     The variables which should be quantified over; each must exist ({@link IllegalArgumentException}
+     *     otherwise).
      *
      * @return The quantified function.
      */

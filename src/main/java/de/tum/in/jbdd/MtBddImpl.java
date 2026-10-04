@@ -18,6 +18,7 @@ package de.tum.in.jbdd;
 
 import static de.tum.in.jbdd.BooleanBase.TWO;
 import static de.tum.in.jbdd.Preconditions.checkState;
+import static de.tum.in.jbdd.Preconditions.checkVariablesExist;
 import static java.math.BigInteger.ZERO;
 
 import de.tum.in.jbdd.collections.Cube;
@@ -1655,6 +1656,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     @Override
     public int restrict(int mtbddFunction, Cube restriction) {
         assert isValidFunction(mtbddFunction);
+        // A level is read per fixed variable, so each must exist (as for quantification).
+        checkVariablesExist(restriction.support(), numberOfVariables());
 
         if (restriction.isEmpty() || isConstant(mtbddFunction)) {
             return mtbddFunction;

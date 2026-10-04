@@ -17,6 +17,7 @@
 package de.tum.in.jbdd;
 
 import com.google.errorprone.annotations.FormatMethod;
+import de.tum.in.jbdd.collections.NatSet;
 
 final class Preconditions {
     private Preconditions() {}
@@ -31,6 +32,17 @@ final class Preconditions {
     static void checkState(boolean state, String formatString, Object... format) {
         if (!state) {
             throw new IllegalStateException(String.format(formatString, format));
+        }
+    }
+
+    /**
+     * Quantification takes existing variables only: its shortcut for a set of all of them compares sizes, which this
+     * makes sound. One comparison, so a check rather than an assertion.
+     */
+    static void checkVariablesExist(NatSet variables, int numberOfVariables) {
+        if (variables.length() > numberOfVariables) {
+            throw new IllegalArgumentException(
+                    "variable " + variables.last() + " does not exist (" + numberOfVariables + " variables)");
         }
     }
 }

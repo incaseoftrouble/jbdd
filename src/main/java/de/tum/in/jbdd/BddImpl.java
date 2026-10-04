@@ -1526,6 +1526,8 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
     @Override
     public int restrict(int function, Cube restriction) {
         assert isValidFunction(function);
+        // A level is read per fixed variable, so each must exist (as for quantification).
+        checkVariablesExist(restriction.support(), numberOfVariables());
 
         if (restriction.isEmpty() || isConstant(function)) {
             return function;
@@ -2035,7 +2037,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
     @Override
     public int exists(int function, NatSet quantifiedVariables) {
         assert isValidFunction(function);
-        assert quantifiedVariables.length() - 1 <= numberOfVariables();
+        checkVariablesExist(quantifiedVariables, numberOfVariables());
 
         if (isConstant(function)) {
             return function;
@@ -2054,7 +2056,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
 
     @Override
     public RegisteredOperation.Unary registerExists(NatSet quantifiedVariables) {
-        assert quantifiedVariables.length() - 1 <= numberOfVariables();
+        checkVariablesExist(quantifiedVariables, numberOfVariables());
         if (quantifiedVariables.isEmpty()) {
             return RegisteredOperation.identity();
         }

@@ -231,7 +231,8 @@ public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTe
 
     /**
      * {@code function} with every variable of the {@code restriction} fixed to its value there, so the result no
-     * longer depends on them.
+     * longer depends on them. Each variable of the restriction must exist ({@link IllegalArgumentException}
+     * otherwise).
      *
      * @see #compose(int, int[])
      */

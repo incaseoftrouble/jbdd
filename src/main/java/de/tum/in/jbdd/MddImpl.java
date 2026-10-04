@@ -712,7 +712,8 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     @Override
     public int exists(int function, NatSet quantifiedVariables) {
         assert isValidFunction(function);
-        assert quantifiedVariables.length() - 1 <= numberOfVariables;
+        // Every quantified variable exists: the shortcut below counts on it, and so does the level translation.
+        Preconditions.checkVariablesExist(quantifiedVariables, numberOfVariables);
 
         if (isConstant(function)) {
             return function;
