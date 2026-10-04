@@ -496,12 +496,13 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
     RegisteredOperation.Unary registerMapBoolean(IntPredicate values);
 
     /**
-     * Creates the inverse of the given {@code function}, i.e. a mapping from each value to the boolean
-     * function describing all assignments under which the function evaluates to that value.
+     * The inverse of the given {@code function}: {@link FunctionToFunctionMap#function()} is {@code function} itself,
+     * and {@link FunctionToFunctionMap#functionFor(int)} the boolean function of the {@link #bdd() Bdd} describing all
+     * assignments under which it evaluates to that value, {@literal false} for a value it never takes.
      *
      * @see #mapBoolean(int, IntPredicate)
      */
-    Inverse invert(int function);
+    FunctionToFunctionMap invert(int function);
 
     /**
      * Creates the split of the given {@code function}. Suppose {@code function} is {@code f(x_1, ..., x_n}}
@@ -576,24 +577,7 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
      */
     int simplify(int function, int domain);
 
-    interface Inverse {
-        /**
-         * The inverted MTBDD function.
-         */
-        int function();
-
-        /**
-         * Return the BDD function describing all valuations that yield the given value in the MTBDD function.
-         * In particular, for values outside the support, this function returns {@link Bdd#falseFunction() FALSE}.
-         */
-        int functionFor(int value);
-
-        /**
-         * The co-domain of the inverted function.
-         */
-        NatSet codomain();
-    }
-
+    /** A function whose values name functions - of this diagram or of the {@link #bdd() Bdd}, as the operation says. */
     interface FunctionToFunctionMap {
         /**
          * The meta-function whose values index functions.

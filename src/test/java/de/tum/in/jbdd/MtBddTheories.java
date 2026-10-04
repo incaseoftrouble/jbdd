@@ -747,7 +747,7 @@ class MtBddTheories {
     @MethodSource("intUnary")
     void testInvertSupportMatchesValuesOf(IntUnaryDataPoint dataPoint) {
         MtBddImpl mt = dataPoint.context.mt;
-        MultiTerminalDecisionDiagram.Inverse inverse = mt.invert(dataPoint.function);
+        MultiTerminalDecisionDiagram.FunctionToFunctionMap inverse = mt.invert(dataPoint.function);
         assertThat(inverse.codomain(), is(mt.valuesOf(dataPoint.function)));
     }
 
@@ -756,7 +756,7 @@ class MtBddTheories {
     void testInvertFunctionForMatchesEvaluate(IntUnaryDataPoint dataPoint) {
         MtBddImpl mt = dataPoint.context.mt;
         BddImpl bdd = dataPoint.context.bdd;
-        MultiTerminalDecisionDiagram.Inverse inverse = mt.invert(dataPoint.function);
+        MultiTerminalDecisionDiagram.FunctionToFunctionMap inverse = mt.invert(dataPoint.function);
         NatSet values = mt.valuesOf(dataPoint.function);
         for (int value = values.nextSetBit(0); value >= 0; value = values.nextSetBit(value + 1)) {
             int bddFunction = bdd.reference(inverse.functionFor(value));
@@ -772,7 +772,7 @@ class MtBddTheories {
     void testInvertMatchesMapBoolean(IntUnaryDataPoint dataPoint) {
         MtBddImpl mt = dataPoint.context.mt;
         BddImpl bdd = dataPoint.context.bdd;
-        MultiTerminalDecisionDiagram.Inverse inverse = mt.invert(dataPoint.function);
+        MultiTerminalDecisionDiagram.FunctionToFunctionMap inverse = mt.invert(dataPoint.function);
         NatSet values = mt.valuesOf(dataPoint.function);
         for (int value = values.nextSetBit(0); value >= 0; value = values.nextSetBit(value + 1)) {
             int fixedValue = value;
@@ -788,7 +788,7 @@ class MtBddTheories {
     void testInvertOutsideSupportIsFalse(IntUnaryDataPoint dataPoint) {
         MtBddImpl mt = dataPoint.context.mt;
         BddImpl bdd = dataPoint.context.bdd;
-        MultiTerminalDecisionDiagram.Inverse inverse = mt.invert(dataPoint.function);
+        MultiTerminalDecisionDiagram.FunctionToFunctionMap inverse = mt.invert(dataPoint.function);
         NatSet values = mt.valuesOf(dataPoint.function);
         int outside = values.isEmpty() ? 0 : values.length();
         assertThat(values.contains(outside), is(false));

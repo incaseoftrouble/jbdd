@@ -776,7 +776,7 @@ class MtBddTest {
         MtBddImpl mt = bdd.mtbdd();
 
         int f = mt.of(0, mt.of(1, mt.of(1), mt.of(2)), mt.of(2, mt.of(3), mt.of(4)));
-        MultiTerminalDecisionDiagram.Inverse inverse = mt.invert(f);
+        MultiTerminalDecisionDiagram.FunctionToFunctionMap inverse = mt.invert(f);
 
         // invert()'s co-domain must be exactly f's actual co-domain (values 1..4 here, nothing else).
         assertEquals(mt.valuesOf(f), inverse.codomain());
@@ -805,7 +805,7 @@ class MtBddTest {
         // 64 distinct values (0..63), comfortably above invert()'s array/map size threshold - forces the
         // Map-based path (the smaller test above, with only 4 values, only ever exercises the array path).
         int f = buildValueFunction(mt, numVars, 0, 0);
-        MultiTerminalDecisionDiagram.Inverse inverse = mt.invert(f);
+        MultiTerminalDecisionDiagram.FunctionToFunctionMap inverse = mt.invert(f);
 
         assertEquals(mt.valuesOf(f), inverse.codomain());
         for (int mask = 0; mask < (1 << numVars); mask++) {

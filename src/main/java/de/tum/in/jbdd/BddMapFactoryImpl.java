@@ -751,7 +751,7 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
 
         @Override
         public Map<V, BddSet> inverse() {
-            MultiTerminalDecisionDiagram.Inverse inverse = factory.dd.invert(function);
+            MultiTerminalDecisionDiagram.FunctionToFunctionMap inverse = factory.dd.invert(function);
             // The domains are unreferenced until wrapped, and wrapping allocates no node.
             NatSet codomain = inverse.codomain();
             Map<V, BddSet> domains = new LinkedHashMap<>();

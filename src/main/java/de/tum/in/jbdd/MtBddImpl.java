@@ -1835,13 +1835,13 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
     }
 
     @Override
-    public MultiTerminalDecisionDiagram.Inverse invert(int mtbddFunction) {
+    public FunctionToFunctionMap invert(int mtbddFunction) {
         assert isValidFunction(mtbddFunction);
         assert accessGuard.acquire();
         assert bdd.table().workStacksEmpty();
 
         int domainSize = allocatedValues.length();
-        MultiTerminalDecisionDiagram.Inverse result;
+        FunctionToFunctionMap result;
         int falseFunction = bdd.falseFunction();
         if (domainSize <= INVERT_ARRAY_DOMAIN_THRESHOLD) {
             MutableNatSet values = MutableNatSet.dense(domainSize);
@@ -3022,7 +3022,7 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         return true;
     }
 
-    private static final class FunctionInverse implements Inverse {
+    private static final class FunctionInverse implements FunctionToFunctionMap {
         private final int function;
         private final IntUnaryOperator functionFor;
         private final NatSet values;
