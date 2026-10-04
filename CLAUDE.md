@@ -170,8 +170,10 @@ DecisionDiagram                     ids, ref counting, support, statistics, Refe
   implementation-side surface.
 - `BooleanTerminalDecisionDiagram<S, P>` is the whole boolean-valued logical API over assignment type `S`
   and path type `P` (`NatSet`/`Cube` for BDDs, `int[]`/`int[]` for MDDs): `and`, `andNot`, `exists`,
-  `forall`, `ifThenElse`, `constrain`/`simplify`, solution and path cursors, the `xyIn` / `xySimplify`
-  variants.
+  `forall`, `ifThenElse`, `simplify`, solution and path cursors, the `xyIn` / `xySimplify` variants.
+  `constrain`, the generalized cofactor, is `BinaryDecisionDiagram`'s and `MultiTerminalDecisionDiagram`'s only:
+  it needs a "nearest" domain-satisfying value, which an n-valued variable does not have, so `MddImpl` offers
+  `simplify` alone.
 
 Implementations (package-private; construct only via factories):
 

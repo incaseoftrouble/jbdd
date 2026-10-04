@@ -577,7 +577,7 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
 
     @Override
     public int constrain(int function, int domain) {
-        return mdd.constrain(function, domain);
+        throw new UnsupportedOperationException("An MDD has no canonical cofactor");
     }
 
     @Override

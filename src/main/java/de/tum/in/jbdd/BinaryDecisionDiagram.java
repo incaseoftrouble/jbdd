@@ -78,6 +78,16 @@ public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTe
     double satisfyingFractionIn(int function, int domain);
 
     /**
+     * Constructs the generalized cofactor of {@code function} w.r.t. {@code domain} (Coudert &amp; Madre),
+     * also written {@code f @ domain}: The result agrees with {@code function} wherever {@code domain} holds,
+     * and elsewhere takes the value of {@code function} at the nearest {@code domain}-satisfying assignment
+     * (variables decided top-down, flipped only when {@code domain} forces it) - a specific canonical
+     * choice, unlike {@link #simplify}'s arbitrary one, so the result may depend on variables {@code
+     * function} did not and is not guaranteed to stay bounded in size.
+     */
+    int constrain(int function, int domain);
+
+    /**
      * Creates a new variable and returns the BDD function representing it. The implementation guarantees that
      * variables are always allocated sequentially starting from 0, i.e. {@code
      * getVariable(createVariable()) == numberOfVariables() - 1}.

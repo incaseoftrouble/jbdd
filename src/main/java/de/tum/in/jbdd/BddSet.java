@@ -109,7 +109,7 @@ public interface BddSet {
 
     /** Agrees with this set on {@code domain}; unspecified (but canonical) elsewhere.
      *
-     * @see BooleanTerminalDecisionDiagram#constrain(int, int) */
+     * @see BinaryDecisionDiagram#constrain(int, int) */
     BddSet constrain(BddSet domain);
 
     /** Agrees with this set on {@code domain}; unspecified elsewhere.

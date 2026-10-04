@@ -1027,24 +1027,6 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
     }
 
     @Override
-    public int constrain(int function, int domain) {
-        assert isValidFunction(function) && isValidFunction(domain);
-
-        if (domain == FALSE) {
-            return FALSE;
-        }
-
-        assert accessGuard.acquire();
-        assert table.workStacksEmpty();
-        table.pushToWorkStack(function, domain);
-        int result = computeConstrainSimplify(function, domain, true);
-        table.popFromWorkStack(2);
-        assert table.workStacksEmpty();
-        assert accessGuard.release();
-        return result;
-    }
-
-    @Override
     public int simplify(int function, int domain) {
         assert isValidFunction(function) && isValidFunction(domain);
 
@@ -1055,14 +1037,14 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         assert accessGuard.acquire();
         assert table.workStacksEmpty();
         table.pushToWorkStack(function, domain);
-        int result = computeConstrainSimplify(function, domain, false);
+        int result = computeSimplify(function, domain);
         table.popFromWorkStack(2);
         assert table.workStacksEmpty();
         assert accessGuard.release();
         return result;
     }
 
-    private int computeConstrainSimplify(int function, int domain, boolean constrain) {
+    private int computeSimplify(int function, int domain) {
         assert domain != FALSE;
         if (function == TRUE || function == FALSE || domain == TRUE) {
             return function;
@@ -1077,7 +1059,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         int node = positive(function);
         boolean func = node != function;
 
-        int lookup = constrain ? cache.lookupConstrain(node, domain) : cache.lookupSimplify(node, domain);
+        int lookup = cache.lookupSimplify(node, domain);
         if (lookup != placeholder()) {
             return complementIf(lookup, func);
         }
@@ -1107,8 +1089,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
                     } else {
                         firstDecision = -2;
                     }
-                    resultChildren[val] = table.pushToWorkStack(
-                            computeConstrainSimplify(functionChildren[val], domainChild, constrain));
+                    resultChildren[val] = table.pushToWorkStack(computeSimplify(functionChildren[val], domainChild));
                     workStack += 1;
                 }
             }
@@ -1124,8 +1105,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             int variableDomainSize = functionChildren.length;
             int[] resultChildren = new int[variableDomainSize];
             for (int i = 0; i < variableDomainSize; i++) {
-                resultChildren[i] =
-                        table.pushToWorkStack(computeConstrainSimplify(functionChildren[i], domain, constrain));
+                resultChildren[i] = table.pushToWorkStack(computeSimplify(functionChildren[i], domain));
             }
             result = makeFunction(functionVar, resultChildren);
             table.popFromWorkStack(variableDomainSize);
@@ -1137,7 +1117,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
                 disjunction = computeOr(disjunction, complementIf(domainChildren[i], domc));
                 table.popFromWorkStack();
             }
-            result = computeConstrainSimplify(node, table.pushToWorkStack(disjunction), true);
+            result = computeSimplify(node, table.pushToWorkStack(disjunction));
             table.popFromWorkStack();
         }
         cache.putSimplify(hash, node, domain, result);
