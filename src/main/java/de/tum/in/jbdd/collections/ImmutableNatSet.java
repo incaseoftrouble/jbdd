@@ -96,7 +96,7 @@ final class ImmutableNatSet implements NatSet {
     }
 
     /** The set of the first {@code count} entries of {@code sorted}, ascending and distinct, which it may keep. */
-    private static ImmutableNatSet ofSorted(int[] sorted, int count) {
+    static ImmutableNatSet ofSorted(int[] sorted, int count) {
         if (count <= 1) {
             return count == 0 ? EMPTY : singleton(sorted[0]);
         }
@@ -112,7 +112,7 @@ final class ImmutableNatSet implements NatSet {
     }
 
     /** The set of {@code words}, of which it keeps a trimmed copy or, if {@code own}, the array itself. */
-    private static ImmutableNatSet ofWords(long[] words, int count, boolean own) {
+    static ImmutableNatSet ofWords(long[] words, int count, boolean own) {
         if (count <= 1) {
             return count == 0 ? EMPTY : singleton(NatSetUtil.wordsNext(words, 0));
         }
@@ -478,6 +478,52 @@ final class ImmutableNatSet implements NatSet {
         assert current != null;
         long[] shifted = NatSetUtil.shiftedWords(current, amount);
         return ofWords(shifted, amount > 0 ? size : NatSetUtil.wordsCount(shifted), true);
+    }
+
+    @Override
+    public NatSet subSet(int from, int to) {
+        assert from >= 0 : from;
+        if (size == 0 || to <= from) {
+            return EMPTY;
+        }
+        if (from <= first() && last() < to) {
+            return this;
+        }
+        int[] array = elements();
+        if (array != null) {
+            int low = NatSetUtil.arrayLowerBound(array, size, from);
+            int high = NatSetUtil.arrayLowerBound(array, size, to);
+            return ofSorted(Arrays.copyOfRange(array, low, high), high - low);
+        }
+        long[] current = words();
+        assert current != null;
+        long[] restricted = NatSetUtil.subSetWords(current, from, to);
+        return ofWords(restricted, NatSetUtil.wordsCount(restricted), true);
+    }
+
+    @Override
+    public NatSet slice(int from, int to) {
+        assert from >= 0 : from;
+        if (from == 0) {
+            return subSet(0, to);
+        }
+        if (size == 0 || to <= from) {
+            return EMPTY;
+        }
+        int[] array = elements();
+        if (array != null) {
+            int low = NatSetUtil.arrayLowerBound(array, size, from);
+            int high = NatSetUtil.arrayLowerBound(array, size, to);
+            int[] sliced = new int[high - low];
+            for (int index = low; index < high; index++) {
+                sliced[index - low] = array[index] - from;
+            }
+            return ofSorted(sliced, sliced.length);
+        }
+        long[] current = words();
+        assert current != null;
+        long[] sliced = NatSetUtil.sliceWords(current, from, to);
+        return ofWords(sliced, NatSetUtil.wordsCount(sliced), true);
     }
 
     // Views, copies, bridges

@@ -104,6 +104,18 @@ public interface NatSet {
     /** The largest element, {@code -1} if empty. */
     int last();
 
+    /** The smallest element, {@code defaultValue} if empty. */
+    default int firstOr(int defaultValue) {
+        int first = first();
+        return first < 0 ? defaultValue : first;
+    }
+
+    /** The largest element, {@code defaultValue} if empty. */
+    default int lastOr(int defaultValue) {
+        int last = last();
+        return last < 0 ? defaultValue : last;
+    }
+
     /**
      * The smallest element at least {@code from}, {@code -1} if there is none - as {@link BitSet#nextSetBit(int)}.
      * A loop {@code nextSetBit(e + 1)} must stop after {@link Integer#MAX_VALUE}, which is a valid element.
@@ -159,6 +171,15 @@ public interface NatSet {
      * elements must stay ints.
      */
     NatSet shifted(int amount);
+
+    /** The elements in {@code [from, to)}; empty if {@code to <= from}. */
+    NatSet subSet(int from, int to);
+
+    /**
+     * The elements in {@code [from, to)}, each less {@code from}: {@code subSet(from, to).shifted(-from)}, as
+     * {@link BitSet#get(int, int)} reads a range.
+     */
+    NatSet slice(int from, int to);
 
     /**
      * This set as a {@code Set<Integer>}, a new view: unmodifiable unless this set is a {@link MutableNatSet}, and

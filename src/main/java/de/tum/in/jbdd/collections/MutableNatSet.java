@@ -35,6 +35,15 @@ public interface MutableNatSet extends NatSet {
         return MutableNatSetImpl.dense(capacity);
     }
 
+    /** The naturals from {@code from} inclusive to {@code to} exclusive, as words; empty if {@code to <= from}. */
+    static MutableNatSet range(int from, int to) {
+        MutableNatSet set = dense(Math.max(to, 0));
+        if (from < to) {
+            set.set(from, to);
+        }
+        return set;
+    }
+
     static MutableNatSet of(int... elements) {
         return MutableNatSetImpl.of(elements);
     }

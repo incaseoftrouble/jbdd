@@ -454,6 +454,67 @@ final class NatSetUtil {
         return shifted;
     }
 
+    /**
+     * The index of the first of the ascending {@code elements[0, size)} that is at least {@code from}; {@code size} if
+     * none.
+     */
+    static int arrayLowerBound(int[] elements, int size, int from) {
+        int low = 0;
+        int high = size;
+        while (low < high) {
+            int middle = (low + high) >>> 1;
+            if (elements[middle] < from) {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        return low;
+    }
+
+    /**
+     * {@code words} restricted to the elements in {@code [from, to)}: a new array, possibly with trailing zero words.
+     */
+    static long[] subSetWords(long[] words, int from, int to) {
+        int end = (int) Math.min(to, (long) words.length << WORD_SHIFT);
+        if (end <= from) {
+            return new long[0];
+        }
+        int firstWord = from >>> WORD_SHIFT;
+        int lastWord = (end - 1) >>> WORD_SHIFT;
+        long[] restricted = new long[lastWord + 1];
+        System.arraycopy(words, firstWord, restricted, firstWord, lastWord - firstWord + 1);
+        restricted[firstWord] &= -1L << from;
+        restricted[lastWord] &= -1L >>> -end;
+        return restricted;
+    }
+
+    /**
+     * {@code words} restricted to {@code [from, to)} and shifted down by {@code from}, as
+     * {@link java.util.BitSet#get(int, int)}.
+     */
+    static long[] sliceWords(long[] words, int from, int to) {
+        int end = (int) Math.min(to, (long) words.length << WORD_SHIFT);
+        if (end <= from) {
+            return new long[0];
+        }
+        // Each result word gathers its bits from the two source words it straddles; only the last is masked.
+        int length = end - from;
+        int firstWord = from >>> WORD_SHIFT;
+        int bitShift = from & (Long.SIZE - 1);
+        long[] sliced = new long[wordCount(length)];
+        for (int index = 0; index < sliced.length; index++) {
+            int source = firstWord + index;
+            long word = words[source] >>> bitShift;
+            if (bitShift != 0 && source + 1 < words.length) {
+                word |= words[source + 1] << (Long.SIZE - bitShift);
+            }
+            sliced[index] = word;
+        }
+        sliced[sliced.length - 1] &= -1L >>> -length;
+        return sliced;
+    }
+
     /** The index of the first of the ascending {@code elements[0, size)} that stays natural when shifted by amount. */
     static int arrayFirstKept(int[] elements, int size, int amount) {
         int first = 0;

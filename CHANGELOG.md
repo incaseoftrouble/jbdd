@@ -76,6 +76,7 @@
 * Significant improvement of `compose` / `ifThenElse` in certain cases (e.g.\ identifying constant replacements)
 * The BDD `compose` / `composeSimplify` (and with them `replaceVariables` and the registered replacers) is a joint descent over the function, the domain and the replacements it reads, restricted along the path and cached on that whole tuple: the path reaches the replacements, instead of each branch being composed for both values and one half discarded - exponentially fewer nodes where the replaced variables sit below those their replacements read. The compose, `restrict` and support caches are stable (keyed on their whole context), so a registered BDD compose no longer carries a cache of its own
 * Preserve cached values when possible (should provide notable improvements on some workloads)
+* `NatSet.subSet(from, to)` and `slice(from, to)` (the elements of a range, in place or re-based at 0), `MutableNatSet.range(from, to)`, `firstOr` / `lastOr`
 
 ## 0.6
 

@@ -762,6 +762,45 @@ final class MutableNatSetImpl implements MutableNatSet {
         return ImmutableNatSet.freeze(copy);
     }
 
+    @Override
+    public NatSet subSet(int from, int to) {
+        assert from >= 0 : from;
+        if (size == 0 || to <= from) {
+            return ImmutableNatSet.EMPTY;
+        }
+        long[] current = words;
+        if (current == null) {
+            int low = NatSetUtil.arrayLowerBound(elements, size, from);
+            int high = NatSetUtil.arrayLowerBound(elements, size, to);
+            return ImmutableNatSet.ofSorted(Arrays.copyOfRange(elements, low, high), high - low);
+        }
+        long[] restricted = NatSetUtil.subSetWords(current, from, to);
+        return ImmutableNatSet.ofWords(restricted, NatSetUtil.wordsCount(restricted), true);
+    }
+
+    @Override
+    public NatSet slice(int from, int to) {
+        assert from >= 0 : from;
+        if (from == 0) {
+            return subSet(0, to);
+        }
+        if (size == 0 || to <= from) {
+            return ImmutableNatSet.EMPTY;
+        }
+        long[] current = words;
+        if (current == null) {
+            int low = NatSetUtil.arrayLowerBound(elements, size, from);
+            int high = NatSetUtil.arrayLowerBound(elements, size, to);
+            int[] sliced = new int[high - low];
+            for (int index = low; index < high; index++) {
+                sliced[index - low] = elements[index] - from;
+            }
+            return ImmutableNatSet.ofSorted(sliced, sliced.length);
+        }
+        long[] sliced = NatSetUtil.sliceWords(current, from, to);
+        return ImmutableNatSet.ofWords(sliced, NatSetUtil.wordsCount(sliced), true);
+    }
+
     // Views, copies, bridges
 
     @Override

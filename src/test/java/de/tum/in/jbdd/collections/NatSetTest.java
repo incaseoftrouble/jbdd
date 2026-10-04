@@ -448,4 +448,74 @@ class NatSetTest {
         assertSame(NatSet.of(3), NatSet.of(3).shifted(0));
         assertEquals(NatSet.of(), NatSet.of(1, 2).shifted(-3));
     }
+
+    @Test
+    void rangesAgreeWithBitSet() {
+        Random random = new Random(6);
+        for (int span : new int[] {8, 64, 200, 3000}) {
+            for (int round = 0; round < 200; round++) {
+                BitSet reference = randomBitSet(random, span, random.nextInt(span < 64 ? 6 : 40));
+                int length = reference.length();
+                int[][] ranges = {
+                    {0, length},
+                    {0, length + 70},
+                    {0, 0},
+                    {5, 5},
+                    {7, 3},
+                    {1, length},
+                    {0, Math.max(0, length - 1)},
+                    {63, 65},
+                    {64, 128},
+                    {60, 200},
+                    {length, length + 3},
+                    {random.nextInt(span + 1), random.nextInt(span + 1)},
+                    {random.nextInt(span + 1), random.nextInt(2 * span + 1)}
+                };
+                for (int[] range : ranges) {
+                    int from = range[0];
+                    int to = range[1];
+                    BitSet sliced = to <= from ? new BitSet() : reference.get(from, to);
+                    BitSet restricted = new BitSet();
+                    sliced.stream().forEach(e -> restricted.set(e + from));
+                    NatSet set = natSet(random, reference);
+                    assertSameContents(restricted, set.subSet(from, to));
+                    assertSameContents(sliced, set.slice(from, to));
+                    assertFalse(set.subSet(from, to) instanceof MutableNatSet);
+                    assertFalse(set.slice(from, to) instanceof MutableNatSet);
+                    assertSameContents(reference, set);
+                    assertEquals(set.subSet(from, to).shifted(-from), set.slice(from, to));
+                }
+            }
+        }
+        NatSet immutable = NatSet.of(2, 5, 9);
+        assertSame(immutable, immutable.subSet(0, 10));
+        assertSame(immutable, immutable.subSet(2, 10));
+        assertEquals(NatSet.of(5), immutable.subSet(3, 9));
+        assertEquals(NatSet.of(2, 6), immutable.slice(3, 10));
+    }
+
+    @Test
+    void rangesAndEndsWithDefaults() {
+        for (int[] range : new int[][] {{0, 0}, {3, 3}, {5, 2}, {0, 1}, {0, 64}, {7, 70}, {63, 65}, {100, 300}}) {
+            int from = range[0];
+            int to = range[1];
+            BitSet reference = new BitSet();
+            if (from < to) {
+                reference.set(from, to);
+            }
+            NatSet immutable = NatSet.range(from, to);
+            MutableNatSet mutable = MutableNatSet.range(from, to);
+            assertSameContents(reference, immutable);
+            assertSameContents(reference, mutable);
+            assertEquals(immutable, mutable);
+            int expectedFirst = reference.isEmpty() ? -7 : from;
+            int expectedLast = reference.isEmpty() ? -7 : to - 1;
+            assertEquals(expectedFirst, immutable.firstOr(-7));
+            assertEquals(expectedLast, immutable.lastOr(-7));
+            assertEquals(expectedFirst, mutable.firstOr(-7));
+            assertEquals(expectedLast, mutable.lastOr(-7));
+            mutable.set(to + 10);
+            assertEquals(to + 10, mutable.lastOr(-7));
+        }
+    }
 }
