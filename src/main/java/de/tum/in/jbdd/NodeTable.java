@@ -105,7 +105,7 @@ public abstract class NodeTable {
     /* Hash map for existing nodes and a linked list for free nodes. The semantics of the "next
      * chain entry" change, depending on whether the node is valid or not.
      *
-     * When a node with a certain hash is created, we add a pointer to the corresponding hash bucket
+     * When a node with a certain hash is created, we add a function to the corresponding hash bucket
      * obtainable by hashToChainStart. Whenever we add another node with the same value, this
      * node gets added to the chain and one can traverse the chain by repeatedly accessing
      * hashChain on the chain start. If however a node is invalid, the "next chain
@@ -243,18 +243,18 @@ public abstract class NodeTable {
         return freeNodeCount;
     }
 
-    abstract int treeNodeFor(int pointer);
+    abstract int nodeFor(int function);
 
     protected abstract boolean isLeafNode(int node);
 
     protected abstract boolean isValidLeafNode(int node);
 
-    public boolean isValidConstant(int pointer) {
-        return isValidLeafNode(treeNodeFor(pointer));
+    public boolean isValidConstant(int function) {
+        return isValidLeafNode(nodeFor(function));
     }
 
-    public boolean isValidPointer(int pointer) {
-        return isValidNode(treeNodeFor(pointer));
+    public boolean isValidFunction(int function) {
+        return isValidNode(nodeFor(function));
     }
 
     // Creating nodes
@@ -525,12 +525,12 @@ public abstract class NodeTable {
     }
 
     /**
-     * Records that {@code pointer} gained a parent. If nothing reached it before, it and whatever it
+     * Records that {@code function} gained a parent. If nothing reached it before, it and whatever it
      * reaches come back to life - a walk down the diagram, so it recurses like the rest of them.
      */
-    final void addParent(int pointer) {
+    final void addParent(int function) {
         assert reorderBookkeeping;
-        int node = treeNodeFor(pointer);
+        int node = nodeFor(function);
         if (isLeafNode(node)) {
             return;
         }
@@ -539,14 +539,14 @@ public abstract class NodeTable {
         if (wasUnreached) {
             // Back in reach, so it starts keeping its own children alive again.
             deadNodeCount -= 1;
-            forEachChildPointer(node, this::addParent);
+            forEachChild(node, this::addParent);
         }
     }
 
-    /** Records that {@code pointer} lost a parent, and with it whatever only it still reached. */
-    final void removeParent(int pointer) {
+    /** Records that {@code function} lost a parent, and with it whatever only it still reached. */
+    final void removeParent(int function) {
         assert reorderBookkeeping;
-        int node = treeNodeFor(pointer);
+        int node = nodeFor(function);
         if (isLeafNode(node)) {
             return;
         }
@@ -555,7 +555,7 @@ public abstract class NodeTable {
         if (isUnreached(node)) {
             // Out of reach, so it stops keeping its own children alive.
             deadNodeCount += 1;
-            forEachChildPointer(node, this::removeParent);
+            forEachChild(node, this::removeParent);
         }
     }
 
@@ -563,8 +563,8 @@ public abstract class NodeTable {
      * addParent, removeParent): children are strictly deeper than their parent, so the depth is the
      * number of levels. */
     private void countChildrenBelow(int node, int[] counts, MutableNatSet live) {
-        forEachChildPointer(node, child -> {
-            int childNode = treeNodeFor(child);
+        forEachChild(node, child -> {
+            int childNode = nodeFor(child);
             if (isLeafNode(childNode)) {
                 return;
             }
@@ -689,7 +689,7 @@ public abstract class NodeTable {
         if (reorderBookkeeping && isUnreached(node)) {
             // An outside reference reaches it just as a live parent would.
             deadNodeCount -= 1;
-            forEachChildPointer(node, this::addParent);
+            forEachChild(node, this::addParent);
         }
         nodeData[node] = dataIncreaseReferenceCount(metadata);
         // Can't decrease approximateDeadNodeCount here - we may reference a node for the first time.
@@ -718,7 +718,7 @@ public abstract class NodeTable {
         if (reorderBookkeeping && isUnreached(node)) {
             // The outside let go and nothing names it, so it and its subtree are out of reach.
             deadNodeCount += 1;
-            forEachChildPointer(node, this::removeParent);
+            forEachChild(node, this::removeParent);
         }
     }
 
@@ -749,7 +749,7 @@ public abstract class NodeTable {
         nodeData[node] = dataSaturate(nodeData[node]);
         if (wasUnreached) {
             deadNodeCount -= 1;
-            forEachChildPointer(node, this::addParent);
+            forEachChild(node, this::addParent);
         }
         return node;
     }
@@ -864,48 +864,48 @@ public abstract class NodeTable {
     }
 
     /**
-     * Pushes the given pointer onto the stack. While a pointer is on the work stack, it will not be garbage
+     * Pushes the given function onto the stack. While a function is on the work stack, it will not be garbage
      * collected. Hence, elements should be popped from the stack as soon as they are not used anymore.
      *
-     * @param pointer The pointer to be pushed.
-     * @return The given {@code pointer}, to be used for chaining.
+     * @param function The function to be pushed.
+     * @return The given {@code function}, to be used for chaining.
      * @see #popFromWorkStack(int)
      */
-    int pushToWorkStack(int pointer) {
-        assert isValidPointer(pointer);
+    int pushToWorkStack(int function) {
+        assert isValidFunction(function);
         ensureWorkStackSize(workStackIndex);
-        workStack[workStackIndex] = pointer;
+        workStack[workStackIndex] = function;
         workStackIndex += 1;
-        return pointer;
+        return function;
     }
 
-    void pushToWorkStack(int pointer1, int pointer2) {
-        assert isValidPointer(pointer1) && isValidPointer(pointer2);
+    void pushToWorkStack(int function1, int function2) {
+        assert isValidFunction(function1) && isValidFunction(function2);
         ensureWorkStackSize(workStackIndex + 1);
-        workStack[workStackIndex] = pointer1;
-        workStack[workStackIndex + 1] = pointer2;
+        workStack[workStackIndex] = function1;
+        workStack[workStackIndex + 1] = function2;
         workStackIndex += 2;
     }
 
-    void pushToWorkStack(int pointer1, int pointer2, int pointer3) {
-        assert isValidPointer(pointer1) && isValidPointer(pointer2) && isValidPointer(pointer3);
+    void pushToWorkStack(int function1, int function2, int function3) {
+        assert isValidFunction(function1) && isValidFunction(function2) && isValidFunction(function3);
         ensureWorkStackSize(workStackIndex + 2);
-        workStack[workStackIndex] = pointer1;
-        workStack[workStackIndex + 1] = pointer2;
-        workStack[workStackIndex + 2] = pointer3;
+        workStack[workStackIndex] = function1;
+        workStack[workStackIndex + 1] = function2;
+        workStack[workStackIndex + 2] = function3;
         workStackIndex += 3;
     }
 
-    void pushToWorkStack(int pointer1, int pointer2, int pointer3, int pointer4) {
-        assert isValidPointer(pointer1)
-                && isValidPointer(pointer2)
-                && isValidPointer(pointer3)
-                && isValidPointer(pointer4);
+    void pushToWorkStack(int function1, int function2, int function3, int function4) {
+        assert isValidFunction(function1)
+                && isValidFunction(function2)
+                && isValidFunction(function3)
+                && isValidFunction(function4);
         ensureWorkStackSize(workStackIndex + 3);
-        workStack[workStackIndex] = pointer1;
-        workStack[workStackIndex + 1] = pointer2;
-        workStack[workStackIndex + 2] = pointer3;
-        workStack[workStackIndex + 3] = pointer4;
+        workStack[workStackIndex] = function1;
+        workStack[workStackIndex + 1] = function2;
+        workStack[workStackIndex + 2] = function3;
+        workStack[workStackIndex + 3] = function4;
         workStackIndex += 4;
     }
 
@@ -930,20 +930,20 @@ public abstract class NodeTable {
     }
 
     /**
-     * Pushes the given pointer onto the secondary stack. Behaves exactly like {@link #pushToWorkStack(int)},
+     * Pushes the given function onto the secondary stack. Behaves exactly like {@link #pushToWorkStack(int)},
      * but on an independent stack - so pushing here does not disturb what {@link #popFromWorkStack(int)}
      * considers the top of the primary stack.
      *
-     * @param pointer The pointer to be pushed.
-     * @return The given {@code pointer}, to be used for chaining.
+     * @param function The function to be pushed.
+     * @return The given {@code function}, to be used for chaining.
      * @see #popFromSecondaryWorkStack(int)
      */
-    int pushToSecondaryWorkStack(int pointer) {
-        assert isValidPointer(pointer);
+    int pushToSecondaryWorkStack(int function) {
+        assert isValidFunction(function);
         ensureSecondaryWorkStackSize(secondaryWorkStackIndex);
-        secondaryWorkStack[secondaryWorkStackIndex] = pointer;
+        secondaryWorkStack[secondaryWorkStackIndex] = function;
         secondaryWorkStackIndex += 1;
-        return pointer;
+        return function;
     }
 
     // Memory management
@@ -1497,15 +1497,15 @@ public abstract class NodeTable {
         int referencedNodes = 0;
 
         for (int i = 0; i < workStackIndex; i++) {
-            int pointer = workStack[i];
-            assert isValidPointer(pointer);
-            referencedNodes += markAllBelowNode(treeNodeFor(pointer), true);
+            int function = workStack[i];
+            assert isValidFunction(function);
+            referencedNodes += markAllBelowNode(nodeFor(function), true);
         }
 
         for (int i = 0; i < secondaryWorkStackIndex; i++) {
-            int pointer = secondaryWorkStack[i];
-            assert isValidPointer(pointer);
-            referencedNodes += markAllBelowNode(treeNodeFor(pointer), true);
+            int function = secondaryWorkStack[i];
+            assert isValidFunction(function);
+            referencedNodes += markAllBelowNode(nodeFor(function), true);
         }
 
         for (int node = FIRST_NODE; node <= biggestValidNode; node++) {
@@ -1524,10 +1524,10 @@ public abstract class NodeTable {
 
     // Structural properties
 
-    public void forEachVariable(int pointer, IntConsumer action) {
-        assert isValidPointer(pointer);
+    public void forEachVariable(int function, IntConsumer action) {
+        assert isValidFunction(function);
 
-        int node = treeNodeFor(pointer);
+        int node = nodeFor(function);
         assert !Assertions.COSTLY_ASSERTIONS || isNoneMarkedBelowNode(node);
         doForEachVariable(node, action, null, Integer.MAX_VALUE);
         // doForEachVariable marks decision nodes, so do not consider leaves
@@ -1546,15 +1546,15 @@ public abstract class NodeTable {
         return max;
     }
 
-    public void forEachVariable(int pointer, NatSet filter, IntConsumer action) {
-        assert isValidPointer(pointer);
+    public void forEachVariable(int function, NatSet filter, IntConsumer action) {
+        assert isValidFunction(function);
 
         int depthLimit = maxLevelOf(filter) + 1;
         if (depthLimit == 0) {
             return;
         }
 
-        int node = treeNodeFor(pointer);
+        int node = nodeFor(function);
         assert !Assertions.COSTLY_ASSERTIONS || isNoneMarkedBelowNode(node);
         doForEachVariable(node, action, filter, depthLimit);
         // doForEachVariable never marks leaves (see the unfiltered overload above), so don't touch them here.
@@ -1589,12 +1589,12 @@ public abstract class NodeTable {
     protected abstract void recurseForEachVariable(
             int node, IntConsumer action, @Nullable NatSet filter, int depthLimit);
 
-    protected abstract void forEachChildPointer(int node, IntConsumer action);
+    protected abstract void forEachChild(int node, IntConsumer action);
 
     // Integrity checks and utility
 
-    public boolean isValidNodeOrPlaceholder(int pointer) {
-        return pointer == PLACEHOLDER || isValidNode(pointer);
+    public boolean isValidNodeOrPlaceholder(int function) {
+        return function == PLACEHOLDER || isValidNode(function);
     }
 
     public boolean isValidDecisionNode(int node) {
@@ -1619,19 +1619,19 @@ public abstract class NodeTable {
         checkState(
                 biggestValidNode == PLACEHOLDER || dataIsValid(nodeData[biggestValidNode]),
                 "Node (%s) is not valid or leaf",
-                pointerToStringSupplier(biggestValidNode));
+                functionToStringSupplier(biggestValidNode));
         for (int i = biggestValidNode + 1; i < size(); i++) {
-            checkState(!dataIsValid(nodeData[i]), "Node (%s) is valid", pointerToStringSupplier(i));
+            checkState(!dataIsValid(nodeData[i]), "Node (%s) is valid", functionToStringSupplier(i));
         }
 
         // Check biggestReferencedNode, a bound: the node there is valid, nothing above it is referenced
         checkState(
                 biggestReferencedNode == PLACEHOLDER || dataIsValid(nodeData[biggestReferencedNode]),
                 "Node (%s) is not valid",
-                pointerToStringSupplier(biggestReferencedNode));
+                functionToStringSupplier(biggestReferencedNode));
         for (int i = biggestReferencedNode + 1; i < size(); i++) {
             checkState(
-                    !dataIsReferencedOrSaturated(nodeData[i]), "Node (%s) is referenced", pointerToStringSupplier(i));
+                    !dataIsReferencedOrSaturated(nodeData[i]), "Node (%s) is referenced", functionToStringSupplier(i));
         }
 
         // Check invalid nodes are not referenced
@@ -1640,7 +1640,7 @@ public abstract class NodeTable {
                 checkState(
                         dataIsValid(nodeData[node]),
                         "Node (%s) is referenced but invalid",
-                        pointerToStringSupplier(node));
+                        functionToStringSupplier(node));
             }
         }
 
@@ -1664,19 +1664,19 @@ public abstract class NodeTable {
             int node = i;
             int metadata = nodeData[node];
             if (dataIsValid(metadata)) {
-                forEachChildPointer(node, child -> {
+                forEachChild(node, child -> {
                     checkState(
-                            isValidPointer(child),
+                            isValidFunction(child),
                             "Invalid entry (%s) -> (%s)",
-                            pointerToStringSupplier(node),
-                            pointerToStringSupplier(child));
+                            functionToStringSupplier(node),
+                            functionToStringSupplier(child));
                     if (!isValidConstant(child)) {
                         checkState(
                                 levelOfVariable(dataGetVariable(metadata))
-                                        < levelOfVariable(dataGetVariable(nodeData[treeNodeFor(child)])),
+                                        < levelOfVariable(dataGetVariable(nodeData[nodeFor(child)])),
                                 "(%s) -> (%s) does not descend tree",
-                                pointerToStringSupplier(node),
-                                pointerToStringSupplier(child));
+                                functionToStringSupplier(node),
+                                functionToStringSupplier(child));
                     }
                 });
             }
@@ -1695,8 +1695,8 @@ public abstract class NodeTable {
                             checkState(
                                     dataGetVariable(dataI) != dataGetVariable(dataJ) || !areChildrenEqual(node, j),
                                     "Duplicate entries (%s) and (%s)",
-                                    pointerToStringSupplier(node),
-                                    pointerToStringSupplier(j));
+                                    functionToStringSupplier(node),
+                                    functionToStringSupplier(j));
                         }
                     }
                 }
@@ -1710,7 +1710,7 @@ public abstract class NodeTable {
             Set<Object> nodes = new HashSet<>();
             for (int node = FIRST_NODE; node <= biggestValidNode; node++) {
                 if (isValidDecisionNode(node)) {
-                    checkState(nodes.add(representative(node)), "Duplicate entry (%s)", pointerToStringSupplier(node));
+                    checkState(nodes.add(representative(node)), "Duplicate entry (%s)", functionToStringSupplier(node));
                 }
             }
         }
@@ -1723,7 +1723,7 @@ public abstract class NodeTable {
                     checkState(
                             counted[node] == parentCount[node],
                             "Node (%s) has %s parents but is counted as %s",
-                            pointerToStringSupplier(node),
+                            functionToStringSupplier(node),
                             counted[node],
                             parentCount[node]);
                 }
@@ -1740,9 +1740,9 @@ public abstract class NodeTable {
                     checkState(
                             isValidDecisionNode(node) && variable(node) == variable,
                             "Node (%s) in the list of variable %s",
-                            pointerToStringSupplier(node),
+                            functionToStringSupplier(node),
                             variable);
-                    checkState(!listed.contains(node), "Node (%s) listed twice", pointerToStringSupplier(node));
+                    checkState(!listed.contains(node), "Node (%s) listed twice", functionToStringSupplier(node));
                     listed.set(node);
                 }
             }
@@ -1750,7 +1750,7 @@ public abstract class NodeTable {
                 checkState(
                         dataIsValid(nodeData[node]) == listed.contains(node),
                         "Node (%s) is %s but %s listed",
-                        pointerToStringSupplier(node),
+                        functionToStringSupplier(node),
                         dataIsValid(nodeData[node]) ? "valid" : "invalid",
                         listed.contains(node) ? "is" : "is not");
             }
@@ -1773,7 +1773,10 @@ public abstract class NodeTable {
                     chainPosition = this.hashChain[chainPosition];
                 }
                 checkState(
-                        found, "(%s) is not contained in it's hash list: %s", pointerToStringSupplier(node), hashChain);
+                        found,
+                        "(%s) is not contained in it's hash list: %s",
+                        functionToStringSupplier(node),
+                        hashChain);
             }
         }
 
@@ -1782,7 +1785,7 @@ public abstract class NodeTable {
             checkState(
                     dataIsValid(nodeData[i]),
                     "Invalid node (%s) smaller than firstFreeNode",
-                    pointerToStringSupplier(i));
+                    functionToStringSupplier(i));
         }
 
         // Check free nodes chain
@@ -1791,7 +1794,7 @@ public abstract class NodeTable {
             checkState(
                     !dataIsValid(nodeData[currentFreeNode]),
                     "Node (%s) in free node chain is valid",
-                    pointerToStringSupplier(currentFreeNode));
+                    functionToStringSupplier(currentFreeNode));
             int nextFreeNode = hashChain[currentFreeNode];
             // This also excludes possible loops
             checkState(
@@ -1817,13 +1820,13 @@ public abstract class NodeTable {
 
     // Printing
 
-    abstract String format(int pointer);
+    abstract String format(int function);
 
-    private String pointerToString(int pointer) {
-        int node = treeNodeFor(pointer);
+    private String functionToString(int function) {
+        int node = nodeFor(function);
         int metadata = nodeData[node];
         if (!dataIsValid(metadata)) {
-            return String.format("%5d| == INVALID ==", pointer);
+            return String.format("%5d| == INVALID ==", function);
         }
         String referenceCountString;
         if (dataIsSaturated(metadata)) {
@@ -1832,52 +1835,52 @@ public abstract class NodeTable {
             referenceCountString = String.format("%3d", dataGetReferenceCount(metadata));
         }
         String baseString =
-                String.format("%5s|%3d|%s|", format(pointer), dataGetVariable(metadata), referenceCountString);
+                String.format("%5s|%3d|%s|", format(function), dataGetVariable(metadata), referenceCountString);
         StringBuilder string = new StringBuilder(baseString);
-        forEachChildPointer(node, child -> string.append(format(child)).append(' '));
+        forEachChild(node, child -> string.append(format(child)).append(' '));
         string.deleteCharAt(string.length() - 1);
         return string.toString();
     }
 
-    private FunctionToStringSupplier pointerToStringSupplier(int pointer) {
-        return new FunctionToStringSupplier(this, pointer);
+    private FunctionToStringSupplier functionToStringSupplier(int function) {
+        return new FunctionToStringSupplier(this, function);
     }
 
     /**
-     * Generates a string representation of the given {@code pointer}.
+     * Generates a string representation of the given {@code function}.
      *
-     * @param pointer The pointer to be printed.
-     * @return A string representing the given pointer.
+     * @param function The function to be printed.
+     * @return A string representing the given function.
      */
-    public String treeToString(int pointer) {
-        assert isValidPointer(pointer);
+    public String treeToString(int function) {
+        assert isValidFunction(function);
         assert !Assertions.COSTLY_ASSERTIONS || isNoneMarked();
-        if (isValidConstant(pointer)) {
-            return String.format("Fun %s%n", format(pointer));
+        if (isValidConstant(function)) {
+            return String.format("Fun %s%n", format(function));
         }
         //noinspection MagicNumber
         StringBuilder builder = new StringBuilder(50)
                 .append("Fun ")
-                .append(format(pointer))
+                .append(format(function))
                 .append('\n')
                 .append("  NODE|VAR|REF| CHILDREN \n");
-        treeToStringRecursive(pointer, builder);
-        unMarkAllBelowNode(treeNodeFor(pointer), false);
+        treeToStringRecursive(function, builder);
+        unMarkAllBelowNode(nodeFor(function), false);
         return builder.toString();
     }
 
-    private void treeToStringRecursive(int pointer, StringBuilder builder) {
-        if (isValidConstant(pointer)) {
+    private void treeToStringRecursive(int function, StringBuilder builder) {
+        if (isValidConstant(function)) {
             return;
         }
-        int node = treeNodeFor(pointer);
+        int node = nodeFor(function);
         int metadata = nodeData[node];
         if (dataIsMarked(metadata)) {
             return;
         }
         nodeData[node] = dataSetMark(metadata);
-        builder.append(' ').append(pointerToString(pointer)).append('\n');
-        forEachChildPointer(node, child -> treeToStringRecursive(child, builder));
+        builder.append(' ').append(functionToString(function)).append('\n');
+        forEachChild(node, child -> treeToStringRecursive(child, builder));
     }
 
     // Statistics
@@ -2008,7 +2011,7 @@ public abstract class NodeTable {
 
         @Override
         public String toString() {
-            return table.pointerToString(node);
+            return table.functionToString(node);
         }
     }
 
@@ -2099,7 +2102,7 @@ public abstract class NodeTable {
         }
 
         @Override
-        protected void forEachChildPointer(int node, IntConsumer action) {
+        protected void forEachChild(int node, IntConsumer action) {
             assert isValidDecisionNode(node);
             action.accept(low[node]);
             action.accept(high[node]);
@@ -2157,12 +2160,12 @@ public abstract class NodeTable {
         /**
          * Replaces {@code node}'s variable and children in place and puts it back.
          */
-        void rewriteNode(int node, int variable, int lowPointer, int highPointer) {
+        void rewriteNode(int node, int variable, int lowFunction, int highFunction) {
             assert isValidDecisionNode(node);
-            assert lowPointer != highPointer;
+            assert lowFunction != highFunction;
 
             /* Only a node something can reach keeps its children alive, so only then does re-pointing it
-             * move credit from the old children to the new. Skipping the pair when a child pointer did
+             * move credit from the old children to the new. Skipping the pair when a child function did
              * not actually change was measured *slower*: the cascade it would avoid needs the node to
              * be its child's last live parent, which sharing makes rare, so the two tests cost more
              * than they save. */
@@ -2172,11 +2175,11 @@ public abstract class NodeTable {
                 removeParent(high[node]);
             }
             setVariable(node, variable);
-            low[node] = lowPointer;
-            high[node] = highPointer;
+            low[node] = lowFunction;
+            high[node] = highFunction;
             if (live) {
-                addParent(lowPointer);
-                addParent(highPointer);
+                addParent(lowFunction);
+                addParent(highFunction);
             }
 
             unhideAfterRewrite(node);
@@ -2185,25 +2188,25 @@ public abstract class NodeTable {
             assert findNode(
                                     variable,
                                     hash,
-                                    other -> other != node && low[other] == lowPointer && high[other] == highPointer)
+                                    other -> other != node && low[other] == lowFunction && high[other] == highFunction)
                             == PLACEHOLDER
                     : "Rewriting node " + node + " would duplicate an existing one";
             linkHashList(node, hash);
             addToVariableList(node, variable);
         }
 
-        public int makeNode(int variable, int lowPointer, int highPointer) {
+        public int makeNode(int variable, int lowFunction, int highFunction) {
             assert 0 <= variable && variable < INVALID_NODE_VARIABLE;
-            assert isValidConstant(lowPointer)
-                    || levelOfVariable(variable) < levelOfVariable(variable(treeNodeFor(lowPointer)));
-            assert isValidConstant(highPointer)
-                    || levelOfVariable(variable) < levelOfVariable(variable(treeNodeFor(highPointer)));
-            assert highPointer != lowPointer;
+            assert isValidConstant(lowFunction)
+                    || levelOfVariable(variable) < levelOfVariable(variable(nodeFor(lowFunction)));
+            assert isValidConstant(highFunction)
+                    || levelOfVariable(variable) < levelOfVariable(variable(nodeFor(highFunction)));
+            assert highFunction != lowFunction;
 
-            int hash = hash(variable, lowPointer, highPointer);
+            int hash = hash(variable, lowFunction, highFunction);
 
             int modHash = modHash(hash);
-            int lookup = findNode(variable, modHash, node -> low[node] == lowPointer && high[node] == highPointer);
+            int lookup = findNode(variable, modHash, node -> low[node] == lowFunction && high[node] == highFunction);
             if (lookup != PLACEHOLDER) {
                 return lookup;
             }
@@ -2211,8 +2214,8 @@ public abstract class NodeTable {
                 modHash = modHash(hash);
             }
             int freeNode = allocateNode(variable, modHash);
-            this.low[freeNode] = lowPointer;
-            this.high[freeNode] = highPointer;
+            this.low[freeNode] = lowFunction;
+            this.high[freeNode] = highFunction;
             onNodeCreated(freeNode);
             return freeNode;
         }
@@ -2264,7 +2267,7 @@ public abstract class NodeTable {
         }
 
         @Override
-        protected void forEachChildPointer(int node, IntConsumer action) {
+        protected void forEachChild(int node, IntConsumer action) {
             assert isValidDecisionNode(node);
             for (int child : tree[node]) {
                 action.accept(child);
@@ -2311,7 +2314,7 @@ public abstract class NodeTable {
             assert 0 <= variable;
             assert Arrays.stream(children)
                     .allMatch(child -> isValidConstant(child)
-                            || levelOfVariable(variable) < levelOfVariable(variable(treeNodeFor(child))));
+                            || levelOfVariable(variable) < levelOfVariable(variable(nodeFor(child))));
             assert Arrays.stream(children).distinct().count() > 1;
 
             int hash = hash(variable, children);

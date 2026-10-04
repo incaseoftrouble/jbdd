@@ -2948,13 +2948,13 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         }
 
         @Override
-        public boolean isValidConstant(int pointer) {
-            return bdd.isConstant(pointer);
+        public boolean isValidConstant(int function) {
+            return bdd.isConstant(function);
         }
 
         @Override
-        public boolean isValidPointer(int pointer) {
-            return bdd.isValidFunction(pointer);
+        public boolean isValidFunction(int function) {
+            return bdd.isValidFunction(function);
         }
 
         @Override
@@ -2999,8 +2999,8 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         }
 
         @Override
-        int treeNodeFor(int pointer) {
-            return bdd.nodeFor(pointer);
+        int nodeFor(int function) {
+            return bdd.nodeFor(function);
         }
 
         @Override
@@ -3064,8 +3064,8 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         }
 
         @Override
-        String format(int pointer) {
-            return bdd.format(pointer);
+        String format(int function) {
+            return bdd.format(function);
         }
     }
 }

@@ -2824,13 +2824,13 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
 
         @Override
-        public boolean isValidConstant(int pointer) {
-            return mtbdd.isConstant(pointer);
+        public boolean isValidConstant(int function) {
+            return mtbdd.isConstant(function);
         }
 
         @Override
-        public boolean isValidPointer(int pointer) {
-            return mtbdd.isValidFunction(pointer);
+        public boolean isValidFunction(int function) {
+            return mtbdd.isValidFunction(function);
         }
 
         private boolean isUnmarkedConstant(int node) {
@@ -2902,8 +2902,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
 
         @Override
-        int treeNodeFor(int pointer) {
-            return mtbdd.nodeFor(pointer);
+        int nodeFor(int function) {
+            return mtbdd.nodeFor(function);
         }
 
         @Override
@@ -2981,8 +2981,8 @@ public class MtBddImpl implements MtBdd, StatisticsSource {
         }
 
         @Override
-        String format(int pointer) {
-            return mtbdd.format(pointer);
+        String format(int function) {
+            return mtbdd.format(function);
         }
     }
 

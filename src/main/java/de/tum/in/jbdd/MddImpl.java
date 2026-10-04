@@ -1420,13 +1420,13 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         @Override
-        public boolean isValidConstant(int pointer) {
-            return mdd.isConstant(pointer);
+        public boolean isValidConstant(int function) {
+            return mdd.isConstant(function);
         }
 
         @Override
-        public boolean isValidPointer(int pointer) {
-            return mdd.isValidFunction(pointer);
+        public boolean isValidFunction(int function) {
+            return mdd.isValidFunction(function);
         }
 
         @Override
@@ -1487,8 +1487,8 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         @Override
-        int treeNodeFor(int pointer) {
-            return mdd.nodeFor(pointer);
+        int nodeFor(int function) {
+            return mdd.nodeFor(function);
         }
 
         @Override
@@ -1552,8 +1552,8 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         }
 
         @Override
-        String format(int pointer) {
-            return mdd.format(pointer);
+        String format(int function) {
+            return mdd.format(function);
         }
     }
 }
