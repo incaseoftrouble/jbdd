@@ -241,16 +241,12 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
 
         @Override
         public BddMap<V> ifThenElse(int variable, BddMap<V> then, BddMap<V> otherwise) {
+            // A variable above both maps is one node and two trivial recursions for ifThenElse; no special case.
             int variableFunction = factory.variableFunction(variable);
-            int thenFunction = factory.functionOf(then, this);
-            int otherwiseFunction = factory.functionOf(otherwise, this);
-            MtBddImpl dd = factory.dd;
-            int level = dd.levelOfVariable(variable);
-            // TODO Is this special-casing worth it? Shouldn't ifThenElse take care of that?
-            int result = level < dd.decisionLevelOrMax(thenFunction) && level < dd.decisionLevelOrMax(otherwiseFunction)
-                    ? dd.of(variable, thenFunction, otherwiseFunction)
-                    : dd.ifThenElse(variableFunction, thenFunction, otherwiseFunction);
-            return factory.make(result, this);
+            return factory.make(
+                    factory.dd.ifThenElse(
+                            variableFunction, factory.functionOf(then, this), factory.functionOf(otherwise, this)),
+                    this);
         }
 
         @Override
