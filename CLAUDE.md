@@ -558,7 +558,12 @@ Every `compute*` / `*Recursive` follows six steps; deviations are where bugs liv
 
 1. Trivial/constant short-circuits — **before** any cache lookup, always.
 2. Canonicalize operand order, *only* if the operation is genuinely commutative.
-3. Cache lookup; keep the raw pre-modulo hash (`lookupHash()`).
+3. Cache lookup; keep the raw pre-modulo hash (`lookupHash()`), and count the step (`table.step()`) on a miss.
+   A recursion with a memo of its own (adopt's map, unateness, literals, influences) counts on its memo's miss,
+   one without (`invert`) on every non-terminal call; walks that only mark nodes (values, cubes, matches) and
+   folds do not count - they are linear in a diagram whose steps did. The count is `DdContext.work()` and the
+   statistic `operation_steps`: clients measure their own cost by it (SemML's explorer budgets its rounds in it),
+   so a new operation that does not count makes their budgets wrong without failing anything.
 4. Shannon-expand on the smallest top **level**; an operand not carrying that variable passes through
    unchanged on both branches. `decisionLevelOrMax` gives a constant `Integer.MAX_VALUE`, below every
    level, so the minimum over the operands picks the step and `lowIf`/`highIf` pass a constant through -

@@ -61,6 +61,11 @@ public final class DdContextImpl implements DdContext, StatisticsReporter.Source
         return order;
     }
 
+    @Override
+    public long work() {
+        return bdd.table().steps() + mtbdd.table().steps();
+    }
+
     // Variables
 
     int createVariable() {

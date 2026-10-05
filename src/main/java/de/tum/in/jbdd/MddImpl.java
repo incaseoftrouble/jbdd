@@ -444,6 +444,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             return base.subtract(cacheLookup);
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int[] children = table.childrenUnchecked(node);
         BigInteger result = BigInteger.ZERO;
@@ -528,6 +529,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             return lookup;
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int fun1var = decisionVariable(function1);
         int fun2var = decisionVariable(function2);
@@ -591,6 +593,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             return complementIf(lookup, negate);
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int fun1var = decisionVariable(function1);
         int fun2var = decisionVariable(function2);
@@ -667,6 +670,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             return lookup;
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int domain = children.length;
         int resultNode;
@@ -747,6 +751,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             return lookup == TRUE;
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int fun1var = decisionVariable(function1);
         int fun2var = decisionVariable(function2);
@@ -900,6 +905,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             return complementIf(lookup, complement);
         }
         int hash = cache.lookupHash();
+        table.step();
         int ifVar = table.variable(ifNormalized);
         int thenVar = table.variable(thenNormalized);
         int elseVar = table.variable(positive(elseNormalized));
@@ -960,6 +966,7 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             return complementIf(lookup, func);
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int domainNode = positive(domain);
         boolean domc = domainNode != domain;

@@ -45,6 +45,11 @@ final class BinaryFactoryContextImpl implements BinaryFactoryContext, Statistics
     }
 
     @Override
+    public long work() {
+        return context.work();
+    }
+
+    @Override
     public int createVariableAtLevel(int level) {
         return context.createVariableAtLevel(level);
     }

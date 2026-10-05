@@ -43,6 +43,12 @@ public interface DdContext extends StatisticsSource {
     DdVariableOrder variableOrder();
 
     /**
+     * An approximation of the work both diagrams have done since the context was created, in "steps": one per (uncached)
+     * recursion of an operation, whatever it builds or decides. Useful to deterministically bound code paths by a budget.
+     */
+    long work();
+
+    /**
      * Creates a variable and places it at {@code level}, pushing whatever sits there and below down one.
      *
      * <p>Generally cheap, but makes the {@code level <-> variable} mapping non-identity, which does

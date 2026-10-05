@@ -143,6 +143,8 @@ public abstract class NodeTable implements StatisticsReporter {
             "biggest_referenced_node", "an upper bound of the topmost referenced node, exact after each collection");
     private static final Statistic CREATED_NODES =
             Statistic.counter("created_nodes", "nodes created since the table was built");
+    private static final Statistic STEPS = Statistic.counter(
+            "operation_steps", "steps of the operations on this table's diagrams that no cache or memo answered");
     private static final Statistic LOOKUPS =
             Statistic.counter("hash_table_lookups", "lookups of a node in the hash chains");
     private static final Statistic LOOKUP_LENGTH =
@@ -223,6 +225,8 @@ public abstract class NodeTable implements StatisticsReporter {
      * the interesting ones to watch: Collected node count alone says nothing about efficiency - a table
      * which is collected far too often collects *more* nodes in total, not fewer. */
     private long createdNodes = 0;
+    /* Approximate work done on this table's diagrams, so that clients can measure the work operations did (DdContext.work()). */
+    private long steps = 0;
     private long hashChainLookups = 0;
     private long hashChainLookupLength = 0;
     private int growCount = 0;
@@ -945,6 +949,16 @@ public abstract class NodeTable implements StatisticsReporter {
     void popFromWorkStack() {
         assert !workStacksEmpty();
         workStackIndex--;
+    }
+
+    /** Counts one step of work. */
+    final void step() {
+        steps += 1;
+    }
+
+    /** The steps counted on this table since it was built. */
+    final long steps() {
+        return steps;
     }
 
     /**
@@ -2124,6 +2138,7 @@ public abstract class NodeTable implements StatisticsReporter {
         report.put(SIZE, size());
         report.put(BIGGEST_REFERENCED_NODE, biggestReferencedNode);
         report.put(CREATED_NODES, createdNodes);
+        report.put(STEPS, steps);
         report.put(LOOKUPS, hashChainLookups);
         report.put(LOOKUP_LENGTH, hashChainLookupLength);
         report.ratio(LOOKUP_AVERAGE_LENGTH);

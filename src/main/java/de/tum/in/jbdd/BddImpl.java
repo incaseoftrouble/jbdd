@@ -815,6 +815,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
                     .shiftLeft(rootLevel - previousLevel - 1);
         }
         int hash = cache.lookupHash();
+        table.step();
 
         BigInteger result = countSatisfyingAssignmentsRecursive(low(function), rootLevel)
                 .add(countSatisfyingAssignmentsRecursive(high(function), rootLevel));
@@ -860,6 +861,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             return cacheLookup.shiftLeft(level - previousLevel - 1);
         }
         int hash = cache.lookupHash();
+        table.step();
 
         BigInteger result = countSatisfyingAssignmentsInRecursive(
                         lowIf(function1, fun1Level == level), lowIf(function2, fun2Level == level), level)
@@ -900,6 +902,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             complementFraction = fractions.complementFraction();
         } else {
             int hash = fractions.lookupHash();
+            table.step();
             computeSatisfyingFraction(low(node), result);
             double lowFraction = result[FRACTION];
             double lowComplementFraction = result[COMPLEMENT_FRACTION];
@@ -1010,6 +1013,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             return;
         }
         visited.put(function, 0);
+        table.step();
         int node = positive(function);
         int variable = table.variable(node);
         if (table.levelOfVariable(variable) > deepest) {
@@ -1039,6 +1043,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             return;
         }
         visited.put(function, 0);
+        table.step();
         int node = positive(function);
         int variable = table.variable(node);
         int low = complementIf(table.lowUnchecked(node), !isPositive(function));
@@ -1069,6 +1074,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         int node = positive(function);
         Literals literals = memo.get(node);
         if (literals == null) {
+            table.step();
             int variable = table.variable(node);
             int low = table.lowUnchecked(node);
             int high = table.highUnchecked(node);
@@ -1197,6 +1203,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         if (postOrder.containsKey(node)) {
             return;
         }
+        table.step();
         int low = table.lowUnchecked(node);
         if (!isConstant(low)) {
             collectPostOrder(positive(low), postOrder);
@@ -1242,6 +1249,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             agreement = differences.agreement();
         } else {
             int hash = differences.lookupHash();
+            table.step();
             int firstLevel = decisionLevel(first);
             int secondLevel = decisionLevel(second);
             int level = Math.min(firstLevel, secondLevel);
@@ -1289,6 +1297,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             exponent = fractions.exponent();
         } else {
             int hash = fractions.lookupHash();
+            table.step();
             int nodeLevel = decisionLevel(node);
             int domainLevel = decisionLevel(domain);
             int level = Math.min(nodeLevel, domainLevel);
@@ -1513,6 +1522,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             return cached;
         }
         int hash = supportCache.lookupHash();
+        table.step();
         int[] low = supportArray(table.low(node));
         int[] high = supportArray(table.high(node));
         int variable = table.variable(node);
@@ -1666,6 +1676,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             return complementIf(lookup, complement);
         }
         int hash = tupleCache.lookupHash;
+        table.step();
 
         int topVariable = table.variable(node);
         int topLevel = levelOfVariable(topVariable);
@@ -1803,6 +1814,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         }
         int rebuilt = adopted.get(node, NodeTable.PLACEHOLDER);
         if (rebuilt == NodeTable.PLACEHOLDER) {
+            table.step();
             NodeTable.Binary sourceTable = source.table;
             int high = adoptRecursive(source, sourceTable.high(node), variableMapping, adopted);
             int low = adoptRecursive(source, sourceTable.low(node), variableMapping, adopted);
@@ -1876,6 +1888,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             return complementIf(lookup, func);
         }
         int hash = restrictCache.lookupHash;
+        table.step();
         int low = table.pushToWorkStack(computeRestrict(table.low(node), restriction, cubeHash, maxRestrictedLevel));
         int high = table.pushToWorkStack(computeRestrict(table.high(node), restriction, cubeHash, maxRestrictedLevel));
         int result = makeFunction(nodeLevel, low, high);
@@ -1943,6 +1956,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             return complementIf(lookup, func);
         }
         int hash = restrictCache.lookupHash;
+        table.step();
 
         int domainLevel = decisionLevel(domain);
         int result;
@@ -2186,6 +2200,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             return lookup;
         }
         int hash = andAllCache.lookupHash;
+        table.step();
 
         // The tuple is sorted by top level: the operands deciding this step lead, the rest pass into both
         // cofactors unchanged and in order, so only the deciding ones' children are sorted, then merged in.
@@ -2298,6 +2313,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             return lookup;
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int fun1Level = decisionLevel(function1);
         int fun2Level = decisionLevel(function2);
@@ -2357,6 +2373,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             return lookup;
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int fun1Level = decisionLevel(function1);
         int fun2Level = decisionLevel(function2);
@@ -2475,6 +2492,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             return complementIf(lookup, negate);
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int fun1Level = decisionLevel(function1);
         int fun2Level = decisionLevel(function2);
@@ -2544,6 +2562,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             return complementIf(lookup, negate);
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int fun1Level = decisionLevel(function1);
         int fun2Level = decisionLevel(function2);
@@ -2664,6 +2683,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             return lookup;
         }
         int hash = existsCache.lookupHash();
+        table.step();
 
         int lowExists = table.pushToWorkStack(existsRecursive(low(function), quantifiedLevels, existsCache));
         int highExists = table.pushToWorkStack(existsRecursive(high(function), quantifiedLevels, existsCache));
@@ -2829,6 +2849,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             return lookup;
         }
         int hash = simplifyCache.lookupHash();
+        table.step();
 
         int domainLevel = decisionLevel(domain);
         assert !quantifiedLevels.contains(domainLevel);
@@ -2962,6 +2983,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             return lookup;
         }
         int hash = andExistsCache.lookupHash();
+        table.step();
 
         int low1 = lowIf(function1, fun1Level == level);
         int low2 = lowIf(function2, fun2Level == level);
@@ -3087,6 +3109,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             return complementIf(lookup, complement);
         }
         int hash = cache.lookupHash();
+        table.step();
         int ifLevel = decisionLevel(ifNormalized);
         int thenLevel = decisionLevel(thenNormalized);
         int elseLevel = decisionLevel(elseNormalized);
@@ -3175,6 +3198,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             return complementIf(lookup, complement);
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int ifLevel = decisionLevel(ifNormalized);
         int thenLevel = decisionLevel(thenNormalized);
@@ -3276,6 +3300,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             return lookup == TRUE;
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int fun1Level = decisionLevel(function1);
         int fun2Level = decisionLevel(function2);
@@ -3353,6 +3378,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             return complementIf(lookup, func);
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int functionLevel = decisionLevel(node);
         int domainLevel = decisionLevel(domain);

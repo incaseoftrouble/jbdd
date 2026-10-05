@@ -806,6 +806,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             return cached;
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int nodeLevel = decisionLevel(node);
         BigInteger lowCount = doCountSatisfyingAssignments(low(node), nodeLevel, values);
@@ -975,6 +976,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             return lookup;
         }
         int hash = universeDomain ? applyCache.lookupHash() : applySimplifyCache.lookupHash();
+        table.step();
 
         int level1 = decisionLevelOrMax(function1);
         int level2 = decisionLevelOrMax(function2);
@@ -1105,6 +1107,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             return lookup;
         }
         int hash = universeDomain ? mapCache.lookupHash() : mapSimplifyCache.lookupHash();
+        table.step();
 
         int level = decisionLevel(function);
         int domainLevel = universeDomain ? Integer.MAX_VALUE : bdd.decisionLevel(bddDomain);
@@ -1231,6 +1234,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             return lookup;
         }
         int hash = cache.lookupHash();
+        table.step();
         // The operand array is rewritten in place below, so the cache needs one of its own.
         // TODO [KEY-COPY] Copying is costly; can we do it better? Write in a DepthPool?
         //   The array only needs to survive until the cache put
@@ -1319,6 +1323,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             return lookup == 1;
         }
         int hash = matchCache.lookupHash();
+        table.step();
 
         int level1 = decisionLevelOrMax(mtbddNode1);
         int level2 = decisionLevelOrMax(mtbddNode2);
@@ -1377,6 +1382,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             return lookup;
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int level1 = decisionLevelOrMax(mtbddNode1);
         int level2 = decisionLevelOrMax(mtbddNode2);
@@ -1427,6 +1433,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             return lookup;
         }
         int hash = mapBooleanCache.lookupHash();
+        table.step();
 
         int level = decisionLevel(mtbddNode);
         NodeTable bddTable = bdd.table();
@@ -1466,6 +1473,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             return lookup;
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int bddLevel = bdd.decisionLevel(bddNode);
         int mtbddLevel = decisionLevelOrMax(mtbddNode);
@@ -1620,6 +1628,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             return lookup;
         }
         int hash = domainIsTrue ? composeCache.lookupHash() : composeSimplifyCache.lookupHash();
+        table.step();
 
         int domainLevel = domainIsTrue ? Integer.MAX_VALUE : bdd.decisionLevel(bddDomain);
         int domainLow = bdd.lowIf(bddDomain, domainLevel <= level);
@@ -1771,6 +1780,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             return lookup;
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int result;
         if (restriction.support().contains(nodeVariable)) {
@@ -1827,6 +1837,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
         if (rebuilt != NodeTable.PLACEHOLDER) {
             return rebuilt;
         }
+        table.step();
         if (function < 0) {
             rebuilt = constant(valueMapping.applyAsInt(constantFunctionToValue(function)));
         } else {
@@ -1880,6 +1891,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             return lookup;
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int bddLevel = bdd.decisionLevel(bddNode);
         int thenLevel = decisionLevelOrMax(mtbddThenNode);
@@ -1941,6 +1953,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             result.put(constantFunctionToValue(mtbddNode), bdd.table().pushToWorkStack(bdd.trueFunction()));
             return result;
         }
+        table.step();
 
         int level = decisionLevel(mtbddNode);
         IntIntHashMap mtbddLowMap = invertRecursive(low(mtbddNode), depth + 1, highLeafPool);
@@ -1979,6 +1992,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             result[value] = bddTable.pushToWorkStack(bdd.trueFunction());
             return result;
         }
+        table.step();
 
         int level = decisionLevel(mtbddNode);
         int[] lowArray = invertRecursiveArray(low(mtbddNode), domainSize, values, depth + 1, highLeafPool);
@@ -2213,6 +2227,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             return lookup;
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int low = table.pushToWorkStack(
                 splitBddRecursive(bdd.low(bddFunction), splitVariables, maxSplitLevel, residuals));
@@ -2237,6 +2252,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             return lookup;
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int result;
         if (isConstant(lowFragment) && isConstant(highFragment)) {
@@ -2281,6 +2297,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             return lookup;
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int low = table.pushToWorkStack(splitRecursive(low(mtbddNode), splitVariables, maxSplitLevel, bijection));
         int high = table.pushToWorkStack(splitRecursive(high(mtbddNode), splitVariables, maxSplitLevel, bijection));
@@ -2303,6 +2320,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             return lookup;
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int result;
         if (isConstant(lowFragment) && isConstant(highFragment)) {
@@ -2415,6 +2433,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             return lookup;
         }
         int hash = cache.lookupHash();
+        table.step();
 
         // TODO [KEY-COPY] Measure whether caching here pays for the copy this forces
         // The operand array is rewritten in place below, so the cache needs one of its own.
@@ -2584,6 +2603,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             return lookup;
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int[] lowNodes = new int[essential];
         int[] highNodes = new int[essential];
@@ -2626,6 +2646,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             return lookup;
         }
         int hash = cache.lookupHash();
+        table.step();
         int low = table.pushToWorkStack(residualProductSingle(descent, residual, variable, low(node)));
         int high = table.pushToWorkStack(residualProductSingle(descent, residual, variable, high(node)));
         int result = makeFunction(decisionLevel(node), low, high);
@@ -2754,6 +2775,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             return lookup;
         }
         int hash = cache.lookupHash();
+        table.step();
 
         int mtbddLevel = decisionLevel(mtbddNode);
         int bddLevel = bdd.decisionLevel(bddDomain);
