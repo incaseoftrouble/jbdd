@@ -353,40 +353,11 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
             return;
         }
 
-        int numberOfVariables = numberOfVariables();
-        forEachPathRecursive(positive(function), null, numberOfVariables, path, action, isPositive(function));
+        forEachPathRecursive(positive(function), path, action, isPositive(function));
         assert accessGuard.release();
     }
 
-    @Override
-    public void forEachPartialPath(int function, NatSet relevantSet, Consumer<? super int[]> action) {
-        assert isValidFunction(function);
-
-        if (function == FALSE) {
-            return;
-        }
-        assert accessGuard.acquire();
-        int[] path = new int[numberOfVariables];
-        Arrays.fill(path, -1);
-        if (function == TRUE || relevantSet.isEmpty()) {
-            action.accept(path);
-            assert accessGuard.release();
-            return;
-        }
-
-        int maxVariable = relevantSet.length() - 1;
-
-        forEachPathRecursive(positive(function), relevantSet, maxVariable, path, action, isPositive(function));
-        assert accessGuard.release();
-    }
-
-    private void forEachPathRecursive(
-            int node,
-            @Nullable NatSet support,
-            int depthLimit,
-            int[] path,
-            Consumer<? super int[]> action,
-            boolean lookingFor) {
+    private void forEachPathRecursive(int node, int[] path, Consumer<? super int[]> action, boolean lookingFor) {
 
         if (node == TRUE) {
             assert lookingFor;
@@ -397,30 +368,17 @@ public class MddImpl extends BooleanBase<int[], int[]> implements Mdd {
         assert !isConstant(node);
 
         int variable = table.variable(node);
-        if (variable > depthLimit) {
-            // There must exist at least one satisfying path
-            action.accept(path);
-            return;
-        }
-
-        boolean relevant = support == null || support.contains(variable);
-
         int[] children = table.childrenUnchecked(node);
         for (int val = 0; val < children.length; val++) {
             int child = children[val];
             if (!isFalse(child, lookingFor)) {
-                if (relevant) {
-                    path[variable] = val;
-                }
-                forEachPathRecursive(
-                        positive(child), support, depthLimit, path, action, isPositive(child) == lookingFor);
+                path[variable] = val;
+                forEachPathRecursive(positive(child), path, action, isPositive(child) == lookingFor);
             }
         }
 
-        assert (path[variable] >= 0) == relevant;
-        if (relevant) {
-            path[variable] = -1;
-        }
+        assert path[variable] >= 0;
+        path[variable] = -1;
     }
 
     @Override

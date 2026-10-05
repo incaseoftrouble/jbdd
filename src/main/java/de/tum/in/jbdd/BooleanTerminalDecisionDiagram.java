@@ -139,12 +139,6 @@ public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
     void forEachPath(int function, Consumer<? super P> action);
 
     /**
-     * As {@link #forEachPath}, recording only the variables of {@code relevantSet} and stopping below the last of
-     * them.
-     */
-    void forEachPartialPath(int function, NatSet relevantSet, Consumer<? super P> action);
-
-    /**
      * Whether some path of {@code function} satisfies {@code predicate}, which sees the paths as
      * {@link #forEachPath} does.
      */

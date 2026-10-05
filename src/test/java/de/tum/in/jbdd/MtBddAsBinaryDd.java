@@ -328,63 +328,6 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
     }
 
     @Override
-    public void forEachPartialPath(int function, NatSet relevantSet, Consumer<? super Cube> action) {
-        if (function == falseFunction()) {
-            return;
-        }
-        if (function == trueFunction() || relevantSet.isEmpty()) {
-            action.accept(Cube.ofUnsafe(MutableNatSet.dense(0), MutableNatSet.dense(0)));
-            return;
-        }
-        /* By level, not by variable: the cut-off is "the walk is past everything relevant", which is a
-         * statement about the order. The two coincide only until something reorders. */
-        int maxRelevantLevel = -1;
-        for (int v = relevantSet.nextSetBit(0); v >= 0; v = relevantSet.nextSetBit(v + 1)) {
-            maxRelevantLevel = Math.max(maxRelevantLevel, mt.levelOfVariable(v));
-        }
-        int variables = mt.numberOfVariables();
-        WalkCube path = new WalkCube(variables);
-        forEachPathRecursive(function, relevantSet, maxRelevantLevel, path, action);
-    }
-
-    private void forEachPathRecursive(
-            int node, NatSet relevantSet, int depthLimit, WalkCube path, Consumer<? super Cube> action) {
-        if (node == trueFunction()) {
-            action.accept(path.cube);
-            return;
-        }
-        int variable = mt.decisionVariable(node);
-        if (mt.levelOfVariable(variable) > depthLimit) {
-            // There must exist at least one satisfying completion beyond depthLimit.
-            action.accept(path.cube);
-            return;
-        }
-
-        int low = mt.lowOf(node);
-        int high = mt.highOf(node);
-        boolean relevant = relevantSet.contains(variable);
-
-        if (relevant) {
-            path.support.set(variable);
-        }
-        if (low != falseFunction()) {
-            forEachPathRecursive(low, relevantSet, depthLimit, path, action);
-        }
-        if (high != falseFunction()) {
-            if (relevant) {
-                path.assignment.set(variable);
-                forEachPathRecursive(high, relevantSet, depthLimit, path, action);
-                path.assignment.clear(variable);
-            } else {
-                forEachPathRecursive(high, relevantSet, depthLimit, path, action);
-            }
-        }
-        if (relevant) {
-            path.support.clear(variable);
-        }
-    }
-
-    @Override
     public boolean anyPathMatches(int function, Predicate<? super Cube> predicate) {
         if (function == falseFunction()) {
             return false;

@@ -673,37 +673,11 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
 
         int numberOfVariables = numberOfVariables();
         WalkCube path = new WalkCube(numberOfVariables);
-        forEachPathRecursive(positive(function), null, numberOfVariables, path, action, isPositive(function));
+        forEachPathRecursive(positive(function), path, action, isPositive(function));
         assert accessGuard.release();
     }
 
-    @Override
-    public void forEachPartialPath(int function, NatSet relevantSet, Consumer<? super Cube> action) {
-        assert isValidFunction(function);
-
-        if (function == FALSE) {
-            return;
-        }
-        assert accessGuard.acquire();
-        if (function == TRUE || relevantSet.isEmpty()) {
-            action.accept(Cube.empty());
-            assert accessGuard.release();
-            return;
-        }
-
-        int maxRelevantLevel = maxLevel(relevantSet);
-        WalkCube path = new WalkCube(maxRelevantLevel + 1);
-        forEachPathRecursive(positive(function), relevantSet, maxRelevantLevel, path, action, isPositive(function));
-        assert accessGuard.release();
-    }
-
-    private void forEachPathRecursive(
-            int node,
-            @Nullable NatSet support,
-            int depthLimit,
-            WalkCube path,
-            Consumer<? super Cube> action,
-            boolean lookingFor) {
+    private void forEachPathRecursive(int node, WalkCube path, Consumer<? super Cube> action, boolean lookingFor) {
         if (node == TRUE) {
             assert lookingFor;
             action.accept(path.cube);
@@ -713,40 +687,22 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         assert !isConstant(node);
 
         int variable = table.variable(node);
-        if (levelOfVariable(variable) > depthLimit) {
-            // There must exist at least one satisfying path
-            action.accept(path.cube);
-            return;
-        }
-
         int lowEdge = table.low(node);
         int highNode = table.high(node);
-        boolean relevant = support == null || support.contains(variable);
-
-        if (relevant) {
-            path.support.set(variable);
-        }
+        path.support.set(variable);
 
         if (!isFalse(lowEdge, lookingFor)) {
-            forEachPathRecursive(
-                    positive(lowEdge), support, depthLimit, path, action, isPositive(lowEdge) == lookingFor);
+            forEachPathRecursive(positive(lowEdge), path, action, isPositive(lowEdge) == lookingFor);
         }
         if (!isFalse(highNode, lookingFor)) {
-            if (relevant) {
-                path.assignment.set(variable);
-                forEachPathRecursive(highNode, support, depthLimit, path, action, lookingFor);
-                assert path.assignment.contains(variable);
-                path.assignment.clear(variable);
-            } else {
-                assert !path.assignment.contains(variable);
-                forEachPathRecursive(highNode, support, depthLimit, path, action, lookingFor);
-            }
+            path.assignment.set(variable);
+            forEachPathRecursive(highNode, path, action, lookingFor);
+            assert path.assignment.contains(variable);
+            path.assignment.clear(variable);
         }
 
-        assert relevant == path.support.contains(variable);
-        if (relevant) {
-            path.support.clear(variable);
-        }
+        assert path.support.contains(variable);
+        path.support.clear(variable);
     }
 
     @Override

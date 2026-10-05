@@ -353,28 +353,19 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
 
     @Override
     public void forEachPath(int function, Consumer<? super Cube> action) {
-        MutableNatSet everything = MutableNatSet.create();
-        everything.set(0, mdd.numberOfVariables());
-        forEachPartialPath(function, everything, action);
-    }
-
-    @Override
-    public void forEachPartialPath(int function, NatSet relevantSet, Consumer<? super Cube> action) {
         int variables = mdd.numberOfVariables();
         MutableNatSet values = MutableNatSet.dense(variables);
         MutableNatSet support = MutableNatSet.dense(variables);
         Cube bddPath = Cube.ofUnsafe(values, support);
-        mdd.forEachPartialPath(function, relevantSet, path -> {
+        mdd.forEachPath(function, path -> {
             for (int var = 0; var < path.length; var++) {
                 assert path[var] == -1 || path[var] == TRUE || path[var] == FALSE;
-                if (relevantSet.contains(var)) {
-                    if (path[var] == -1) {
-                        values.clear(var);
-                        support.clear(var);
-                    } else {
-                        support.set(var);
-                        values.set(var, path[var] == TRUE);
-                    }
+                if (path[var] == -1) {
+                    values.clear(var);
+                    support.clear(var);
+                } else {
+                    support.set(var);
+                    values.set(var, path[var] == TRUE);
                 }
             }
             action.accept(bddPath);

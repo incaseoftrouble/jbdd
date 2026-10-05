@@ -1210,48 +1210,6 @@ class BddTheories {
 
     @ParameterizedTest(name = "{index}")
     @MethodSource("unary")
-    void testForEachPathWithSupportSimple(UnaryDataPoint<BinaryDd> dataPoint) {
-        BinaryDd bdd = dataPoint.bdd;
-        int function = dataPoint.function;
-        assumeTrue(bdd.isValidFunction(function));
-
-        MutableNatSet support = MutableNatSet.copyOf(bdd.support(function));
-        assumeTrue(support.size() <= 7);
-
-        MutableNatSet supportRestriction = MutableNatSet.create();
-        Random mixer = new Random(bdd.hashCode() + function);
-        for (int i = 0; i < bdd.numberOfVariables(); i++) {
-            supportRestriction.set(i, mixer.nextBoolean());
-        }
-
-        MutableNatSet supportFromPathSupport = MutableNatSet.dense(bdd.numberOfVariables());
-
-        Set<NatSet> paths = new HashSet<>();
-        bdd.forEachPartialPath(function, supportRestriction, path -> {
-            assertThat(NatSetFixtures.isSubset(path.support(), supportRestriction), is(true));
-            paths.add(NatSet.copyOf(path.assignment()));
-            supportFromPathSupport.or(path.support());
-        });
-        var supportCopy = NatSetFixtures.copyOf(support);
-        supportCopy.and(supportRestriction);
-        assertThat(supportFromPathSupport, is(supportCopy));
-
-        for (NatSet path : paths) {
-            assertThat(NatSetFixtures.isSubset(path, supportRestriction), is(true));
-        }
-
-        // Build up all minimal solutions using a naive algorithm
-        Set<NatSet> assignments = new HashSet<>();
-        for (NatSet assignment : new BddPathExplorer(bdd, function).getAssignments()) {
-            var copy = NatSetFixtures.copyOf(assignment);
-            copy.and(supportRestriction);
-            assignments.add(copy);
-        }
-        assertThat(paths, is(assignments));
-    }
-
-    @ParameterizedTest(name = "{index}")
-    @MethodSource("unary")
     void testForEachPathWithRelevantSet(UnaryDataPoint<BinaryDd> dataPoint) {
         BinaryDd bdd = dataPoint.bdd;
         int function = dataPoint.function;
