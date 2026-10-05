@@ -22,7 +22,7 @@ package de.tum.in.jbdd;
  * from {@code -Pjbdd.test.scale}).
  */
 @SuppressWarnings("PMD.TestClassWithoutTestCases") // A helper
-final class TestProfile {
+public final class TestProfile {
     private static final String PROPERTY = "jbdd.test.scale";
     private static final double SCALE = readScale();
 
@@ -47,15 +47,15 @@ final class TestProfile {
         return scale;
     }
 
-    static double scale() {
+    public static double scale() {
         return SCALE;
     }
 
-    static int scaled(int count) {
+    public static int scaled(int count) {
         return scaled(count, 1);
     }
 
-    static int scaled(int count, int minimum) {
+    public static int scaled(int count, int minimum) {
         assert 0 < minimum && minimum <= count;
         return Math.max(minimum, (int) (count * SCALE));
     }

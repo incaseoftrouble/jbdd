@@ -1201,7 +1201,14 @@ intuitions transfer badly. Two habits follow:
 - Targeted tests: `BddTest`, `MtBddTest`, `BddMapTest`, `BddSetTest`, `ValuesTest`, `ReorderTest`, `HashTest`,
   `UtilityTest`, `DimacsReaderTest`; in `collections`, `NatSetTest` (every operation against `java.util.BitSet`,
   over spans that keep a set in the array, move it to words, or mix both; one set in every representation equal
-  to itself, hash code and order included), `CubeTest` and `IntHashMapTest`. `UtilityTest` also asserts
+  to itself, hash code and order included), `NatSetFuzzTest` (random operation sequences against `BitSet`,
+  every query after each step, the set re-read through each class and representation, the combinations against
+  sets of every shape), `CubeTest` and `IntHashMapTest`. `BddFuzzTest` is the BDD's counterpart: the n-ary
+  operations, quantification and the relational product, composition over restrictions and general mappings,
+  the domain operations and restriction by a path cursor's cubes, all against truth tables on a tiny table with
+  collections, reorderings and garbage between the operations - the theories compare per operation against syntax
+  trees, this walks their combinations over one diagram. Both scale their rounds with `TestProfile` (public, so the
+  `collections` tests see it) and run in seconds at full scale. `UtilityTest` also asserts
   that the costly assertions are on (`Assertions`), so a test task that forgot the property fails. `SyntheticTest` — n-queens counts as an end-to-end sanity check.
   **`RegressionTests` — one test per past bug; add here when fixing one.**
 - `ValuesTest` holds the numbering-level tests: split residuals, a merging cartesian product and a
