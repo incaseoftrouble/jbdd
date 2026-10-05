@@ -243,9 +243,10 @@ public abstract class NodeTable implements StatisticsReporter {
     private int jvmGcRequestCount = 0;
     /* The table size at which the JVM was last asked for a collection, -1 if never. */
     private int jvmGcRequestSize = -1;
-    /* While the table cannot grow because of memory limits: the free node count at which ensureCapacity
-     * next acts, half of what the last collection left, so each full mark is paid for by as many
-     * allocations. -1 while the table can grow. */
+    /* While the table is memory limited - its last attempt to grow found no room: the free node count at which
+     * ensureCapacity next acts, half of what the last collection left, so each full mark is paid for by as many
+     * allocations. -1 otherwise; a growth, or a collection of ensureCapacity's leaving more than a quarter free, ends
+     * the regime (a caller's gc() does not: sifting counts on it to last through a reordering, see swapFits). */
     private int denseFreeThreshold = -1;
     /* The share of the counters above spent while the variable order was being changed, so reordering's
      * cost can be told apart from the operations'. Taken as differences between a snapshot at the start of
@@ -323,6 +324,16 @@ public abstract class NodeTable implements StatisticsReporter {
 
     public int freeNodeCount() {
         return freeNodeCount;
+    }
+
+    /**
+     * Whether the last attempt to grow this table found no room in the heap, so that it is run densely packed until
+     * a growth succeeds or a collection of its own leaves more than a quarter free. A step that allocates many nodes
+     * at once where the table cannot collect (a swap during sifting) checks {@link #freeNodeCount()} first while this
+     * holds.
+     */
+    public final boolean isMemoryLimited() {
+        return denseFreeThreshold >= 0;
     }
 
     abstract int nodeFor(int function);
@@ -1182,9 +1193,10 @@ public abstract class NodeTable implements StatisticsReporter {
                         this, currentSize - freeNodes, currentSize, availableMemory()));
             }
             // Growing is not possible - carry on with a densely packed table for as long as we can
-            checkState(freeNodes > 0, "Node table %s is full and cannot grow", this);
-
-            // Don't go through this whole procedure again, allow the table to grow fuller
+            if (freeNodes == 0) {
+                throw new OutOfMemoryError(String.format(
+                        "Node table %s is full and cannot grow (%d bytes available)", this, availableMemory()));
+            }
             denseFreeThreshold = freeNodes / 2;
             assert !Assertions.COSTLY_ASSERTIONS || rewriteDepth > 0 || checkOwner();
             return false;

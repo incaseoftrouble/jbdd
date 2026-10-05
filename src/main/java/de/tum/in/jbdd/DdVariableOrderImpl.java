@@ -54,6 +54,9 @@ public final class DdVariableOrderImpl implements DdVariableOrder, StatisticsRep
             Statistic.counter("reorder_collections", "collections during reordering");
     private static final Statistic REORDER_ABANDONED_DIRECTIONS = Statistic.counter(
             "reorder_abandoned_directions", "sifting directions abandoned because the diagrams grew too much");
+    private static final Statistic REORDER_MEMORY_STOPS = Statistic.counter(
+            "reorder_memory_stops",
+            "sifting directions stopped because a memory-limited table could not hold the next swap");
     private static final Statistic REORDER_IDENTITY_REVERTS =
             Statistic.counter("reorder_identity_reverts", "reorderings undone because they saved nothing");
     /* The one ratio that says whether sifting is earning its keep, the way node_table_work_per_created_node does
@@ -101,6 +104,9 @@ public final class DdVariableOrderImpl implements DdVariableOrder, StatisticsRep
     private long reorderRewrittenNodes = 0;
     private int reorderCollections = 0;
     private int reorderAbandonedDirections = 0;
+    /* Sifting directions stopped because a memory-limited table could not have held the next swap - see swapFits.
+     * Nonzero means the heap, not MAXIMUM_SIFT_GROWTH, decided how far sifting went. */
+    private int reorderMemoryStops = 0;
     private long reorderTimeMilliseconds = 0;
     /* How often a reordering landed back on the identity and the order went implicit again. Sifting has
      * no reason to prefer the identity, so this is expected to stay at zero on anything but a caller's
@@ -638,7 +644,7 @@ public final class DdVariableOrderImpl implements DdVariableOrder, StatisticsRep
         int limit = (int) Math.min(Integer.MAX_VALUE, (long) (bestSize * MAXIMUM_SIFT_GROWTH));
 
         int current = start;
-        while (current < maxLevel) {
+        while (current < maxLevel && swapFits(current)) {
             swapWithNextLevel(current);
             current += 1;
             int size = liveNodeCount();
@@ -651,10 +657,10 @@ public final class DdVariableOrderImpl implements DdVariableOrder, StatisticsRep
             }
         }
         while (current > start) {
-            swapWithNextLevel(current - 1);
+            swapWithRoom(current - 1);
             current -= 1;
         }
-        while (current > minLevel) {
+        while (current > minLevel && swapFits(current - 1)) {
             swapWithNextLevel(current - 1);
             current -= 1;
             int size = liveNodeCount();
@@ -667,14 +673,62 @@ public final class DdVariableOrderImpl implements DdVariableOrder, StatisticsRep
             }
         }
         while (current < best) {
-            swapWithNextLevel(current);
+            swapWithRoom(current);
             current += 1;
         }
         while (current > best) {
-            swapWithNextLevel(current - 1);
+            swapWithRoom(current - 1);
             current -= 1;
         }
         assert levelOfVariable(variable) == best;
+    }
+
+    /*
+     * Whether the swap of level and level + 1 is sure to fit while a table is memory limited: inside a swap the tables
+     * grow rather than collect, and one that cannot grow runs full. A swap creates at most two nodes per node of the
+     * lower variable, so twice that count free suffices; where it is not free, the garbage of the swaps so far is
+     * collected first - the orphans of exploring, which no ensureCapacity inside the bracket reclaims - and the
+     * direction is given up if that does not make room. While both tables can grow nothing is asked: they grow inside
+     * the swap as needed, and the collections sifting makes stay at MAXIMUM_SIFT_GARBAGE.
+     */
+    private boolean swapFits(int level) {
+        if (roomFor(level)) {
+            return true;
+        }
+        collectForSwap();
+        if (roomFor(level)) {
+            return true;
+        }
+        reorderMemoryStops += 1;
+        return false;
+    }
+
+    /* A swap that has to happen (back to the best position): room is made as in swapFits, but it is not given up. */
+    private void swapWithRoom(int level) {
+        if (!roomFor(level)) {
+            collectForSwap();
+        }
+        swapWithNextLevel(level);
+    }
+
+    private boolean roomFor(int level) {
+        NodeTable bddTable = bdd().table();
+        NodeTable mtbddTable = mtbdd().table();
+        if (!bddTable.isMemoryLimited() && !mtbddTable.isMemoryLimited()) {
+            return true;
+        }
+        int lower = variableAtLevel(level);
+        return fits(bddTable, lower) && fits(mtbddTable, lower);
+    }
+
+    private static boolean fits(NodeTable table, int variable) {
+        return table.freeNodeCount() >= 2L * table.nodesWithVariable(variable);
+    }
+
+    private void collectForSwap() {
+        bdd().gc();
+        mtbdd().gc();
+        reorderCollections += 1;
     }
 
     /** Reported by the BDD, which is where a caller looks for them - there is only one order. */
@@ -688,6 +742,7 @@ public final class DdVariableOrderImpl implements DdVariableOrder, StatisticsRep
         report.put(REORDER_REWRITTEN_NODES, reorderRewrittenNodes);
         report.put(REORDER_COLLECTIONS, reorderCollections);
         report.put(REORDER_ABANDONED_DIRECTIONS, reorderAbandonedDirections);
+        report.put(REORDER_MEMORY_STOPS, reorderMemoryStops);
         report.put(REORDER_IDENTITY_REVERTS, reorderIdentityReverts);
         report.ratio(REORDER_WORK_PER_SAVED_NODE);
     }

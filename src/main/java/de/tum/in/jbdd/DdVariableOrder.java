@@ -57,6 +57,10 @@ public interface DdVariableOrder {
     /**
      * Reorders variables, aiming to reduce the number of nodes.
      *
+     * <p>Where the heap no longer lets a node table grow, a variable is not moved further than the tables can hold,
+     * so the result is whatever that explored; {@link #siftDown} and {@link #reorderTo} do what they are told and
+     * throw an {@link OutOfMemoryError} instead.
+     *
      * @return How many nodes fewer the diagrams hold afterwards, counted across every diagram over this
      *     order. Never negative - a variable is only moved somewhere that was at least as good as where
      *     it started.

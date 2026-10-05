@@ -458,7 +458,8 @@ Three load-bearing properties:
   full mark. A table that cannot grow collects instead, and then collects again only once half of what that
   left free is used (`denseFreeThreshold`) - without that, every allocation below the quarter-free trigger
   was a full mark, and a synthesis workload ran for hours. If a collection leaves under a thirty-second free
-  (`MINIMUM_FREE_DIVISOR`), `ensureCapacity` throws `OutOfMemoryError`. Whether the table can grow is decided
+  (`MINIMUM_FREE_DIVISOR`), or a table that could not collect (inside a rewrite, or with collection off) has no
+  free node left, `ensureCapacity` throws `OutOfMemoryError`. Whether the table can grow is decided
   *before* choosing between reclaiming and the futile path, since the futile path's invalidation is valid only
   right before `grow()`.
 
@@ -869,6 +870,22 @@ benchmarks it is a shallow basin flat from 0.30 to 0.45, ~8% worse at 0.25, degr
 garbage a swap walks outweighs the collections saved and the table starts doubling (0.60 doubles it; with
 no bound the run dies of memory). 0.40 sits mid-basin.
 
+**A table that cannot grow stops sifting short rather than dying mid-swap.** Inside the rewrite bracket a table
+grows instead of collecting, and one the heap no longer lets grow (`NodeTable.isMemoryLimited()`, set by the first
+growth that found no room) runs full: the swaps' garbage fills it and `ensureCapacity` throws `OutOfMemoryError`
+from inside `rewriteLevelAfterSwap`, with both diagrams half rewritten (seen on a synthesis workload, 5 GB heap,
+an explicit `reorder()`). So `sift` asks `swapFits` before each exploring swap while either table is memory
+limited: a swap creates at most two nodes per node of the lower variable, so twice that count free is enough;
+otherwise both diagrams collect first (the swaps' garbage, which no `ensureCapacity` inside the bracket reclaims)
+and, if that does not make room, the direction is given up (`reorder_memory_stops`). The swaps back to the best
+position make room the same way but are never given up (`swapWithRoom`): they recreate the nodes the exploration
+orphaned, which a collection in between has reclaimed. `reorderTo` and a caller's own `siftDown` do what they are
+told and throw. A caller's `gc()` deliberately leaves the memory-limited regime in place (only a growth, or a
+collection of `ensureCapacity`'s own leaving a quarter free, ends it), so the checks last through a reordering.
+While both tables can grow nothing is asked, so the tuned constants above are untouched. The scenario is
+reproducible only against a nearly full heap (a table 65% live, ballast blocking its doubling), which the suite
+does not set up; it was verified by hand: `reorder()` completed with 14 stops where it died after ten swaps.
+
 Bookkeeping (per-variable node lists, parent counts) is built lazily on the first reorder and dropped
 afterwards unless `keepReorderingStructures()` is set. Set it only when reordering is frequent enough that
 rebuilding dominates; it costs one int per node slot plus one per valid node and puts work on every node
@@ -950,7 +967,8 @@ Statistics (`DdVariableOrderImpl.report`, folded into the BDD's contribution to 
 map and prefixed with `configuration().name()`, which is empty by default): `reorder_saved_nodes` against `reorder_swaps` /
 `reorder_rewritten_nodes` is the benefit-vs-cost pair, summarised as `reorder_work_per_saved_node`.
 `reorder_collections` says whether `MAXIMUM_SIFT_GARBAGE` is set sensibly,
-`reorder_abandoned_directions` whether `MAXIMUM_SIFT_GROWTH` is, and `reorder_notifications` against
+`reorder_abandoned_directions` whether `MAXIMUM_SIFT_GROWTH` is, `reorder_memory_stops` whether the heap rather
+than either decided how far sifting went, and `reorder_notifications` against
 `reorder_swaps` what batching the order-change event is worth. `reorder_identity_reverts` outside a
 deliberate `reorderToIdentity()`
 signals the fast path is worth more than it looks. Each table additionally reports the share of its own
