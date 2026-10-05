@@ -327,7 +327,9 @@ Collections independent of decision diagrams, public for users too; nothing here
   set in a `BoxedNatSet`, with `Set`'s equality and hash code, whose mutators always throw over an immutable set.
 - The read algorithms over either store are static functions in `NatSetUtil`, shared by both. Operands of one
   representation meet word against word or array against array (`union`/`intersection`/`difference` of immutable
-  sets build the result's store directly, `NatSet.ORDER` compares with `Arrays.mismatch`/`Arrays.compare`), and
+  sets build the result's store directly, and so do a mutable set's over two arrays - `ImmutableNatSet.unionOfArrays`
+  and friends; over words, copying the mutable set and combining in place measured faster - and a factory picks the
+  representation before it copies anything; `NatSet.ORDER` compares with `Arrays.mismatch`/`Arrays.compare`), and
   `containsAll`/`intersects` of words against an array test the array's elements in the words (mostly a tiny set
   against a larger one) - in the loop rather than a helper, as a call site C2 does not find hot inlines 35
   bytes at most. An immutable set's representation follows from its elements and its store is exact, so two are equal

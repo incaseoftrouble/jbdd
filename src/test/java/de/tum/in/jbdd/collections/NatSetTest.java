@@ -586,4 +586,28 @@ class NatSetTest {
             }
         }
     }
+
+    @Test
+    void boxedBulkRemovalsFollowTheCollection() {
+        Random random = new Random(11);
+        for (int span : new int[] {8, 64, 200, 3000}) {
+            for (int round = 0; round < 100; round++) {
+                BitSet reference = randomBitSet(random, span, random.nextInt(span < 64 ? 6 : 40));
+                List<Object> collection = new ArrayList<>();
+                for (int index = random.nextInt(30); index > 0; index--) {
+                    collection.add(random.nextInt(span));
+                }
+                collection.add(-1);
+                collection.add("not an element");
+                Set<Integer> retained = new HashSet<>(reference.stream().boxed().collect(Collectors.toList()));
+                Set<Integer> boxedRetained = MutableNatSet.copyOf(reference).boxed();
+                assertEquals(retained.retainAll(collection), boxedRetained.retainAll(collection));
+                assertEquals(retained, boxedRetained);
+                Set<Integer> removed = new HashSet<>(reference.stream().boxed().collect(Collectors.toList()));
+                Set<Integer> boxedRemoved = MutableNatSet.copyOf(reference).boxed();
+                assertEquals(removed.removeAll(collection), boxedRemoved.removeAll(collection));
+                assertEquals(removed, boxedRemoved);
+            }
+        }
+    }
 }

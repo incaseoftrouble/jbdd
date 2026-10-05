@@ -17,7 +17,6 @@
 package de.tum.in.jbdd.collections;
 
 import java.util.AbstractSet;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.function.Consumer;
@@ -139,13 +138,12 @@ final class BoxedNatSet extends AbstractSet<Integer> {
             int[] array = new int[c.size()];
             int index = 0;
             for (Object o : c) {
-                if (o instanceof Integer) {
+                if (o instanceof Integer && (Integer) o >= 0) {
                     array[index] = (Integer) o;
                     index += 1;
                 }
             }
-            // TODO double copy
-            other = ImmutableNatSet.of(index == array.length ? array : Arrays.copyOf(array, index));
+            other = ImmutableNatSet.taking(array, index);
         }
         ours.and(other);
         return ours.size() != size;

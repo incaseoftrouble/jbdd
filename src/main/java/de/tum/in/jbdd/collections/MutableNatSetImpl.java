@@ -76,27 +76,35 @@ final class MutableNatSetImpl implements MutableNatSet {
     }
 
     static MutableNatSetImpl of(int... elements) {
-        int[] sorted = elements.clone();
-        Arrays.sort(sorted);
-        int count = 0;
-        for (int element : sorted) {
+        return taking(elements.clone(), elements.length);
+    }
+
+    /**
+     * The set of the first {@code count} entries of {@code elements}, in any order and with repetitions, which it sorts
+     * in place, taking the array over.
+     */
+    private static MutableNatSetImpl taking(int[] elements, int count) {
+        Arrays.sort(elements, 0, count);
+        int distinct = 0;
+        for (int index = 0; index < count; index++) {
+            int element = elements[index];
             assert element >= 0 : "Negative element " + element;
-            if (count == 0 || sorted[count - 1] != element) {
-                sorted[count] = element;
-                count += 1;
+            if (distinct == 0 || elements[distinct - 1] != element) {
+                elements[distinct] = element;
+                distinct += 1;
             }
         }
         MutableNatSetImpl set = new MutableNatSetImpl();
-        if (count > 0 && NatSetUtil.useWords(count, sorted[count - 1])) {
-            long[] setWords = new long[NatSetUtil.wordCount(sorted[count - 1] + 1)];
-            for (int index = 0; index < count; index++) {
-                setWords[sorted[index] >>> WORD_SHIFT] |= 1L << sorted[index];
+        if (distinct > 0 && NatSetUtil.useWords(distinct, elements[distinct - 1])) {
+            long[] setWords = new long[NatSetUtil.wordCount(elements[distinct - 1] + 1)];
+            for (int index = 0; index < distinct; index++) {
+                setWords[elements[index] >>> WORD_SHIFT] |= 1L << elements[index];
             }
             set.words = setWords;
-        } else if (count > 0) {
-            set.elements = count == sorted.length ? sorted : Arrays.copyOf(sorted, count);
+        } else if (distinct > 0) {
+            set.elements = distinct == elements.length ? elements : Arrays.copyOf(elements, distinct);
         }
-        set.size = count;
+        set.size = distinct;
         return set;
     }
 
@@ -158,7 +166,7 @@ final class MutableNatSetImpl implements MutableNatSet {
             array[index] = element;
             index += 1;
         }
-        return of(index == array.length ? array : Arrays.copyOf(array, index));
+        return taking(array, index);
     }
 
     // Representation
@@ -761,6 +769,18 @@ final class MutableNatSetImpl implements MutableNatSet {
 
     @Override
     public NatSet union(NatSet other) {
+        if (other.isEmpty()) {
+            return ImmutableNatSet.copyOf(this);
+        }
+        if (size == 0) {
+            return ImmutableNatSet.copyOf(other);
+        }
+        if (words == null) {
+            int[] otherElements = NatSetUtil.elementsOf(other);
+            if (otherElements != null) {
+                return ImmutableNatSet.unionOfArrays(elements, size, otherElements, other.size());
+            }
+        }
         MutableNatSetImpl union = new MutableNatSetImpl(this);
         union.or(other);
         return ImmutableNatSet.freeze(union);
@@ -768,6 +788,15 @@ final class MutableNatSetImpl implements MutableNatSet {
 
     @Override
     public NatSet intersection(NatSet other) {
+        if (size == 0 || other.isEmpty()) {
+            return ImmutableNatSet.EMPTY;
+        }
+        if (words == null) {
+            int[] otherElements = NatSetUtil.elementsOf(other);
+            if (otherElements != null) {
+                return ImmutableNatSet.intersectionOfArrays(elements, size, otherElements, other.size());
+            }
+        }
         MutableNatSetImpl intersection = new MutableNatSetImpl(this);
         intersection.and(other);
         return ImmutableNatSet.freeze(intersection);
@@ -775,6 +804,18 @@ final class MutableNatSetImpl implements MutableNatSet {
 
     @Override
     public NatSet difference(NatSet other) {
+        if (size == 0) {
+            return ImmutableNatSet.EMPTY;
+        }
+        if (other.isEmpty()) {
+            return ImmutableNatSet.copyOf(this);
+        }
+        if (words == null) {
+            int[] otherElements = NatSetUtil.elementsOf(other);
+            if (otherElements != null) {
+                return ImmutableNatSet.differenceOfArrays(elements, size, otherElements, other.size());
+            }
+        }
         MutableNatSetImpl difference = new MutableNatSetImpl(this);
         difference.andNot(other);
         return ImmutableNatSet.freeze(difference);
@@ -805,9 +846,9 @@ final class MutableNatSetImpl implements MutableNatSet {
 
     @Override
     public NatSet shifted(int amount) {
-        MutableNatSetImpl copy = new MutableNatSetImpl(this);
-        copy.shift(amount);
-        return ImmutableNatSet.freeze(copy);
+        assert amount > Integer.MIN_VALUE && (amount <= 0 || size == 0 || last() <= Integer.MAX_VALUE - amount)
+                : amount;
+        return amount == 0 || size == 0 ? ImmutableNatSet.copyOf(this) : ImmutableNatSet.shiftedOf(this, amount);
     }
 
     @Override
@@ -820,10 +861,10 @@ final class MutableNatSetImpl implements MutableNatSet {
         if (current == null) {
             int low = NatSetUtil.arrayLowerBound(elements, size, from);
             int high = NatSetUtil.arrayLowerBound(elements, size, to);
-            return ImmutableNatSet.ofSorted(Arrays.copyOfRange(elements, low, high), high - low);
+            return ImmutableNatSet.copyOfSorted(elements, low, high);
         }
         long[] restricted = NatSetUtil.subSetWords(current, from, to);
-        return ImmutableNatSet.ofWords(restricted, NatSetUtil.wordsCount(restricted), true);
+        return ImmutableNatSet.takingWords(restricted, NatSetUtil.wordsCount(restricted));
     }
 
     @Override
@@ -843,10 +884,10 @@ final class MutableNatSetImpl implements MutableNatSet {
             for (int index = low; index < high; index++) {
                 sliced[index - low] = elements[index] - from;
             }
-            return ImmutableNatSet.ofSorted(sliced, sliced.length);
+            return ImmutableNatSet.takingSorted(sliced, sliced.length);
         }
         long[] sliced = NatSetUtil.sliceWords(current, from, to);
-        return ImmutableNatSet.ofWords(sliced, NatSetUtil.wordsCount(sliced), true);
+        return ImmutableNatSet.takingWords(sliced, NatSetUtil.wordsCount(sliced));
     }
 
     @Override
@@ -891,11 +932,13 @@ final class MutableNatSetImpl implements MutableNatSet {
         return target;
     }
 
+    @SuppressWarnings("EqualsDoesntCheckParameterClass")
     @Override
     public boolean equals(Object o) {
         return o == this || NatSetUtil.setEquals(this, o);
     }
 
+    @SuppressWarnings("NonFinalFieldReferencedInHashCode")
     @Override
     public int hashCode() {
         long[] current = words;

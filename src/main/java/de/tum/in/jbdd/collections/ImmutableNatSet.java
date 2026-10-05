@@ -95,24 +95,45 @@ final class ImmutableNatSet implements NatSet {
         return new ImmutableNatSet(new int[] {element});
     }
 
-    /** The set of the first {@code count} entries of {@code sorted}, ascending and distinct, which it may keep. */
-    static ImmutableNatSet ofSorted(int[] sorted, int count) {
+    /** The set of the first {@code count} entries of {@code sorted}, ascending and distinct, taking the array over. */
+    static ImmutableNatSet takingSorted(int[] sorted, int count) {
+        return fromSorted(sorted, 0, count, true);
+    }
+
+    /** The set of {@code sorted[from, to)}, ascending and distinct, of which it keeps a copy. */
+    static ImmutableNatSet copyOfSorted(int[] sorted, int from, int to) {
+        return fromSorted(sorted, from, to, false);
+    }
+
+    // The representation is chosen before anything is copied, so an array that becomes words is never copied first.
+    private static ImmutableNatSet fromSorted(int[] sorted, int from, int to, boolean take) {
+        int count = to - from;
         if (count <= 1) {
-            return count == 0 ? EMPTY : singleton(sorted[0]);
+            return count <= 0 ? EMPTY : singleton(sorted[from]);
         }
-        int max = sorted[count - 1];
+        int max = sorted[to - 1];
         if (NatSetUtil.useWords(count, max)) {
             long[] words = new long[NatSetUtil.wordCount(max + 1)];
-            for (int index = 0; index < count; index++) {
+            for (int index = from; index < to; index++) {
                 words[sorted[index] >>> WORD_SHIFT] |= 1L << sorted[index];
             }
             return new ImmutableNatSet(words, count);
         }
-        return new ImmutableNatSet(count == sorted.length ? sorted : Arrays.copyOf(sorted, count));
+        boolean keep = take && from == 0 && to == sorted.length;
+        return new ImmutableNatSet(keep ? sorted : Arrays.copyOfRange(sorted, from, to));
     }
 
-    /** The set of {@code words}, of which it keeps a trimmed copy or, if {@code own}, the array itself. */
-    static ImmutableNatSet ofWords(long[] words, int count, boolean own) {
+    /** The set of {@code words}, holding {@code count} elements, taking the array over. */
+    static ImmutableNatSet takingWords(long[] words, int count) {
+        return fromWords(words, count, true);
+    }
+
+    /** The set of {@code words}, holding {@code count} elements, of which it keeps a trimmed copy. */
+    static ImmutableNatSet copyOfWords(long[] words, int count) {
+        return fromWords(words, count, false);
+    }
+
+    private static ImmutableNatSet fromWords(long[] words, int count, boolean take) {
         if (count <= 1) {
             return count == 0 ? EMPTY : singleton(NatSetUtil.wordsNext(words, 0));
         }
@@ -121,21 +142,29 @@ final class ImmutableNatSet implements NatSet {
             return new ImmutableNatSet(NatSetUtil.wordsToArray(words, count));
         }
         int wordCount = NatSetUtil.wordCount(length);
-        return new ImmutableNatSet(own && wordCount == words.length ? words : Arrays.copyOf(words, wordCount), count);
+        return new ImmutableNatSet(take && wordCount == words.length ? words : Arrays.copyOf(words, wordCount), count);
     }
 
     static ImmutableNatSet of(int... elements) {
-        int[] sorted = elements.clone();
-        Arrays.sort(sorted);
-        int count = 0;
-        for (int element : sorted) {
+        return taking(elements.clone(), elements.length);
+    }
+
+    /**
+     * The set of the first {@code count} entries of {@code elements}, in any order and with repetitions, which it sorts
+     * in place, taking the array over.
+     */
+    static ImmutableNatSet taking(int[] elements, int count) {
+        Arrays.sort(elements, 0, count);
+        int distinct = 0;
+        for (int index = 0; index < count; index++) {
+            int element = elements[index];
             assert element >= 0 : "Negative element " + element;
-            if (count == 0 || sorted[count - 1] != element) {
-                sorted[count] = element;
-                count += 1;
+            if (distinct == 0 || elements[distinct - 1] != element) {
+                elements[distinct] = element;
+                distinct += 1;
             }
         }
-        return ofSorted(sorted, count);
+        return takingSorted(elements, distinct);
     }
 
     static ImmutableNatSet range(int from, int to) {
@@ -161,24 +190,24 @@ final class ImmutableNatSet implements NatSet {
         MutableNatSetImpl mutable = (MutableNatSetImpl) set;
         long[] mutableWords = mutable.words;
         if (mutableWords == null) {
-            return ofSorted(Arrays.copyOf(mutable.elements, mutable.size()), mutable.size());
+            return copyOfSorted(mutable.elements, 0, mutable.size());
         }
-        return ofWords(mutableWords, mutable.size(), false);
+        return copyOfWords(mutableWords, mutable.size());
     }
 
     /** {@code set} as an immutable set, taking over its stores: {@code set} is not used afterwards. */
     static ImmutableNatSet freeze(MutableNatSetImpl set) {
         long[] setWords = set.words;
-        return setWords == null ? ofSorted(set.elements, set.size()) : ofWords(setWords, set.size(), true);
+        return setWords == null ? takingSorted(set.elements, set.size()) : takingWords(setWords, set.size());
     }
 
     static ImmutableNatSet valueOf(long... words) {
-        return ofWords(words, NatSetUtil.wordsCount(words), false);
+        return copyOfWords(words, NatSetUtil.wordsCount(words));
     }
 
     static ImmutableNatSet copyOf(BitSet set) {
         long[] words = set.toLongArray();
-        return ofWords(words, set.cardinality(), true);
+        return takingWords(words, set.cardinality());
     }
 
     static ImmutableNatSet copyOf(Collection<Integer> elements) {
@@ -191,7 +220,7 @@ final class ImmutableNatSet implements NatSet {
             array[index] = element;
             index += 1;
         }
-        return of(index == array.length ? array : Arrays.copyOf(array, index));
+        return taking(array, index);
     }
 
     // Queries
@@ -390,8 +419,6 @@ final class ImmutableNatSet implements NatSet {
 
     // Combination: an operand that is the result is returned as it is, never changing.
 
-    // Two operands of one representation are combined into the result's store directly, mixed ones through a copy.
-
     @Override
     public NatSet union(NatSet other) {
         if (containsAll(other)) {
@@ -409,17 +436,16 @@ final class ImmutableNatSet implements NatSet {
             for (int index = 0; index < shorter.length; index++) {
                 union[index] |= shorter[index];
             }
-            return ofWords(union, NatSetUtil.wordsCount(union), true);
+            return takingWords(union, NatSetUtil.wordsCount(union));
         }
         int[] array = elements();
         int[] otherArray = NatSetUtil.elementsOf(other);
         if (array != null && otherArray != null) {
-            int[] union = new int[size + other.size()];
-            return ofSorted(union, NatSetUtil.arrayUnion(array, size, otherArray, other.size(), union));
+            return unionOfArrays(array, size, otherArray, other.size());
         }
-        MutableNatSetImpl union = MutableNatSetImpl.copyOf(this);
-        union.or(other);
-        return freeze(union);
+        MutableNatSetImpl mixed = MutableNatSetImpl.copyOf(this);
+        mixed.or(other);
+        return freeze(mixed);
     }
 
     @Override
@@ -437,18 +463,16 @@ final class ImmutableNatSet implements NatSet {
             for (int index = 0; index < intersection.length; index++) {
                 intersection[index] = current[index] & otherWords[index];
             }
-            return ofWords(intersection, NatSetUtil.wordsCount(intersection), true);
+            return takingWords(intersection, NatSetUtil.wordsCount(intersection));
         }
         int[] array = elements();
         int[] otherArray = NatSetUtil.elementsOf(other);
         if (array != null && otherArray != null) {
-            int[] intersection = new int[Math.min(size, other.size())];
-            return ofSorted(
-                    intersection, NatSetUtil.arrayIntersection(array, size, otherArray, other.size(), intersection));
+            return intersectionOfArrays(array, size, otherArray, other.size());
         }
-        MutableNatSetImpl intersection = MutableNatSetImpl.copyOf(this);
-        intersection.and(other);
-        return freeze(intersection);
+        MutableNatSetImpl mixed = MutableNatSetImpl.copyOf(this);
+        mixed.and(other);
+        return freeze(mixed);
     }
 
     @Override
@@ -464,39 +488,62 @@ final class ImmutableNatSet implements NatSet {
             for (int index = 0; index < common; index++) {
                 difference[index] &= ~otherWords[index];
             }
-            return ofWords(difference, NatSetUtil.wordsCount(difference), true);
+            return takingWords(difference, NatSetUtil.wordsCount(difference));
         }
         int[] array = elements();
         int[] otherArray = NatSetUtil.elementsOf(other);
         if (array != null && otherArray != null) {
-            int[] difference = new int[size];
-            return ofSorted(difference, NatSetUtil.arrayDifference(array, size, otherArray, other.size(), difference));
+            return differenceOfArrays(array, size, otherArray, other.size());
         }
-        MutableNatSetImpl difference = MutableNatSetImpl.copyOf(this);
-        difference.andNot(other);
-        return freeze(difference);
+        MutableNatSetImpl mixed = MutableNatSetImpl.copyOf(this);
+        mixed.andNot(other);
+        return freeze(mixed);
     }
 
     @Override
     public NatSet shifted(int amount) {
         assert amount > Integer.MIN_VALUE && (amount <= 0 || size == 0 || last() <= Integer.MAX_VALUE - amount)
                 : amount;
-        if (amount == 0 || size == 0) {
-            return this;
-        }
-        int[] array = elements();
+        return amount == 0 || size == 0 ? this : shiftedOf(this, amount);
+    }
+
+    /*
+     * Two ascending arrays combined into the result's store directly - for either class: a mutable receiver over words
+     * copies itself and combines in place, which measured faster than reading both stores from here.
+     */
+
+    static ImmutableNatSet unionOfArrays(int[] array, int size, int[] otherArray, int otherSize) {
+        int[] union = new int[size + otherSize];
+        return takingSorted(union, NatSetUtil.arrayUnion(array, size, otherArray, otherSize, union));
+    }
+
+    static ImmutableNatSet intersectionOfArrays(int[] array, int size, int[] otherArray, int otherSize) {
+        int[] intersection = new int[Math.min(size, otherSize)];
+        return takingSorted(
+                intersection, NatSetUtil.arrayIntersection(array, size, otherArray, otherSize, intersection));
+    }
+
+    static ImmutableNatSet differenceOfArrays(int[] array, int size, int[] otherArray, int otherSize) {
+        int[] difference = new int[size];
+        return takingSorted(difference, NatSetUtil.arrayDifference(array, size, otherArray, otherSize, difference));
+    }
+
+    /** {@code set} shifted by {@code amount}, which is not zero, as {@link NatSet#shifted} specifies. */
+    static ImmutableNatSet shiftedOf(NatSet set, int amount) {
+        int size = set.size();
+        int[] array = NatSetUtil.elementsOf(set);
         if (array != null) {
             int first = NatSetUtil.arrayFirstKept(array, size, amount);
             int[] shifted = new int[size - first];
             for (int index = first; index < size; index++) {
                 shifted[index - first] = array[index] + amount;
             }
-            return ofSorted(shifted, shifted.length);
+            return takingSorted(shifted, shifted.length);
         }
-        long[] current = words();
-        assert current != null;
-        long[] shifted = NatSetUtil.shiftedWords(current, amount);
-        return ofWords(shifted, amount > 0 ? size : NatSetUtil.wordsCount(shifted), true);
+        long[] words = NatSetUtil.wordsOf(set);
+        assert words != null;
+        long[] shifted = NatSetUtil.shiftedWords(words, amount);
+        return takingWords(shifted, amount > 0 ? size : NatSetUtil.wordsCount(shifted));
     }
 
     @Override
@@ -512,12 +559,12 @@ final class ImmutableNatSet implements NatSet {
         if (array != null) {
             int low = NatSetUtil.arrayLowerBound(array, size, from);
             int high = NatSetUtil.arrayLowerBound(array, size, to);
-            return ofSorted(Arrays.copyOfRange(array, low, high), high - low);
+            return copyOfSorted(array, low, high);
         }
         long[] current = words();
         assert current != null;
         long[] restricted = NatSetUtil.subSetWords(current, from, to);
-        return ofWords(restricted, NatSetUtil.wordsCount(restricted), true);
+        return takingWords(restricted, NatSetUtil.wordsCount(restricted));
     }
 
     @Override
@@ -537,12 +584,12 @@ final class ImmutableNatSet implements NatSet {
             for (int index = low; index < high; index++) {
                 sliced[index - low] = array[index] - from;
             }
-            return ofSorted(sliced, sliced.length);
+            return takingSorted(sliced, sliced.length);
         }
         long[] current = words();
         assert current != null;
         long[] sliced = NatSetUtil.sliceWords(current, from, to);
-        return ofWords(sliced, NatSetUtil.wordsCount(sliced), true);
+        return takingWords(sliced, NatSetUtil.wordsCount(sliced));
     }
 
     // Views, copies, bridges
