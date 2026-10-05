@@ -196,7 +196,7 @@ public class GcReferenceManager<V extends GcReferenceManager.DdContainer, DD ext
 
     private void remove(DdReference<?> dead) {
         int hole = find(dead.key);
-        assert hole >= 0 && references[hole] == dead;
+        assert hole >= 0 && references[hole] == dead; // NOPMD - identity is the point of the check
         int mask = keys.length - 1;
         for (int index = (hole + 1) & mask; keys[index] != EMPTY; index = (index + 1) & mask) {
             // The entry at index may move into the hole only if the hole lies on its probe path, that is if it is

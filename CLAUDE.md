@@ -1082,7 +1082,10 @@ entry point (`of`, `ifThenElse`, `cartesianProduct`, `createRelabeling`, `relabe
   `@State` fields, `// NOPMD - <reason>` on deliberate reference comparisons (factory and numbering
   identity is *the* check; `equals` would be wrong) and on `System.out` in benchmark mains.
   `@SuppressWarnings("AssertWithSideEffects")` sits on the classes whose public methods bracket with
-  `assert accessGuard.acquire()`.
+  `assert accessGuard.acquire()`. `PMD.AvoidReassigningParameters` sits on the three implementations, which
+  canonicalize an operand order in place before a cache lookup; `PMD.CouplingBetweenObjects` on `BooleanCache`,
+  `MtBddCache` and `MtBddImpl`, where every cache shape (and both diagrams) meet by design. `./gradlew build`
+  runs PMD over all three source sets and fails on a violation, so a suppression is the way to keep one.
 - **Assertions carry real work.** `assert accessGuard.acquire(); … assert accessGuard.release();` and
   `assert isValidFunction(f)` are the standard preamble of a public method. Tests run with `-ea` and rely
   on it. An assertion auditing a *whole* structure where the operation touches one part of it - a table

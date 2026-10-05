@@ -37,6 +37,7 @@ import java.util.Set;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 
+@SuppressWarnings("PMD.CouplingBetweenObjects") // One class per subject
 class BddSetTest {
     @Test
     void testBddSetConstrainAndSimplify() {

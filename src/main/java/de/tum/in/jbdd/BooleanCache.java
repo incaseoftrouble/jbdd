@@ -30,6 +30,8 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.jspecify.annotations.Nullable;
 
+// One class per cache shape, all held here, is the point of the design.
+@SuppressWarnings("PMD.CouplingBetweenObjects")
 final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
     private static final Logger logger = Logger.getLogger(BooleanCache.class.getName());
 
@@ -1010,7 +1012,7 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
             if (key != null
                     && key.node == node
                     && key.domain == domain
-                    && (key.cube == cube || key.cube.equals(cube))) {
+                    && (key.cube == cube || key.cube.equals(cube))) { // NOPMD - the same cube is the common case
                 assert isValid(index);
                 statistics.hit();
                 return values[index];

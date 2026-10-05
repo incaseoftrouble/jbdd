@@ -46,7 +46,14 @@ import org.jspecify.annotations.Nullable;
  * Important differences to BDDs:
  *  - In a generic MTBDD we have no commutativity and neutral elements, hence much more "base case" branching is required
  */
-@SuppressWarnings({"PMD", "AssignmentToMethodParameter", "AssertWithSideEffects"})
+// Reassigned parameters: the operand order is canonicalized in place before a cache lookup. Coupling: every cache
+// shape and both diagrams meet here.
+@SuppressWarnings({
+    "PMD.AvoidReassigningParameters",
+    "PMD.CouplingBetweenObjects",
+    "AssignmentToMethodParameter",
+    "AssertWithSideEffects"
+})
 public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
     /** {@link #agreement}'s predicate: raw terminal equality, which within one numbering is value
      * equality. Fixed, so its cache never needs an init. */
@@ -1138,15 +1145,15 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             boolean multipleSurvivors = false;
             for (int function : functions) {
                 boolean isNeutral = isConstant(function) && constantFunctionToValue(function) == operator.neutral;
-                if (!isNeutral) {
-                    if (!hasSurvivor) {
-                        hasSurvivor = true;
-                        survivor = function;
-                    } else {
-                        multipleSurvivors = true;
-                        break;
-                    }
+                if (isNeutral) {
+                    continue;
                 }
+                if (hasSurvivor) {
+                    multipleSurvivors = true;
+                    break;
+                }
+                hasSurvivor = true;
+                survivor = function;
             }
             if (!multipleSurvivors) {
                 return hasSurvivor ? survivor : of(operator.neutral);
@@ -1737,7 +1744,8 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
         assert accessGuard.acquire();
         assert table.workStacksEmpty();
         // Adopting from this diagram itself, the source must survive the collections the rebuilding may cause.
-        boolean fromItself = mtBddSource == this;
+        //noinspection ObjectEquality
+        boolean fromItself = mtBddSource == this; // NOPMD - identity is the point of the check
         if (fromItself) {
             table.pushToWorkStack(function);
         }
@@ -2267,7 +2275,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
         private final IntArrayList valueToFunction = new IntArrayList();
         private final NodeTable table;
 
-        public SplitBijection(NodeTable table) {
+        SplitBijection(NodeTable table) {
             this.table = table;
         }
 
@@ -3010,7 +3018,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
         private final IntUnaryOperator functionFor;
         private final NatSet values;
 
-        public FunctionInverse(int function, IntUnaryOperator functionFor, NatSet values) {
+        FunctionInverse(int function, IntUnaryOperator functionFor, NatSet values) {
             this.function = function;
             this.functionFor = functionFor;
             this.values = values;
