@@ -58,7 +58,8 @@ public abstract class BooleanBase<S, P>
 
     abstract BddConfiguration configuration();
 
-    int tableSize() {
+    @Override
+    public int tableSize() {
         return table().size();
     }
 

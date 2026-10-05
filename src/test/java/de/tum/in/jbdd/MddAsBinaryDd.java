@@ -99,6 +99,11 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
     }
 
     @Override
+    public int tableSize() {
+        return mdd.tableSize();
+    }
+
+    @Override
     public int gc() {
         return mdd.gc();
     }

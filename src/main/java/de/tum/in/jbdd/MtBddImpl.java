@@ -2266,6 +2266,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
         return result;
     }
 
+    @Override
     public int tableSize() {
         return table.size();
     }

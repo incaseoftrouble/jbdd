@@ -53,6 +53,13 @@ public interface NodeBasedDd extends DecisionDiagram {
     int nodeCount();
 
     /**
+     * The slots of the node table: its capacity, which grows with the diagrams (the table doubles when it fills) and
+     * shrinks only when a reordering's collection leaves it mostly empty. A plain read, for callers that act on growth
+     * - such as reordering once the diagrams got larger - without a pass over the table.
+     */
+    int tableSize();
+
+    /**
      * Returns the number of decision nodes used to represent this function in the decision diagram
      */
     int size(int function);

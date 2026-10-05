@@ -447,6 +447,29 @@ class RegressionTests {
     }
 
     @Test
+    void testTableSizeIsTheTablesSlotsAndFollowsItsGrowth() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create(
+                ImmutableBddConfiguration.builder().initialSize(64).build());
+        BddSetFactory sets = ctx.bddSets();
+        int initial = ctx.bdd().tableSize();
+        assertEquals(
+                initial, ((Number) ctx.statistics(StatisticsDetail.COUNTERS).get("bdd_node_table_size")).intValue());
+        List<BddSet> held = new ArrayList<>();
+        for (int i = 0; i < 256; i++) {
+            held.add(cube(sets, i).union(cube(sets, 3 * i + 1)));
+        }
+        assertTrue(ctx.bdd().tableSize() > initial, "the table grew with the diagrams");
+        assertTrue(ctx.bdd().tableSize() >= ctx.bdd().nodeCount());
+        assertEquals(
+                ctx.bdd().tableSize(),
+                ((Number) ctx.statistics(StatisticsDetail.COUNTERS).get("bdd_node_table_size")).intValue());
+        assertEquals(
+                ctx.mtBdd().tableSize(),
+                ((Number) ctx.statistics(StatisticsDetail.COUNTERS).get("mtbdd_node_table_size")).intValue());
+        assertEquals(256, held.size());
+    }
+
+    @Test
     void testWrapperTableStaysCanonicalThroughCollections() throws InterruptedException {
         // Enough wrappers to grow the table several times, half of them collected, so lookups probe across the
         // holes the backward-shift deletion closes - and a function and its complement are separate keys.

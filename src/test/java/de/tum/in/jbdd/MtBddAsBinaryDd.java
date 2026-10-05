@@ -115,6 +115,11 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
     }
 
     @Override
+    public int tableSize() {
+        return mt.tableSize();
+    }
+
+    @Override
     public int gc() {
         return mt.gc();
     }
