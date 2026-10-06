@@ -141,6 +141,23 @@ public final class NatSets {
         target.andNot(minus);
     }
 
+    /**
+     * Whether {@code first} and {@code second} hold the same elements of {@code scope}: {@code first ∩ scope = second
+     * ∩ scope}, i.e. for every {@code e ∈ scope}, {@code e ∈ first ⇔ e ∈ second}.
+     */
+    public static boolean equalOn(NatSet first, NatSet second, NatSet scope) {
+        return NatSetUtil.equalOn(first, second, scope);
+    }
+
+    /**
+     * Whether {@code first} and {@code second} hold the same elements of the intersection of the two scopes:
+     * {@code equalOn(first, second, scope ∩ otherScope)}, i.e. for every {@code e ∈ scope ∩ otherScope},
+     * {@code e ∈ first ⇔ e ∈ second}.
+     */
+    public static boolean equalOnIntersection(NatSet first, NatSet second, NatSet scope, NatSet otherScope) {
+        return NatSetUtil.equalOnIntersection(first, second, scope, otherScope);
+    }
+
     /** The image of {@code source} under {@code mapping}. */
     public static MutableNatSet map(NatSet source, IntUnaryOperator mapping) {
         MutableNatSet target = MutableNatSet.create();

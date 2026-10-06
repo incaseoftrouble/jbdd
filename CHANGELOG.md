@@ -27,7 +27,7 @@ Object layer
 Collections (`de.tum.in.jbdd.collections`)
 
 * `NatSet` / `MutableNatSet` take the place of `java.util.BitSet` throughout the API: a set of naturals over primitives - a few elements far apart as a sorted array, anything else as words - viewable as a `Set<Integer>` (`boxed()`); `NatSet`'s factories and operations return immutable sets, `MutableNatSet` has `BitSet`'s mutators; a fresh result is a `MutableNatSet`, a cached one (`BddSet.support()`) a `NatSet`.
-* `NatSets`: helpers over `NatSet` - mapped copies and views, `int` encodings, a binary counter (`increment`), a power-set `Cursor`, unions and intersections of many sets
+* `NatSets`: helpers over `NatSet` - mapped copies and views, `int` encodings, a binary counter (`increment`), a power-set `Cursor`, unions and intersections of many sets, equality of two sets on a scope (`equalOn`, `equalOnIntersection`)
 * `Cube`: a conjunction of literals - what path walks, `implicants`, `primeImplicants` and `shortestPath` hand out and `restrict` and `BddSetFactory.of` take - with the usual cube operations (`implies`, `intersection`, `with`, `restrictedTo`, `antichain`, ...)
 * `Cursor` (`valid` / `current` / `advance`) takes the place of `Iterator` for solutions and paths: `current()` is the walk's own state, so a step copies nothing (no need for tracking `hasNext()`, which was costly / complicated for diagrams)
 * `IntIntHashMap` / `IntObjectHashMap`: hash maps keyed by `int` that box nothing

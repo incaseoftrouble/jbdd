@@ -658,6 +658,45 @@ final class NatSetUtil {
         return smaller.anyMatch(larger::contains);
     }
 
+    // Whether first and second hold the same elements of scope: one pass over the words, else over the scope.
+    static boolean equalOn(NatSet first, NatSet second, NatSet scope) {
+        long[] firstWords = wordsOrNone(first);
+        long[] secondWords = wordsOrNone(second);
+        long[] scopeWords = wordsOrNone(scope);
+        if (firstWords != null && secondWords != null && scopeWords != null) {
+            for (int index = 0; index < scopeWords.length; index++) {
+                long within = scopeWords[index];
+                if (within != 0 && ((word(firstWords, index) ^ word(secondWords, index)) & within) != 0) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        return scope.allMatch(element -> first.contains(element) == second.contains(element));
+    }
+
+    // As equalOn, over the elements both scopes hold.
+    static boolean equalOnIntersection(NatSet first, NatSet second, NatSet scope, NatSet otherScope) {
+        long[] firstWords = wordsOrNone(first);
+        long[] secondWords = wordsOrNone(second);
+        long[] scopeWords = wordsOrNone(scope);
+        long[] otherScopeWords = wordsOrNone(otherScope);
+        if (firstWords != null && secondWords != null && scopeWords != null && otherScopeWords != null) {
+            int common = Math.min(scopeWords.length, otherScopeWords.length);
+            for (int index = 0; index < common; index++) {
+                long within = scopeWords[index] & otherScopeWords[index];
+                if (within != 0 && ((word(firstWords, index) ^ word(secondWords, index)) & within) != 0) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        NatSet smaller = otherScope.size() < scope.size() ? otherScope : scope;
+        NatSet larger = smaller == scope ? otherScope : scope; // NOPMD - identity is the point of the check
+        return smaller.allMatch(
+                element -> !larger.contains(element) || first.contains(element) == second.contains(element));
+    }
+
     static int compare(NatSet first, NatSet second) {
         int sizes = Integer.compare(first.size(), second.size());
         if (sizes != 0) {

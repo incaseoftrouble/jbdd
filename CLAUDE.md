@@ -326,7 +326,10 @@ Collections independent of decision diagrams, public for users too; nothing here
   apart. Words-only was measured and gains nothing (a synthesis tool end to end, `jmhEnumeration`/`jmhRandom`), while sparse sets
   as words take 2 to 10 times as long and up to `element / 64` words. Neither class is a `Set`: `boxed()` wraps the
   set in a `BoxedNatSet`, with `Set`'s equality and hash code, whose mutators always throw over an immutable set.
-- The read algorithms over either store are static functions in `NatSetUtil`, shared by both. Operands of one
+- The read algorithms over either store are static functions in `NatSetUtil`, shared by both. Nothing outside the
+  two implementation classes and `NatSetUtil` reads a store (`wordsOf`, `elementsOf` and friends; `NatSetTest`
+  checks the representation chosen): a helper that needs one is written there and exposed through `NatSets`, as
+  `equalOn` is, and `Cube` works through `NatSet` and `NatSets` only. Operands of one
   representation meet word against word or array against array (`union`/`intersection`/`difference` of immutable
   sets build the result's store directly, and so do a mutable set's over two arrays - `ImmutableNatSet.unionOfArrays`
   and friends; over words, copying the mutable set and combining in place measured faster - and a factory picks the
@@ -336,14 +339,17 @@ Collections independent of decision diagrams, public for users too; nothing here
   bytes at most. An immutable set's representation follows from its elements and its store is exact, so two are equal
   exactly if their stores are; otherwise equal sizes and words equal up to the shorter's end (a mutable set's words
   may run on), or equal array prefixes, decide. A mutable set's bulk and range operations count the change in the
-  words they touch, not every word (asserted). `Cube`'s `contains`/`implies`/`intersects` work word by word when its
-  sets are words or empty.
+  words they touch, not every word (asserted). `NatSets.equalOn` (two sets holding the same elements of a scope) and
+  `equalOnIntersection` (of two scopes' intersection) are one pass over the words, else a walk of the (smaller)
+  scope: `Cube`'s `contains` and `intersects` are one call each, `implies` a `containsAll` of the supports and one
+  call. A fused single pass for `implies` (five stores read instead of two calls) measured 1.2 to 1.7 times slower.
 - **Words are walked bit by bit**, one trailing-zero count and one clear per element: `forEach`, `anyMatch`/
   `allMatch`/`noneMatch`, and the primitive `iterator()` as a cursor on a word. Walking run by run, and choosing by
   sampling the runs first, was measured once (a benchmark since removed): runs won 13 to 24% only with runs of twelve elements and more
   below 1024 bits and lost up to fivefold above, and the sampling cost more than either walk. These, not a
   `nextSetBit` loop, are how to walk a set: in array mode `nextSetBit` searches the array.
-- `NatSets`: helpers over `NatSet` - mapped copies and views, `int` encodings, `difference` into a target,
+- `NatSets`: helpers over `NatSet` - mapped copies and views, `int` encodings, `difference` into a target, equality on a
+  scope (`equalOn`, `equalOnIntersection`),
   `increment` (a set as a binary counter over given positions: a contiguous one carries with `nextClearBit`),
   `forEachWithIndex`, and `powerSet`, a `Cursor` handing out that counter.
 - `Cursor` (the enumeration shape of §8), `Cube`, `IntIntHashMap` / `IntObjectHashMap`.

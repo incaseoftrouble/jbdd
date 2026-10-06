@@ -97,6 +97,7 @@ public final class Cube {
         NatSet assignmentCopy = NatSet.copyOf(assignment);
         NatSet supportCopy = NatSet.copyOf(support);
         // Nothing to copy when both sets never change already.
+        //noinspection ObjectEquality
         boolean unchanged = assignmentCopy == assignment && supportCopy == support; // NOPMD - identity is the point
         return unchanged ? this : new Cube(assignmentCopy, supportCopy);
     }
@@ -130,77 +131,17 @@ public final class Cube {
 
     /** Whether {@code valuation} (a full assignment) satisfies this cube. */
     public boolean contains(NatSet valuation) {
-        long[] supportWords = NatSetUtil.wordsOrNone(support);
-        long[] assignmentWords = NatSetUtil.wordsOrNone(assignment);
-        long[] valuationWords = NatSetUtil.wordsOrNone(valuation);
-        if (supportWords != null && assignmentWords != null && valuationWords != null) {
-            for (int index = 0; index < supportWords.length; index++) {
-                long fixed = supportWords[index];
-                if (fixed != 0
-                        && ((NatSetUtil.word(valuationWords, index) ^ NatSetUtil.word(assignmentWords, index)) & fixed)
-                                != 0) {
-                    return false;
-                }
-            }
-            return true;
-        }
-        return support.allMatch(variable -> valuation.contains(variable) == assignment.contains(variable));
+        return NatSets.equalOn(valuation, assignment, support);
     }
 
     /** Whether every valuation of this cube is one of {@code other}'s: every literal of {@code other} is one of these. */
     public boolean implies(Cube other) {
-        long[] supportWords = NatSetUtil.wordsOrNone(support);
-        long[] assignmentWords = NatSetUtil.wordsOrNone(assignment);
-        long[] otherSupportWords = NatSetUtil.wordsOrNone(other.support);
-        long[] otherAssignmentWords = NatSetUtil.wordsOrNone(other.assignment);
-        if (supportWords != null
-                && assignmentWords != null
-                && otherSupportWords != null
-                && otherAssignmentWords != null) {
-            for (int index = 0; index < otherSupportWords.length; index++) {
-                long fixed = otherSupportWords[index];
-                if (fixed != 0
-                        && ((fixed & ~NatSetUtil.word(supportWords, index)) != 0
-                                || ((NatSetUtil.word(assignmentWords, index)
-                                                        ^ NatSetUtil.word(otherAssignmentWords, index))
-                                                & fixed)
-                                        != 0)) {
-                    return false;
-                }
-            }
-            return true;
-        }
-        return other.support.allMatch(variable ->
-                support.contains(variable) && assignment.contains(variable) == other.assignment.contains(variable));
+        return support.containsAll(other.support) && NatSets.equalOn(assignment, other.assignment, other.support);
     }
 
     /** Whether some valuation satisfies both cubes: they agree wherever both fix a variable. */
     public boolean intersects(Cube other) {
-        long[] supportWords = NatSetUtil.wordsOrNone(support);
-        long[] assignmentWords = NatSetUtil.wordsOrNone(assignment);
-        long[] otherSupportWords = NatSetUtil.wordsOrNone(other.support);
-        long[] otherAssignmentWords = NatSetUtil.wordsOrNone(other.assignment);
-        if (supportWords != null
-                && assignmentWords != null
-                && otherSupportWords != null
-                && otherAssignmentWords != null) {
-            int common = Math.min(supportWords.length, otherSupportWords.length);
-            for (int index = 0; index < common; index++) {
-                long bothFix = supportWords[index] & otherSupportWords[index];
-                if (bothFix != 0
-                        && ((NatSetUtil.word(assignmentWords, index) ^ NatSetUtil.word(otherAssignmentWords, index))
-                                        & bothFix)
-                                != 0) {
-                    return false;
-                }
-            }
-            return true;
-        }
-        // Iterate the smaller support.
-        Cube smaller = support.size() <= other.support.size() ? this : other;
-        Cube larger = smaller == this ? other : this; // NOPMD - identity is the point
-        return smaller.support.noneMatch(variable -> larger.support.contains(variable)
-                && smaller.assignment.contains(variable) != larger.assignment.contains(variable));
+        return NatSets.equalOnIntersection(assignment, other.assignment, support, other.support);
     }
 
     /** The conjunction of both cubes, or empty if they contradict each other. */

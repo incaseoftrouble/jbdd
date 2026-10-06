@@ -22,12 +22,69 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.BitSet;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Random;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class NatSetsTest {
+    /** The set in each class and representation: immutable, mutable, mutable as words and, if small, as an array. */
+    private static List<NatSet> forms(BitSet bits, int span) {
+        MutableNatSet words = MutableNatSet.dense(span);
+        bits.stream().forEach(words::set);
+        NatSet array = bits.cardinality() <= 16 ? MutableNatSet.of(bits.stream().toArray()) : words;
+        return List.of(NatSet.copyOf(bits), MutableNatSet.copyOf(bits), words, array);
+    }
+
+    private static BitSet randomBits(Random random, int span) {
+        BitSet bits = new BitSet();
+        for (int count = random.nextInt(Math.min(span, 40)); count > 0; count--) {
+            bits.set(random.nextInt(span));
+        }
+        return bits;
+    }
+
+    // Mostly the first with a few flips, so that agreement on a scope is neither always nor never the answer.
+    private static BitSet nearby(Random random, BitSet bits, int span) {
+        BitSet near = (BitSet) bits.clone();
+        for (int flips = random.nextInt(3); flips > 0; flips--) {
+            near.flip(random.nextInt(span));
+        }
+        return near;
+    }
+
+    @Test
+    void agreementOnAScopeAgainstBitSet() {
+        Random random = new Random(5);
+        for (int span : new int[] {8, 64, 200, 3000}) {
+            for (int round = 0; round < 60; round++) {
+                BitSet first = randomBits(random, span);
+                BitSet second = nearby(random, first, span);
+                BitSet scope = randomBits(random, span);
+                BitSet otherScope = randomBits(random, span);
+                BitSet differing = (BitSet) first.clone();
+                differing.xor(second);
+                BitSet onScope = (BitSet) differing.clone();
+                onScope.and(scope);
+                BitSet onBoth = (BitSet) onScope.clone();
+                onBoth.and(otherScope);
+                for (NatSet a : forms(first, span)) {
+                    for (NatSet b : forms(second, span)) {
+                        for (NatSet s : forms(scope, span)) {
+                            assertEquals(onScope.isEmpty(), NatSets.equalOn(a, b, s));
+                            assertEquals(onScope.isEmpty(), NatSets.equalOn(b, a, s));
+                            for (NatSet t : forms(otherScope, span)) {
+                                assertEquals(onBoth.isEmpty(), NatSets.equalOnIntersection(a, b, s, t));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     @Test
     void combinationsLeaveTheirOperands() {
         NatSet a = MutableNatSet.of(1, 2);
