@@ -60,10 +60,10 @@ class StatisticsTest {
         Map<String, StatisticDescription> descriptions =
                 BinaryFactoryContext.create(configuration, 3).describeStatistics();
 
-        StatisticDescription hits = descriptions.get("named_cache_and_exists_hit_ratio");
+        StatisticDescription hits = descriptions.get("named_bdd_cache_and_exists_hit_ratio");
         assertEquals(Kind.RATIO, hits.kind());
-        assertEquals(List.of("named_cache_and_exists_hit"), hits.numerator());
-        assertEquals(List.of("named_cache_and_exists_hit", "named_cache_and_exists_miss"), hits.denominator());
+        assertEquals(List.of("named_bdd_cache_and_exists_hit"), hits.numerator());
+        assertEquals(List.of("named_bdd_cache_and_exists_hit", "named_bdd_cache_and_exists_miss"), hits.denominator());
         assertEquals("fraction of the lookups of cache and_exists that hit", hits.text());
 
         StatisticDescription reorderCollections = descriptions.get("named_bdd_node_table_reorder_gc_count");

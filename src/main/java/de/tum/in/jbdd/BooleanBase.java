@@ -82,8 +82,9 @@ public abstract class BooleanBase<S, P>
         boolean guarded = detail == StatisticsDetail.FULL;
         assert !guarded || accessGuard.acquire();
         StatisticsReport named = report.named(configuration().name());
-        table().report(named.prefixed(statisticsPrefix()), detail);
-        cache().report(named, detail);
+        StatisticsReport own = named.prefixed(statisticsPrefix());
+        table().report(own, detail);
+        cache().report(own, detail);
         reportOwn(named, detail);
         assert !guarded || accessGuard.release();
     }

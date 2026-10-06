@@ -659,7 +659,7 @@ class RegressionTests {
         int stale = bdd.reference(bdd.compose(function, replacingLast(bdd, replacement)));
 
         bdd.dereference(replacement);
-        collectAndRecycle(context, "cache_compose_tuple", replacement);
+        collectAndRecycle(context, "bdd_cache_compose_tuple", replacement);
 
         int high = bdd.reference(bdd.restrict(function, Cube.literal(7, true)));
         int low = bdd.reference(bdd.restrict(function, Cube.literal(7, false)));

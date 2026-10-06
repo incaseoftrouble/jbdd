@@ -220,7 +220,8 @@ Entry points — never `new BddImpl(...)` outside tests:
   implement `StatisticsReporter.Source`, which reads both the snapshot and the descriptions from one such report,
   so a key cannot go undescribed and a ratio cannot disagree with its parts. `StatisticsReport` is public only
   because those classes are, and opaque outside the package. Scopes carry the prefixes - the configuration's `name()`, the
-  table's `bdd_`/`mtbdd_`/`mdd_` (`statisticsPrefix()`), `cache_<name>_`, `set_`/`map_` - and the name `{name}`
+  diagram's `bdd_`/`mtbdd_`/`mdd_` (`statisticsPrefix()`) over its table and its caches, `cache_<name>_` within
+  it, the order's keys unprefixed (the order is the context's), `set_`/`map_` - and the name `{name}`
   in a sentence stands for; a key written twice fails an assertion. `Statistics.formatStatistics` renders a
   snapshot. `statistics(StatisticsDetail)` reads to a detail: `COUNTERS` are the fields the
   structures keep as they run (no pass, no write, no access guard - the one level another thread may read,
