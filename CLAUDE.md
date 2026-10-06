@@ -57,10 +57,11 @@ Gotchas that have cost real time:
   it. Never report a scaled run as the suite passing.
 - **One build at a time.** The test JVM alone takes gigabytes; two concurrent builds fail `:test` with no
   failing test in the report.
-- **The Gradle configuration cache is deliberately off** (`gradle.properties`). It snapshots the task
-  graph, so the `-Pjbdd.*` forwarding in `build.gradle.kts` would capture one run's values and every later
-  run silently reuse them — a switch then appears to have no effect and any A/B run using it is
-  worthless. Build caching stays on.
+- **The configuration cache is on** (`gradle.properties`). A `-Pjbdd.*` property read at configuration
+  time is one of its inputs, so changing it re-configures. Forward a new switch to the test JVM the same
+  way, as a `-P` property read in `build.gradle.kts`, never as a `System.getProperty` in the build script.
+- `-Pjbdd.test.java=11` runs `test`/`testSmall` on that JDK (a Gradle toolchain; it must be installed, nothing
+  is downloaded) while the build itself needs JDK 21. CI tests on 11, the baseline, and 21.
 - The reorder stress in `BddTheories`/`MtBddTheories` is unconditional; there is no switch, only the
   scale. It is most of those suites' runtime and all of their coverage of a non-identity variable order.
 - Publishing (`-Prelease clean publishToSonatype closeAndReleaseSonatypeStagingRepository`) needs Sonatype

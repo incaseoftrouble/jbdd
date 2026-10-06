@@ -196,6 +196,12 @@ fun Test.jbddTest(defaultScale: String) {
   systemProperty("jbdd.test.scale", project.findProperty("jbdd.test.scale") ?: defaultScale)
   // JBDD's own tests audit whole tables and caches, not just the entry at hand (Assertions).
   systemProperty("JBDD_COSTLY_ASSERTIONS", "true")
+  // Run the tests on another installed JDK than the build's, e.g. the Java 11 baseline.
+  project.findProperty("jbdd.test.java")?.let { version ->
+    javaLauncher = javaToolchains.launcherFor {
+      languageVersion = JavaLanguageVersion.of(version.toString())
+    }
+  }
 }
 
 tasks.test { jbddTest("1.0") }

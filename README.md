@@ -54,7 +54,7 @@ A few JVM flags worth trying out:
 
 ## Building
 
-Build the project using gradle.
+Build the project using gradle, on JDK 21 or newer (the library itself targets Java 11).
 All dependencies are downloaded automatically.
 
     $ ./gradlew build
