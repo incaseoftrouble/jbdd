@@ -68,6 +68,8 @@ final class MutableNatSetImpl implements MutableNatSet {
         size = other.size;
     }
 
+    // Factories
+
     static MutableNatSetImpl dense(int capacity) {
         assert capacity >= 0 : "Negative capacity " + capacity;
         MutableNatSetImpl set = new MutableNatSetImpl();

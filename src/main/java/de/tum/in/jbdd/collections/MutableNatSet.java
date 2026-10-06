@@ -36,6 +36,10 @@ public interface MutableNatSet extends NatSet {
         return MutableNatSetImpl.dense(capacity);
     }
 
+    static MutableNatSet of(int... elements) {
+        return MutableNatSetImpl.of(elements);
+    }
+
     /** The naturals from {@code from} inclusive to {@code to} exclusive, as words; empty if {@code to <= from}. */
     static MutableNatSet range(int from, int to) {
         MutableNatSet set = dense(Math.max(to, 0));
@@ -45,17 +49,13 @@ public interface MutableNatSet extends NatSet {
         return set;
     }
 
-    static MutableNatSet of(int... elements) {
-        return MutableNatSetImpl.of(elements);
+    static MutableNatSet copyOf(NatSet set) {
+        return MutableNatSetImpl.copyOf(set);
     }
 
     /** The set whose words are {@code words} - see {@link NatSet#valueOf}. */
     static MutableNatSet valueOf(long... words) {
         return MutableNatSetImpl.valueOf(words);
-    }
-
-    static MutableNatSet copyOf(NatSet set) {
-        return MutableNatSetImpl.copyOf(set);
     }
 
     static MutableNatSet copyOf(BitSet set) {

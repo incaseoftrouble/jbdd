@@ -124,6 +124,24 @@ final class NatSetUtil {
         return candidate;
     }
 
+    /**
+     * The index of the first of the ascending {@code elements[0, size)} that is at least {@code from}; {@code size} if
+     * none.
+     */
+    static int arrayLowerBound(int[] elements, int size, int from) {
+        int low = 0;
+        int high = size;
+        while (low < high) {
+            int middle = (low + high) >>> 1;
+            if (elements[middle] < from) {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        return low;
+    }
+
     static int arrayHash(int[] elements, int size) {
         // The words the elements make, built on the fly, so that both representations hash alike.
         long hash = 0;
@@ -138,6 +156,125 @@ final class NatSetUtil {
             hash = hashStep(hash, wordIndex, word);
         }
         return hashFinish(hash);
+    }
+
+    /** Whether some element of the first {@code size} entries of {@code elements} satisfies {@code predicate}. */
+    static boolean arrayAnyMatch(int[] elements, int size, IntPredicate predicate) {
+        for (int index = 0; index < size; index++) {
+            if (predicate.test(elements[index])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether every element of the first {@code size} entries of {@code elements} satisfies {@code predicate}. */
+    static boolean arrayAllMatch(int[] elements, int size, IntPredicate predicate) {
+        for (int index = 0; index < size; index++) {
+            if (!predicate.test(elements[index])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** The first {@code size} entries of {@code elements}, ascending. */
+    static final class ArrayIterator implements PrimitiveIterator.OfInt {
+        private final int[] elements;
+        private final int size;
+        private int index = 0;
+
+        ArrayIterator(int[] elements, int size) {
+            this.elements = elements;
+            this.size = size;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return index < size;
+        }
+
+        @Override
+        public int nextInt() {
+            if (index >= size) {
+                throw new NoSuchElementException();
+            }
+            int element = elements[index];
+            index += 1;
+            return element;
+        }
+    }
+
+    /** Writes the union of two ascending arrays to {@code target}, ascending; how many it wrote. */
+    static int arrayUnion(int[] first, int firstSize, int[] second, int secondSize, int[] target) {
+        int i = 0;
+        int j = 0;
+        int count = 0;
+        while (i < firstSize && j < secondSize) {
+            int a = first[i];
+            int b = second[j];
+            target[count] = Math.min(a, b);
+            count += 1;
+            if (a <= b) {
+                i += 1;
+            }
+            if (b <= a) {
+                j += 1;
+            }
+        }
+        System.arraycopy(first, i, target, count, firstSize - i);
+        count += firstSize - i;
+        System.arraycopy(second, j, target, count, secondSize - j);
+        return count + secondSize - j;
+    }
+
+    /** Writes the intersection of two ascending arrays to {@code target}, ascending; how many it wrote. */
+    static int arrayIntersection(int[] first, int firstSize, int[] second, int secondSize, int[] target) {
+        int i = 0;
+        int j = 0;
+        int count = 0;
+        while (i < firstSize && j < secondSize) {
+            int a = first[i];
+            int b = second[j];
+            if (a == b) {
+                target[count] = a;
+                count += 1;
+            }
+            if (a <= b) {
+                i += 1;
+            }
+            if (b <= a) {
+                j += 1;
+            }
+        }
+        return count;
+    }
+
+    /** Writes the elements of the first ascending array not in the second to {@code target}; how many it wrote. */
+    static int arrayDifference(int[] first, int firstSize, int[] second, int secondSize, int[] target) {
+        int j = 0;
+        int count = 0;
+        for (int i = 0; i < firstSize; i++) {
+            int a = first[i];
+            while (j < secondSize && second[j] < a) {
+                j += 1;
+            }
+            if (j == secondSize || second[j] != a) {
+                target[count] = a;
+                count += 1;
+            }
+        }
+        return count;
+    }
+
+    /** The index of the first of the ascending {@code elements[0, size)} that stays natural when shifted by amount. */
+    static int arrayFirstKept(int[] elements, int size, int amount) {
+        int first = 0;
+        // Elements are natural and amount is negative here, so the sum cannot overflow.
+        while (amount < 0 && first < size && elements[first] + amount < 0) {
+            first += 1;
+        }
+        return first;
     }
 
     // Words
@@ -297,115 +434,6 @@ final class NatSetUtil {
         return true;
     }
 
-    /** The first {@code size} entries of {@code elements}, ascending. */
-    static final class ArrayIterator implements PrimitiveIterator.OfInt {
-        private final int[] elements;
-        private final int size;
-        private int index = 0;
-
-        ArrayIterator(int[] elements, int size) {
-            this.elements = elements;
-            this.size = size;
-        }
-
-        @Override
-        public boolean hasNext() {
-            return index < size;
-        }
-
-        @Override
-        public int nextInt() {
-            if (index >= size) {
-                throw new NoSuchElementException();
-            }
-            int element = elements[index];
-            index += 1;
-            return element;
-        }
-    }
-
-    /** Whether some element of the first {@code size} entries of {@code elements} satisfies {@code predicate}. */
-    static boolean arrayAnyMatch(int[] elements, int size, IntPredicate predicate) {
-        for (int index = 0; index < size; index++) {
-            if (predicate.test(elements[index])) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /** Writes the union of two ascending arrays to {@code target}, ascending; how many it wrote. */
-    static int arrayUnion(int[] first, int firstSize, int[] second, int secondSize, int[] target) {
-        int i = 0;
-        int j = 0;
-        int count = 0;
-        while (i < firstSize && j < secondSize) {
-            int a = first[i];
-            int b = second[j];
-            target[count] = Math.min(a, b);
-            count += 1;
-            if (a <= b) {
-                i += 1;
-            }
-            if (b <= a) {
-                j += 1;
-            }
-        }
-        System.arraycopy(first, i, target, count, firstSize - i);
-        count += firstSize - i;
-        System.arraycopy(second, j, target, count, secondSize - j);
-        return count + secondSize - j;
-    }
-
-    /** Writes the intersection of two ascending arrays to {@code target}, ascending; how many it wrote. */
-    static int arrayIntersection(int[] first, int firstSize, int[] second, int secondSize, int[] target) {
-        int i = 0;
-        int j = 0;
-        int count = 0;
-        while (i < firstSize && j < secondSize) {
-            int a = first[i];
-            int b = second[j];
-            if (a == b) {
-                target[count] = a;
-                count += 1;
-            }
-            if (a <= b) {
-                i += 1;
-            }
-            if (b <= a) {
-                j += 1;
-            }
-        }
-        return count;
-    }
-
-    /** Writes the elements of the first ascending array not in the second to {@code target}; how many it wrote. */
-    static int arrayDifference(int[] first, int firstSize, int[] second, int secondSize, int[] target) {
-        int j = 0;
-        int count = 0;
-        for (int i = 0; i < firstSize; i++) {
-            int a = first[i];
-            while (j < secondSize && second[j] < a) {
-                j += 1;
-            }
-            if (j == secondSize || second[j] != a) {
-                target[count] = a;
-                count += 1;
-            }
-        }
-        return count;
-    }
-
-    /** Whether every element of the first {@code size} entries of {@code elements} satisfies {@code predicate}. */
-    static boolean arrayAllMatch(int[] elements, int size, IntPredicate predicate) {
-        for (int index = 0; index < size; index++) {
-            if (!predicate.test(elements[index])) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     /** The elements of {@code words}, ascending: a cursor on a word, which hands out and clears its lowest bit. */
     static final class WordsIterator implements PrimitiveIterator.OfInt {
         private final long[] words;
@@ -480,24 +508,6 @@ final class NatSetUtil {
     }
 
     /**
-     * The index of the first of the ascending {@code elements[0, size)} that is at least {@code from}; {@code size} if
-     * none.
-     */
-    static int arrayLowerBound(int[] elements, int size, int from) {
-        int low = 0;
-        int high = size;
-        while (low < high) {
-            int middle = (low + high) >>> 1;
-            if (elements[middle] < from) {
-                low = middle + 1;
-            } else {
-                high = middle;
-            }
-        }
-        return low;
-    }
-
-    /**
      * {@code words} restricted to the elements in {@code [from, to)}: a new array, possibly with trailing zero words.
      */
     static long[] subSetWords(long[] words, int from, int to) {
@@ -540,20 +550,12 @@ final class NatSetUtil {
         return sliced;
     }
 
-    /** The index of the first of the ascending {@code elements[0, size)} that stays natural when shifted by amount. */
-    static int arrayFirstKept(int[] elements, int size, int amount) {
-        int first = 0;
-        // Elements are natural and amount is negative here, so the sum cannot overflow.
-        while (amount < 0 && first < size && elements[first] + amount < 0) {
-            first += 1;
-        }
-        return first;
-    }
-
     /** {@code words} without trailing zero words, a copy. */
     static long[] trimmedWords(long[] words) {
         return Arrays.copyOf(words, wordCount(wordsLength(words)));
     }
+
+    // Conversion
 
     /** The ascending elements, as words without trailing zero words. */
     static long[] arrayToWords(int[] elements, int size) {
