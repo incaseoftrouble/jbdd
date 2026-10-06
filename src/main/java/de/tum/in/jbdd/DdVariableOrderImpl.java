@@ -19,7 +19,6 @@ package de.tum.in.jbdd;
 import static de.tum.in.jbdd.BooleanBase.EMPTY_INT_ARRAY;
 import static de.tum.in.jbdd.Preconditions.checkState;
 
-import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.MutableNatSet;
 import de.tum.in.jbdd.collections.NatSet;
 import de.tum.in.jbdd.collections.NatSets;

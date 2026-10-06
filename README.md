@@ -21,7 +21,7 @@ Compared to other libraries, JBDD beats most Java implementations and even is on
 * MTBDDs over the same variables (`MtBdd`, and `BddMap<V>` over caller-chosen value numberings), MDDs over n-valued variables (`Mdd`)
 * The usual operations plus domain-restricted (`xyIn`) and simplifying (`xySimplify`) variants, `compose`, `restrict`, quantification and the relational product (`andExists`), `constrain`/`simplify`, satisfying counts and fractions, implicants and prime implicants, solution and path cursors, registered operations with private caches
 * Dynamic variable reordering by sifting, over both diagrams of a context at once
-* Primitive collections the API speaks, usable on their own (`de.tum.in.jbdd.collections`): `NatSet` (sets of naturals as sorted arrays or words), `Cube`, `Cursor` and `int`-keyed hash maps
+* Primitive collections the API speaks, usable on their own (`de.tum.in.jbdd.collections`): `NatSet` (sets of naturals as sorted arrays or words), `Cursor` and `int`-keyed hash maps
 
 ZDDs are not implemented; for those, consider [CUDD](http://vlsi.colorado.edu/~fabio/) or [Sylvan](http://fmt.cs.utwente.nl/tools/sylvan/).
 

@@ -24,7 +24,6 @@ import static org.junit.jupiter.api.Assertions.assertThrowsExactly;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.google.common.collect.Lists;
-import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.Cursor;
 import de.tum.in.jbdd.collections.MutableNatSet;
 import de.tum.in.jbdd.collections.NatSet;

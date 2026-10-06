@@ -33,7 +33,6 @@ import de.tum.in.jbdd.Generator.UnaryDataPoint;
 import de.tum.in.jbdd.SyntaxTree.SyntaxTreeLiteral;
 import de.tum.in.jbdd.SyntaxTree.SyntaxTreeNode;
 import de.tum.in.jbdd.SyntaxTree.SyntaxTreeNot;
-import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.Cursor;
 import de.tum.in.jbdd.collections.MutableNatSet;
 import de.tum.in.jbdd.collections.NatSet;

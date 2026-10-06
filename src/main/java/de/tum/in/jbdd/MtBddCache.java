@@ -21,7 +21,6 @@ import static de.tum.in.jbdd.MtBddCache.Slot.MTBDD;
 import static de.tum.in.jbdd.MtBddCache.Slot.PLAIN;
 import static java.util.Map.entry;
 
-import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.MutableNatSet;
 import de.tum.in.jbdd.collections.NatSet;
 import java.math.BigInteger;

@@ -18,7 +18,6 @@ package de.tum.in.jbdd;
 
 import static de.tum.in.jbdd.Preconditions.*;
 
-import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.Cursor;
 import de.tum.in.jbdd.collections.IntIntHashMap;
 import de.tum.in.jbdd.collections.MutableNatSet;

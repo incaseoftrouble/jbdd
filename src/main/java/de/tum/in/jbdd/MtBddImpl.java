@@ -21,7 +21,6 @@ import static de.tum.in.jbdd.Preconditions.checkState;
 import static de.tum.in.jbdd.Preconditions.checkVariablesExist;
 import static java.math.BigInteger.ZERO;
 
-import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.Cursor;
 import de.tum.in.jbdd.collections.IntIntHashMap;
 import de.tum.in.jbdd.collections.MutableNatSet;

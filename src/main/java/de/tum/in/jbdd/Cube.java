@@ -14,8 +14,11 @@
  * You should have received a copy of the GNU General Public License
  * along with JBDD. If not, see <http://www.gnu.org/licenses/>.
  */
-package de.tum.in.jbdd.collections;
+package de.tum.in.jbdd;
 
+import de.tum.in.jbdd.collections.Cursor;
+import de.tum.in.jbdd.collections.NatSet;
+import de.tum.in.jbdd.collections.NatSets;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashSet;

@@ -16,7 +16,6 @@
  */
 package de.tum.in.jbdd;
 
-import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.MutableNatSet;
 import java.util.ArrayList;
 import java.util.Arrays;

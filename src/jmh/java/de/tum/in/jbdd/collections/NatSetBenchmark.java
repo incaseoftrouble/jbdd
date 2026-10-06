@@ -66,13 +66,13 @@ public class NatSetBenchmark {
         MEDIUM(64),
         SPARSE(4096);
 
-        final int span;
+        public final int span;
 
         Shape(int span) {
             this.span = span;
         }
 
-        int size(Random random) {
+        public int size(Random random) {
             switch (this) {
                 case SINGLETON:
                     return 1;
@@ -113,15 +113,12 @@ public class NatSetBenchmark {
     private final int[] probes = new int[POOL];
 
     private final Map<NatSet, Integer> index = new HashMap<>();
-    /** Per entry, the cube fixing the entry's variables as the other set does, and one fixing fewer of them. */
-    private final Cube[] cubes = new Cube[POOL];
-
-    private final Cube[] weaker = new Cube[POOL];
     /** A large, half full set, as a diagram's mark set; made in the setup, as anything touching the collections. */
     @SuppressWarnings("NullAway.Init")
     private MutableNatSet large;
 
-    private static int[] draw(Random random, int size, int span) {
+    /** {@code size} distinct elements below {@code span}, in random order. */
+    public static int[] draw(Random random, int size, int span) {
         MutableNatSet drawn = MutableNatSet.dense(span);
         while (drawn.size() < size) {
             drawn.set(random.nextInt(span));
@@ -175,8 +172,6 @@ public class NatSetBenchmark {
                 tinySets[entry] = NatSet.of(draw(random, tinySize, shape.span));
             }
             index.put(sets[entry], entry);
-            cubes[entry] = Cube.of(others[entry], sets[entry]);
-            weaker[entry] = Cube.of(others[entry], candidates[entry].intersection(sets[entry]));
         }
     }
 
@@ -360,27 +355,6 @@ public class NatSetBenchmark {
         int sum = 0;
         for (int entry = 0; entry < POOL; entry++) {
             sum += NatSet.ORDER.compare(sets[entry], entry % 2 == 0 ? copies[entry] : others[entry]);
-        }
-        return sum;
-    }
-
-    /** Whether a valuation satisfies a cube: the other set, which it fixes alike, or the entry. */
-    @Benchmark
-    @OperationsPerInvocation(POOL)
-    public int cubeContains() {
-        int sum = 0;
-        for (int entry = 0; entry < POOL; entry++) {
-            sum += cubes[entry].contains(entry % 2 == 0 ? others[entry] : sets[entry]) ? 1 : 0;
-        }
-        return sum;
-    }
-
-    @Benchmark
-    @OperationsPerInvocation(POOL)
-    public int cubeImplies() {
-        int sum = 0;
-        for (int entry = 0; entry < POOL; entry++) {
-            sum += cubes[entry].implies(entry % 2 == 0 ? weaker[entry] : cubes[(entry + 1) % POOL]) ? 1 : 0;
         }
         return sum;
     }

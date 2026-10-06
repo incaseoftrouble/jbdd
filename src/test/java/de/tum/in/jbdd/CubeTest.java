@@ -14,7 +14,7 @@
  * You should have received a copy of the GNU General Public License
  * along with JBDD. If not, see <http://www.gnu.org/licenses/>.
  */
-package de.tum.in.jbdd.collections;
+package de.tum.in.jbdd;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -22,8 +22,8 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import de.tum.in.jbdd.BddSetFactory;
-import de.tum.in.jbdd.BinaryFactoryContext;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;

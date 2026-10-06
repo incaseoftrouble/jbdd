@@ -92,6 +92,9 @@ jmh {
   if (isRequested("jmhNatSet")) {
     includes.add("NatSetBenchmark*")
   }
+  if (isRequested("jmhCube")) {
+    includes.add("CubeBenchmark*")
+  }
   if (isRequested("jmhEnumeration")) {
     includes.add("EnumerationBenchmark*")
   }
@@ -126,6 +129,11 @@ tasks.register<Task>("jmhDimacs") {
 
 tasks.register<Task>("jmhNatSet") {
   description = "Run set benchmarks, per shape"
+  finalizedBy("jmh")
+}
+
+tasks.register<Task>("jmhCube") {
+  description = "Run the cube tests, per shape"
   finalizedBy("jmh")
 }
 

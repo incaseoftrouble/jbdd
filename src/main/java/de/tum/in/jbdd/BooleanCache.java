@@ -19,7 +19,6 @@ package de.tum.in.jbdd;
 import static de.tum.in.jbdd.Util.*;
 import static java.util.Map.entry;
 
-import de.tum.in.jbdd.collections.Cube;
 import de.tum.in.jbdd.collections.NatSet;
 import java.math.BigInteger;
 import java.util.Arrays;

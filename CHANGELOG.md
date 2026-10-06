@@ -13,6 +13,7 @@ Diagrams
 * MDDs (`Mdd`): functions with boolean values over n-valued variables (an MDD offers `simplify` but no `constrain`, since an n-valued variable has no canonical nearest domain value)
 * Dynamic variable reordering by sifting, moving a BDD and its MTBDD together (`DdContext`, `DdVariableOrder`: `reorder`, within groups, `reorderTo` a block shape, `reorderToIdentity`, `siftDown`)
 * The API distinguishes a boolean function (what a node with its complement flag denotes) from the node holding it, and is renamed and restructured accordingly
+* `Cube`: a conjunction of literals - what path walks, `implicants`, `primeImplicants` and `shortestPath` hand out and `restrict` and `BddSetFactory.of` take - with the usual cube operations (`implies`, `intersection`, `with`, `restrictedTo`, `antichain`, ...)
 * Only the recursive implementation remains: the iterative one (`BddFactory.buildBddIterative`, `buildBddRecursive`) was about 10% slower on some benchmarks and tedious to maintain, and a large stack is cheap (`-Xss128m`)
 
 Object layer
@@ -28,7 +29,6 @@ Collections (`de.tum.in.jbdd.collections`)
 
 * `NatSet` / `MutableNatSet` take the place of `java.util.BitSet` throughout the API: a set of naturals over primitives - a few elements far apart as a sorted array, anything else as words - viewable as a `Set<Integer>` (`boxed()`); `NatSet`'s factories and operations return immutable sets, `MutableNatSet` has `BitSet`'s mutators; a fresh result is a `MutableNatSet`, a cached one (`BddSet.support()`) a `NatSet`.
 * `NatSets`: helpers over `NatSet` - mapped copies and views, `int` encodings, a binary counter (`increment`), a power-set `Cursor`, unions and intersections of many sets, equality of two sets on a scope (`equalOn`, `equalOnIntersection`)
-* `Cube`: a conjunction of literals - what path walks, `implicants`, `primeImplicants` and `shortestPath` hand out and `restrict` and `BddSetFactory.of` take - with the usual cube operations (`implies`, `intersection`, `with`, `restrictedTo`, `antichain`, ...)
 * `Cursor` (`valid` / `current` / `advance`) takes the place of `Iterator` for solutions and paths: `current()` is the walk's own state, so a step copies nothing (no need for tracking `hasNext()`, which was costly / complicated for diagrams)
 * `IntIntHashMap` / `IntObjectHashMap`: hash maps keyed by `int` that box nothing
 
@@ -59,7 +59,7 @@ Changed
 * Removed `BddConfiguration.logStatisticsOnShutdown()`: its output went through `java.util.logging`, whose own shutdown hook resets the handlers first, so nothing was printed - read `statistics()` from a shutdown hook of your own instead
 * A node table the heap no longer lets grow keeps working densely packed and throws `OutOfMemoryError` once a collection frees too little, instead of slowing to a full collection every few allocations
 * Assertions auditing a whole table or cache only run with the system property `JBDD_COSTLY_ASSERTIONS` (set by JBDD's own tests); `-ea` alone checks the entries actually used
-* New benchmarks, as regression workloads: `NatSetBenchmark` (`jmhNatSet`, the set operations a synthesis tool spends its time in, per shape), `EnumerationBenchmark` (`jmhEnumeration`, the cursors over four shapes and two orders), `NaryBenchmark` (`jmhNary`), `MtBddBenchmark` (`jmhMtBdd`, the object layer's maps as a synthesis tool uses them), `ReorderBenchmark` (`jmhReorder`) and `RelationalProductBenchmark` (`jmhRelational`)
+* New benchmarks, as regression workloads: `NatSetBenchmark` (`jmhNatSet`, the set operations a synthesis tool spends its time in, per shape), `CubeBenchmark` (`jmhCube`), `EnumerationBenchmark` (`jmhEnumeration`, the cursors over four shapes and two orders), `NaryBenchmark` (`jmhNary`), `MtBddBenchmark` (`jmhMtBdd`, the object layer's maps as a synthesis tool uses them), `ReorderBenchmark` (`jmhReorder`) and `RelationalProductBenchmark` (`jmhRelational`)
 
 ## 0.6
 

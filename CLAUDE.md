@@ -43,7 +43,7 @@ asking for clarification over guessing.**
 ./gradlew test --tests 'de.tum.in.jbdd.RegressionTests'    # quick loop
 ./gradlew compileJava compileTestJava -q                   # quickest check
 ./gradlew spotlessApply    # palantir-java-format, 120 cols; pre-commit hook runs spotlessCheck
-./gradlew jmhRandom | jmhSynthetic | jmhDimacs | jmhEnumeration | jmhNary | jmhMtBdd | jmhReorder | jmhRelational | jmhNatSet | jmh
+./gradlew jmhRandom | jmhSynthetic | jmhDimacs | jmhEnumeration | jmhNary | jmhMtBdd | jmhReorder | jmhRelational | jmhNatSet | jmhCube | jmh
 ```
 
 Gotchas that have cost real time:
@@ -286,13 +286,16 @@ Entry points — never `new BddImpl(...)` outside tests:
   counterpart: `implicants`, `primeImplicants`, `shortestPath`, and the generic `adopt`.
 - `BddSet` deliberately exposes nothing assuming a fixed variable universe — callers always name the
   support they mean.
-- `Cube` (in `collections`) is the one type for a conjunction of literals - equivalently a partial assignment:
+- `Cube` is the one type for a conjunction of literals - equivalently a partial assignment:
   path walks and `BddUtil`'s `implicants` / `primeImplicants` / `shortestPath` hand them out, `restrict` and
   `BddSetFactory.of` take them, `of(Cube)` builds one's function. Its operations return new cubes; a walk's cube
   is working state (§8). `of` copies what it is given and `ofUnsafe` takes the sets as they are (checking the
   assignment against the support by assertion only); the accessors `assignment()` / `support()` hand out the
   cube's own sets, never copies, so a caller keeping one across a walk's step (or JBDD keeping one as a cache
   key - `restrict` does) takes `copy()`, a no-op over sets that never change.
+  It sits in the core package, not in `collections`: it is a logic notion over the diagrams' variables, and from
+  there it can only use `NatSet`'s public surface - its `contains`, `intersects` and `implies` are `NatSets.equalOn`
+  / `equalOnIntersection` and a `containsAll`.
 - `io.DimacsReader` parses DIMACS CNF (benchmarks/tests).
 
 ### `de.tum.in.jbdd.collections`
@@ -328,8 +331,9 @@ Collections independent of decision diagrams, public for users too; nothing here
   set in a `BoxedNatSet`, with `Set`'s equality and hash code, whose mutators always throw over an immutable set.
 - The read algorithms over either store are static functions in `NatSetUtil`, shared by both. Nothing outside the
   two implementation classes and `NatSetUtil` reads a store (`wordsOf`, `elementsOf` and friends; `NatSetTest`
-  checks the representation chosen): a helper that needs one is written there and exposed through `NatSets`, as
-  `equalOn` is, and `Cube` works through `NatSet` and `NatSets` only. Operands of one
+  checks the representation chosen), and the package makes that a compile-time rule for everything outside
+  `collections`: a helper that needs a store is written there and exposed through `NatSets`, as `equalOn` is.
+  Operands of one
   representation meet word against word or array against array (`union`/`intersection`/`difference` of immutable
   sets build the result's store directly, and so do a mutable set's over two arrays - `ImmutableNatSet.unionOfArrays`
   and friends; over words, copying the mutable set and combining in place measured faster - and a factory picks the
@@ -341,8 +345,8 @@ Collections independent of decision diagrams, public for users too; nothing here
   may run on), or equal array prefixes, decide. A mutable set's bulk and range operations count the change in the
   words they touch, not every word (asserted). `NatSets.equalOn` (two sets holding the same elements of a scope) and
   `equalOnIntersection` (of two scopes' intersection) are one pass over the words, else a walk of the (smaller)
-  scope: `Cube`'s `contains` and `intersects` are one call each, `implies` a `containsAll` of the supports and one
-  call. A fused single pass for `implies` (five stores read instead of two calls) measured 1.2 to 1.7 times slower.
+  scope. A fused single pass for `Cube.implies` (five stores read instead of a `containsAll` and an `equalOn`)
+  measured 1.2 to 1.7 times slower.
 - **Words are walked bit by bit**, one trailing-zero count and one clear per element: `forEach`, `anyMatch`/
   `allMatch`/`noneMatch`, and the primitive `iterator()` as a cursor on a word. Walking run by run, and choosing by
   sampling the runs first, was measured once (a benchmark since removed): runs won 13 to 24% only with runs of twelve elements and more
@@ -352,7 +356,7 @@ Collections independent of decision diagrams, public for users too; nothing here
   scope (`equalOn`, `equalOnIntersection`),
   `increment` (a set as a binary counter over given positions: a contiguous one carries with `nextClearBit`),
   `forEachWithIndex`, and `powerSet`, a `Cursor` handing out that counter.
-- `Cursor` (the enumeration shape of §8), `Cube`, `IntIntHashMap` / `IntObjectHashMap`.
+- `Cursor` (the enumeration shape of §8), `IntIntHashMap` / `IntObjectHashMap`.
 
 ### Navigation: types that are not in a file of their own
 
@@ -1211,7 +1215,8 @@ intuitions transfer badly. Two habits follow:
   over spans that keep a set in the array, move it to words, or mix both; one set in every representation equal
   to itself, hash code and order included), `NatSetFuzzTest` (random operation sequences against `BitSet`,
   every query after each step, the set re-read through each class and representation, the combinations against
-  sets of every shape), `NatSetsTest`, `CubeTest` and `IntHashMapTest`. `BddFuzzTest` is the BDD's counterpart: the n-ary
+  sets of every shape), `NatSetsTest` and `IntHashMapTest`; `CubeTest` beside the core tests. `BddFuzzTest` is the
+  BDD's counterpart: the n-ary
   operations, quantification and the relational product, composition over restrictions and general mappings,
   the domain operations and restriction by a path cursor's cubes, all against truth tables on a tiny table with
   collections, reorderings and garbage between the operations - the theories compare per operation against syntax
@@ -1246,6 +1251,7 @@ comments and the changelog are expected to be backed by these; **measure before 
 | `jmhReorder` | `ReorderBenchmark`: sifting, sifting in groups and `reorderTo` over 8 queens and a 24-bit adder, with and without the kept bookkeeping |
 | `jmhRelational` | `RelationalProductBenchmark`: preimages `exists next. R & S`, cold, over a counter, a twisted shift register and a union of random transitions (current and next state interleaved, 16 and 32 bits), sixteen targets each |
 | `jmhNatSet` | `NatSetBenchmark`: the set operations a synthesis tool spends its time in, per shape |
+| `jmhCube` | `CubeBenchmark`: `contains`, `implies` and `intersects` over cubes drawn in `NatSetBenchmark`'s shapes |
 
 `NatSetBenchmark` sits in `collections` and times each operation over a pool of 1024 random sets of one shape
 (singletons, tiny sets, 2 to 32 elements below 64, sparse ones below 4096), so a time is per set, over sets
