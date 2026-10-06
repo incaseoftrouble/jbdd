@@ -4,85 +4,62 @@
 
 ### 0.7.0 (2026-XX-XX)
 
-* Implemented complement edges
-* Implemented MDDs (Function with boolean values but n-valued domains for their variables)
-* Significant renaming / restructuring of the API: Distinguish between boolean function (what a BDD node abstracts) and internal structure (nodes) to reduce mixing of these now different concepts
-* Remove iterative implementation: On some benchmarks about ~10% slower, tedious to maintain, and increasing stack size is cheap
-* Separate out the node table structure to have a unified base for BDDs, MTBDDs, MDDs, etc.
-* Slightly improved usability of automatic reference management; its wrappers are canonical through a primitive-keyed table, so a lookup allocates nothing (`DdContainer.canonicalKey` is a `long`); collected wrappers are also drained before every table collection, so their nodes are not kept
-* New methods:
-  * `andNot`
-  * `forall` quantification, also on `BddSet`
-  * `andExists` (`BinaryDecisionDiagram`, `BddSet`, registered as `registerAndExists`): the relational product `exists(and(f, g), vars)` in one recursion that never builds the conjunction; `orForall` its dual
-  * `forEachPath` now has a version with `support` as parameter (replacing the previous `highestVariable`)
-  * `anyPathMatches`: check if any path matches a given predicate 
-  * `intersects`: check if `and(f, g) != FALSE`
-  * `satisfyingFraction` (`BinaryDecisionDiagram` and `BddSet`): the fraction of all assignments satisfying a function as a best-effort `double` - independent of the number of variables, no `BigInteger` per node, and as precise for small fractions reached through a complement edge as for any other; `satisfyingFractionIn(function, domain)`: the probability that an assignment drawn uniformly from the domain satisfies the function, without building the conjunction, and precise however small the domain
-  * `simplify`: (also called `constrain`) reduce a function `f` to a given domain `d`, i.e. preserve the values of `f` where `d` is true but otherwise do whatever - on `BddSet` and `BddMap` as well as on the int layer
-  * `xyIn`: Perform operation `xy` relative to a given domain `d` (e.g.\ count satisfying assignments of `x` in `d`)
-  * `xySimplify`: Perform `simplify(xy(...), g)`, but potentially much faster
-  * `Statistics.formatStatistics`: render a statistics map as sorted `key=value` lines; statistics values are numbers, not strings
-  * `decisionVariable` / `high` / `low` on `BddSet` and `BddMap`: the Shannon decomposition, so a structural recursion needs no node access
-  * `BddSet.restrict` and `BddSetFactory.ifThenElse`: the set-layer counterparts of the int-layer operations
-  * `implicants` (`BddUtil` and `BddSet`) and its inverse `of(Cube)`: a cover of a function by cubes, each cube of a cofactor recording the decision variable only where it does not imply the other cofactor already - complement first for a CNF cover
-  * `BddSetFactory.of(expression, ExpressionStructure)`: build a set from a propositional expression of the caller's own type, read through an accessor - one memoized build, n-ary conjunctions and disjunctions stopping at their absorbing operand, with sets the caller already has for subexpressions taken as they are
-  * `adopt` (`BinaryDecisionDiagram`, `MultiTerminalDecisionDiagram`, `BddSetFactory`, `Values`): a function of another diagram rebuilt in this one under a variable mapping (and, for maps, a value mapping) - one memoized pass, a single node per source node where the mapping keeps it above its children; the object layer creates missing variables and maps each distinct value once, before the pass, so the value mapping may build anything
-  * `BddSet.fold`, `BddSetFactory.fold(roots, folder)` and `BddMap.fold`: a diagram folded into anything of the caller's own, each node once, children first and high before low; a set's folder sees `true` and complements (computed once per node), a map's its values, once each in that order - the folder may build sets and maps
-  * `IntIntHashMap` / `IntObjectHashMap`: hash maps keyed by `int` that box nothing - open addressing, every `int` but `Integer.MIN_VALUE` a valid key
-  * `NatSet` / `MutableNatSet`: a set of naturals over primitives - a few elements far apart as a sorted array, anything else as words - viewable as a `Set<Integer>` (`boxed()`); `NatSet`'s factories return sets that never change (singletons shared), `MutableNatSet` has `java.util.BitSet`'s mutators; words walked bit by bit (`forEach`, a primitive `iterator()`, `anyMatch`/`allMatch`/`noneMatch`); operands of one representation combined word by word or element by element, without a callback per element or an intermediate copy; a singleton below 64 is a word, arrays kept for sets far apart
-  * `NatSet.shifted` / `MutableNatSet.shift`: every element moved by an amount, those that would turn negative dropped
-  * `NatSet.rank`: the number of elements below a given one, without allocating
-  * `NatSets`: helpers over `NatSet` - mapped copies and views, `int` encodings, a binary counter (`increment`), a power-set `Cursor`
-  * A `NatSet` equals other `NatSet`s only and hashes by its words; `boxed()` is a `Set<Integer>` view with `Set`'s equality and hash code
-* The API takes and returns `NatSet` where it took and returned `java.util.BitSet`; a fresh result is a `MutableNatSet`, a cached one (`BddSet.support()`) an immutable `NatSet`
-* Node tables under memory pressure: a JVM collection (at most once per table size) before memory decides against growing, no growth by less than an eighth, a table that cannot grow collects again only after using half of what it freed, and `OutOfMemoryError` once a collection leaves under a twentieth free (or a table that could not collect is full) - instead of a full mark every few allocations
-* `reorder()` on a node table the heap no longer lets grow stops a variable short of a swap the table could not hold, collecting the swaps' garbage first (`reorder_memory_stops` counts the stops); it used to die mid-swap with an `IllegalStateException`
-* An MDD's `solutionCursorIn` walks the function and the domain together, like the BDD's; it used to walk their unreferenced conjunction, which a collection in between reclaimed under the cursor. Its `forEachSolution` runs over that cursor, so both enumerate in the same order
-* `composeSimplify` over a mapping that only fixes variables restricts and simplifies in one recursion
-* `and(int[])` and `or(int[])` are a true n-ary recursion over the operand tuple with a tuple-keyed cache where the operands share top variables, and a pairwise fold deepest top level first otherwise
-* `constrain` is `BinaryDecisionDiagram`'s and `MultiTerminalDecisionDiagram`'s: an n-valued variable has no nearest domain value, so an MDD offers `simplify` only
-* `MtBdd.invert` returns a `FunctionToFunctionMap`; `Inverse` was the same type under another name
-* `MtBdd.apply` over no operands is the operator's value on the empty tuple, and `cartesianProduct` of no functions the constant naming the empty tuple; both returned the placeholder
-* `compose` reads its mapping and `or(int[])` its operands without writing to the array; `compose` used to resolve placeholders in place
-* The relabeler of `MtBdd.splitRelabeled`, `BddMap.splitMap` and `BddSet.split` runs outside the operation and may build functions
-* `BddConfiguration` is down to one cache knob, `cacheSizeDivider` (the eight per-arity dividers, `registeredOperationDivider` and `useCachePreserve` are gone - caches always keep their valid entries), `initialSize` / `mtbddInitialSize` (no `bddInitialSize`), `keepReorderingStructures` and the two collection knobs; tables always double (`growthFactor` is gone)
-* `MutableNatSet.removeIf`; `Cube.positives()` is gone, it was `assignment()`
-* MTBDD terminal reference counts are `short`s (saturating at 32767) rather than bytes
-* The n-ary MTBDD `apply` over two operands keeps the operator's neutral and absorbing values
-* Dereferencing the topmost referenced node no longer searches the table downwards for the next one
-* `StatisticsSource.describeStatistics()`: what each statistics key means - its kind (counter, gauge, maximum, or a ratio with the keys it is computed from) and a sentence; `hash_table_lookup_length` is reported, so the average lookup length can be recomputed
-* `StatisticsSource.statistics(StatisticsDetail)`, on `DdContext` and `Mdd`: `COUNTERS` reads only the fields kept as the diagrams run (no pass over a table, readable from another thread), `FULL` (`statistics()`) adds a pass over each table, which no longer uses the mark bits
-* Removed `BddConfiguration.logStatisticsOnShutdown()`: its output went through `java.util.logging`, whose own shutdown hook resets the handlers first, so nothing was ever printed - read `DdContext.statistics()` from a shutdown hook of your own instead
-* Packages: `Cube`, `Cursor`, `NatSets`, the maps and `NatSet` live in `de.tum.in.jbdd.collections`, `DimacsReader` in `de.tum.in.jbdd.io`; `Cube.ofUnsafe` checks its arguments by assertion only
-  * `BddUtil`: what is computed from a `BinaryDecisionDiagram`'s public operations alone - `implicants`, `primeImplicants`, `shortestPath` and a generic `adopt` - as static methods rather than interface defaults
-  * `shortestPath` (`BddUtil` and `BddSet`): the path to true with the fewest decisions, the first such in `forEachPath` order - a memoised recursion bounded by the best path found so far, not a walk over every path
-  * `primeImplicants` (`BinaryDecisionDiagram` and `BddSet`): all prime implicants, the Blake canonical form - the same cubes under any variable order, where `implicants` is a cover that depends on the diagram
-  * `BddSet.split` (and `MtBdd.splitBdd` on the int layer): a set as a `BddMap<BddSet>` over some variables, mapping each of their assignments to the residual it restricts the set to - one recursion; `inverse()` gives the partition by residual
-  * `BddMap.inverse`: every value with its domain, in one pass
-  * `BddSetFactory.pin`: keep a set's diagram for the factory's lifetime, whatever happens to its objects
-  * `BinaryFactoryContext.attachToSets` (an `Attachment<BddSet, A>`): bind a caller's object to every set, built on first request and living as long as the set - a wrapper type stays canonical without a map of its own
-  * `BddMap.split(variables, destination, residual)`: the split with each residual map transformed on its way into the meta-map, in one traversal
-  * `Values.ifThenElse(int variable, ...)`: a single node when the variable comes before both maps, the general construction otherwise
-  * `Values.apply(List, BddMapBinaryOperator)`: an associative operator folded over many maps in one traversal
-  * `allMatch` (`MtBdd` and `BddMap`) and `BddMap.agreesWith`: whether a predicate holds between two functions everywhere, without building the set where it does and stopping at the first counterexample - semantic equality across value numberings
-  * `registerXy`: Bind an operation's parameter once and get a private cache for it, surviving alternation with other operations - `compose` / `composeSimplify` (BDD and MTBDD), `exists` (BDD), `apply` / `applySimplify` / `map` / `mapSimplify` / `mapBoolean` / `applyBoolean` (MTBDD), plus the object-layer handles over them
-* `BinaryPath` is now `Cube`, the type of every conjunction of literals (paths, implicants, `restrict`, `BddSetFactory.of`), with the usual cube operations (`implies`, `intersection`, `with`, `restrictedTo`, `antichain`, ...); `BddSetFactory.union(Iterable<Cube>)`
-* The cache classes share their lookups and puts (`CacheBase.IntKeys`); the MTBDD ones are one class per key count, described by which slots hold nodes of which diagram; boolean results are bits
-* Caches record the bins written since their last clear while few, and a clear resets only those: an invalidated cache that grew large once no longer costs a full fill per small call (`sparse_clear_count` in the statistics)
-* `Cube`'s factory `of` and accessors `assignment()` / `support()` copy, so a cube cannot be changed through them; `ofUnsafe`, `assignmentUnsafe()` and `supportUnsafe()` hand the sets over as they are (`copyAssignment` / `copySupport` are gone)
-* Cubes (`of(Cube)`, `conjunction`, `disjunction`, `BddSetFactory.of`) are built bottom-up in linear time without recursion; they were quadratic and recursed as deep as the cube was long
-* Node tables report the share of their statistics spent inside reorderings (`node_table_reorder_*`)
-* The n-ary MTBDD `apply` is memoised on its operand tuple; it walked every combination of paths before
-* `split` / `splitMap` (and `BddSet.split`) protect every value they hand out until their result holds it; a collection in between made the numbering forget a value the result then used - under assertions an error, otherwise a silently merged or missing value
-* Dereferencing the last referenced node of a table (an MTBDD table can let go of every node; a BDD table keeps its variables) leaves the table with nothing referenced; its high-water mark stayed on the node, which a collection then freed - under assertions an error, otherwise harmless
-* `restrict` walks the part of the restriction fixing the topmost decisions without building or caching anything, and keys its cache on the remaining literals only - so restrictions differing in a fixed prefix share it
-* `and(int[])` / `or(int[])` on the int layer: n-ary conjunction and disjunction (above), stopping at the absorbing constant; `BddSetFactory.union` / `intersection` over many sets delegate to them
+0.7 is a major rewrite of the library (helped by AI agents).
+
+Diagrams
+
+* Complement edges
+* MTBDDs (`MtBdd`) over the BDD's variables
+* MDDs (`Mdd`): functions with boolean values over n-valued variables (an MDD offers `simplify` but no `constrain`, since an n-valued variable has no canonical nearest domain value)
+* Dynamic variable reordering by sifting, moving a BDD and its MTBDD together (`DdContext`, `DdVariableOrder`: `reorder`, within groups, `reorderTo` a block shape, `reorderToIdentity`, `siftDown`)
+* The API distinguishes a boolean function (what a node with its complement flag denotes) from the node holding it, and is renamed and restructured accordingly
+* Only the recursive implementation remains: the iterative one (`BddFactory.buildBddIterative`, `buildBddRecursive`) was about 10% slower on some benchmarks and tedious to maintain, and a large stack is cheap (`-Xss128m`)
+
+Object layer
+
+* `BddMap<V>`: an MTBDD whose values are objects, numbered by a caller-chosen `Values<V>`; maps over different numberings combine value by value
+* `BinaryFactoryContext.create(...)` gives a context with its `bddSets()` and `bddMaps()`; it replaces `BddSetFactory.create()`
+* `BinaryFactoryContext.attachToSets` (an `Attachment<BddSet, A>`): bind a caller's object to every set, built on first request and living as long as the set
+* `BddSetFactory.pin`: keep a set's diagram for the factory's lifetime, whatever happens to its objects
+* `BddSetFactory.of(expression, ExpressionStructure)`: build a set from a propositional expression of the caller's own type, read through an accessor, taking sets the caller already has for subexpressions as they are
+* `BddSet.fold`, `BddSetFactory.fold(roots, folder)` and `BddMap.fold`: a diagram folded into anything of the caller's own, each node once, children first and high before low; a set's folder sees `true` and complements, a map's its values, once each in that order - the folder may build sets and maps
+
+Collections (`de.tum.in.jbdd.collections`)
+
+* `NatSet` / `MutableNatSet` take the place of `java.util.BitSet` throughout the API: a set of naturals over primitives - a few elements far apart as a sorted array, anything else as words - viewable as a `Set<Integer>` (`boxed()`); `NatSet`'s factories and operations return immutable sets, `MutableNatSet` has `BitSet`'s mutators; a fresh result is a `MutableNatSet`, a cached one (`BddSet.support()`) a `NatSet`.
+* `NatSets`: helpers over `NatSet` - mapped copies and views, `int` encodings, a binary counter (`increment`), a power-set `Cursor`, unions and intersections of many sets
+* `Cube`: a conjunction of literals - what path walks, `implicants`, `primeImplicants` and `shortestPath` hand out and `restrict` and `BddSetFactory.of` take - with the usual cube operations (`implies`, `intersection`, `with`, `restrictedTo`, `antichain`, ...)
+* `Cursor` (`valid` / `current` / `advance`) takes the place of `Iterator` for solutions and paths: `current()` is the walk's own state, so a step copies nothing (no need for tracking `hasNext()`, which was costly / complicated for diagrams)
+* `IntIntHashMap` / `IntObjectHashMap`: hash maps keyed by `int` that box nothing
+
+New operations
+
+* `andNot`, `forall` (also on `BddSet`), `intersects` (`and(f, g) != FALSE`), `anyPathMatches`
+* `andExists` (`BinaryDecisionDiagram`, `BddSet`, registered as `registerAndExists`): the relational product `exists(and(f, g), vars)` in one recursion that never builds the conjunction; `orForall` its dual
+* `and(int[])` / `or(int[])`: n-ary conjunction and disjunction; `BddSetFactory.union` / `intersection` over many sets delegate to them
+* `simplify` and `constrain`: reduce a function `f` to a given domain `d`, i.e. preserve the values of `f` where `d` is true but otherwise do whatever - `constrain` as the generalized cofactor (on binary diagrams only), `simplify` heuristically; on `BddSet` and `BddMap` as well as on the int layer
+* `xyIn`: perform operation `xy` relative to a given domain `d` (e.g.\ count satisfying assignments of `x` in `d`); `xySimplify`: perform `simplify(xy(...), d)`, but potentially much faster
+* `satisfyingFraction` (`BinaryDecisionDiagram` and `BddSet`): the fraction of all assignments satisfying a function as a best-effort `double`, independent of the number of variables and precise for small fractions; `satisfyingFractionIn(function, domain)`: the probability that an assignment drawn uniformly from the domain satisfies the function, without building the conjunction
+* `registerXy`: bind an operation's parameter once and get a private cache for it, surviving alternation with other operations - `compose` / `composeSimplify` (BDD and MTBDD), `exists` and `andExists` (BDD), `apply` / `applySimplify` / `map` / `mapSimplify` / `mapBoolean` / `applyBoolean` (MTBDD), plus the object-layer handles over them
+* `decisionVariable` / `high` / `low` on `BddSet` and `BddMap`: the Shannon decomposition, so a structural recursion needs no node access; `BddSet.restrict` and `BddSetFactory.ifThenElse`
+* `BddUtil`, computed from a `BinaryDecisionDiagram`'s public operations alone: `implicants` (also on `BddSet`, with its inverse `of(Cube)`) - a cover by cubes, complement first for a CNF cover; `primeImplicants` - the Blake canonical form, the same cubes under any variable order; `shortestPath` - the path to true with the fewest decisions
+* `adopt` (`BinaryDecisionDiagram`, `MultiTerminalDecisionDiagram`, `BddSetFactory`, `Values`): a function of another diagram rebuilt in this one under a variable mapping (and, for maps, a value mapping) - one memoized pass; the object layer creates missing variables and maps each distinct value once, before the pass
+* `BddSet.split` (and `MtBdd.splitBdd`): a set as a `BddMap<BddSet>` over some variables, mapping each of their assignments to the residual it restricts the set to; `BddMap.split(variables, destination, residual)` the same for maps, each residual transformed on its way
+* `BddMap.inverse` (and `MtBdd.invert`): every value with its domain, in one pass
+* `Values.ifThenElse(int variable, ...)`, `Values.apply(List, BddMapBinaryOperator)` (an associative operator folded over many maps in one traversal), `cartesianProduct`
+* `allMatch` (`MtBdd` and `BddMap`) and `BddMap.agreesWith`: whether a predicate holds between two functions everywhere, stopping at the first counterexample - semantic equality across value numberings
+
+Changed
+
+* `compose` reads its mapping without writing to it; 0.6 resolved placeholders in the caller's array (if the same operation is used multiple times, consider `registerCompose`)
+* The BDD `compose` / `composeSimplify` (and with them `replaceVariables` and the registered replacers) builds exponentially fewer nodes where the replaced variables sit below those their replacements read
+* `DimacsReader` moved to `de.tum.in.jbdd.io`
+* Statistics: `statistics()` (on `DdContext` and `Mdd`, a `StatisticsSource`) is a map of numbers rather than a string, read to a detail - `COUNTERS` only reads the fields kept as the diagrams run (no pass over a table, readable from another thread), `FULL` adds a pass over each table; `describeStatistics()` says what each key means - its kind (counter, gauge, maximum, or a ratio with the keys it is computed from) and a sentence; `Statistics.formatStatistics` renders a map as sorted `key=value` lines
+* `BddConfiguration`: `initialSize` / `mtbddInitialSize`, one `cacheSizeDivider` (for 0.6's five per-operation dividers), `keepReorderingStructures`, `useGarbageCollection`, `gcLiveNodeThreshold` (for `minimumFreeNodePercentageAfterGc`) and `name`, which prefixes the statistics keys; tables always double (`growthFactor` is gone); `threadSafetyCheck` is gone, concurrent use being detected under assertions
+* Removed `BddConfiguration.logStatisticsOnShutdown()`: its output went through `java.util.logging`, whose own shutdown hook resets the handlers first, so nothing was printed - read `statistics()` from a shutdown hook of your own instead
+* A node table the heap no longer lets grow keeps working densely packed and throws `OutOfMemoryError` once a collection frees too little, instead of slowing to a full collection every few allocations
 * Assertions auditing a whole table or cache only run with the system property `JBDD_COSTLY_ASSERTIONS` (set by JBDD's own tests); `-ea` alone checks the entries actually used
-* Significant improvement of `compose` / `ifThenElse` in certain cases (e.g.\ identifying constant replacements)
-* The BDD `compose` / `composeSimplify` (and with them `replaceVariables` and the registered replacers) is a joint descent over the function, the domain and the replacements it reads, restricted along the path and cached on that whole tuple: the path reaches the replacements, instead of each branch being composed for both values and one half discarded - exponentially fewer nodes where the replaced variables sit below those their replacements read. The compose, `restrict` and support caches are stable (keyed on their whole context), so a registered BDD compose no longer carries a cache of its own
-* Preserve cached values when possible (should provide notable improvements on some workloads)
-* `NatSet.subSet(from, to)` and `slice(from, to)` (the elements of a range, in place or re-based at 0), `MutableNatSet.freezeAndClear()` (a built set as one that never changes, without a copy), `MutableNatSet.range(from, to)`, `firstOr` / `lastOr`, `NatSets.union` / `intersection` over any number of sets and `lazyUnion`, which builds nothing for one non-empty operand
-* The benchmarks are regression workloads: `NatSetBenchmark` (`jmhNatSet`, the set operations a synthesis tool spends its time in, per shape), `EnumerationBenchmark` (`jmhEnumeration`, the cursors over four shapes and two orders), `NaryBenchmark` (`jmhNary`), `MtBddBenchmark` (`jmhMtBdd`, the object layer's maps as a synthesis tool uses them) and `ReorderBenchmark` (`jmhReorder`, sifting over the synthetic diagrams) join the random, synthetic and DIMACS ones; the one-off comparisons (hash schemes, set layouts and walks, the pairwise fold, the enumeration strategies) are gone
+* New benchmarks, as regression workloads: `NatSetBenchmark` (`jmhNatSet`, the set operations a synthesis tool spends its time in, per shape), `EnumerationBenchmark` (`jmhEnumeration`, the cursors over four shapes and two orders), `NaryBenchmark` (`jmhNary`), `MtBddBenchmark` (`jmhMtBdd`, the object layer's maps as a synthesis tool uses them), `ReorderBenchmark` (`jmhReorder`) and `RelationalProductBenchmark` (`jmhRelational`)
 
 ## 0.6
 

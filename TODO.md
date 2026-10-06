@@ -2,9 +2,9 @@
 
 The in-source `// TODO`s, grouped by what each would take. Each has an identifier, `[LIKE-THIS]`, that the
 source comment carries too, so grep for it; identifiers are names, not numbers, and never change. A TODO that turns out to be answered is deleted from the source rather than
-carried; if the answer is worth keeping, it belongs next to the code it is about. The larger open items -
-native domain-restricted enumeration for MDDs, frozen numberings, `invert`'s array bound - live in
-`CLAUDE.md` §15.
+carried; if the answer is worth keeping, it belongs next to the code it is about. The open items with no line of
+their own to sit on, and the options answered in the negative, close this file. Section numbers refer to
+`CLAUDE.md`.
 
 ## Blocked on a measurement
 
@@ -71,3 +71,46 @@ can settle; `CLAUDE.md` §11 is explicit that reasoning about these paths has re
 - **[RESTRICT-REGISTER] `BddOperations` - a registered `restrict`.** `restrict`'s cache is stable and keyed on the whole cube,
   so a handle would only save resolving the cube per call; the question is whether anything calls one
   restriction often enough to want it.
+
+## Without a line of their own
+
+- **`MddImpl.satisfyingAssignmentIn` and `countSatisfyingAssignmentsIn` materialize `and(function, domain)`.**
+  Deliberately: MDDs see little use and are kept at a minimum. Only the cursor walks the pair natively,
+  because a cursor over an intermediate nothing references is a use-after-free waiting for a collection;
+  `forEachSolution` runs over it, as the interface's default. `MtBddImpl` has no
+  domain-restricted enumeration at all - `assignmentCursor`'s predicate is over terminals, a different
+  question.
+- **A dedicated single-diagram path walk.** `PathCursor` pays ~5 ns/path to carry a domain it never uses.
+  Worth re-duplicating the walk only if path enumeration turns out to be hot.
+- **Incremental buffer mirroring is not in `MtBddImpl.PathWalk`,** which shares the order and therefore
+  translates too. `MddImpl` needs none of it - an MDD does not reorder, so its cursors never translate.
+- **Freeze + intern numberings** - only if sharing measurements justify it. Build against a mutable
+  scratch numbering, then canonicalize (safe while only one map references it) and intern by value
+  sequence, so isomorphic states converge on the same `Values` object: equality becomes precise and
+  sharing canonical, one pass per numbering at finalization. The primitive is `map(function, interner)`
+  with an interner handing out `0,1,2,…` on first sight - no new `MtBdd` method, but `map`'s contract must
+  be strengthened first: guarantee the **order of first invocations** is low-first DFS (*not* "exactly
+  once per value" - the caches are lossy, so a value may be re-presented after eviction; an idempotent
+  interner is unaffected, but "exactly once" would be false), and specify low-first explicitly rather than
+  only "deterministic", so an injective `apply`'s output is provably already canonical and the pass can be
+  skipped. `computeApply` and `computeMap` both recurse low-then-high. The deciding measurement: with one
+  numbering shared by a group of maps, how much structural sharing is lost against a canonicalized numbering
+  per map?
+- **`invert` sizes its array-vs-`HashMap` path from a global watermark.** `MtBddImpl.invert` takes
+  `domainSize = allocatedValues.length()` - monotone and global - to decide a *per-function* operation, so
+  one high-out-degree map permanently forces every later `invert` onto the `HashMap` path. `domainSize`
+  only sets the array width (the per-node loops already walk the accumulated `values` set), so raising
+  `INVERT_ARRAY_DOMAIN_THRESHOLD` is the cheap fix, not a per-function bound. `invertRecursiveArray`
+  allocates a fresh `int[domainSize]` at every constant leaf and cannot use `DepthPool`, because a low
+  branch's array is still live while the high branch recurses to the same depth.
+
+## Answered in the negative
+
+- **Relabel hooks on `ifThenElse` / `restrict` / `compose`.** A stateful hook makes the result depend on the
+  lambda, forcing per-call cache invalidation - for `ifThenElse` that destroys a *persistent* cache.
+  (`splitRelabeled` is not a precedent: it exists so no intermediate function is exposed unprotected, i.e. memory
+  safety, not renumbering efficiency.)
+- **A native cross-numbering `agreement`.** Possible, but `applyBooleanRecursive`'s `node1 == node2` shortcut and
+  its operand-order canonicalization both become unsound, and its *stable* cache would become an
+  ephemeral-parameter one. Worth revisiting only if `adopt` traversals measurably dominate, and then with a
+  separate cache.

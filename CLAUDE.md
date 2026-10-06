@@ -29,8 +29,9 @@ asking for clarification over guessing.**
 - **The owner edits and reviews alongside you.** Files changing under you mid-session is normal, not a
   sign something broke. Re-read a file before editing it rather than trusting an earlier read, and prefer
   the IDEA MCP (§1) for the live state — that is largely why it is wired up.
-- `CHANGELOG.md` is kept current per release (`0.7.0` in progress). `README.md` carries the version, the
-  feature list and the recommended JVM flags.
+- `CHANGELOG.md` is kept current per release (`0.7.0` in progress), against the previous release: what a user of
+  0.6 meets, not the steps in between. `README.md` carries the version, the feature list and the recommended JVM
+  flags.
 
 ## 1. Build, test, tooling
 
@@ -491,7 +492,7 @@ Read the comment there before "fixing" it: a node has one chain slot shared with
 nodes must be unlinked precisely; that means walking chains (random access) instead of streaming the table
 (sequential), it cannot produce the ascending free list `check()` asserts, and the only winning variant —
 repairing just the buckets containing a dead node — pays off only when few nodes died, which the threshold
-above now avoids by growing instead.
+above avoids by growing instead.
 
 `MtBddTable` additionally sweeps terminal values in the *same* mark pass via the managed-leaf hooks
 (`markLeafNodeIfManaged`, `anyManagedLeafMarked`, `recurse*`). Leaf marks live in a separate `MutableNatSet
@@ -517,8 +518,8 @@ All O(1) per collection; nothing on the hot path.
 ## 5. The recursive-operation skeleton
 
 Core operations are **plain recursion** over the diagram; deep structures are handled with a large `-Xss`,
-not hand-rolled explicit stacks (the iterative implementation was removed: ~10% slower on some benchmarks
-and tedious to maintain). Keep new operations in that shape.
+not hand-rolled explicit stacks (an iterative implementation measured ~10% slower on some benchmarks and is
+tedious to maintain). Keep new operations in that shape.
 
 Every `compute*` / `*Recursive` follows six steps; deviations are where bugs live:
 
@@ -872,7 +873,7 @@ benchmarks it is a shallow basin flat from 0.30 to 0.45, ~8% worse at 0.25, degr
 garbage a swap walks outweighs the collections saved and the table starts doubling (0.60 doubles it; with
 no bound the run dies of memory). 0.40 sits mid-basin.
 
-**A table that cannot grow stops sifting short rather than dying mid-swap.** Inside the rewrite bracket a table
+**A table that cannot grow stops sifting short of a swap it could not hold.** Inside the rewrite bracket a table
 grows instead of collecting, and one the heap no longer lets grow (`NodeTable.isMemoryLimited()`, set by the first
 growth that found no room) runs full: the swaps' garbage fills it and `ensureCapacity` throws `OutOfMemoryError`
 from inside `rewriteLevelAfterSwap`, with both diagrams half rewritten (seen on a synthesis workload, 5 GB heap,
@@ -886,7 +887,8 @@ told and throw. A caller's `gc()` deliberately leaves the memory-limited regime 
 collection of `ensureCapacity`'s own leaving a quarter free, ends it), so the checks last through a reordering.
 While both tables can grow nothing is asked, so the tuned constants above are untouched. The scenario is
 reproducible only against a nearly full heap (a table 65% live, ballast blocking its doubling), which the suite
-does not set up; it was verified by hand: `reorder()` completed with 14 stops where it died after ten swaps.
+does not set up; it was verified by hand: `reorder()` completes with 14 stops where unchecked swaps ran the table
+full after ten.
 
 Bookkeeping (per-variable node lists, parent counts) is built lazily on the first reorder and dropped
 afterwards unless `keepReorderingStructures()` is set. Set it only when reordering is frequent enough that
@@ -912,11 +914,11 @@ in the diagram rather than a branch on `origin` inside the cache.
   MTBDD `Compose`. Strictly, only the satisfaction counts (ranging over the levels below their node) and
   `constrain` (deciding top-down) are wrong afterwards: reordering rewrites in place, so an entry that is a
   statement about functions - `exists`, `compose`, `restrict` and the simplify family included, whose level
-  cut-offs only decide where the recursion stops - still holds. Keeping those was built and is not worth
-  its classification: invalidation is lazy, so dropping costs one clear per cache on next use; `reorder()`
+  cut-offs only decide where the recursion stops - still holds. Keeping those is not worth the
+  classification: invalidation is lazy, so dropping costs one clear per cache on next use; `reorder()`
   collects before sifting, which clears everything anyway (below); and the kept entries are hardly ever
   asked again, since the swaps reshape the diagram (the `and` hit count over swaps-then-replay was the same
-  to within one hit). `RegressionTests` pins the counts and `constrain` for whoever tries again.
+  to within one hit). `RegressionTests` pins the counts and `constrain`.
 
   **During a reordering, caches are cleared rather than maintained** (`isReordering`): a collection or a
   growth then invalidates every cache over the tables, registered ones included, before its "nothing died"
@@ -1008,9 +1010,8 @@ entry point (`of`, `ifThenElse`, `cartesianProduct`, `createRelabeling`, `relabe
 - **Cross-numbering is supported, not forbidden.** `apply(other, combiner, destination)` and
   `where(other, BiPredicate)` resolve each side through its own numbering in a single traversal — no
   `adopt` pass first, and the two sides need not share a value type. Operations that must *produce* a map
-  over one numbering still go through `Values.adopt` explicitly; implicit adoption was rejected because it
-  would permanently append the other map's values and hide an O(|other|) traversal behind an O(1)-looking
-  call.
+  over one numbering go through `Values.adopt` explicitly; there is no implicit adoption, which would
+  permanently append the other map's values and hide an O(|other|) traversal behind an O(1)-looking call.
 - **A destination numbering is always caller-supplied**, never auto-created — `apply`, `split`,
   `cartesianProductMap` all take one, so chained cross-numbering operations cannot silently proliferate
   numberings. `cartesianProductMap` additionally takes a `map` over each tuple — not for the mapping (the
@@ -1199,11 +1200,12 @@ intuitions transfer badly. Two habits follow:
   `SyntheticTest` reads the same scale but as a *bound*, not a factor: its boards grow exponentially, so
   the largest alone dominates the test and it drops from 9 queens to 8 below 0.9 and to 7 below 0.5.
 - Targeted tests: `BddTest`, `MtBddTest`, `BddMapTest`, `BddSetTest`, `ValuesTest`, `ReorderTest`, `HashTest`,
-  `UtilityTest`, `DimacsReaderTest`; in `collections`, `NatSetTest` (every operation against `java.util.BitSet`,
+  `UtilityTest`, `DimacsReaderTest`, `StatisticsTest` (a context's and an MDD's keys and descriptions agree, every
+  ratio's parts are in the snapshot); in `collections`, `NatSetTest` (every operation against `java.util.BitSet`,
   over spans that keep a set in the array, move it to words, or mix both; one set in every representation equal
   to itself, hash code and order included), `NatSetFuzzTest` (random operation sequences against `BitSet`,
   every query after each step, the set re-read through each class and representation, the combinations against
-  sets of every shape), `CubeTest` and `IntHashMapTest`. `BddFuzzTest` is the BDD's counterpart: the n-ary
+  sets of every shape), `NatSetsTest`, `CubeTest` and `IntHashMapTest`. `BddFuzzTest` is the BDD's counterpart: the n-ary
   operations, quantification and the relational product, composition over restrictions and general mappings,
   the domain operations and restriction by a path cursor's cubes, all against truth tables on a tiny table with
   collections, reorderings and garbage between the operations - the theories compare per operation against syntax
@@ -1265,46 +1267,3 @@ Ranked by how much time they cost when you get them wrong:
 7. **Assertions are the validation layer.** An over-eager or inverted assertion is itself a bug and will
    not be caught by a production run. Corollary: an untested method is not merely unverified — its
    assertions have never been evaluated at all.
-
-## 15. Open work
-
-Ordered by how much they block. These are the items with no natural line to sit on; the ones that do have
-one are `// TODO`s in the source, with their reasoning in `TODO.md`.
-
-- **`MddImpl.satisfyingAssignmentIn` and `countSatisfyingAssignmentsIn` materialize `and(function, domain)`.**
-  Deliberately: MDDs see little use and are kept at a minimum. Only the cursor walks the pair natively,
-  because a cursor over an intermediate nothing references is a use-after-free waiting for a collection;
-  `forEachSolution` runs over it, as the interface's default. `MtBddImpl` has no
-  domain-restricted enumeration at all — `assignmentCursor`'s predicate is over terminals, a different
-  question.
-- **A dedicated single-diagram path walk.** `PathCursor` pays ~5 ns/path to carry a domain it never uses.
-  Worth re-duplicating the walk only if path enumeration turns out to be hot.
-- **Incremental buffer mirroring is not in `MtBddImpl.PathWalk`,** which shares the order and therefore
-  translates too. `MddImpl` needs none of it — an MDD does not reorder, so its cursors never translate.
-- **Freeze + intern numberings** — only if sharing measurements justify it. Build against a mutable
-  scratch numbering, then canonicalize (safe while only one map references it) and intern by value
-  sequence, so isomorphic states converge on the same `Values` object: equality becomes precise and
-  sharing canonical, one pass per numbering at finalization. The primitive is `map(function, interner)`
-  with an interner handing out `0,1,2,…` on first sight — no new `MtBdd` method, but `map`'s contract must
-  be strengthened first: guarantee the **order of first invocations** is low-first DFS (*not* "exactly
-  once per value" — the caches are lossy, so a value may be re-presented after eviction; an idempotent
-  interner is unaffected, but "exactly once" would be false), and specify low-first explicitly rather than
-  only "deterministic", so an injective `apply`'s output is provably already canonical and the pass can be
-  skipped. `computeApply` and `computeMap` both recurse low-then-high; write it down. The deciding
-  measurement: with one numbering shared by a group of maps, how much structural sharing is lost against a
-  canonicalized numbering per map?
-- **`invert` sizes its array-vs-`HashMap` path from a global watermark.** `MtBddImpl.invert` takes
-  `domainSize = allocatedValues.length()` — monotone and global — to decide a *per-function* operation, so
-  one high-out-degree map permanently forces every later `invert` onto the `HashMap` path. `domainSize`
-  only sets the array width (the per-node loops already walk the accumulated `values` BitSet), so raising
-  `INVERT_ARRAY_DOMAIN_THRESHOLD` is the cheap fix, not a per-function bound. `invertRecursiveArray`
-  allocates a fresh `int[domainSize]` at every constant leaf and cannot use `DepthPool`, because a low
-  branch's array is still live while the high branch recurses to the same depth.
-
-**Rejected, with reasons.** Relabel hooks on `ifThenElse`/`restrict`/`compose`: a stateful hook makes the
-result depend on the lambda, forcing per-call cache invalidation — for `ifThenElse` that destroys a
-*persistent* cache. (`splitRelabeled` is not a precedent: it exists so no intermediate function is exposed
-unprotected, i.e. memory safety, not renumbering efficiency.) A native cross-numbering `agreement`:
-possible, but `applyBooleanRecursive`'s `node1 == node2` shortcut and its operand-order canonicalization both
-become unsound, and its currently *stable* cache would become an ephemeral-parameter one. Revisit only if
-`adopt` traversals measurably dominate, and then with a separate cache.
