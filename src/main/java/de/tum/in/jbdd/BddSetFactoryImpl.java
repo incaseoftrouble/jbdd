@@ -623,6 +623,11 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         }
 
         @Override
+        public double[] influences() {
+            return factory.dd.influences(function);
+        }
+
+        @Override
         public void forEach(NatSet support, Consumer<? super NatSet> consumer) {
             factory.dd.forEachSolution(function, support, consumer);
         }

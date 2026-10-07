@@ -927,6 +927,112 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         return fractions[FRACTION] / (fractions[FRACTION] + fractions[COMPLEMENT_FRACTION]);
     }
 
+    @Override
+    public double[] influences(int function) {
+        assert isValidFunction(function);
+        double[] influences = new double[numberOfVariables()];
+        if (isConstant(function)) {
+            return influences;
+        }
+
+        assert accessGuard.acquire();
+        // A uniformly random assignment follows one path through the diagram; flipping a variable flips the function
+        // exactly where the path reaches a node of that variable and the node's children differ on the rest of the
+        // assignment. So a variable's influence is the sum over its nodes of the probability that the path reaches the
+        // node times the fraction of assignments on which its children differ - which a complement edge on the way
+        // does not change. The reach probabilities are computed top-down, every node after all its parents (reverse
+        // post-order): the root is reached surely, a node passes half of what reaches it to each child.
+        IntIntHashMap postOrder = new IntIntHashMap();
+        collectPostOrder(positive(function), postOrder);
+        int count = postOrder.size();
+        int[] nodes = new int[count];
+        postOrder.forEach((node, position) -> nodes[position] = node);
+        double[] reach = new double[count];
+        reach[count - 1] = 1.0d;
+        double[] fractions = new double[2];
+        for (int position = count - 1; position >= 0; position--) {
+            int node = nodes[position];
+            double nodeReach = reach[position];
+            int low = table.lowUnchecked(node);
+            int high = table.highUnchecked(node);
+            computeDifferenceFraction(low, high, fractions);
+            influences[table.variable(node)] += nodeReach * fractions[FRACTION];
+            if (!isConstant(low)) {
+                reach[postOrder.get(positive(low), -1)] += 0.5d * nodeReach;
+            }
+            if (!isConstant(high)) {
+                reach[postOrder.get(high, -1)] += 0.5d * nodeReach;
+            }
+        }
+        assert accessGuard.release();
+        return influences;
+    }
+
+    /* Numbers the nodes below node (inclusive) in post-order, children before their parent. */
+    private void collectPostOrder(int node, IntIntHashMap postOrder) {
+        if (postOrder.containsKey(node)) {
+            return;
+        }
+        int low = table.lowUnchecked(node);
+        if (!isConstant(low)) {
+            collectPostOrder(positive(low), postOrder);
+        }
+        int high = table.highUnchecked(node);
+        if (!isConstant(high)) {
+            collectPostOrder(high, postOrder);
+        }
+        postOrder.put(node, postOrder.size());
+    }
+
+    /* Leaves the fraction of assignments on which function1 and function2 differ in result[FRACTION] and the fraction on
+     * which they agree in result[COMPLEMENT_FRACTION]: each the mean of the children's same side, a complement on either
+     * function swapping them (a XOR NOT b is NOT (a XOR b)) - only sums of non-negative terms, never 1 - x, as in
+     * computeSatisfyingFraction. Cached per pair of regular nodes, the smaller first. */
+    private void computeDifferenceFraction(int function1, int function2, double[] result) {
+        if (function1 == function2 || function1 == complement(function2)) {
+            boolean differ = function1 != function2;
+            result[FRACTION] = differ ? 1.0d : 0.0d;
+            result[COMPLEMENT_FRACTION] = differ ? 0.0d : 1.0d;
+            return;
+        }
+        if (isConstant(function1) || isConstant(function2)) {
+            // Differing from false is being true, from true being false.
+            boolean firstConstant = isConstant(function1);
+            computeSatisfyingFraction(firstConstant ? function2 : function1, result);
+            if ((firstConstant ? function1 : function2) == TRUE) {
+                double fraction = result[FRACTION];
+                result[FRACTION] = result[COMPLEMENT_FRACTION];
+                result[COMPLEMENT_FRACTION] = fraction;
+            }
+            return;
+        }
+
+        boolean swap = isComplementFunction(function1) != isComplementFunction(function2);
+        int first = Math.min(positive(function1), positive(function2));
+        int second = Math.max(positive(function1), positive(function2));
+        BooleanCache.DifferenceCache differences = cache.differenceCache();
+        double difference;
+        double agreement;
+        if (differences.lookup(first, second)) {
+            difference = differences.difference();
+            agreement = differences.agreement();
+        } else {
+            int hash = differences.lookupHash();
+            int firstLevel = decisionLevel(first);
+            int secondLevel = decisionLevel(second);
+            int level = Math.min(firstLevel, secondLevel);
+            computeDifferenceFraction(lowIf(first, firstLevel == level), lowIf(second, secondLevel == level), result);
+            double lowDifference = result[FRACTION];
+            double lowAgreement = result[COMPLEMENT_FRACTION];
+            computeDifferenceFraction(highIf(first, firstLevel == level), highIf(second, secondLevel == level), result);
+            difference = (lowDifference + result[FRACTION]) * 0.5d;
+            agreement = (lowAgreement + result[COMPLEMENT_FRACTION]) * 0.5d;
+            differences.put(hash, first, second, difference, agreement);
+        }
+        result[FRACTION] = swap ? agreement : difference;
+        result[COMPLEMENT_FRACTION] = swap ? difference : agreement;
+    }
+
     /* Leaves the satisfying fractions of function AND domain and of NOT function AND domain in result, by the scheme
      * of computeSatisfyingFraction but scaled: result[FRACTION] * 2^result[EXPONENT], and alike for the complement,
      * with the larger side in [1, 2). Only the domain's valuations are counted, so their fraction may be as small as

@@ -219,6 +219,55 @@ class BddTest {
     }
 
     @Test
+    void testInfluencesAreTheFlipsOfEachVariableUnderAnyOrder() {
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int a = bdd.createVariable();
+        int b = bdd.createVariable();
+        int c = bdd.createVariable();
+        bdd.createVariable();
+        // a | (b & c): a decides wherever b & c is false, b where a is false and c true, c alike; d never.
+        int function = bdd.reference(bdd.or(a, bdd.and(b, c)));
+        // a ^ b is not unate: flipping either always flips it, although its cofactors have equal fractions.
+        int parity = bdd.reference(bdd.xor(a, b));
+        double[] expected = {0.75d, 0.25d, 0.25d, 0.0d};
+        double[] parityExpected = {1.0d, 1.0d, 0.0d, 0.0d};
+
+        assertThat(bdd.influences(function), is(expected));
+        assertThat(bdd.influences(bdd.not(function)), is(expected));
+        assertThat(bdd.influences(parity), is(parityExpected));
+        assertThat(bdd.influences(bdd.trueFunction()), is(new double[4]));
+
+        List<NatSet> reversed = new ArrayList<>();
+        for (int variable = bdd.numberOfVariables() - 1; variable >= 0; variable--) {
+            MutableNatSet block = MutableNatSet.create();
+            block.set(variable);
+            reversed.add(block);
+        }
+        bdd.variableOrder().reorderTo(reversed);
+        assertThat(bdd.influences(function), is(expected));
+        assertThat(bdd.influences(parity), is(parityExpected));
+        bdd.createVariables(2);
+        assertThat(bdd.influences(function), is(new double[] {0.75d, 0.25d, 0.25d, 0.0d, 0.0d, 0.0d}));
+    }
+
+    @Test
+    void testInfluencesKeepSmallValuesPrecise() {
+        // The conjunction of 200 negated literals: each variable flips it only on the one assignment of the others that
+        // satisfies the rest, 2^-199 of all - a 1 - x anywhere would give 0.
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int variables = 200;
+        int[] nodes = bdd.createVariables(variables);
+        int disjunction = bdd.falseFunction();
+        for (int node : nodes) {
+            disjunction = bdd.updateWith(bdd.or(disjunction, node), disjunction);
+        }
+        double[] influences = bdd.influences(bdd.not(disjunction));
+        for (int variable = 0; variable < variables; variable++) {
+            assertThat(influences[variable], is(Math.scalb(1.0d, 1 - variables)));
+        }
+    }
+
+    @Test
     void testSatisfyingFractionKeepsSmallComplementsPrecise() {
         // The conjunction of negated literals is stored as the complement of the disjunction, whose fraction is
         // 1 - 2^-200, i.e. 1.0 as a double: deriving the conjunction's as 1 - x would give 0.

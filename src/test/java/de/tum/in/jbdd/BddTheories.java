@@ -989,6 +989,38 @@ class BddTheories {
     }
 
     @ParameterizedTest(name = "{index}")
+    @MethodSource("unary")
+    void testInfluences(UnaryDataPoint<BinaryDd> dataPoint) {
+        BinaryDd bdd = dataPoint.bdd;
+        int function = dataPoint.function;
+        assumeTrue(bdd.isValidFunction(function));
+
+        // By definition: the assignments on which flipping the variable flips the function. Exact over at most 53
+        // variables, every reach probability and fraction being a multiple of 2^-n.
+        assumeTrue(bdd.numberOfVariables() <= 53);
+        int variables = bdd.numberOfVariables();
+        long[] flips = new long[variables];
+        for (boolean[] valuation : valuations) {
+            boolean value = bdd.evaluate(function, valuation);
+            for (int variable = 0; variable < variables; variable++) {
+                valuation[variable] = !valuation[variable];
+                if (bdd.evaluate(function, valuation) != value) {
+                    flips[variable] += 1L;
+                }
+                valuation[variable] = !valuation[variable];
+            }
+        }
+        double[] expected = new double[variables];
+        for (int variable = 0; variable < variables; variable++) {
+            expected[variable] = Math.scalb((double) flips[variable], -variables);
+        }
+        assertThat(bdd.influences(function), is(expected));
+        int negation = bdd.reference(bdd.not(function));
+        assertThat(bdd.influences(negation), is(expected));
+        bdd.dereference(negation);
+    }
+
+    @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
     void testCountSatisfyingAssignmentsIn(BinaryDataPoint<BinaryDd> dataPoint) {
         BinaryDd bdd = dataPoint.bdd;

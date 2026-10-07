@@ -66,6 +66,7 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
     private final UnaryToObjectCache<int[]> supportCache;
     private final FractionCache fractionCache;
     private final FractionInCache fractionInCache;
+    private final DifferenceCache differenceCache;
     private final ComposeTupleCache composeTupleCache;
     private final OperandTupleCache andAllCache;
     private final RestrictCubeCache restrictCubeCache;
@@ -95,6 +96,7 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
         supportCache.grow(0);
         fractionCache = new FractionCache(bdd);
         fractionInCache = new FractionInCache(bdd);
+        differenceCache = new DifferenceCache(bdd);
         composeTupleCache = new ComposeTupleCache(bdd);
         andAllCache = new OperandTupleCache(bdd);
         restrictCubeCache = new RestrictCubeCache(bdd);
@@ -103,6 +105,7 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
                 entry("support", supportCache),
                 entry("fraction", fractionCache),
                 entry("fraction_in", fractionInCache),
+                entry("difference", differenceCache),
                 entry("and", andCache),
                 entry("and_simplify", andSimplifyCache),
                 entry("xor", xorCache),
@@ -134,6 +137,10 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
 
     FractionInCache fractionInCache() {
         return fractionInCache;
+    }
+
+    DifferenceCache differenceCache() {
+        return differenceCache;
     }
 
     ComposeTupleCache composeTupleCache() {
@@ -173,6 +180,7 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
         andAllCache.grow(size);
         restrictCubeCache.grow(size);
         fractionInCache.grow(size);
+        differenceCache.grow(size);
         andCache.grow(size);
         xorCache.grow(size);
         simplifyCache.grow(size);
@@ -778,6 +786,65 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
             fractions[2 * binIndex] = fraction;
             fractions[2 * binIndex + 1] = complementFraction;
             exponents[binIndex] = exponent;
+        }
+    }
+
+    /**
+     * Per pair of regular nodes, the smaller first, the fraction of assignments on which they differ and the fraction on
+     * which they agree (see {@link BddImpl#influences}): a complement on either side swaps the two, so one entry serves
+     * all four combinations. Stable for the same reasons as {@link FractionCache}.
+     */
+    static final class DifferenceCache extends IntCache {
+        private double[] fractions = EMPTY_DOUBLE_ARRAY;
+        private int lookupBin = -1;
+
+        DifferenceCache(BooleanBase<?, ?> bdd) {
+            super(bdd, 2, 2);
+        }
+
+        @Override
+        protected boolean isValidResult(int binStart) {
+            return true;
+        }
+
+        @Override
+        protected void growInto(int newSize, int[] newCache, boolean preserve) {
+            if (preserve) {
+                double[] newFractions = new double[2 * newSize];
+                rehashInto(newSize, newCache, (oldBin, newBin) -> {
+                    newFractions[2 * newBin] = fractions[2 * oldBin];
+                    newFractions[2 * newBin + 1] = fractions[2 * oldBin + 1];
+                });
+                this.fractions = newFractions;
+            } else {
+                this.fractions = new double[2 * newSize];
+            }
+        }
+
+        /** Whether the pair is cached; if so, {@link #difference()} and {@link #agreement()} read it. */
+        boolean lookup(int first, int second) {
+            lookupBin = findBin(first, second);
+            return lookupBin >= 0;
+        }
+
+        double difference() {
+            return fractions[2 * lookupBin];
+        }
+
+        double agreement() {
+            return fractions[2 * lookupBin + 1];
+        }
+
+        void put(int hash, int first, int second, double difference, double agreement) {
+            ensureValid();
+            assert bdd.isValidNonConstantFunction(first)
+                    && bdd.isPositive(first)
+                    && bdd.isValidNonConstantFunction(second)
+                    && bdd.isPositive(second)
+                    && first < second;
+            int binIndex = storeKeys(hash, first, second);
+            fractions[2 * binIndex] = difference;
+            fractions[2 * binIndex + 1] = agreement;
         }
     }
 

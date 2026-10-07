@@ -77,6 +77,20 @@ public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTe
     double satisfyingFractionIn(int function, int domain);
 
     /**
+     * The influence of each variable on {@code function}: the fraction of all assignments on which flipping the variable
+     * flips the function, indexed by variable over {@link #numberOfVariables()} - {@code 0} for a variable outside the
+     * support. For a variable the function is unate in, it is {@code |fraction(f[v:=1]) - fraction(f[v:=0])|}; in
+     * general it is the fraction of {@code f[v:=1] XOR f[v:=0]}. One pass over the diagram computes all of them, and
+     * like {@link #satisfyingFraction(int)} the values do not depend on the number of variables or their order, and
+     * {@code not(function)} has the same influences.
+     *
+     * <p>Best-effort, as {@link #satisfyingFraction(int)} is: within a relative error of about {@code d * 2^-53}, {@code
+     * d} being the number of levels below the root, exact over at most 53 variables, and losing precision only below
+     * {@code 2^-1022}.</p>
+     */
+    double[] influences(int function);
+
+    /**
      * Constructs the generalized cofactor of {@code function} w.r.t. {@code domain} (Coudert &amp; Madre),
      * also written {@code f @ domain}: The result agrees with {@code function} wherever {@code domain} holds,
      * and elsewhere takes the value of {@code function} at the nearest {@code domain}-satisfying assignment

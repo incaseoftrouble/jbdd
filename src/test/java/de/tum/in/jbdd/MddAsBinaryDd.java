@@ -245,6 +245,11 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
         return Util.quotient(countSatisfyingAssignmentsIn(function, domain), countSatisfyingAssignments(domain));
     }
 
+    @Override
+    public double[] influences(int function) {
+        return ReferenceInfluences.of(this, function);
+    }
+
     /** Presents a cursor's elements as something else, without copying or stepping anything itself. */
     private static <F, T> Cursor<T> map(Cursor<F> cursor, Function<? super F, ? extends T> function) {
         return new Cursor<>() {

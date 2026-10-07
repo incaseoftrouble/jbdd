@@ -207,6 +207,13 @@ public interface BddSet {
      */
     double satisfyingFractionIn(BddSet domain);
 
+    /**
+     * The influence of each variable on this set, indexed by variable over the factory's variables at the time of the
+     * call: the fraction of assignments on which flipping the variable flips membership. See {@link
+     * BinaryDecisionDiagram#influences(int)}.
+     */
+    double[] influences();
+
     /** Calls {@code consumer} once per element, treating variables outside {@code support} as "don't care". */
     void forEach(NatSet support, Consumer<? super NatSet> consumer);
 

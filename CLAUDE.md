@@ -626,7 +626,11 @@ consequences that are easy to get wrong:
     neither the variable count nor the order; `FractionInCache` is the same pair per node and domain, both
     scaled by one binary exponent that keeps the larger in `[1, 2)`, so a domain far below `2^-1074` of all
     assignments neither underflows nor needs exact counts; `satisfyingFractionIn` divides by their sum, where
-    the exponent cancels). Nothing extra.
+    the exponent cancels; `influences` sums, over the nodes of a variable, the probability that a random
+    assignment reaches the node - computed top-down in reverse post-order with a per-call map, the caches
+    being lossy - times the fraction where its children differ, from `DifferenceCache`: per pair of regular
+    nodes, the smaller first, the fractions where they differ and where they agree, a complement on either side
+    swapping the two, so every term stays a sum of non-negatives). Nothing extra.
   - **Ephemeral "current parameter"** — the MTBDD `compose` (`int[]` mapping) and `restrict` (a `Cube`),
     `exists` and `andExists` (a `NatSet` each), `apply`/`map`/`mapBoolean`/`applyBoolean` and the n-ary `apply` (an opaque
     operator compared by identity; the paired `*Simplify` cache is invalidated by the same `initX`; the

@@ -274,6 +274,11 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
     }
 
     @Override
+    public double[] influences(int function) {
+        return ReferenceInfluences.of(this, function);
+    }
+
+    @Override
     public Cursor<NatSet> solutionCursor(int function) {
         return mt.assignmentCursor(function, v -> v != FALSE);
     }
