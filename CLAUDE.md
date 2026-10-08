@@ -579,6 +579,9 @@ for the whole subtree, which never comes back to the n-ary; it costs up to a fif
 deep tuples would still have shrunk (`TODO.md` [NARY-SPLIT]).
 `NaryBenchmark` (`jmhNary`) times both shapes.
 
+A split's codomain is the values its meta-function takes (`valuesOf`), since combining interns residuals that a later
+combination merges away; the relabeled splits relabel only those (arrays still by residual index).
+
 **MTBDD-specific constraint:** the combining function is an **opaque caller lambda with no assumed
 algebra**. There is no `f == g ⇒ f` shortcut and no idempotence — `apply(f, f, op)` must fully recurse.
 Callers opt into properties explicitly via `MtBddBinaryOperator`/`MtBddNaryOperator`

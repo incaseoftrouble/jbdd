@@ -1992,7 +1992,8 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
         assert table.workStacksEmpty();
         assert accessGuard.release();
 
-        NatSet indices = NatSet.range(0, bijection.size());
+        // Only the values the meta-function takes: combining interns residuals a later combination merges away.
+        NatSet indices = valuesOf(mtbddG);
         return new FunctionToFunctionMap() {
             @Override
             public int function() {
@@ -2038,10 +2039,12 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
         // handed out before any node holds it, so its terminal is referenced until the result has been built.
         int[] relabeledResiduals = new int[residualCount];
         int[] terminals = new int[residualCount];
-        for (int index = 0; index < residualCount; index++) {
+        // Only the residuals the meta-function reaches: combining interns some a later combination merges away.
+        NatSet taken = valuesOf(mtbddG);
+        taken.forEach(index -> {
             relabeledResiduals[index] = relabeler.applyAsInt(bijection.getFunction(index));
             terminals[index] = reference(of(relabeledResiduals[index]));
-        }
+        });
 
         assert accessGuard.acquire();
         assert table.workStacksEmpty();
@@ -2054,8 +2057,8 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
         dereference(mtbddG);
         for (int index = 0; index < residualCount; index++) {
             dereference(bijection.getFunction(index));
-            dereference(terminals[index]);
         }
+        taken.forEach(index -> dereference(terminals[index]));
         return result;
     }
 
@@ -2071,7 +2074,8 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
         assert accessGuard.release();
 
-        NatSet indices = NatSet.range(0, residuals.size());
+        // Only the values the meta-function takes, as for split.
+        NatSet indices = valuesOf(mtbddG);
         return new FunctionToFunctionMap() {
             @Override
             public int function() {
@@ -2106,12 +2110,14 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
         assert accessGuard.release();
 
+        // Only the residuals the meta-function reaches: combining interns some a later combination merges away.
+        NatSet taken = valuesOf(mtbddG);
         int[] relabeledResiduals = new int[residualCount];
         int[] terminals = new int[residualCount];
-        for (int index = 0; index < residualCount; index++) {
+        taken.forEach(index -> {
             relabeledResiduals[index] = relabeler.applyAsInt(residuals.getFunction(index));
             terminals[index] = reference(of(relabeledResiduals[index]));
-        }
+        });
 
         assert accessGuard.acquire();
         assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
@@ -2124,8 +2130,8 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
         dereference(mtbddG);
         for (int index = 0; index < residualCount; index++) {
             bdd.dereference(residuals.getFunction(index));
-            dereference(terminals[index]);
         }
+        taken.forEach(index -> dereference(terminals[index]));
         return result;
     }
 
