@@ -579,6 +579,28 @@ for the whole subtree, which never comes back to the n-ary; it costs up to a fif
 deep tuples would still have shrunk (`TODO.md` [NARY-SPLIT]).
 `NaryBenchmark` (`jmhNary`) times both shapes.
 
+**The residual product is one descent too** (`MtBddImpl#residualProduct`, the interface javadoc has the algebra and
+the chains it equals; `ResidualProducts.ofCartesianProduct` is the chain, the default implementation and the theories'
+oracle). Its operands map variables of the function as `compose`'s mapping does (`placeholder()` leaves a variable).
+The state is the residual, a function of the operator's diagram, and the operands still in the descent, by the
+ascending variable they replace: at each step the operands that reached a value the valuation decides restrict the
+residual (`BddImpl#restrictLiteral`), then every operand whose variable is outside the residual's support
+(`supportArray`) leaves, so the tuple shrinks along the path as in `and(int[])` - an empty support or an all-terminal tuple
+is a leaf, a single operand left descends alone (`residualProductSingle`: the residual cannot change before it reaches
+a value, so no supports and no tuples, under the same key), otherwise it splits on the operands' least level. Results go to `ResidualProductCache`, keyed
+`[residual, node_1, ..., node_k]` (the variables are the replaced ones in the residual's support, so the residual
+determines them) and per-call (the leaves index pairs numbered afresh,
+`ResidualProducts.Pairs`). Every residual stays on its diagram's secondary work stack for the call, which is what keeps the cache's
+keys and the pairs valid across the collections a restriction may cause - and why the cache checks the operands' nodes
+only. The function is the *operator*: its variables index the operands, it is only restricted and asked for its
+support in its own diagram and never descended with the operands, so it may live in any diagram - the int layer takes
+it as an `Operator` (diagram and function; a `BddImpl` descends natively, any other `BinaryDecisionDiagram` gets the
+chain), `Values.residualProduct` as a `BddSet` of any context (`residualProductRelabeled`, which also relabels the pairs
+outside the descent as `splitBddRelabeled` does). The joint descents (`ifThenElse`, the domains, `compose`'s
+replacements) cannot do that: there the BDD decides on the MTBDD's own variables. An assignment reaching each pair is `cubes` of the result (`BddMap.cubes()` on the object layer).
+A split's codomain is the values its meta-function takes (`valuesOf`), since combining interns residuals that a later
+combination merges away; the relabeled splits relabel only those (arrays still by residual index).
+
 **Cubes of paths** (`PathCubes`): `MultiTerminalDecisionDiagram.cubes(f[, values])` (`BddMap.cubes()` on the object layer) is `valuesOf`'s walk keeping the
 first path to each value (low before high, each node once; a `NatSet` stops once all have one), `shortestCube(f,
 predicate)` the bounded shortest-path search of `BddUtil.shortestPath` with "the terminal is accepted" for "the terminal
@@ -586,9 +608,6 @@ is true", `shortestCubes` that per value. Both give a `ValueCubes` (`codomain()`
 ascending value; `PathCubes.OfMap` over a map), not a bare map. `MtBddImpl` walks for `cubes` with the table's mark bits, as `valuesOf`
 marks (each node marked on entry, so the path above a marked node is marked and one `doSetMarkBelow` unmarks all). On a BDD, `cube(f)` is a greedy descent (every node but false reaches true)
 and `shortestCube(f)` is `BddUtil.shortestPath`.
-
-A split's codomain is the values its meta-function takes (`valuesOf`), since combining interns residuals that a later
-combination merges away; the relabeled splits relabel only those (arrays still by residual index).
 
 **MTBDD-specific constraint:** the combining function is an **opaque caller lambda with no assumed
 algebra**. There is no `f == g ⇒ f` shortcut and no idempotence — `apply(f, f, op)` must fully recurse.
@@ -662,10 +681,10 @@ consequences that are easy to get wrong:
     compares against the previous call's parameter and invalidates wholesale on change. **This works only
     for eagerly-completing calls** — the lazy cursor from `assignmentCursor` outlives its own `initX` and
     must be drained before any other query runs; an assertion enforces it.
-  - **Per-call scratch state** — `split`/`splitCombine`, `splitBdd`/`splitBddCombine` and
-    `cartesianProduct` produce *indices into a bijection built fresh per call*, so an older entry names a
-    numbering that no longer exists. `initSplit()`/`initSplitBdd()`/`initCartesianProduct()` therefore
-    invalidate unconditionally at every entry. `splitBdd`'s residuals are BDD functions, interned on the
+  - **Per-call scratch state** — `split`/`splitCombine`, `splitBdd`/`splitBddCombine`,
+    `cartesianProduct` and `residualProduct` produce *indices into a bijection built fresh per call*, so an older entry names a
+    numbering that no longer exists. `initSplit()`/`initSplitBdd()`/`initCartesianProduct()`/`initResidualProduct()`
+    therefore invalidate unconditionally at every entry. `splitBdd`'s residuals are BDD functions, interned on the
     BDD's secondary work stack, and its first cache is keyed on a BDD node (a `UnaryCache` of `BDD` to `MTBDD`). Within one
     call they are sound because interning is idempotent. Note `cartesianProduct`'s key is the whole
     operand tuple and its recursion rewrites that array in place — it must be cloned before descending,
@@ -1259,6 +1278,9 @@ intuitions transfer badly. Two habits follow:
   ones pinned to their contract via `agreement(…).containsAll`). Test classes are split by subject
   (sets in `BddSetTest`, maps in `BddMapTest`); when one trips PMD's coupling limit anyway, suppress
   `PMD.CouplingBetweenObjects` on it rather than splitting it further.
+- `MtBddTheories`' residual-product theories check the operation against its definition (the syntax trees, `restrict`
+  and `support`), against the chain it denotes, and each generalization as an identity: the cartesian product, the
+  monoid n-ary apply, vector composition, and the split of the composition for slots outside the operands' supports.
 - **New operations need:** theory coverage against the reference evaluation, an invariant check, and — if
   it touches ordering — a reordered variant.
 

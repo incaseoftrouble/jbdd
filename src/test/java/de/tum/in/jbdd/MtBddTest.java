@@ -896,6 +896,61 @@ class MtBddTest {
     }
 
     @Test
+    void testResidualProductOfTheDocumentedExample() {
+        // residualProduct's javadoc: F = a & (b | c), 0 valued false, 1 true, every other value undefined.
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int[] x = bdd.createVariables(2);
+        int[] abc = bdd.createVariables(3);
+        MtBddImpl mt = bdd.mtbdd();
+        int[] operands = {
+            mt.placeholder(),
+            mt.placeholder(),
+            mt.reference(mt.ifThenElse(x[0], mt.of(0), mt.of(7))),
+            mt.reference(mt.ifThenElse(x[1], mt.of(1), mt.of(5))),
+            mt.reference(mt.ifThenElse(x[1], mt.of(9), mt.of(0)))
+        };
+        int function = bdd.reference(bdd.and(abc[0], bdd.or(abc[1], abc[2])));
+        PartialValuation valuation = (variable, value) ->
+                value <= 1 ? PartialValuation.Truth.of(value == 1) : PartialValuation.Truth.UNDECIDED;
+        MultiTerminalDecisionDiagram.ResidualProduct product =
+                mt.residualProduct(MultiTerminalDecisionDiagram.Operator.of(bdd, function), operands, valuation);
+        int absent = MultiTerminalDecisionDiagram.ResidualProduct.ABSENT;
+
+        int rejected = mt.evaluate(product.function(), new boolean[] {true, false});
+        assertEquals(bdd.falseFunction(), product.residualFor(rejected));
+        assertArrayEquals(new int[] {absent, absent, absent, absent, absent}, product.valuesFor(rejected));
+        assertEquals(rejected, mt.evaluate(product.function(), new boolean[] {true, true}));
+        // Where T_a is 0 the descent stops: the result does not decide on x_1 there.
+        assertTrue(mt.isConstant(mt.high(product.function())));
+
+        int decided = mt.evaluate(product.function(), new boolean[] {false, true});
+        assertEquals(abc[0], product.residualFor(decided));
+        assertArrayEquals(new int[] {absent, absent, 7, absent, absent}, product.valuesFor(decided));
+
+        int open = mt.evaluate(product.function(), new boolean[] {false, false});
+        assertEquals(bdd.and(abc[0], abc[1]), product.residualFor(open));
+        assertArrayEquals(new int[] {absent, absent, 7, 5, absent}, product.valuesFor(open));
+        assertEquals(3, product.codomain().size());
+    }
+
+    @Test
+    void testResidualProductLeavesAVariableWithoutOperand() {
+        // A variable no operand replaces stays in the residual, as compose leaves it.
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int[] x = bdd.createVariables(3);
+        MtBddImpl mt = bdd.mtbdd();
+        int[] operands = {mt.placeholder(), mt.reference(mt.ifThenElse(x[0], mt.of(1), mt.of(0)))};
+        int function = bdd.reference(bdd.or(x[1], x[2]));
+        MultiTerminalDecisionDiagram.ResidualProduct product = mt.residualProduct(
+                MultiTerminalDecisionDiagram.Operator.of(bdd, function),
+                operands,
+                (variable, value) -> PartialValuation.Truth.of(value == 1));
+
+        assertEquals(bdd.trueFunction(), product.residualFor(mt.evaluate(product.function(), new boolean[] {true})));
+        assertEquals(x[2], product.residualFor(mt.evaluate(product.function(), new boolean[] {false})));
+    }
+
+    @Test
     void testCartesianProductDeduplicatesRepeatedTuples() {
         BddImpl bdd = new DdContextImpl(config).bdd();
         bdd.createVariables(2);

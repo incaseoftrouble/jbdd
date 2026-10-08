@@ -17,6 +17,7 @@
 package de.tum.in.jbdd;
 
 import de.tum.in.jbdd.collections.Cursor;
+import de.tum.in.jbdd.collections.IntObjectHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BiFunction;
@@ -86,6 +87,39 @@ public interface Values<V> {
      */
     <W> BddMap<W> cartesianProductMap(
             List<? extends BddMap<V>> maps, Values<W> destination, Function<? super List<V>, ? extends W> map);
+
+    /**
+     * The {@link MultiTerminalDecisionDiagram#residualProduct residual product} of {@code operands} under the boolean
+     * {@code function}, each pair mapped by {@code pair} into {@code destination}: at every assignment, the value of
+     * {@code pair} for the residual of {@code function} under the partial valuation the operands' values induce, and
+     * the values of the operands replacing a variable the residual depends on, keyed by that variable. The map
+     * {@code operands[v]} replaces the variable {@code v} of {@code function}, and a variable without one is left as
+     * it is. {@code function} is the operator combining the operands, so it may be a set of any context: its variables
+     * index the operands rather than decide anything of this context.
+     *
+     * <p>Where the parts live: the result is a map of this context, over its variables, into {@code destination}; each
+     * residual {@code pair} is handed is a set of {@code function}'s context, over its variables; the essential values
+     * are values of this numbering, keyed by those variables ({@link BddMap#cubes} of the result gives an assignment
+     * reaching each value). {@code pair} is called once per pair, outside the
+     * traversal, and may start operations of its own (as {@link BddMap#splitMap}'s mapping); the valuation runs inside
+     * it. All {@code operands} must be over this numbering.
+     */
+    <W> BddMap<W> residualProduct(
+            BddSet function,
+            IntObjectHashMap<? extends BddMap<V>> operands,
+            PartialValuation.Of<? super V> valuation,
+            Values<W> destination,
+            PairMapper<V, ? extends W> pair);
+
+    /** What {@link #residualProduct} maps a pair to. */
+    @FunctionalInterface
+    interface PairMapper<V, W> {
+        /**
+         * The value for the pair of {@code residual} and the essential {@code values}, keyed by the variable each
+         * operand replaces.
+         */
+        W apply(BddSet residual, IntObjectHashMap<V> values);
+    }
 
     /**
      * Creates a {@link BddMap.Relabeler} to {@code O} via {@code injection}. Build this once and reuse it (via

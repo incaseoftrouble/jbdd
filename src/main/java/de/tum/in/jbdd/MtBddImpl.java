@@ -2432,6 +2432,242 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
         return result;
     }
 
+    @Override
+    public ResidualProduct residualProduct(Operator operator, int[] operands, PartialValuation valuation) {
+        if (!(operator.diagram() instanceof BddImpl)) {
+            // The descent restricts and protects through the operator's table; another implementation gets the chain.
+            return ResidualProducts.ofCartesianProduct(this, operator, operands, valuation);
+        }
+        assert accessGuard.acquire();
+        ResidualProductDescent descent =
+                new ResidualProductDescent((BddImpl) operator.diagram(), operands.length, valuation);
+        int result = residualProductDescent(descent, operator.function(), operands);
+        assert accessGuard.release();
+        return descent.pairs.over(result);
+    }
+
+    /**
+     * {@link #residualProduct} of a function of any {@code operatorDiagram} - the function is the operator, whose
+     * variables index the operands, never descended with them, so it may live in a diagram of its own, over other
+     * variables and in another order - with the pairs relabeled as {@link #splitBddRelabeled} relabels the residuals:
+     * called once per pair outside the descent, with every residual referenced meanwhile, so the relabeler may start
+     * operations of its own.
+     */
+    int residualProductRelabeled(
+            BddImpl operatorDiagram,
+            int function,
+            int[] operands,
+            PartialValuation valuation,
+            PairRelabeler relabeler) {
+        assert accessGuard.acquire();
+        ResidualProductDescent descent = new ResidualProductDescent(operatorDiagram, operands.length, valuation);
+        int product = reference(residualProductDescent(descent, function, operands));
+        ResidualProducts.Pairs pairs = descent.pairs;
+        int pairCount = pairs.size();
+        for (int index = 0; index < pairCount; index++) {
+            operatorDiagram.reference(pairs.residuals.get(index));
+        }
+        assert accessGuard.release();
+
+        // relabelled values
+        int[] relabeled = new int[pairCount];
+        // corresponding constant mtbdd functions
+        int[] terminals = new int[pairCount];
+        for (int index = 0; index < pairCount; index++) {
+            relabeled[index] = relabeler.relabel(pairs.residuals.get(index), pairs.values.get(index));
+            terminals[index] = reference(of(relabeled[index]));
+        }
+
+        assert accessGuard.acquire();
+        assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
+        IntUnaryOperator combined = value -> relabeled[value];
+        cache.initMap(combined);
+        int result = computeMap(product, bdd.trueFunction(), combined, cache.mapCache(), cache.mapSimplifyCache());
+        assert table.workStacksEmpty() && bdd.table().workStacksEmpty();
+        assert accessGuard.release();
+
+        dereference(product);
+        for (int index = 0; index < pairCount; index++) {
+            operatorDiagram.dereference(pairs.residuals.get(index));
+            dereference(terminals[index]);
+        }
+        return result;
+    }
+
+    /** The value a pair of a {@link #residualProductRelabeled} is relabeled to. */
+    @FunctionalInterface
+    interface PairRelabeler {
+        int relabel(int residual, int[] values);
+    }
+
+    private int residualProductDescent(ResidualProductDescent descent, int function, int[] operands) {
+        BddImpl operatorDiagram = descent.operatorDiagram;
+        assert ResidualProducts.checkArguments(operatorDiagram, function, operands, placeholder());
+        int[] variables = ResidualProducts.replacedVariables(operands, placeholder());
+        int[] nodes = new int[variables.length];
+        for (int i = 0; i < variables.length; i++) {
+            nodes[i] = operands[variables[i]];
+            assert isValidFunction(nodes[i]);
+        }
+        assert table.workStacksEmpty() && operatorDiagram.table().workStacksEmpty();
+        table.pushToWorkStack(nodes);
+        cache.initResidualProduct();
+        int result = residualProductRecursive(descent, descent.protect(function), variables, nodes, nodes.length);
+        table.popFromWorkStack(nodes.length);
+        operatorDiagram.table().popFromSecondaryWorkStack(descent.protectedCount());
+        assert table.workStacksEmpty() && operatorDiagram.table().workStacksEmpty();
+        return result;
+    }
+
+    /* The state is the residual and the operands still in the descent, by the ascending variable they replace: first
+     * the variables whose operand reached a value the valuation decides are restricted away, then every operand
+     * replacing a variable outside the residual's support leaves, so the tuple shrinks along the path. The residual
+     * is only restricted and asked for its support, in its own diagram. */
+    private int residualProductRecursive(
+            ResidualProductDescent descent, int residual, int[] variables, int[] nodes, int count) {
+        BddImpl operatorDiagram = descent.operatorDiagram;
+        int restricted = residual;
+        for (int i = 0; i < count; i++) {
+            if (isConstant(nodes[i])) {
+                PartialValuation.Truth truth =
+                        descent.valuation.valueOf(variables[i], constantFunctionToValue(nodes[i]));
+                if (truth != PartialValuation.Truth.UNDECIDED) {
+                    restricted = descent.protect(operatorDiagram.restrictLiteral(
+                            restricted, variables[i], truth == PartialValuation.Truth.TRUE));
+                }
+            }
+        }
+
+        int[] support = operatorDiagram.supportArray(restricted);
+        if (support.length == 0) { // i.e. restricted is constant
+            return of(descent.pairs.intern(restricted));
+        }
+        // The residual and the essential operands' nodes are the whole state below, written as the cache's key:
+        // [residual, node_1, ..., node_k]. Their variables need no place in it - they are the replaced ones in the
+        // residual's support.
+        int[] essentialVariables = new int[count];
+        int[] key = new int[1 + count];
+        key[0] = restricted;
+        int essential = 0;
+        int level = Integer.MAX_VALUE;
+        // Both ascending: one joint linear walk
+        int next = 0;
+        for (int i = 0; i < count && next < support.length; i++) {
+            int variable = variables[i];
+            while (next < support.length && support[next] < variable) {
+                next += 1;
+            }
+            if (next < support.length && support[next] == variable) {
+                essentialVariables[essential] = variable;
+                key[1 + essential] = nodes[i];
+                essential += 1;
+                level = Math.min(level, decisionLevelOrMax(nodes[i]));
+            }
+        }
+        if (level == Integer.MAX_VALUE) {
+            int[] values = descent.absentValues();
+            for (int i = 0; i < essential; i++) {
+                values[essentialVariables[i]] = constantFunctionToValue(key[1 + i]);
+            }
+            return of(descent.pairs.intern(restricted, values));
+        }
+
+        if (essential == 1) {
+            return residualProductSingle(descent, restricted, essentialVariables[0], key[1]);
+        }
+        if (essential < count) {
+            // The cache compares whole keys.
+            key = Arrays.copyOf(key, 1 + essential);
+        }
+        int lookup = cache.lookupResidualProduct(key);
+        if (lookup != placeholder()) {
+            return lookup;
+        }
+        int hash = cache.lookupHash();
+
+        int[] lowNodes = new int[essential];
+        int[] highNodes = new int[essential];
+        for (int i = 0; i < essential; i++) {
+            int node = key[1 + i];
+            boolean decides = decisionLevelOrMax(node) == level;
+            lowNodes[i] = lowIf(node, decides);
+            highNodes[i] = highIf(node, decides);
+        }
+        int low = table.pushToWorkStack(
+                residualProductRecursive(descent, restricted, essentialVariables, lowNodes, essential));
+        int high = table.pushToWorkStack(
+                residualProductRecursive(descent, restricted, essentialVariables, highNodes, essential));
+        int result = makeFunction(level, low, high);
+        table.popFromWorkStack(2);
+        cache.putResidualProduct(hash, key, result);
+        return result;
+    }
+
+    /* One operand left: the residual cannot change before the operand reaches a value, so the descent follows that one
+     * node, without supports or tuples; its key is the general one's for this state, [residual, node]. */
+    private int residualProductSingle(ResidualProductDescent descent, int residual, int variable, int node) {
+        if (isConstant(node)) {
+            int value = constantFunctionToValue(node);
+            PartialValuation.Truth truth = descent.valuation.valueOf(variable, value);
+            if (truth != PartialValuation.Truth.UNDECIDED) {
+                // The residual depended on no other replaced variable, so once this one is fixed nothing is essential.
+                int restricted = descent.protect(descent.operatorDiagram.restrictLiteral(
+                        residual, variable, truth == PartialValuation.Truth.TRUE));
+                return of(descent.pairs.intern(restricted));
+            }
+            int[] values = descent.absentValues();
+            values[variable] = value;
+            return of(descent.pairs.intern(residual, values));
+        }
+
+        int[] key = {residual, node};
+        int lookup = cache.lookupResidualProduct(key);
+        if (lookup != placeholder()) {
+            return lookup;
+        }
+        int hash = cache.lookupHash();
+        int low = table.pushToWorkStack(residualProductSingle(descent, residual, variable, low(node)));
+        int high = table.pushToWorkStack(residualProductSingle(descent, residual, variable, high(node)));
+        int result = makeFunction(decisionLevel(node), low, high);
+        table.popFromWorkStack(2);
+        cache.putResidualProduct(hash, key, result);
+        return result;
+    }
+
+    // Every residual of the descent stays on its diagram's secondary work stack until the call ends.
+    private static final class ResidualProductDescent {
+        final BddImpl operatorDiagram;
+        final int width;
+        final PartialValuation valuation;
+        final ResidualProducts.Pairs pairs;
+        private final IntIntHashMap protectedResiduals = new IntIntHashMap();
+
+        ResidualProductDescent(BddImpl operatorDiagram, int width, PartialValuation valuation) {
+            this.operatorDiagram = operatorDiagram;
+            this.width = width;
+            this.pairs = new ResidualProducts.Pairs(width);
+            this.valuation = valuation;
+        }
+
+        int protect(int residual) {
+            protectedResiduals.computeIfAbsent(residual, function -> {
+                operatorDiagram.table().pushToSecondaryWorkStack(function);
+                return 0;
+            });
+            return residual;
+        }
+
+        int protectedCount() {
+            return protectedResiduals.size();
+        }
+
+        int[] absentValues() {
+            int[] values = new int[width];
+            Arrays.fill(values, ResidualProduct.ABSENT);
+            return values;
+        }
+    }
+
     private static final class IntTupleBijection {
         private final Map<IntArrayTuple, Integer> tupleToIndex = new HashMap<>();
         private final List<int[]> indexToTuple = new ArrayList<>();
