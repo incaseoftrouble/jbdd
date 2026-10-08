@@ -57,6 +57,8 @@ Gotchas that have cost real time:
   it. Never report a scaled run as the suite passing.
 - **One build at a time.** The test JVM alone takes gigabytes; two concurrent builds fail `:test` with no
   failing test in the report.
+- **Results are the XML reports** (`build/test-results/<task>/TEST-*.xml`); the HTML report is off, since the
+  theories' hundreds of thousands of cases fill the Gradle daemon's heap building it.
 - **The configuration cache is on** (`gradle.properties`). A `-Pjbdd.*` property read at configuration
   time is one of its inputs, so changing it re-configures. Forward a new switch to the test JVM the same
   way, as a `-P` property read in `build.gradle.kts`, never as a `System.getProperty` in the build script.
