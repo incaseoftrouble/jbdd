@@ -76,6 +76,12 @@ public interface BddMap<V> {
     /** Every value this map takes with the valuations mapping to it. */
     Map<V, BddSet> inverse();
 
+    /**
+     * Every value this map takes with a cube of one path to it ({@link MultiTerminalDecisionDiagram#cubes}): every
+     * assignment extending the cube is mapped to the value. One walk over the diagram.
+     */
+    Map<V, Cube> cubes();
+
     /** The set of valuations whose value matches {@code predicate}. */
     BddSet where(Predicate<? super V> predicate);
 

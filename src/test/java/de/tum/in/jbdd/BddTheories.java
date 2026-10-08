@@ -1521,6 +1521,24 @@ class BddTheories {
             }
         });
         assertThat(BddUtil.shortestPath(bdd, function).orElse(null), is(expected[0]));
+        assertThat(bdd.shortestCube(function).orElse(null), is(expected[0]));
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("unary")
+    void testCubeIsAPathToTrue(UnaryDataPoint<BinaryDd> dataPoint) {
+        BinaryDd bdd = dataPoint.bdd;
+        int function = dataPoint.function;
+        assumeTrue(bdd.isValidFunction(function));
+
+        Optional<Cube> cube = bdd.cube(function);
+        assertThat(cube.isPresent(), is(function != bdd.falseFunction()));
+        cube.ifPresent(path -> {
+            assertThat(bdd.restrict(function, path), is(bdd.trueFunction()));
+            boolean[] paths = {false};
+            bdd.forEachPath(function, other -> paths[0] |= other.equals(path));
+            assertThat("a path of the function", paths[0], is(true));
+        });
     }
 
     @ParameterizedTest(name = "{index}")

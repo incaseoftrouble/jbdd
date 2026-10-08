@@ -579,6 +579,14 @@ for the whole subtree, which never comes back to the n-ary; it costs up to a fif
 deep tuples would still have shrunk (`TODO.md` [NARY-SPLIT]).
 `NaryBenchmark` (`jmhNary`) times both shapes.
 
+**Cubes of paths** (`PathCubes`): `MultiTerminalDecisionDiagram.cubes(f[, values])` (`BddMap.cubes()` on the object layer) is `valuesOf`'s walk keeping the
+first path to each value (low before high, each node once; a `NatSet` stops once all have one), `shortestCube(f,
+predicate)` the bounded shortest-path search of `BddUtil.shortestPath` with "the terminal is accepted" for "the terminal
+is true", `shortestCubes` that per value. Both give a `ValueCubes` (`codomain()`, `cubeFor(value)`, `forEach` by
+ascending value; `PathCubes.OfMap` over a map), not a bare map. `MtBddImpl` walks for `cubes` with the table's mark bits, as `valuesOf`
+marks (each node marked on entry, so the path above a marked node is marked and one `doSetMarkBelow` unmarks all). On a BDD, `cube(f)` is a greedy descent (every node but false reaches true)
+and `shortestCube(f)` is `BddUtil.shortestPath`.
+
 A split's codomain is the values its meta-function takes (`valuesOf`), since combining interns residuals that a later
 combination merges away; the relabeled splits relabel only those (arrays still by residual index).
 
