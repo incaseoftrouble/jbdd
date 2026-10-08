@@ -243,6 +243,24 @@ class BddTest {
     }
 
     @Test
+    void testUnatenessThroughComplementEdges() {
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int a = bdd.createVariable();
+        int b = bdd.createVariable();
+        int c = bdd.createVariable();
+        // (a & !b) | c: positive in a and c, negative in b; a ^ b binate in both; its negation the other way round.
+        int function = bdd.reference(bdd.or(bdd.and(a, bdd.not(b)), c));
+        assertThat(bdd.unateness(function), is(new BinaryDecisionDiagram.Unateness(NatSet.of(0, 2), NatSet.of(1))));
+        assertThat(
+                bdd.unateness(bdd.not(function)),
+                is(new BinaryDecisionDiagram.Unateness(NatSet.of(1), NatSet.of(0, 2))));
+        int parity = bdd.reference(bdd.xor(a, b));
+        assertThat(bdd.unateness(parity), is(new BinaryDecisionDiagram.Unateness(NatSet.of(), NatSet.of())));
+        assertThat(
+                bdd.unateness(bdd.trueFunction()), is(new BinaryDecisionDiagram.Unateness(NatSet.of(), NatSet.of())));
+    }
+
+    @Test
     void testInfluencesAreTheFlipsOfEachVariableUnderAnyOrder() {
         BddImpl bdd = new DdContextImpl(config).bdd();
         int a = bdd.createVariable();

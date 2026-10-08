@@ -260,6 +260,11 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
         return ReferenceLiterals.implying(this, function);
     }
 
+    @Override
+    public Unateness unateness(int function) {
+        return ReferenceLiterals.unateness(this, function);
+    }
+
     /** Presents a cursor's elements as something else, without copying or stepping anything itself. */
     private static <F, T> Cursor<T> map(Cursor<F> cursor, Function<? super F, ? extends T> function) {
         return new Cursor<>() {

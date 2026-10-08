@@ -220,6 +220,12 @@ public interface BddSet {
     /** The literals implying this set, as a cube. See {@link BinaryDecisionDiagram#implyingLiterals(int)}. */
     Optional<Cube> implyingLiterals();
 
+    /** The variables this set is positive and negative unate in. See {@link BinaryDecisionDiagram#unateness(int)}. */
+    BinaryDecisionDiagram.Unateness unateness();
+
+    /** {@link #unateness()} for the given variables. See {@link BinaryDecisionDiagram#unateness(int, NatSet)}. */
+    BinaryDecisionDiagram.Unateness unateness(NatSet variables);
+
     /** Calls {@code consumer} once per element, treating variables outside {@code support} as "don't care". */
     void forEach(NatSet support, Consumer<? super NatSet> consumer);
 
