@@ -39,6 +39,22 @@ public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTe
     MutableNatSet satisfyingAssignment(int function);
 
     /**
+     * A path of {@code function} to true, as the cube of its decisions: every assignment extending it satisfies the
+     * function. Empty for false. A descent from the root, low unless that is false - every other node reaches true.
+     */
+    default Optional<Cube> cube(int function) {
+        return PathCubes.cube(this, function);
+    }
+
+    /**
+     * A shortest path of {@code function} to true, as the cube of its decisions; of the paths fixing the fewest
+     * variables, the first, low before high. Empty for false.
+     */
+    default Optional<Cube> shortestCube(int function) {
+        return BddUtil.shortestPath(this, function);
+    }
+
+    /**
      * The fraction of all assignments satisfying {@code function}: {@link #countSatisfyingAssignments(int)} divided by
      * {@code 2^}{@link #numberOfVariables()}, which is the same over any set of variables containing the function's
      * support. It therefore does not change when variables are created.

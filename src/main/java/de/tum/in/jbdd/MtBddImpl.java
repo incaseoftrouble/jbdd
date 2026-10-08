@@ -654,6 +654,64 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
     }
 
     @Override
+    public ValueCubes cubes(int function, IntPredicate values) {
+        return cubesMarked(function, values, Integer.MAX_VALUE);
+    }
+
+    @Override
+    public ValueCubes cubes(int function, NatSet values) {
+        return cubesMarked(function, values::contains, values.size());
+    }
+
+    // PathCubes.cubes with the visited nodes marked in the table, as valuesOf marks them, instead of hashed.
+    private ValueCubes cubesMarked(int function, IntPredicate values, int expected) {
+        assert isValidFunction(function);
+        PathCubes.OfMap cubes = new PathCubes.OfMap();
+        if (isConstant(function)) {
+            int value = constantFunctionToValue(function);
+            if (values.test(value)) {
+                cubes.put(value, Cube.of(MutableNatSet.create(), MutableNatSet.create()));
+            }
+            return cubes;
+        }
+        assert accessGuard.acquire();
+        assert !Assertions.COSTLY_ASSERTIONS || table.isNoneMarkedBelowNode(function);
+        cubesRecursive(function, values, expected, MutableNatSet.create(), MutableNatSet.create(), cubes);
+        // Marks decision nodes only, each with its path marked above it: unmarking descends exactly into them.
+        table.doSetMarkBelow(function, false, false);
+        assert !Assertions.COSTLY_ASSERTIONS || table.isNoneMarkedBelowNode(function);
+        assert accessGuard.release();
+        return cubes;
+    }
+
+    // Low before high, as PathCubes: a marked node leads only to values that have their cube already.
+    private void cubesRecursive(
+            int function,
+            IntPredicate values,
+            int expected,
+            MutableNatSet assignment,
+            MutableNatSet support,
+            PathCubes.OfMap cubes) {
+        if (isConstant(function)) {
+            int value = constantFunctionToValue(function);
+            if (!cubes.containsKey(value) && values.test(value)) {
+                cubes.put(value, Cube.of(assignment, support));
+            }
+            return;
+        }
+        if (cubes.size() == expected || !table.markNodeIfUnmarked(function)) {
+            return;
+        }
+        int variable = table.variable(function);
+        support.set(variable);
+        cubesRecursive(low(function), values, expected, assignment, support, cubes);
+        assignment.set(variable);
+        cubesRecursive(high(function), values, expected, assignment, support, cubes);
+        assignment.clear(variable);
+        support.clear(variable);
+    }
+
+    @Override
     public void forEachPath(int function, PathValueConsumer action) {
         assert accessGuard.acquire();
         for (ValuedCursor<Cube> cursor = pathCursor(function); cursor.valid(); cursor.advance()) {

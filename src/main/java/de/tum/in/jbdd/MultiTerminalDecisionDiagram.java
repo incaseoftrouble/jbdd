@@ -530,6 +530,47 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
     int splitRelabeled(int function, NatSet splitVariables, IntUnaryOperator relabeler);
 
     /**
+     * One cube per value of {@code function} that {@code values} accepts: the decisions along a path of the function
+     * to the value, so every assignment extending the cube is mapped to the value - the first such path, low before
+     * high. A value the function does not take has none. One walk over the function, each node once.
+     */
+    default ValueCubes cubes(int function, IntPredicate values) {
+        return PathCubes.cubes(this, function, values, Integer.MAX_VALUE);
+    }
+
+    /**
+     * The values {@code function} takes, each with a cube of a path to it: {@link #valuesOf} with the paths it walks.
+     */
+    default ValueCubes cubes(int function) {
+        return cubes(function, (int value) -> true);
+    }
+
+    /** Like {@link #cubes(int, IntPredicate)}, stopping once every value of {@code values} has its cube. */
+    default ValueCubes cubes(int function, NatSet values) {
+        return PathCubes.cubes(this, function, values::contains, values.size());
+    }
+
+    /**
+     * A shortest path of {@code function} to a value {@code values} accepts, as a cube: of the paths fixing the fewest
+     * variables, the first, low before high; empty if the function takes no such value.
+     */
+    default Optional<Cube> shortestCube(int function, IntPredicate values) {
+        return PathCubes.shortestCube(this, function, values);
+    }
+
+    /** {@link #shortestCube} for each value of {@code values} the function takes. */
+    default ValueCubes shortestCubes(int function, NatSet values) {
+        return PathCubes.shortestCubes(this, function, values);
+    }
+
+    /** {@link #shortestCubes(int, NatSet)} for the values {@code values} accepts. */
+    default ValueCubes shortestCubes(int function, IntPredicate values) {
+        MutableNatSet accepted = valuesOf(function);
+        accepted.removeIf(value -> !values.test(value));
+        return PathCubes.shortestCubes(this, function, accepted);
+    }
+
+    /**
      * Creates the product of the given {@code functions}. Suppose each function is {@code f_i(x_1, ..., x_n}},
      * then their product is a function {@code f(x)} that yields {@code [f_1(x), ..., f_m(x)]}. The returned
      * function indexes the {@code values} map. The outputs of {@code f} do not need to be dense. The product of no
@@ -607,6 +648,21 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
          * The co-domain of the meta-function: the values it takes.
          */
         NatSet codomain();
+    }
+
+    /** One cube per value of a function: the decisions along one of its paths to the value. */
+    interface ValueCubes {
+        /** The values with a cube. */
+        NatSet codomain();
+
+        /**
+         * The cube of a path to {@code value}: every assignment extending it is mapped to the value. For a value of
+         * {@link #codomain()}.
+         */
+        Cube cubeFor(int value);
+
+        /** Hands each value with its cube to {@code action}, by ascending value. */
+        void forEach(PathValueConsumer action);
     }
 
     @FunctionalInterface

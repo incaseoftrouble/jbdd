@@ -760,6 +760,13 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
         }
 
         @Override
+        public Map<V, Cube> cubes() {
+            Map<V, Cube> cubes = new LinkedHashMap<>();
+            factory.dd.cubes(function).forEach((cube, raw) -> cubes.put(values.valueOf(raw), cube));
+            return Collections.unmodifiableMap(cubes);
+        }
+
+        @Override
         public OptionalInt decisionVariable() {
             return factory.dd.isConstant(function)
                     ? OptionalInt.empty()

@@ -18,7 +18,6 @@ package de.tum.in.jbdd;
 
 import de.tum.in.jbdd.collections.IntIntHashMap;
 import de.tum.in.jbdd.collections.IntObjectHashMap;
-import de.tum.in.jbdd.collections.MutableNatSet;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -212,66 +211,7 @@ public final class BddUtil {
      * beat it is left early, and what that showed about it is remembered as a lower bound.
      */
     public static Optional<Cube> shortestPath(BinaryDecisionDiagram bdd, int function) {
-        if (function == bdd.falseFunction()) {
-            return Optional.empty();
-        }
-        // Exact lengths as themselves, the lower bound of a subtree left early as its negation.
-        IntIntHashMap lengths = new IntIntHashMap();
-        int length = shortestPathLength(bdd, function, Integer.MAX_VALUE, lengths);
-
-        MutableNatSet assignment = MutableNatSet.create();
-        MutableNatSet support = MutableNatSet.create();
-        int node = function;
-        for (int remaining = length; remaining > 0; remaining--) {
-            int variable = bdd.decisionVariable(node);
-            support.set(variable);
-            int low = bdd.lowOf(node);
-            // Low first, as forEachPath: every child on a shortest path got its exact length.
-            if (exactShortestPathLength(bdd, low, lengths) == remaining - 1) {
-                node = low;
-            } else {
-                assignment.set(variable);
-                node = bdd.highOf(node);
-                assert exactShortestPathLength(bdd, node, lengths) == remaining - 1;
-            }
-        }
-        assert node == bdd.trueFunction();
-        return Optional.of(Cube.of(assignment, support));
-    }
-
-    /** The length of the shortest path of {@code function} if below {@code bound}, else a lower bound of at least it. */
-    private static int shortestPathLength(BinaryDecisionDiagram bdd, int function, int bound, IntIntHashMap lengths) {
-        if (function == bdd.trueFunction()) {
-            return 0;
-        }
-        if (function == bdd.falseFunction()) {
-            return Integer.MAX_VALUE;
-        }
-        int known = lengths.get(function, Integer.MIN_VALUE);
-        if (known != Integer.MIN_VALUE && (known > 0 || -known >= bound)) {
-            return Math.abs(known);
-        }
-        if (bound <= 1) {
-            // Every decision node is at least one decision away from true.
-            return 1;
-        }
-
-        int low = shortestPathLength(bdd, bdd.lowOf(function), bound - 1, lengths);
-        int best = low == Integer.MAX_VALUE ? low : low + 1;
-        int high = shortestPathLength(bdd, bdd.highOf(function), Math.min(bound, best) - 1, lengths);
-        int length = Math.min(best, high == Integer.MAX_VALUE ? high : high + 1);
-        // Below the bound, both children were searched far enough for this to be exact; otherwise each is a
-        // lower bound and so is their minimum.
-        lengths.put(function, length < bound ? length : -length);
-        return length;
-    }
-
-    private static int exactShortestPathLength(BinaryDecisionDiagram bdd, int function, IntIntHashMap lengths) {
-        if (function == bdd.trueFunction()) {
-            return 0;
-        }
-        int known = lengths.get(function, -1);
-        return Math.max(known, -1);
+        return PathCubes.shortestTo(bdd, function, (int terminal) -> terminal == bdd.trueFunction());
     }
 
     /**

@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import com.google.common.collect.Streams;
 import de.tum.in.jbdd.Generator.Info;
 import de.tum.in.jbdd.Generator.UnaryDataPoint;
+import de.tum.in.jbdd.collections.IntIntHashMap;
 import de.tum.in.jbdd.collections.MutableNatSet;
 import de.tum.in.jbdd.collections.NatSet;
 import java.util.ArrayList;
@@ -31,6 +32,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -952,6 +954,104 @@ class MtBddTheories {
         MtBddImpl mt = dataPoint.context.mt;
         BddImpl bdd = dataPoint.context.bdd;
         assertThat(mt.constrain(dataPoint.function, bdd.trueFunction()), is(dataPoint.function));
+    }
+
+    // The assignment a witness denotes: its fixed variables as given, every other one false.
+    private static boolean[] assignmentOf(Cube witness) {
+        boolean[] assignment = new boolean[variableCount];
+        witness.assignment().forEach((int variable) -> assignment[variable] = true);
+        return assignment;
+    }
+
+    // Every value of the codomain has a cube, and every cube reaches its value; the marked walk finds the same cubes as
+    // the generic one, in ascending order.
+    private static void assertCubes(MtBddImpl mt, int function, NatSet codomain) {
+        MultiTerminalDecisionDiagram.ValueCubes cubes = mt.cubes(function, codomain);
+        assertThat(cubes.codomain(), is(codomain));
+        assertReaching(mt, function, cubes);
+        MultiTerminalDecisionDiagram.ValueCubes generic =
+                PathCubes.cubes(mt, function, codomain::contains, codomain.size());
+        codomain.forEach((int value) -> assertThat(cubes.cubeFor(value), is(generic.cubeFor(value))));
+    }
+
+    private static void assertReaching(MtBddImpl mt, int function, MultiTerminalDecisionDiagram.ValueCubes cubes) {
+        int[] previous = {-1};
+        cubes.forEach((cube, value) -> {
+            assertThat(value > previous[0], is(true));
+            previous[0] = value;
+            assertThat(mt.evaluate(function, assignmentOf(cube)), is(value));
+            assertThat(cubes.cubeFor(value), is(cube));
+        });
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("intUnary")
+    void testShortestCubesAreShortest(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        int function = dataPoint.function;
+        IntIntHashMap shortest = new IntIntHashMap();
+        mt.forEachPath(function, (path, value) -> {
+            if (path.support().size() < shortest.get(value, Integer.MAX_VALUE)) {
+                shortest.put(value, path.support().size());
+            }
+        });
+        NatSet values = mt.valuesOf(function);
+        MultiTerminalDecisionDiagram.ValueCubes all = mt.cubes(function);
+        assertThat(all.codomain(), is(values));
+        assertReaching(mt, function, all);
+        MultiTerminalDecisionDiagram.ValueCubes cubes = mt.shortestCubes(function, values);
+        assertThat(cubes.codomain(), is(values));
+        assertReaching(mt, function, cubes);
+        cubes.forEach((cube, value) -> assertThat(cube.support().size(), is(shortest.get(value, -1))));
+        // Over a predicate: the even values, and one shortest cube to any of them.
+        MultiTerminalDecisionDiagram.ValueCubes even = mt.cubes(function, (int value) -> value % 2 == 0);
+        values.forEach((int value) -> assertThat(even.codomain().contains(value), is(value % 2 == 0)));
+        assertReaching(mt, function, even);
+        assertThat(mt.shortestCubes(function, (int value) -> value % 2 == 0).codomain(), is(even.codomain()));
+        int fewest = values.intStream()
+                .filter(value -> value % 2 == 0)
+                .map(value -> shortest.get(value, -1))
+                .min()
+                .orElse(-1);
+        Optional<Cube> anyEven = mt.shortestCube(function, (int value) -> value % 2 == 0);
+        assertThat(anyEven.map(cube -> cube.support().size()).orElse(-1), is(fewest));
+        anyEven.ifPresent(cube -> assertThat(mt.evaluate(function, assignmentOf(cube)) % 2, is(0)));
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("intUnary")
+    void testCubesOfInverseAndSplitReachTheirValues(IntUnaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        MultiTerminalDecisionDiagram.FunctionToFunctionMap inverse = mt.invert(dataPoint.function);
+        assertCubes(mt, dataPoint.function, inverse.codomain());
+        MultiTerminalDecisionDiagram.FunctionToFunctionMap split = mt.split(dataPoint.function, splitVariables);
+        int meta = mt.reference(split.function());
+        // The codomain is what the meta-function takes, nothing a combination merged away.
+        assertThat(split.codomain(), is(mt.valuesOf(meta)));
+        assertCubes(mt, meta, split.codomain());
+        // A path of the meta-function decides on split variables only.
+        mt.cubes(meta, split.codomain())
+                .forEach((cube, index) -> assertThat(splitVariables.containsAll(cube.support()), is(true)));
+        mt.dereference(meta);
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("intTernary")
+    void testCubesOfTheCartesianProductReachTheirTuples(IntTernaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        int[] functions = {dataPoint.first, dataPoint.second, dataPoint.third};
+        IntSyntaxTree[] trees = {dataPoint.firstTree, dataPoint.secondTree, dataPoint.thirdTree};
+        MultiTerminalDecisionDiagram.FunctionToFunctionsMap product = mt.cartesianProduct(functions);
+        int function = mt.reference(product.function());
+        assertCubes(mt, function, product.codomain());
+        MultiTerminalDecisionDiagram.ValueCubes cubes = mt.cubes(function, product.codomain());
+        product.codomain().forEach((int index) -> {
+            boolean[] assignment = assignmentOf(cubes.cubeFor(index));
+            for (int i = 0; i < trees.length; i++) {
+                assertThat(product.functionFor(index)[i], is(trees[i].evaluate(assignment)));
+            }
+        });
+        mt.dereference(function);
     }
 
     @ParameterizedTest(name = "{index}")

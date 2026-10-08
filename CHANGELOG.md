@@ -47,6 +47,7 @@ New operations
 * `BddSet.split` (and `MtBdd.splitBdd`): a set as a `BddMap<BddSet>` over some variables, mapping each of their assignments to the residual it restricts the set to; `BddMap.split(variables, destination, residual)` the same for maps, each residual transformed on its way; a split's codomain is exactly the values its meta-function takes
 * `BddMap.inverse` (and `MtBdd.invert`): every value with its domain, in one pass
 * `Values.ifThenElse(int variable, ...)`, `Values.apply(List, BddMapBinaryOperator)` (an associative operator folded over many maps in one traversal), `cartesianProduct`
+* `MultiTerminalDecisionDiagram.cubes`, `shortestCube`, `shortestCubes` (one path to each value, over a set or a predicate, as a `ValueCubes`) and `BinaryDecisionDiagram.cube`, `shortestCube`; `BddMap.cubes()`
 * `allMatch` (`MtBdd` and `BddMap`) and `BddMap.agreesWith`: whether a predicate holds between two functions everywhere, stopping at the first counterexample - semantic equality across value numberings
 
 Changed
