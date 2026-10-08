@@ -1057,6 +1057,40 @@ class BddTheories {
         assertThat(bdd.implyingLiterals(function), is(valid ? Optional.empty() : Optional.of(cube(implying))));
     }
 
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("unary")
+    void testUnateness(UnaryDataPoint<BinaryDd> dataPoint) {
+        BinaryDd bdd = dataPoint.bdd;
+        int function = dataPoint.function;
+        assumeTrue(bdd.isValidFunction(function));
+
+        // By definition: positive in v iff raising v never falsifies the function, negative iff lowering it never does.
+        NatSet support = bdd.support(function);
+        MutableNatSet positive = MutableNatSet.copyOf(support);
+        MutableNatSet negative = MutableNatSet.copyOf(support);
+        for (boolean[] valuation : valuations) {
+            boolean value = bdd.evaluate(function, valuation);
+            support.forEach((int variable) -> {
+                boolean original = valuation[variable];
+                valuation[variable] = !original;
+                boolean flipped = bdd.evaluate(function, valuation);
+                valuation[variable] = original;
+                boolean low = original ? flipped : value;
+                boolean high = original ? value : flipped;
+                if (low && !high) {
+                    positive.clear(variable);
+                }
+                if (high && !low) {
+                    negative.clear(variable);
+                }
+            });
+        }
+        assertThat(bdd.unateness(function), is(new BinaryDecisionDiagram.Unateness(positive, negative)));
+        int negation = bdd.reference(bdd.not(function));
+        assertThat(bdd.unateness(negation), is(new BinaryDecisionDiagram.Unateness(negative, positive)));
+        bdd.dereference(negation);
+    }
+
     // The cube of the literals marked: literals[v][1] the positive one, literals[v][0] the negative one.
     private static Cube cube(boolean[][] literals) {
         MutableNatSet assignment = MutableNatSet.create();

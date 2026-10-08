@@ -289,6 +289,11 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
     }
 
     @Override
+    public Unateness unateness(int function) {
+        return ReferenceLiterals.unateness(this, function);
+    }
+
+    @Override
     public Cursor<NatSet> solutionCursor(int function) {
         return mt.assignmentCursor(function, v -> v != FALSE);
     }

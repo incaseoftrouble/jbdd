@@ -293,6 +293,10 @@ Entry points — never `new BddImpl(...)` outside tests:
   implies both; the node's own variable from a false or true child), a complement swapping the kinds and negating
   the literals. They hand out a `Cube` read as a consistent set of literals, empty for false (it implies every
   literal) and true (every literal implies it); the test adapters take cofactors.
+- `unateness` is native in `BddImpl` too: one visit of every (node, complement) the function reaches, a node of `v`
+  whose low child does not imply its high one ruling out positive in `v` (the converse negative, swapped through a
+  complement), by `intersectsRecursive` with the complement, which builds nothing. That suffices because the paths
+  above a node split the assignments into disjoint parts, each reaching one node of `v` or none.
 - `Cube` is the one type for a conjunction of literals - equivalently a partial assignment:
   path walks, the implied and implying literals and `BddUtil`'s `implicants` / `primeImplicants` / `shortestPath`
   hand them out, `restrict` and

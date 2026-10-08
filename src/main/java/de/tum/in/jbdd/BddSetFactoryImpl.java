@@ -638,6 +638,11 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         }
 
         @Override
+        public BinaryDecisionDiagram.Unateness unateness() {
+            return factory.dd.unateness(function);
+        }
+
+        @Override
         public void forEach(NatSet support, Consumer<? super NatSet> consumer) {
             factory.dd.forEachSolution(function, support, consumer);
         }

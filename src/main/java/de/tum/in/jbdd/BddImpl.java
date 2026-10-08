@@ -953,6 +953,47 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         return Optional.of(Objects.requireNonNull(literals.implying).cube());
     }
 
+    @Override
+    public Unateness unateness(int function) {
+        assert isValidFunction(function);
+        NatSet support = support(function);
+        MutableNatSet positive = MutableNatSet.copyOf(support);
+        MutableNatSet negative = MutableNatSet.copyOf(support);
+        if (!isConstant(function)) {
+            assert accessGuard.acquire();
+            assert table.workStacksEmpty();
+            unatenessRecursive(function, positive, negative, new IntIntHashMap());
+            assert table.workStacksEmpty();
+            assert accessGuard.release();
+        }
+        return new Unateness(positive, negative);
+    }
+
+    /*
+     * Visits every node the function reaches, as reached (a complement edge on the way complements it): a node of v
+     * with low not implying high rules out positive, high not implying low negative. Implication is the absence of an
+     * intersection with the complement, which builds nothing.
+     */
+    private void unatenessRecursive(
+            int function, MutableNatSet positive, MutableNatSet negative, IntIntHashMap visited) {
+        if (isConstant(function) || visited.containsKey(function)) {
+            return;
+        }
+        visited.put(function, 0);
+        int node = positive(function);
+        int variable = table.variable(node);
+        int low = complementIf(table.lowUnchecked(node), !isPositive(function));
+        int high = complementIf(table.highUnchecked(node), !isPositive(function));
+        if (positive.contains(variable) && intersectsRecursive(low, complement(high))) {
+            positive.clear(variable);
+        }
+        if (negative.contains(variable) && intersectsRecursive(high, complement(low))) {
+            negative.clear(variable);
+        }
+        unatenessRecursive(low, positive, negative, visited);
+        unatenessRecursive(high, positive, negative, visited);
+    }
+
     /*
      * The literals a function implies and those implying it, per regular node of a call. A literal of another variable
      * is implied by a node iff by both children, and implies it iff it implies both; the node's own variable is implied

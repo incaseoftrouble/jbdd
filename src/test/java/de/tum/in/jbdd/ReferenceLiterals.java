@@ -21,7 +21,7 @@ import de.tum.in.jbdd.collections.NatSet;
 import java.util.Optional;
 import java.util.PrimitiveIterator;
 
-/** Implied and implying literals by definition, for the test diagrams that implement the interface over another. */
+/** Implied and implying literals and unateness by definition, for the test diagrams that implement the interface over another. */
 final class ReferenceLiterals {
     private ReferenceLiterals() {}
 
@@ -33,6 +33,27 @@ final class ReferenceLiterals {
     /** v implies f iff f with v true is true, !v iff f with v false is; nothing outside the support but for true. */
     static Optional<Cube> implying(BinaryDd dd, int function) {
         return function == dd.trueFunction() ? Optional.empty() : Optional.of(literals(dd, function, false));
+    }
+
+    /** Per support variable, whether the low cofactor implies the high one (positive) or the converse (negative). */
+    static BinaryDecisionDiagram.Unateness unateness(BinaryDd dd, int function) {
+        MutableNatSet positive = MutableNatSet.create();
+        MutableNatSet negative = MutableNatSet.create();
+        PrimitiveIterator.OfInt iterator = dd.support(function).iterator();
+        while (iterator.hasNext()) {
+            int variable = iterator.nextInt();
+            int high = dd.reference(dd.restrict(function, Cube.literal(variable, true)));
+            int low = dd.reference(dd.restrict(function, Cube.literal(variable, false)));
+            if (dd.implies(low, high)) {
+                positive.set(variable);
+            }
+            if (dd.implies(high, low)) {
+                negative.set(variable);
+            }
+            dd.dereference(low);
+            dd.dereference(high);
+        }
+        return new BinaryDecisionDiagram.Unateness(positive, negative);
     }
 
     private static Cube literals(BinaryDd dd, int function, boolean implied) {

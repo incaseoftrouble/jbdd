@@ -21,6 +21,7 @@ import de.tum.in.jbdd.collections.NatSet;
 import java.util.Optional;
 import java.util.PrimitiveIterator;
 import java.util.function.IntUnaryOperator;
+import org.jspecify.annotations.Nullable;
 
 /**
  * What a binary decision diagram can compute, representing boolean functions. Note that, together with a set of variables,
@@ -106,6 +107,54 @@ public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTe
      * of the complement, negated, and the same pass computes them.
      */
     Optional<Cube> implyingLiterals(int function);
+
+    /**
+     * The support variables {@code function} is unate in: positive in {@code v} where {@code f[v:=0]} implies {@code
+     * f[v:=1]}, negative where the converse holds; a support variable in neither is binate. The paths above a node
+     * split the assignments into disjoint parts, each reaching one node of {@code v} or none, where the cofactors agree:
+     * so {@code f} is positive in {@code v} iff every node of {@code v} it reaches has its low child implying its high
+     * one (the converse through a complement). One pass over the diagram with an implication check per node; nothing
+     * is built.
+     */
+    Unateness unateness(int function);
+
+    /** The support variables a function is positive and negative unate in; the support's others are binate. */
+    final class Unateness {
+        private final NatSet positive;
+        private final NatSet negative;
+
+        public Unateness(NatSet positive, NatSet negative) {
+            this.positive = positive;
+            this.negative = negative;
+        }
+
+        /** The support variables {@code v} with {@code f[v:=0]} implying {@code f[v:=1]}. */
+        public NatSet positive() {
+            return positive;
+        }
+
+        /** The support variables {@code v} with {@code f[v:=1]} implying {@code f[v:=0]}. */
+        public NatSet negative() {
+            return negative;
+        }
+
+        @Override
+        public boolean equals(@Nullable Object o) {
+            return o instanceof Unateness
+                    && positive.equals(((Unateness) o).positive)
+                    && negative.equals(((Unateness) o).negative);
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * positive.hashCode() + negative.hashCode();
+        }
+
+        @Override
+        public String toString() {
+            return "Unateness[positive=" + positive + ", negative=" + negative + "]";
+        }
+    }
 
     /**
      * Constructs the generalized cofactor of {@code function} w.r.t. {@code domain} (Coudert &amp; Madre),
