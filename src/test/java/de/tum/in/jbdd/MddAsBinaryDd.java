@@ -250,6 +250,16 @@ class MddAsBinaryDd implements BinaryDd, StatisticsSource {
         return ReferenceInfluences.of(this, function);
     }
 
+    @Override
+    public Optional<Cube> impliedLiterals(int function) {
+        return ReferenceLiterals.implied(this, function);
+    }
+
+    @Override
+    public Optional<Cube> implyingLiterals(int function) {
+        return ReferenceLiterals.implying(this, function);
+    }
+
     /** Presents a cursor's elements as something else, without copying or stepping anything itself. */
     private static <F, T> Cursor<T> map(Cursor<F> cursor, Function<? super F, ? extends T> function) {
         return new Cursor<>() {

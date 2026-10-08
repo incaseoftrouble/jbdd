@@ -628,6 +628,16 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         }
 
         @Override
+        public Optional<Cube> impliedLiterals() {
+            return factory.dd.impliedLiterals(function);
+        }
+
+        @Override
+        public Optional<Cube> implyingLiterals() {
+            return factory.dd.implyingLiterals(function);
+        }
+
+        @Override
         public void forEach(NatSet support, Consumer<? super NatSet> consumer) {
             factory.dd.forEachSolution(function, support, consumer);
         }

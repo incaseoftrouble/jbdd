@@ -20,12 +20,14 @@ import static de.tum.in.jbdd.Preconditions.*;
 
 import de.tum.in.jbdd.collections.Cursor;
 import de.tum.in.jbdd.collections.IntIntHashMap;
+import de.tum.in.jbdd.collections.IntObjectHashMap;
 import de.tum.in.jbdd.collections.MutableNatSet;
 import de.tum.in.jbdd.collections.NatSet;
 import de.tum.in.jbdd.collections.NatSets;
 import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.PrimitiveIterator;
 import java.util.function.Consumer;
@@ -925,6 +927,128 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
 
         // Both sides share their exponent, and the larger of them is at least 1/2: neither underflows the quotient.
         return fractions[FRACTION] / (fractions[FRACTION] + fractions[COMPLEMENT_FRACTION]);
+    }
+
+    @Override
+    public Optional<Cube> impliedLiterals(int function) {
+        assert isValidFunction(function);
+        if (function == FALSE) {
+            return Optional.empty();
+        }
+        assert accessGuard.acquire();
+        Literals literals = literals(function, new IntObjectHashMap<>());
+        assert accessGuard.release();
+        return Optional.of(Objects.requireNonNull(literals.implied).cube());
+    }
+
+    @Override
+    public Optional<Cube> implyingLiterals(int function) {
+        assert isValidFunction(function);
+        if (function == TRUE) {
+            return Optional.empty();
+        }
+        assert accessGuard.acquire();
+        Literals literals = literals(function, new IntObjectHashMap<>());
+        assert accessGuard.release();
+        return Optional.of(Objects.requireNonNull(literals.implying).cube());
+    }
+
+    /*
+     * The literals a function implies and those implying it, per regular node of a call. A literal of another variable
+     * is implied by a node iff by both children, and implies it iff it implies both; the node's own variable is implied
+     * where the low child is false (its negation where the high one is), and implies the node where the high child is
+     * true (its negation where the low one is). A complement swaps the two kinds and negates the literals.
+     */
+    private Literals literals(int function, IntObjectHashMap<Literals> memo) {
+        if (function == TRUE) {
+            return Literals.TRUE;
+        }
+        if (function == FALSE) {
+            return Literals.FALSE;
+        }
+        int node = positive(function);
+        Literals literals = memo.get(node);
+        if (literals == null) {
+            int variable = table.variable(node);
+            int low = table.lowUnchecked(node);
+            int high = table.highUnchecked(node);
+            Literals lowLiterals = literals(low, memo);
+            Literals highLiterals = literals(high, memo);
+            LiteralSet implied = LiteralSet.intersection(highLiterals.implied, lowLiterals.implied);
+            LiteralSet implying = LiteralSet.intersection(highLiterals.implying, lowLiterals.implying);
+            if (low == FALSE) {
+                implied = Objects.requireNonNull(implied).with(variable, true);
+            } else if (high == FALSE) {
+                implied = Objects.requireNonNull(implied).with(variable, false);
+            }
+            if (high == TRUE) {
+                implying = Objects.requireNonNull(implying).with(variable, true);
+            } else if (low == TRUE) {
+                implying = Objects.requireNonNull(implying).with(variable, false);
+            }
+            literals = new Literals(implied, implying);
+            memo.put(node, literals);
+        }
+        return isPositive(function) ? literals : literals.complement();
+    }
+
+    // A consistent set of literals, as the variables taken positively and those taken negatively.
+    private static final class LiteralSet {
+        static final LiteralSet EMPTY = new LiteralSet(NatSet.of(), NatSet.of());
+
+        final NatSet positive;
+        final NatSet negative;
+
+        LiteralSet(NatSet positive, NatSet negative) {
+            this.positive = positive;
+            this.negative = negative;
+        }
+
+        // null stands for every literal, the neutral element.
+        static @Nullable LiteralSet intersection(@Nullable LiteralSet first, @Nullable LiteralSet second) {
+            if (first == null) {
+                return second;
+            }
+            if (second == null) {
+                return first;
+            }
+            return new LiteralSet(
+                    first.positive.intersection(second.positive), first.negative.intersection(second.negative));
+        }
+
+        LiteralSet with(int variable, boolean value) {
+            MutableNatSet added = MutableNatSet.copyOf(value ? positive : negative);
+            added.set(variable);
+            return value ? new LiteralSet(added, negative) : new LiteralSet(positive, added);
+        }
+
+        LiteralSet negated() {
+            return new LiteralSet(negative, positive);
+        }
+
+        Cube cube() {
+            return Cube.of(positive, positive.union(negative));
+        }
+    }
+
+    // The literals a function implies and those implying it; null for every literal (false implies all, all imply
+    // true).
+    private static final class Literals {
+        static final Literals TRUE = new Literals(LiteralSet.EMPTY, null);
+        static final Literals FALSE = new Literals(null, LiteralSet.EMPTY);
+
+        final @Nullable LiteralSet implied;
+        final @Nullable LiteralSet implying;
+
+        Literals(@Nullable LiteralSet implied, @Nullable LiteralSet implying) {
+            this.implied = implied;
+            this.implying = implying;
+        }
+
+        Literals complement() {
+            return new Literals(
+                    implying == null ? null : implying.negated(), implied == null ? null : implied.negated());
+        }
     }
 
     @Override

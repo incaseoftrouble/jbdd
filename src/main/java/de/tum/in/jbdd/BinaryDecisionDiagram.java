@@ -18,6 +18,7 @@ package de.tum.in.jbdd;
 
 import de.tum.in.jbdd.collections.MutableNatSet;
 import de.tum.in.jbdd.collections.NatSet;
+import java.util.Optional;
 import java.util.PrimitiveIterator;
 import java.util.function.IntUnaryOperator;
 
@@ -89,6 +90,22 @@ public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTe
      * {@code 2^-1022}.</p>
      */
     double[] influences(int function);
+
+    /**
+     * The literals {@code function} implies, as a cube: every assignment satisfying the function satisfies them, and the
+     * cube is the smallest one containing the function. Empty for false, which implies every literal; true gives the
+     * empty cube. A literal of a variable outside the support is implied only by false. One pass over the diagram:
+     * {@code f} implies a literal of another variable iff both cofactors do, its node's variable iff the low cofactor
+     * is false, the variable's negation iff the high one is.
+     */
+    Optional<Cube> impliedLiterals(int function);
+
+    /**
+     * The literals implying {@code function}, as a cube read as a set of literals: each of them alone implies the
+     * function. Empty for true, which every literal implies; false gives the empty cube. They are the implied literals
+     * of the complement, negated, and the same pass computes them.
+     */
+    Optional<Cube> implyingLiterals(int function);
 
     /**
      * Constructs the generalized cofactor of {@code function} w.r.t. {@code domain} (Coudert &amp; Madre),

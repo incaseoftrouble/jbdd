@@ -33,6 +33,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -216,6 +217,29 @@ class BddTest {
         bdd.variableOrder().reorderTo(reversed);
         assertThat(bdd.satisfyingFraction(and), is(0.25d));
         assertThat(bdd.satisfyingFraction(bdd.not(equivalence)), is(0.5d));
+    }
+
+    @Test
+    void testImpliedAndImplyingLiterals() {
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int a = bdd.createVariable();
+        int b = bdd.createVariable();
+        int c = bdd.createVariable();
+        // a & !b & (b | c): implies a, !b and c; nothing implies it.
+        int conjunction = bdd.reference(bdd.and(a, bdd.and(bdd.not(b), bdd.or(b, c))));
+        assertThat(bdd.impliedLiterals(conjunction), is(Optional.of(Cube.of(NatSet.of(0, 2), NatSet.of(0, 1, 2)))));
+        assertThat(bdd.implyingLiterals(conjunction), is(Optional.of(Cube.of(NatSet.of(), NatSet.of()))));
+        // a | !b | (b & c): implied by a, !b and c (c leaves !b | b), implies nothing; its complement is the other way
+        // round, negated.
+        int disjunction = bdd.reference(bdd.or(a, bdd.or(bdd.not(b), bdd.and(b, c))));
+        assertThat(bdd.implyingLiterals(disjunction), is(Optional.of(Cube.of(NatSet.of(0, 2), NatSet.of(0, 1, 2)))));
+        assertThat(bdd.impliedLiterals(disjunction), is(Optional.of(Cube.of(NatSet.of(), NatSet.of()))));
+        assertThat(
+                bdd.impliedLiterals(bdd.not(disjunction)), is(Optional.of(Cube.of(NatSet.of(1), NatSet.of(0, 1, 2)))));
+        // The constants: false implies everything, true is implied by everything.
+        assertThat(bdd.impliedLiterals(bdd.falseFunction()), is(Optional.empty()));
+        assertThat(bdd.implyingLiterals(bdd.trueFunction()), is(Optional.empty()));
+        assertThat(bdd.impliedLiterals(bdd.trueFunction()), is(Optional.of(Cube.of(NatSet.of(), NatSet.of()))));
     }
 
     @Test

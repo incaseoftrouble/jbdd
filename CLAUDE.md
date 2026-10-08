@@ -288,8 +288,14 @@ Entry points — never `new BddImpl(...)` outside tests:
   counterpart: `implicants`, `primeImplicants`, `shortestPath`, and the generic `adopt`.
 - `BddSet` deliberately exposes nothing assuming a fixed variable universe — callers always name the
   support they mean.
+- `impliedLiterals` / `implyingLiterals` are native in `BddImpl`: one pass with a per-call memo per regular node
+  holding both kinds (a literal of another variable is implied by a node iff by both children, implies it iff it
+  implies both; the node's own variable from a false or true child), a complement swapping the kinds and negating
+  the literals. They hand out a `Cube` read as a consistent set of literals, empty for false (it implies every
+  literal) and true (every literal implies it); the test adapters take cofactors.
 - `Cube` is the one type for a conjunction of literals - equivalently a partial assignment:
-  path walks and `BddUtil`'s `implicants` / `primeImplicants` / `shortestPath` hand them out, `restrict` and
+  path walks, the implied and implying literals and `BddUtil`'s `implicants` / `primeImplicants` / `shortestPath`
+  hand them out, `restrict` and
   `BddSetFactory.of` take them, `of(Cube)` builds one's function. Its operations return new cubes; a walk's cube
   is working state (§8). `of` copies what it is given and `ofUnsafe` takes the sets as they are (checking the
   assignment against the support by assertion only); the accessors `assignment()` / `support()` hand out the

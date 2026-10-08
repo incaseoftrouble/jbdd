@@ -1021,6 +1021,58 @@ class BddTheories {
     }
 
     @ParameterizedTest(name = "{index}")
+    @MethodSource("unary")
+    void testImpliedAndImplyingLiterals(UnaryDataPoint<BinaryDd> dataPoint) {
+        BinaryDd bdd = dataPoint.bdd;
+        int function = dataPoint.function;
+        assumeTrue(bdd.isValidFunction(function));
+
+        // By definition: f implies a literal iff no satisfying valuation falsifies it; a literal implies f iff every
+        // valuation satisfying it satisfies f.
+        int variables = bdd.numberOfVariables();
+        boolean[][] impliedBy = new boolean[variables][2];
+        boolean[][] implying = new boolean[variables][2];
+        for (boolean[] row : impliedBy) {
+            Arrays.fill(row, true);
+        }
+        for (boolean[] row : implying) {
+            Arrays.fill(row, true);
+        }
+        boolean satisfiable = false;
+        boolean valid = true;
+        for (boolean[] valuation : valuations) {
+            boolean value = bdd.evaluate(function, valuation);
+            satisfiable |= value;
+            valid &= value;
+            for (int variable = 0; variable < variables; variable++) {
+                int polarity = valuation[variable] ? 1 : 0;
+                if (value) {
+                    impliedBy[variable][1 - polarity] = false;
+                } else {
+                    implying[variable][polarity] = false;
+                }
+            }
+        }
+        assertThat(bdd.impliedLiterals(function), is(satisfiable ? Optional.of(cube(impliedBy)) : Optional.empty()));
+        assertThat(bdd.implyingLiterals(function), is(valid ? Optional.empty() : Optional.of(cube(implying))));
+    }
+
+    // The cube of the literals marked: literals[v][1] the positive one, literals[v][0] the negative one.
+    private static Cube cube(boolean[][] literals) {
+        MutableNatSet assignment = MutableNatSet.create();
+        MutableNatSet support = MutableNatSet.create();
+        for (int variable = 0; variable < literals.length; variable++) {
+            if (literals[variable][1]) {
+                assignment.set(variable);
+                support.set(variable);
+            } else if (literals[variable][0]) {
+                support.set(variable);
+            }
+        }
+        return Cube.of(assignment, support);
+    }
+
+    @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
     void testCountSatisfyingAssignmentsIn(BinaryDataPoint<BinaryDd> dataPoint) {
         BinaryDd bdd = dataPoint.bdd;

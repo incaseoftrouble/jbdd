@@ -214,6 +214,12 @@ public interface BddSet {
      */
     double[] influences();
 
+    /** The literals this set implies, as a cube. See {@link BinaryDecisionDiagram#impliedLiterals(int)}. */
+    Optional<Cube> impliedLiterals();
+
+    /** The literals implying this set, as a cube. See {@link BinaryDecisionDiagram#implyingLiterals(int)}. */
+    Optional<Cube> implyingLiterals();
+
     /** Calls {@code consumer} once per element, treating variables outside {@code support} as "don't care". */
     void forEach(NatSet support, Consumer<? super NatSet> consumer);
 

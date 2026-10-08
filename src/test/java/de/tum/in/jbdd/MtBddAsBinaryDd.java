@@ -279,6 +279,16 @@ class MtBddAsBinaryDd implements BinaryDd, ReorderableDd, StatisticsSource {
     }
 
     @Override
+    public Optional<Cube> impliedLiterals(int function) {
+        return ReferenceLiterals.implied(this, function);
+    }
+
+    @Override
+    public Optional<Cube> implyingLiterals(int function) {
+        return ReferenceLiterals.implying(this, function);
+    }
+
+    @Override
     public Cursor<NatSet> solutionCursor(int function) {
         return mt.assignmentCursor(function, v -> v != FALSE);
     }
