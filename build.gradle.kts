@@ -191,6 +191,9 @@ dependencies {
 
 fun Test.jbddTest(defaultScale: String) {
   useJUnitPlatform()
+  // The theories run hundreds of thousands of cases; the HTML report of them all fills the daemon's
+  // heap. The XML reports stay.
+  reports.html.required = false
   minHeapSize = "2g"
   maxHeapSize = "8g"
   systemProperty("jbdd.test.scale", project.findProperty("jbdd.test.scale") ?: defaultScale)
