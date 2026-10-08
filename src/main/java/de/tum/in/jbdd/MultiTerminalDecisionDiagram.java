@@ -587,7 +587,7 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
         int functionFor(int value);
 
         /**
-         * The co-domain of the meta-function.
+         * The co-domain of the meta-function: the values it takes.
          */
         NatSet codomain();
     }
@@ -604,7 +604,7 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
         int[] functionFor(int value);
 
         /**
-         * The co-domain of the meta-function.
+         * The co-domain of the meta-function: the values it takes.
          */
         NatSet codomain();
     }

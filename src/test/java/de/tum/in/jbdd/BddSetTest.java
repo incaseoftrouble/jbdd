@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import de.tum.in.jbdd.collections.IntIntHashMap;
 import de.tum.in.jbdd.collections.MutableNatSet;
 import de.tum.in.jbdd.collections.NatSet;
 import java.util.ArrayList;
@@ -727,10 +728,10 @@ class BddSetTest {
                 int raw = ((GcReferenceManager.DdContainer) function).function();
                 MultiTerminalDecisionDiagram.FunctionToFunctionMap pieces = mtBdd.splitBdd(raw, splitVariables);
                 int meta = mtBdd.reference(pieces.function());
-                int[] residualFunctions = pieces.codomain()
-                        .intStream()
-                        .map(index -> bdd.reference(pieces.functionFor(index)))
-                        .toArray();
+                // By index: the codomain holds the indices the meta-function takes, not necessarily 0 to n - 1.
+                IntIntHashMap residualFunctions = new IntIntHashMap();
+                pieces.codomain()
+                        .forEach((int index) -> residualFunctions.put(index, bdd.reference(pieces.functionFor(index))));
                 for (Iterator<NatSet> assignments = NatSetFixtures.powerSetIterator(splitVariables);
                         assignments.hasNext(); ) {
                     NatSet assignment = assignments.next();
@@ -738,12 +739,11 @@ class BddSetTest {
                     BddSet restricted = function.restrict(restriction);
                     assertEquals(restricted, split.evaluate(assignment));
                     int index = mtBdd.evaluate(meta, assignment);
-                    assertEquals(((GcReferenceManager.DdContainer) restricted).function(), residualFunctions[index]);
+                    assertEquals(
+                            ((GcReferenceManager.DdContainer) restricted).function(), residualFunctions.get(index, 0));
                 }
                 mtBdd.dereference(meta);
-                for (int residual : residualFunctions) {
-                    bdd.dereference(residual);
-                }
+                residualFunctions.forEach((index, residual) -> bdd.dereference(residual));
             }
         }
     }
