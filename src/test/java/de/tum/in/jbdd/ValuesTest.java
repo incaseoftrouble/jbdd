@@ -20,11 +20,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import de.tum.in.jbdd.collections.IntObjectHashMap;
 import de.tum.in.jbdd.collections.MutableNatSet;
 import de.tum.in.jbdd.collections.NatSet;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 
@@ -74,6 +78,63 @@ class ValuesTest {
         assertSame(joined, product.valueDomain());
         assertEquals("a0+b0", product.evaluate(NatSetFixtures.of()));
         assertEquals("a1+b1", product.evaluate(NatSetFixtures.of(0)));
+    }
+
+    @Test
+    void testResidualProductWithoutOperands() {
+        // Nothing replaced: one pair, the function itself with no essential values, everywhere.
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        Values<Integer> numbers = ctx.bddMaps().create();
+        BddSet function = ctx.bddSets().var(0).union(ctx.bddSets().var(1));
+        Values<String> pairs = ctx.bddMaps().create();
+        BddMap<String> product = numbers.residualProduct(
+                function,
+                new IntObjectHashMap<>(),
+                (variable, value) -> PartialValuation.Truth.UNDECIDED,
+                pairs,
+                (residual, values) -> residual.equals(function) + " " + values.size());
+        assertTrue(product.isConstant());
+        assertEquals(Set.of("true 0"), product.values());
+    }
+
+    @Test
+    void testResidualProductOverAnOperatorOfAnotherContext() {
+        // residualProduct's documented example, with the function - the operator - in a context of its own.
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BinaryFactoryContext operatorContext = BinaryFactoryContext.create();
+        Values<Integer> numbers = ctx.bddMaps().create();
+        BddSet x0 = ctx.bddSets().var(0);
+        BddSet x1 = ctx.bddSets().var(1);
+        IntObjectHashMap<BddMap<Integer>> operands = new IntObjectHashMap<>();
+        operands.put(2, numbers.of(7).update(x0, 0));
+        operands.put(3, numbers.of(5).update(x1, 1));
+        operands.put(4, numbers.of(0).update(x1, 9));
+        BddSetFactory variables = operatorContext.bddSets();
+        BddSet function = variables.var(2).intersection(variables.var(3).union(variables.var(4)));
+        Values<String> pairs = ctx.bddMaps().create();
+        List<BddSet> residuals = new ArrayList<>();
+        BddMap<String> product = numbers.residualProduct(
+                function,
+                operands,
+                (variable, value) ->
+                        value <= 1 ? PartialValuation.Truth.of(value == 1) : PartialValuation.Truth.UNDECIDED,
+                pairs,
+                (residual, values) -> {
+                    residuals.add(residual);
+                    return residual.support() + " " + values.size() + " " + values.get(2) + " " + values.get(3);
+                });
+
+        assertSame(pairs, product.valueDomain());
+        assertEquals("[] 0 null null", product.evaluate(NatSetFixtures.of(0)));
+        assertEquals("[2] 1 7 null", product.evaluate(NatSetFixtures.of(1)));
+        assertEquals("[2, 3] 2 7 5", product.evaluate(NatSetFixtures.of()));
+        assertEquals(3, residuals.size());
+        assertSame(variables, residuals.get(0).factory());
+        assertTrue(residuals.contains(variables.var(2).intersection(variables.var(3))));
+        // A cube of each pair is an assignment of the operands' context reaching it.
+        Map<String, Cube> cubes = product.cubes();
+        assertEquals(product.values(), cubes.keySet());
+        cubes.forEach((pair, cube) -> assertEquals(pair, product.evaluate(cube.assignment())));
     }
 
     @Test

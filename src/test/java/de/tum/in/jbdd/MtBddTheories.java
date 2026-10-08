@@ -128,6 +128,22 @@ class MtBddTheories {
             new NamedMonoidOp("max", Math::max, 0, valueRange),
             new NamedMonoidOp("min", Math::min, valueRange, 0));
 
+    /* The variables the ternary data points' operands replace in residual products. They are among the operands'
+     * variables on purpose: a residual speaks about the function's variables only. */
+    private static final int[] SLOT_VARIABLES = {3, 7, 11};
+
+    private static final List<NamedValuation> VALUATIONS = List.of(
+            new NamedValuation("by residue", (variable, value) -> truth(value % 3)),
+            new NamedValuation("per variable", (variable, value) -> truth((value + variable) % 4)),
+            new NamedValuation("undecided", PartialValuation.undecided()),
+            new NamedValuation("total", (variable, value) -> truth(value % 2)));
+    // Truth tables over three slots, bit s_0 + 2 s_1 + 4 s_2: false, true, s_0, s_0 & s_1 & s_2, s_0 & (s_1 | s_2),
+    // the majority and the parity.
+    private static final int[] SLOT_TABLES = {0, 255, 0b10101010, 0b10000000, 0b10101000, 0b11101000, 0b10010110};
+    private static final int CONJUNCTION_TABLE = 0b10000000;
+    // An operator diagram of its own: the operator never shares the operands' variables or their order.
+    private static final BddImpl OPERATOR_DIAGRAM = operatorDiagram();
+
     private final Random skipCheckRandom = new Random(0L);
 
     static {
@@ -1201,6 +1217,370 @@ class MtBddTheories {
         assertThat(dataPoint.function, not(is(mt.placeholder())));
     }
 
+    // 0 false, 1 true, anything else undefined.
+    private static PartialValuation.Truth truth(int value) {
+        return value == 0
+                ? PartialValuation.Truth.FALSE
+                : value == 1 ? PartialValuation.Truth.TRUE : PartialValuation.Truth.UNDECIDED;
+    }
+
+    private static BddImpl operatorDiagram() {
+        BddImpl diagram = new DdContextImpl(
+                        ImmutableBddConfiguration.builder().name("operators").build())
+                .bdd();
+        diagram.createVariables(variableCount);
+        return diagram;
+    }
+
+    // The function of the slots with the given truth table, referenced.
+    private static int slotFunction(BddImpl bdd, int[] slotVariables, int truthTable) {
+        int function = bdd.falseFunction();
+        for (int minterm = 0; minterm < 1 << slotVariables.length; minterm++) {
+            if ((truthTable & (1 << minterm)) == 0) {
+                continue;
+            }
+            int cube = bdd.trueFunction();
+            for (int slot = 0; slot < slotVariables.length; slot++) {
+                int literal = bdd.variableFunction(slotVariables[slot]);
+                cube = bdd.updateWith(bdd.and(cube, (minterm & (1 << slot)) == 0 ? bdd.not(literal) : literal), cube);
+            }
+            function = bdd.updateWith(bdd.or(function, cube), function);
+            bdd.dereference(cube);
+        }
+        return function;
+    }
+
+    private static int[] slotTables(IntTernaryDataPoint dataPoint) {
+        Random random = new Random(dataPoint.first * 31L + dataPoint.second * 17L + dataPoint.third);
+        int[] tables = Arrays.copyOf(SLOT_TABLES, SLOT_TABLES.length + 2);
+        tables[SLOT_TABLES.length] = random.nextInt(256);
+        tables[SLOT_TABLES.length + 1] = random.nextInt(256);
+        return tables;
+    }
+
+    // References the function and every residual, which a residual product hands out unprotected.
+    private static void reference(MtBddImpl mt, MultiTerminalDecisionDiagram.ResidualProduct product) {
+        reference(mt, mt.bdd(), product);
+    }
+
+    private static void reference(
+            MtBddImpl mt, BinaryDecisionDiagram operatorDiagram, MultiTerminalDecisionDiagram.ResidualProduct product) {
+        mt.reference(product.function());
+        product.codomain().forEach((int value) -> operatorDiagram.reference(product.residualFor(value)));
+    }
+
+    private static void dereference(MtBddImpl mt, MultiTerminalDecisionDiagram.ResidualProduct product) {
+        dereference(mt, mt.bdd(), product);
+    }
+
+    private static void dereference(
+            MtBddImpl mt, BinaryDecisionDiagram operatorDiagram, MultiTerminalDecisionDiagram.ResidualProduct product) {
+        mt.dereference(product.function());
+        product.codomain().forEach((int value) -> operatorDiagram.dereference(product.residualFor(value)));
+    }
+
+    private static MutableNatSet ternaryVariables(IntTernaryDataPoint dataPoint) {
+        return NatSetFixtures.union(
+                dataPoint.firstTree.containedVariables(),
+                dataPoint.secondTree.containedVariables(),
+                dataPoint.thirdTree.containedVariables());
+    }
+
+    // The operands replacing the given variables, every other variable left as it is.
+    private static int[] replacing(MtBddImpl mt, int[] variables, int[] operands, int count) {
+        int[] mapping = new int[variableCount];
+        Arrays.fill(mapping, mt.placeholder());
+        for (int i = 0; i < count; i++) {
+            mapping[variables[i]] = operands[i];
+        }
+        return mapping;
+    }
+
+    private static int[] absent() {
+        int[] values = new int[variableCount];
+        Arrays.fill(values, MultiTerminalDecisionDiagram.ResidualProduct.ABSENT);
+        return values;
+    }
+
+    // All three slots replaced, and the last one left as it is, so that it stays in every residual.
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("intTernary")
+    void testResidualProductAgreesWithItsDefinition(IntTernaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
+        int[] operands = {dataPoint.first, dataPoint.second, dataPoint.third};
+        IntSyntaxTree[] trees = {dataPoint.firstTree, dataPoint.secondTree, dataPoint.thirdTree};
+        for (BddImpl operatorDiagram : List.of(bdd, OPERATOR_DIAGRAM)) {
+            for (int replaced = operands.length - 1; replaced <= operands.length; replaced++) {
+                int[] mapping = replacing(mt, SLOT_VARIABLES, operands, replaced);
+                for (int table : slotTables(dataPoint)) {
+                    int function = slotFunction(operatorDiagram, SLOT_VARIABLES, table);
+                    for (NamedValuation valuation : VALUATIONS) {
+                        MultiTerminalDecisionDiagram.ResidualProduct product = mt.residualProduct(
+                                MultiTerminalDecisionDiagram.Operator.of(operatorDiagram, function),
+                                mapping,
+                                valuation.valuation);
+                        reference(mt, operatorDiagram, product);
+                        assertCubes(mt, product.function(), product.codomain());
+                        for (boolean[] assignment : assignmentsOver(ternaryVariables(dataPoint))) {
+                            int pair = mt.evaluate(product.function(), assignment);
+                            MutableNatSet restricted = MutableNatSet.create();
+                            MutableNatSet values = MutableNatSet.create();
+                            int[] operandValues = new int[replaced];
+                            for (int slot = 0; slot < replaced; slot++) {
+                                operandValues[slot] = trees[slot].evaluate(assignment);
+                                PartialValuation.Truth truth =
+                                        valuation.valuation.valueOf(SLOT_VARIABLES[slot], operandValues[slot]);
+                                if (truth != PartialValuation.Truth.UNDECIDED) {
+                                    restricted.set(SLOT_VARIABLES[slot]);
+                                    values.set(SLOT_VARIABLES[slot], truth == PartialValuation.Truth.TRUE);
+                                }
+                            }
+                            int residual = operatorDiagram.reference(
+                                    operatorDiagram.restrict(function, Cube.of(values, restricted)));
+                            String label = valuation.label + " " + table + " " + replaced;
+                            assertThat(label, product.residualFor(pair), is(residual));
+                            NatSet support = operatorDiagram.support(residual);
+                            int[] expected = absent();
+                            for (int slot = 0; slot < replaced; slot++) {
+                                if (support.contains(SLOT_VARIABLES[slot])) {
+                                    expected[SLOT_VARIABLES[slot]] = operandValues[slot];
+                                }
+                            }
+                            assertThat(label, product.valuesFor(pair), is(expected));
+                            operatorDiagram.dereference(residual);
+                        }
+                        dereference(mt, operatorDiagram, product);
+                    }
+                    operatorDiagram.dereference(function);
+                }
+            }
+        }
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("intTernary")
+    void testResidualProductIsItsChainOfOperations(IntTernaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
+        int[] operands = {dataPoint.first, dataPoint.second, dataPoint.third};
+        for (BddImpl operatorDiagram : List.of(bdd, OPERATOR_DIAGRAM)) {
+            for (int replaced = operands.length - 1; replaced <= operands.length; replaced++) {
+                int[] mapping = replacing(mt, SLOT_VARIABLES, operands, replaced);
+                for (int table : slotTables(dataPoint)) {
+                    int function = slotFunction(operatorDiagram, SLOT_VARIABLES, table);
+                    for (NamedValuation valuation : VALUATIONS) {
+                        MultiTerminalDecisionDiagram.ResidualProduct product = mt.residualProduct(
+                                MultiTerminalDecisionDiagram.Operator.of(operatorDiagram, function),
+                                mapping,
+                                valuation.valuation);
+                        reference(mt, operatorDiagram, product);
+                        MultiTerminalDecisionDiagram.ResidualProduct chain = ResidualProducts.ofCartesianProduct(
+                                mt,
+                                MultiTerminalDecisionDiagram.Operator.of(operatorDiagram, function),
+                                mapping,
+                                valuation.valuation);
+                        reference(mt, operatorDiagram, chain);
+                        // Both number their pairs as they meet them: the functions are the same up to the numbering.
+                        assertThat(
+                                product.codomain().size(), is(chain.codomain().size()));
+                        for (boolean[] assignment : assignmentsOver(ternaryVariables(dataPoint))) {
+                            int pair = mt.evaluate(product.function(), assignment);
+                            int chainPair = mt.evaluate(chain.function(), assignment);
+                            assertThat(product.residualFor(pair), is(chain.residualFor(chainPair)));
+                            assertThat(product.valuesFor(pair), is(chain.valuesFor(chainPair)));
+                        }
+                        dereference(mt, operatorDiagram, chain);
+                        dereference(mt, operatorDiagram, product);
+                    }
+                    operatorDiagram.dereference(function);
+                }
+            }
+        }
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("intTernary")
+    void testResidualProductGeneralizesTheCartesianProduct(IntTernaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
+        int[] operands = {dataPoint.first, dataPoint.second, dataPoint.third};
+        int conjunction = slotFunction(bdd, SLOT_VARIABLES, CONJUNCTION_TABLE);
+        MultiTerminalDecisionDiagram.ResidualProduct product = mt.residualProduct(
+                MultiTerminalDecisionDiagram.Operator.of(bdd, conjunction),
+                replacing(mt, SLOT_VARIABLES, operands, operands.length),
+                PartialValuation.undecided());
+        reference(mt, product);
+        MultiTerminalDecisionDiagram.FunctionToFunctionsMap tuples = mt.cartesianProduct(operands);
+        int tuplesFunction = mt.reference(tuples.function());
+        assertThat(product.codomain().size(), is(tuples.codomain().size()));
+        for (boolean[] assignment : assignmentsOver(ternaryVariables(dataPoint))) {
+            int pair = mt.evaluate(product.function(), assignment);
+            assertThat(product.residualFor(pair), is(conjunction));
+            int[] tuple = tuples.functionFor(mt.evaluate(tuplesFunction, assignment));
+            int[] expected = absent();
+            for (int slot = 0; slot < operands.length; slot++) {
+                expected[SLOT_VARIABLES[slot]] = tuple[slot];
+            }
+            assertThat(product.valuesFor(pair), is(expected));
+        }
+        mt.dereference(tuplesFunction);
+        dereference(mt, product);
+        bdd.dereference(conjunction);
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("intTernary")
+    void testResidualProductGeneralizesTheMonoidApply(IntTernaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
+        // Small values, so that the neutral and the absorbing value occur among the operands' values.
+        int[] operands = new int[3];
+        int[] given = {dataPoint.first, dataPoint.second, dataPoint.third};
+        for (int i = 0; i < operands.length; i++) {
+            operands[i] =
+                    mt.reference(mt.map(given[i], value -> value % 4 == 0 ? 0 : value % 4 == 1 ? valueRange : value));
+        }
+        int[] mapping = replacing(mt, SLOT_VARIABLES, operands, operands.length);
+        int conjunction = slotFunction(bdd, SLOT_VARIABLES, CONJUNCTION_TABLE);
+        for (NamedMonoidOp namedOp : MONOID_OPS) {
+            PartialValuation valuation = (variable, value) -> value == namedOp.neutral
+                    ? PartialValuation.Truth.TRUE
+                    : namedOp.absorbing != NamedMonoidOp.NONE && value == namedOp.absorbing
+                            ? PartialValuation.Truth.FALSE
+                            : PartialValuation.Truth.UNDECIDED;
+            MultiTerminalDecisionDiagram.ResidualProduct product =
+                    mt.residualProduct(MultiTerminalDecisionDiagram.Operator.of(bdd, conjunction), mapping, valuation);
+            reference(mt, product);
+            int[] folded = new int[product.codomain().size()];
+            for (int pair = 0; pair < folded.length; pair++) {
+                if (product.residualFor(pair) == bdd.falseFunction()) {
+                    folded[pair] = namedOp.absorbing;
+                    continue;
+                }
+                int accumulated = namedOp.neutral;
+                for (int value : product.valuesFor(pair)) {
+                    if (value != MultiTerminalDecisionDiagram.ResidualProduct.ABSENT) {
+                        accumulated = namedOp.op.applyAsInt(accumulated, value);
+                    }
+                }
+                folded[pair] = accumulated;
+            }
+            int mapped = mt.reference(mt.map(product.function(), pair -> folded[pair]));
+            int applied = mt.reference(
+                    namedOp.absorbing == NamedMonoidOp.NONE
+                            ? mt.applyMonoid(operands, namedOp::applyNary, namedOp.neutral)
+                            : mt.applyMonoid(operands, namedOp::applyNary, namedOp.neutral, namedOp.absorbing));
+            assertThat(namedOp.label, mapped, is(applied));
+            mt.dereference(mapped, applied);
+            dereference(mt, product);
+        }
+        bdd.dereference(conjunction);
+        mt.dereference(operands);
+    }
+
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("intTernary")
+    void testResidualProductGeneralizesTheComposition(IntTernaryDataPoint dataPoint) {
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
+        int[] operands = {dataPoint.first, dataPoint.second, dataPoint.third};
+        int[] operandMapping = replacing(mt, SLOT_VARIABLES, operands, operands.length);
+        NamedValuation total = VALUATIONS.get(VALUATIONS.size() - 1);
+        int[] mapping = new int[variableCount];
+        Arrays.fill(mapping, bdd.placeholder());
+        for (int slot = 0; slot < operands.length; slot++) {
+            int variable = SLOT_VARIABLES[slot];
+            mapping[variable] = bdd.reference(mt.mapBoolean(
+                    operands[slot], value -> total.valuation.valueOf(variable, value) == PartialValuation.Truth.TRUE));
+        }
+        for (int table : slotTables(dataPoint)) {
+            int function = slotFunction(bdd, SLOT_VARIABLES, table);
+            MultiTerminalDecisionDiagram.ResidualProduct product = mt.residualProduct(
+                    MultiTerminalDecisionDiagram.Operator.of(bdd, function), operandMapping, total.valuation);
+            reference(mt, product);
+            product.codomain().forEach((int pair) -> {
+                assertThat(bdd.isConstant(product.residualFor(pair)), is(true));
+                assertThat(product.valuesFor(pair), is(absent()));
+            });
+            int holds = bdd.reference(
+                    mt.mapBoolean(product.function(), pair -> product.residualFor(pair) == bdd.trueFunction()));
+            int composed = bdd.reference(bdd.compose(function, mapping));
+            assertThat(String.valueOf(table), holds, is(composed));
+            bdd.dereference(holds, composed);
+            dereference(mt, product);
+            bdd.dereference(function);
+        }
+        for (int variable : SLOT_VARIABLES) {
+            bdd.dereference(mapping[variable]);
+        }
+    }
+
+    // The boolean part as composition and split, which needs replaced variables outside the operands' supports.
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("intTernary")
+    void testResidualProductIsTheSplitComposition(IntTernaryDataPoint dataPoint) {
+        int[] operands = {dataPoint.first, dataPoint.second, dataPoint.third};
+        MutableNatSet operandVariables = ternaryVariables(dataPoint);
+        MutableNatSet free = MutableNatSet.copyOf(NatSet.range(0, variableCount));
+        free.andNot(operandVariables);
+        assumeTrue(free.size() >= operands.length);
+        int[] slotVariables = new int[operands.length];
+        int nextSlot = 0;
+        for (int variable = 0; nextSlot < slotVariables.length; variable++) {
+            if (free.contains(variable)) {
+                slotVariables[nextSlot] = variable;
+                nextSlot += 1;
+            }
+        }
+        MutableNatSet splitVariables = MutableNatSet.copyOf(NatSet.range(0, variableCount));
+        for (int slotVariable : slotVariables) {
+            splitVariables.clear(slotVariable);
+        }
+        NamedValuation valuation = VALUATIONS.get(0);
+        MtBddImpl mt = dataPoint.context.mt;
+        BddImpl bdd = dataPoint.context.bdd;
+        int[] operandMapping = replacing(mt, slotVariables, operands, operands.length);
+        int[] mapping = new int[variableCount];
+        Arrays.fill(mapping, bdd.placeholder());
+        for (int slot = 0; slot < operands.length; slot++) {
+            int variable = slotVariables[slot];
+            int holds = bdd.reference(mt.mapBoolean(
+                    operands[slot],
+                    value -> valuation.valuation.valueOf(variable, value) == PartialValuation.Truth.TRUE));
+            int undefined = bdd.reference(mt.mapBoolean(
+                    operands[slot],
+                    value -> valuation.valuation.valueOf(variable, value) == PartialValuation.Truth.UNDECIDED));
+            int keeps = bdd.reference(bdd.and(undefined, bdd.variableFunction(variable)));
+            mapping[variable] = bdd.reference(bdd.or(holds, keeps));
+            bdd.dereference(holds, undefined, keeps);
+        }
+        for (int table : slotTables(dataPoint)) {
+            int function = slotFunction(bdd, slotVariables, table);
+            MultiTerminalDecisionDiagram.ResidualProduct product = mt.residualProduct(
+                    MultiTerminalDecisionDiagram.Operator.of(bdd, function), operandMapping, valuation.valuation);
+            reference(mt, product);
+            int composed = bdd.reference(bdd.compose(function, mapping));
+            MultiTerminalDecisionDiagram.FunctionToFunctionMap split = mt.splitBdd(composed, splitVariables);
+            int splitFunction = mt.reference(split.function());
+            split.codomain().forEach((int index) -> bdd.reference(split.functionFor(index)));
+            assertCubes(mt, splitFunction, split.codomain());
+            for (boolean[] assignment : assignmentsOver(operandVariables)) {
+                assertThat(
+                        product.residualFor(mt.evaluate(product.function(), assignment)),
+                        is(split.functionFor(mt.evaluate(splitFunction, assignment))));
+            }
+            split.codomain().forEach((int index) -> bdd.dereference(split.functionFor(index)));
+            mt.dereference(splitFunction);
+            bdd.dereference(composed);
+            dereference(mt, product);
+            bdd.dereference(function);
+        }
+        for (int slotVariable : slotVariables) {
+            bdd.dereference(mapping[slotVariable]);
+        }
+    }
+
     /** One fully built diagram plus the data points sampled from it. */
     static final class Context {
         final String name;
@@ -1392,6 +1772,16 @@ class MtBddTheories {
      * though {@code checkLaws} does empirically spot-check them at every leaf encountered). {@link
      * #applyNary} lifts the binary op to n-ary via fold from {@link #neutral} - by construction, the same
      * neutral/absorbing laws carry over to it automatically. */
+    private static final class NamedValuation {
+        final String label;
+        final PartialValuation valuation;
+
+        NamedValuation(String label, PartialValuation valuation) {
+            this.label = label;
+            this.valuation = valuation;
+        }
+    }
+
     private static final class NamedMonoidOp {
         static final int NONE = -1;
 

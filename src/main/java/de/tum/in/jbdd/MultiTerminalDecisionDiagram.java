@@ -579,6 +579,86 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
     FunctionToFunctionsMap cartesianProduct(int[] functions);
 
     /**
+     * The <em>residual product</em>: the boolean {@code operator} evaluated on {@code operands} as far as their values
+     * decide it, together with the values it still depends on.
+     *
+     * <p>Each operand replaces one variable of the operator: {@code operands[v]} replaces the variable {@code v}, as
+     * in {@link BinaryDecisionDiagram#compose}, and {@link #placeholder()} (or an index past the array) leaves
+     * {@code v} as it is. The {@code valuation} reads each value an operand takes as true, false, or undecided for
+     * the variable it replaces. At an assignment {@code x} of this diagram's variables, the result is the pair of
+     *
+     * <ul>
+     *   <li>the <em>residual</em>: the operator with every variable fixed whose operand takes a value the valuation
+     *       reads as true or false, and
+     *   <li>the <em>essential values</em>: the values of the operands replacing a variable the residual still depends
+     *       on.
+     * </ul>
+     *
+     * An operand whose value is undecided is not essential if the residual no longer depends on its variable - the
+     * decided operands already decide that part of the operator. A variable no operand replaces stays in every
+     * residual. Where the decided operands decide the operator altogether, the residual is a constant and nothing is
+     * essential. Computing the product visits an operand only while the residual depends on it, and assignments that
+     * differ only in the values of operands that are not essential share one pair.
+     *
+     * <p><b>Example.</b> The operator {@code F = a & (b | c)} with operands {@code T_a, T_b, T_c}, and the valuation
+     * reading {@code 0} as false, {@code 1} as true and every other value as undecided:
+     *
+     * <ul>
+     *   <li>where {@code T_a(x) = 0}, the pair is {@code (false, {})}, and below such a point neither {@code T_b} nor
+     *       {@code T_c} is visited;
+     *   <li>where {@code T_a(x) = 7}, {@code T_b(x) = 1} and {@code T_c(x) = 9}, it is {@code (a, {a: 7})}:
+     *       {@code b} decides the disjunction, so {@code T_c} is not essential although its value is undecided;
+     *   <li>where {@code T_a(x) = 7}, {@code T_b(x) = 5} and {@code T_c(x) = 0}, it is {@code (a & b, {a: 7, b: 5})}.
+     * </ul>
+     *
+     * <p><b>Formally</b>, with {@code nu} the valuation and {@code T_v = operands[v]}: at {@code x} the replacing
+     * operands induce the partial assignment {@code rho(x) = { v -> nu(v, T_v(x)) }} over the replaced variables whose
+     * value is not {@link PartialValuation.Truth#UNDECIDED}, and the result maps {@code x} to
+     *
+     * <pre>  ( R(x), (T_v(x) | v in E(x)) )    where  R(x) = F|rho(x)  and  E(x) = { v replaced | v in supp(R(x)) },</pre>
+     *
+     * {@code F|rho} being the restriction ({@link BinaryDecisionDiagram#restrict}). {@code F} agrees with {@code R(x)}
+     * on every assignment extending {@code rho(x)}, and {@code R(x)} is free of the replaced variables exactly when
+     * the decided ones determine {@code F} whatever the undecided ones are.
+     *
+     * <p><b>As a chain of operations</b>, it is the {@link #cartesianProduct} of the replacing operands with each
+     * tuple {@code t} replaced by its residual and its essential values,
+     *
+     * <pre>  map(cartesianProduct(T), t -> ( restrict(F, rho(t)), t restricted to E(t) ))</pre>
+     *
+     * computed in one descent instead, which restricts {@code F} as soon as an operand reaches a value the valuation
+     * decides and leaves an operand out as soon as it is not essential. Its boolean part is a vector composition
+     * followed by a split: with the replaced variables outside the operands' supports, {@code x -> R(x)} is the
+     * {@link #splitBdd} on the operands' variables of
+     *
+     * <pre>  compose(F, v -> [nu(v, T_v) = TRUE] | ([nu(v, T_v) = UNDECIDED] &amp; v))</pre>
+     *
+     * with {@code [nu(v, T_v) = c]} the {@link #mapBoolean} of the operand replacing {@code v} to the values the
+     * valuation reads as {@code c}: a decided variable is substituted by its truth value, an undecided one by itself.
+     *
+     * <p><b>The operator</b> combines the operands' values, it never decides on this diagram's variables: its
+     * variables only name operands. So it is a function of any binary decision diagram ({@link Operator}), which need
+     * not share this diagram's variables or their order. A replaced variable must exist in the operator's diagram.
+     *
+     * <p><b>Where the parts of the result live.</b>
+     *
+     * <ul>
+     *   <li>{@link ResidualProduct#function()} is a function of this diagram, over this diagram's variables (those the
+     *       operands decide on); its values are not operand values but indices of the pairs, {@link
+     *       ResidualProduct#codomain()}.
+     *   <li>{@link ResidualProduct#residualFor} of an index is a function of the <em>operator's</em> diagram, over the
+     *       operator's variables - unprotected, as with {@link #splitBdd}: it must be referenced, in the operator's
+     *       diagram, before any further call.
+     *   <li>{@link ResidualProduct#valuesFor} of an index are terminal values of this diagram (the operands' values),
+     *       indexed by the operator's variables like {@code operands}: {@link ResidualProduct#ABSENT} for a variable
+     *       whose operand is not essential or that no operand replaces.
+     * </ul>
+     */
+    default ResidualProduct residualProduct(Operator operator, int[] operands, PartialValuation valuation) {
+        return ResidualProducts.ofCartesianProduct(this, operator, operands, valuation);
+    }
+
+    /**
      * Constructs the generalized cofactor of {@code function} w.r.t. {@code domain} (Coudert &amp; Madre),
      * also written {@code f @ g}: agrees with {@code function} wherever {@code domain} holds, and
      * elsewhere takes the value of {@code function} at the nearest {@code domain}-satisfying assignment
@@ -647,6 +727,73 @@ public interface MultiTerminalDecisionDiagram extends BooleanDecisionDiagram {
         /**
          * The co-domain of the meta-function: the values it takes.
          */
+        NatSet codomain();
+    }
+
+    /**
+     * A boolean function as the operator of a {@link #residualProduct}: the function together with the binary decision
+     * diagram it belongs to, which may be another one than the residual product's own.
+     */
+    final class Operator {
+        private final BinaryDecisionDiagram diagram;
+        private final int function;
+
+        private Operator(BinaryDecisionDiagram diagram, int function) {
+            this.diagram = diagram;
+            this.function = function;
+        }
+
+        /** {@code function} of {@code diagram}. */
+        public static Operator of(BinaryDecisionDiagram diagram, int function) {
+            assert diagram.isValidFunction(function);
+            return new Operator(diagram, function);
+        }
+
+        /** The diagram the function belongs to. */
+        public BinaryDecisionDiagram diagram() {
+            return diagram;
+        }
+
+        /** The function. */
+        public int function() {
+            return function;
+        }
+
+        @Override
+        public boolean equals(@Nullable Object o) {
+            // Diagram identity: a function means something only in its own diagram.
+            return o instanceof Operator && diagram == ((Operator) o).diagram && function == ((Operator) o).function;
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * System.identityHashCode(diagram) + function;
+        }
+
+        @Override
+        public String toString() {
+            return function + "@" + diagram;
+        }
+    }
+
+    /** The pairs of a {@link #residualProduct}, indexed by the values of its function. */
+    interface ResidualProduct {
+        /** The value {@link #valuesFor} holds for an operand that is not essential. */
+        int ABSENT = -1;
+
+        /** The function of this diagram, over its variables, whose values index the pairs. */
+        int function();
+
+        /** The residual of the pair, a function of the operator's diagram. */
+        int residualFor(int value);
+
+        /**
+         * The values of the pair, indexed as the operands are: the value of the operand replacing a variable the
+         * residual depends on, {@link #ABSENT} for every other index. Not to be modified.
+         */
+        int[] valuesFor(int value);
+
+        /** The co-domain of the function. */
         NatSet codomain();
     }
 

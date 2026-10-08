@@ -93,6 +93,7 @@ final class MtBddCache implements VariableOrderObserver, StatisticsReporter {
     private final TernaryCache splitBddCombineCache;
     private final MtbddNodesToIntCache cartesianProductCache;
     private final MtbddNodesToIntCache naryApplyCache;
+    private final ResidualProductCache residualProductCache;
     private @Nullable MtBddNaryOperator currentNaryApplyOp;
     private final UnaryToObjectCache<BigInteger> satisfactionCache;
     private @Nullable IntPredicate currentCountPredicate;
@@ -125,6 +126,7 @@ final class MtBddCache implements VariableOrderObserver, StatisticsReporter {
         splitBddCombineCache = new TernaryCache(mtbdd, bdd, MTBDD, MTBDD, PLAIN, MTBDD);
         cartesianProductCache = new MtbddNodesToIntCache(mtbdd, bdd);
         naryApplyCache = new MtbddNodesToIntCache(mtbdd, bdd);
+        residualProductCache = new ResidualProductCache(mtbdd);
         satisfactionCache = new UnaryToObjectCache<>(mtbdd, bdd);
 
         // Like BooleanCache's own composeValid: composeArray holds Bdd function ids the caller supplies,
@@ -166,6 +168,7 @@ final class MtBddCache implements VariableOrderObserver, StatisticsReporter {
                 entry("split_bdd_combine", splitBddCombineCache),
                 entry("cartesian_product", cartesianProductCache),
                 entry("nary_apply", naryApplyCache),
+                entry("residual_product", residualProductCache),
                 entry("count", satisfactionCache));
 
         tableSizeChanged(0, NatSet.of());
@@ -233,6 +236,7 @@ final class MtBddCache implements VariableOrderObserver, StatisticsReporter {
         splitBddCache.grow(size);
         cartesianProductCache.grow(size);
         naryApplyCache.grow(size);
+        residualProductCache.grow(size);
     }
 
     void variablesChanged() {
@@ -427,6 +431,23 @@ final class MtBddCache implements VariableOrderObserver, StatisticsReporter {
      */
     void initCartesianProduct() {
         cartesianProductCache.invalidate();
+    }
+
+    /** Like {@link #initCartesianProduct}: the results index pairs numbered afresh per call. */
+    void initResidualProduct() {
+        residualProductCache.invalidate();
+    }
+
+    int lookupResidualProduct(int[] key) {
+        int result = residualProductCache.lookup(key);
+        lookupHash = residualProductCache.lookupHash;
+        return result;
+    }
+
+    // Retains key, as putCartesianProduct does.
+    void putResidualProduct(int hash, int[] key, int result) {
+        assert mtbdd.isValidFunction(result);
+        residualProductCache.put(hash, key, result);
     }
 
     void initNaryApply(MtBddNaryOperator op) {
@@ -865,6 +886,87 @@ final class MtBddCache implements VariableOrderObserver, StatisticsReporter {
 
         void put(int hash, int function, V result) {
             values[storeKeys(hash, function)] = result;
+        }
+    }
+
+    /* Keyed on a residual product's state: the residual, then the nodes of the operands still in the descent by the
+     * ascending variable they replace, [residual, node_1, ..., node_k] - the variables are the replaced ones in the
+     * residual's support, so the residual determines them. A residual stays protected for the call and the cache is
+     * cleared at every call, so only the nodes and the result can become stale. */
+    static final class ResidualProductCache extends CacheBase.ObjectKeys<int[]> implements MtbddCacheStorage {
+        private int[] values = EMPTY_INT_ARRAY;
+        final MtBddImpl mtbdd;
+        int lookupHash = 0;
+
+        ResidualProductCache(MtBddImpl mtbdd) {
+            this.mtbdd = mtbdd;
+        }
+
+        @Override
+        protected boolean isValid(int binStart) {
+            int[] key = cache[binStart];
+            if (key == null || !mtbdd.isValidFunction(values[binStart])) {
+                return false;
+            }
+            for (int i = 1; i < key.length; i++) {
+                if (!mtbdd.isValidFunction(key[i])) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        @Override
+        protected int[][] newArray(int size) {
+            return new int[size][];
+        }
+
+        @Override
+        public void clearInvalidBddNodes(boolean attemptPruning) {
+            // The residuals are protected for the call
+        }
+
+        @Override
+        public void clearInvalidMtbddNodes(boolean attemptPruning) {
+            prune(attemptPruning, this::isValid);
+        }
+
+        @Override
+        protected int hashOf(int[] key) {
+            return Arrays.hashCode(key);
+        }
+
+        @Override
+        protected void growInto(int newSize, int[][] newCache, boolean preserve) {
+            if (preserve) {
+                int[] newValues = new int[newSize];
+                rehashInto(newSize, newCache, (oldBin, newBin) -> newValues[newBin] = values[oldBin]);
+                this.values = newValues;
+            } else {
+                this.values = new int[newSize];
+            }
+        }
+
+        int lookup(int[] key) {
+            ensureValid();
+            int hash = Arrays.hashCode(key);
+            lookupHash = hash;
+            int index = binIndex(hash);
+            if (Arrays.equals(key, cache[index])) {
+                assert isValid(index);
+                statistics.hit();
+                return values[index];
+            }
+            statistics.miss();
+            return mtbdd.placeholder();
+        }
+
+        void put(int hash, int[] key, int result) {
+            ensureValid();
+            assert hash == Arrays.hashCode(key);
+            int index = putBin(hash);
+            cache[index] = key;
+            values[index] = result;
         }
     }
 

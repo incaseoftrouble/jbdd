@@ -19,6 +19,7 @@ package de.tum.in.jbdd;
 import static de.tum.in.jbdd.RegisteredOperation.*;
 
 import de.tum.in.jbdd.RegisteredOperations.Forwarding;
+import de.tum.in.jbdd.collections.IntObjectHashMap;
 import de.tum.in.jbdd.collections.MutableNatSet;
 import de.tum.in.jbdd.collections.NatSet;
 import java.lang.ref.Reference;
@@ -312,6 +313,36 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
                         return value;
                     },
                     UnaryOperator.identity());
+        }
+
+        @Override
+        public <W> BddMap<W> residualProduct(
+                BddSet function,
+                IntObjectHashMap<? extends BddMap<V>> operands,
+                PartialValuation.Of<? super V> valuation,
+                Values<W> destination,
+                PairMapper<V, ? extends W> pair) {
+            ValuesImpl<W> resultValues = factory.valuesOf(destination);
+            // The function is the operator: a set of any context (MtBddImpl#residualProductRelabeled).
+            BddSetFactoryImpl operatorSets = (BddSetFactoryImpl) function.factory();
+            int[] functions = new int[operands.keyStream().max().orElse(-1) + 1];
+            assert Arrays.stream(functions).allMatch(v -> v == factory.dd.placeholder());
+            operands.forEach((variable, map) -> functions[variable] = factory.functionOf(map, this));
+            int result = factory.dd.residualProductRelabeled(
+                    operatorSets.dd,
+                    operatorSets.functionOf(function),
+                    functions,
+                    (variable, raw) -> valuation.valueOf(variable, valueOf(raw)),
+                    (residual, rawValues) -> {
+                        IntObjectHashMap<V> values = new IntObjectHashMap<>();
+                        for (int variable = 0; variable < rawValues.length; variable++) {
+                            if (rawValues[variable] != MultiTerminalDecisionDiagram.ResidualProduct.ABSENT) {
+                                values.put(variable, valueOf(rawValues[variable]));
+                            }
+                        }
+                        return resultValues.getOrAssignIndex(pair.apply(operatorSets.make(residual), values));
+                    });
+            return factory.make(result, resultValues);
         }
 
         private <W> BddMap<W> cartesianProduct(
