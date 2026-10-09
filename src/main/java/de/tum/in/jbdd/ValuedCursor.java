@@ -1,0 +1,30 @@
+/*
+ * This file is part of JBDD (https://github.com/incaseoftrouble/jbdd).
+ * Copyright (c) 2026 Tobias Meggendorfer.
+ *
+ * JBDD is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 3.
+ *
+ * JBDD is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with JBDD. If not, see <http://www.gnu.org/licenses/>.
+ */
+package de.tum.in.jbdd;
+
+import de.tum.in.jbdd.collections.Cursor;
+
+/**
+ * A {@link Cursor} that also reports the terminal the element it stands on leads to.
+ */
+public interface ValuedCursor<E> extends Cursor<E> {
+    /**
+     * The value the underlying function takes on the element the cursor stands on. Defined exactly
+     * while {@link #valid()} holds.
+     */
+    int value();
+}

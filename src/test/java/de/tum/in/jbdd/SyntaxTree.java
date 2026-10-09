@@ -18,7 +18,7 @@ package de.tum.in.jbdd;
 
 import de.tum.in.jbdd.SyntaxTree.SyntaxTreeBinaryOperation.BinaryType;
 import de.tum.in.jbdd.SyntaxTree.SyntaxTreeTernaryOperation.TernaryType;
-import java.util.BitSet;
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
@@ -27,9 +27,8 @@ import java.util.Set;
 /**
  * Utility class used to represent propositional formulas.
  */
-@SuppressWarnings({"unused", "WeakerAccess", "PMD.GodClass", "checkstyle:javadoc"})
-// TODO Add a "toBddNode(BDD bdd)" method
-final class SyntaxTree {
+@SuppressWarnings({"unused", "WeakerAccess"})
+public final class SyntaxTree {
     private final SyntaxTreeNode rootNode;
 
     SyntaxTree(SyntaxTreeNode rootNode) {
@@ -136,7 +135,7 @@ final class SyntaxTree {
         return Objects.equals(rootNode, that.rootNode);
     }
 
-    boolean evaluate(BitSet valuation) {
+    boolean evaluate(NatSet valuation) {
         return rootNode.evaluate(valuation);
     }
 
@@ -172,7 +171,7 @@ final class SyntaxTree {
         }
 
         @Override
-        public int depth() {
+        int depth() {
             return depth;
         }
 
@@ -189,8 +188,8 @@ final class SyntaxTree {
         }
 
         @Override
-        boolean evaluate(BitSet valuation) {
-            switch (type) {
+        boolean evaluate(NatSet valuation) {
+            switch (type) { // NOPMD
                 case AND:
                     return left.evaluate(valuation) && right.evaluate(valuation);
                 case OR:
@@ -202,13 +201,13 @@ final class SyntaxTree {
                 case EQUIVALENCE:
                     return left.evaluate(valuation) == right.evaluate(valuation);
                 default:
-                    throw new IllegalStateException("Unknown type");
+                    throw new AssertionError("Unknown type");
             }
         }
 
         @Override
         boolean evaluate(boolean[] valuation) {
-            switch (type) {
+            switch (type) { // NOPMD
                 case AND:
                     return left.evaluate(valuation) && right.evaluate(valuation);
                 case OR:
@@ -225,7 +224,7 @@ final class SyntaxTree {
         }
 
         @Override
-        public void gatherVariables(Set<Integer> set) {
+        void gatherVariables(Set<Integer> set) {
             left.gatherVariables(set);
             right.gatherVariables(set);
         }
@@ -243,7 +242,7 @@ final class SyntaxTree {
         }
 
         @Override
-        public boolean hasVariable(int number) {
+        boolean hasVariable(int number) {
             return left.hasVariable(number) || right.hasVariable(number);
         }
 
@@ -274,7 +273,7 @@ final class SyntaxTree {
         }
 
         @Override
-        public int depth() {
+        int depth() {
             return 1;
         }
 
@@ -291,7 +290,7 @@ final class SyntaxTree {
         }
 
         @Override
-        boolean evaluate(BitSet valuation) {
+        boolean evaluate(NatSet valuation) {
             return value;
         }
 
@@ -301,12 +300,12 @@ final class SyntaxTree {
         }
 
         @Override
-        public void gatherVariables(Set<Integer> set) {
+        void gatherVariables(Set<Integer> set) {
             // No variables in this leaf
         }
 
         @Override
-        public boolean hasVariable(int number) {
+        boolean hasVariable(int number) {
             return false;
         }
 
@@ -329,7 +328,7 @@ final class SyntaxTree {
         }
 
         @Override
-        public int depth() {
+        int depth() {
             return 1;
         }
 
@@ -346,8 +345,8 @@ final class SyntaxTree {
         }
 
         @Override
-        boolean evaluate(BitSet valuation) {
-            return valuation.get(variableNumber);
+        boolean evaluate(NatSet valuation) {
+            return valuation.contains(variableNumber);
         }
 
         @Override
@@ -356,16 +355,16 @@ final class SyntaxTree {
         }
 
         @Override
-        public void gatherVariables(Set<Integer> set) {
+        void gatherVariables(Set<Integer> set) {
             set.add(variableNumber);
         }
 
-        public int getVariableNumber() {
+        int getVariableNumber() {
             return variableNumber;
         }
 
         @Override
-        public boolean hasVariable(int number) {
+        boolean hasVariable(int number) {
             return variableNumber == number;
         }
 
@@ -381,15 +380,15 @@ final class SyntaxTree {
     }
 
     abstract static class SyntaxTreeNode {
-        public abstract int depth();
+        abstract int depth();
 
-        abstract boolean evaluate(BitSet valuation);
+        abstract boolean evaluate(NatSet valuation);
 
         abstract boolean evaluate(boolean[] valuation);
 
-        public abstract void gatherVariables(Set<Integer> set);
+        abstract void gatherVariables(Set<Integer> set);
 
-        public abstract boolean hasVariable(int number);
+        abstract boolean hasVariable(int number);
     }
 
     static final class SyntaxTreeNot extends SyntaxTreeNode {
@@ -400,7 +399,7 @@ final class SyntaxTree {
         }
 
         @Override
-        public int depth() {
+        int depth() {
             // Unary operations are not relevant for bdd complexity
             return child.depth();
         }
@@ -418,7 +417,7 @@ final class SyntaxTree {
         }
 
         @Override
-        boolean evaluate(BitSet valuation) {
+        boolean evaluate(NatSet valuation) {
             return !child.evaluate(valuation);
         }
 
@@ -428,7 +427,7 @@ final class SyntaxTree {
         }
 
         @Override
-        public void gatherVariables(Set<Integer> set) {
+        void gatherVariables(Set<Integer> set) {
             child.gatherVariables(set);
         }
 
@@ -437,7 +436,7 @@ final class SyntaxTree {
         }
 
         @Override
-        public boolean hasVariable(int number) {
+        boolean hasVariable(int number) {
             return child.hasVariable(number);
         }
 
@@ -469,7 +468,7 @@ final class SyntaxTree {
         }
 
         @Override
-        public int depth() {
+        int depth() {
             return depth;
         }
 
@@ -489,7 +488,7 @@ final class SyntaxTree {
         }
 
         @Override
-        boolean evaluate(BitSet valuation) {
+        boolean evaluate(NatSet valuation) {
             if (type == TernaryType.ITE) {
                 if (first.evaluate(valuation)) {
                     return second.evaluate(valuation);
@@ -513,7 +512,7 @@ final class SyntaxTree {
         }
 
         @Override
-        public void gatherVariables(Set<Integer> set) {
+        void gatherVariables(Set<Integer> set) {
             first.gatherVariables(set);
             second.gatherVariables(set);
             third.gatherVariables(set);
@@ -536,7 +535,7 @@ final class SyntaxTree {
         }
 
         @Override
-        public boolean hasVariable(int number) {
+        boolean hasVariable(int number) {
             return first.hasVariable(number) || second.hasVariable(number) || third.hasVariable(number);
         }
 

@@ -17,9 +17,13 @@ Compared to other libraries, JBDD beats most Java implementations and even is on
 
 ## Features
 
-Some more fancy BDD features and variants are missing.
-Most notably, these are ZDDs, MTBDDs, and variable reordering.
-They might get added over time, but if you require such features, consider using optimized implementations like [CUDD](http://vlsi.colorado.edu/~fabio/), [BuDDy](http://buddy.sourceforge.net/manual/main.html) or [Sylvan](http://fmt.cs.utwente.nl/tools/sylvan/) instead.
+* Reduced ordered BDDs with complement edges, over an `int` API with manual reference counting, and an object layer (`BddSet`) with automatic reference management
+* MTBDDs over the same variables (`MtBdd`, and `BddMap<V>` over caller-chosen value numberings), MDDs over n-valued variables (`Mdd`)
+* The usual operations plus domain-restricted (`xyIn`) and simplifying (`xySimplify`) variants, `compose`, `restrict`, quantification and the relational product (`andExists`), `constrain`/`simplify`, satisfying counts and fractions, the influence of every variable in one pass, the literals a function implies and those implying it, unateness, implicants and prime implicants, solution and path cursors, registered operations with private caches
+* Dynamic variable reordering by sifting, over both diagrams of a context at once
+* Primitive collections the API speaks, usable on their own (`de.tum.in.jbdd.collections`): `NatSet` (sets of naturals as sorted arrays or words), `Cursor` and `int`-keyed hash maps
+
+ZDDs are not implemented; for those, consider [CUDD](http://vlsi.colorado.edu/~fabio/) or [Sylvan](http://fmt.cs.utwente.nl/tools/sylvan/).
 
 ## Usage
 
@@ -29,7 +33,7 @@ You can either build the jar using gradle (see below) or fetch it from maven cen
 <dependency>
   <groupId>de.tum.in</groupId>
   <artifactId>jbdd</artifactId>
-  <version>0.6.0</version>
+  <version>0.7.0</version>
 </dependency>
 ```
 
@@ -37,12 +41,20 @@ and for gradle:
 
 ```kotlin
 // https://mvnrepository.com/artifact/de.tum.in/jbdd
-implementation("de.tum.in:jbdd:0.6.0")
+implementation("de.tum.in:jbdd:0.7.0")
 ```
+
+A few JVM flags worth trying out:
+
+- `-Xss128m` or similar high values, the implementation is very recursive
+- High values for `-Xms` and `-XX:+AlwaysPreTouch` to avoid repeated heap growth
+- `-XX:+UseParallelGC` -- low latency is not required
+- `-XX:+UseTransparentHugePages`
+- `-XX:TypeProfileLevel=222` and `-XX:TypeProfileWidth=4`
 
 ## Building
 
-Build the project using gradle.
+Build the project using gradle, on JDK 21 or newer (the library itself targets Java 11).
 All dependencies are downloaded automatically.
 
     $ ./gradlew build

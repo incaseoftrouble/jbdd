@@ -1,3 +1,7 @@
+import me.champeau.jmh.JMHTask
+import net.ltgt.gradle.errorprone.errorprone
+import net.ltgt.gradle.nullaway.nullaway
+
 plugins {
   `java-library`
 
@@ -8,16 +12,20 @@ plugins {
   signing
 
   // https://plugins.gradle.org/plugin/io.github.gradle-nexus.publish-plugin
-  id("io.github.gradle-nexus.publish-plugin") version "1.3.0"
-  // https://plugins.gradle.org/plugin/com.diffplug.spotless
-  id("com.diffplug.spotless") version "6.19.0"
+  id("io.github.gradle-nexus.publish-plugin") version "2.0.0"
   // https://plugins.gradle.org/plugin/me.champeau.jmh
-  id("me.champeau.jmh") version "0.7.1"
+  id("me.champeau.jmh") version "0.7.3"
+  // https://plugins.gradle.org/plugin/com.diffplug.spotless
+  id("com.diffplug.spotless") version "8.9.0"
+  // https://plugins.gradle.org/plugin/net.ltgt.errorprone
+  id("net.ltgt.errorprone") version "5.1.0"
+  // https://plugins.gradle.org/plugin/net.ltgt.nullaway
+  id("net.ltgt.nullaway") version "3.1.0"
 }
 
 group = "de.tum.in"
 
-version = "0.6.0"
+version = "0.7.0"
 
 java {
   sourceCompatibility = JavaVersion.VERSION_11
@@ -29,7 +37,10 @@ java {
 
 var defaultEncoding = "UTF-8"
 
-tasks.withType<JavaCompile> { options.encoding = defaultEncoding }
+tasks.withType<JavaCompile> {
+  options.encoding = defaultEncoding
+  options.release.set(11)
+}
 
 tasks.withType<Javadoc> {
   options.encoding = defaultEncoding
@@ -52,46 +63,192 @@ repositories { mavenCentral() }
 
 spotless {
   java {
+    // https://central.sonatype.com/artifact/com.palantir.javaformat/palantir-java-format
+    palantirJavaFormat("2.89.0")
     licenseHeaderFile("${project.rootDir}/config/LICENCE_HEADER")
-    palantirJavaFormat()
   }
-  kotlinGradle { ktfmt() }
+  kotlinGradle {
+    ktlint()
+    ktfmt()
+  }
 }
 
-jmh { includeTests.set(true) }
+val requestedTaskNames = gradle.startParameter.taskNames
+
+fun isRequested(task: String) = requestedTaskNames.any { it == task || it.endsWith(":$task") }
+
+jmh {
+  if (isRequested("jmhRandom")) {
+    includes.add("RandomBenchmark*")
+    warmupIterations = 5
+    iterations = 15
+  }
+  if (isRequested("jmhSynthetic")) {
+    includes.add("SyntheticBenchmark*")
+  }
+  if (isRequested("jmhDimacs")) {
+    includes.add("DimacsBenchmark*")
+  }
+  if (isRequested("jmhNatSet")) {
+    includes.add("NatSetBenchmark*")
+  }
+  if (isRequested("jmhCube")) {
+    includes.add("CubeBenchmark*")
+  }
+  if (isRequested("jmhEnumeration")) {
+    includes.add("EnumerationBenchmark*")
+  }
+  if (isRequested("jmhNary")) {
+    includes.add("NaryBenchmark*")
+  }
+  if (isRequested("jmhMtBdd")) {
+    includes.add("MtBddBenchmark*")
+  }
+  if (isRequested("jmhReorder")) {
+    includes.add("ReorderBenchmark*")
+  }
+  if (isRequested("jmhRelational")) {
+    includes.add("RelationalProductBenchmark*")
+  }
+}
+
+tasks.register<Task>("jmhRandom") {
+  description = "Run randomized benchmarks"
+  finalizedBy("jmh")
+}
+
+tasks.register<Task>("jmhSynthetic") {
+  description = "Run synthetic benchmarks"
+  finalizedBy("jmh")
+}
+
+tasks.register<Task>("jmhDimacs") {
+  description = "Run DIMACS benchmarks"
+  finalizedBy("jmh")
+}
+
+tasks.register<Task>("jmhNatSet") {
+  description = "Run set benchmarks, per shape"
+  finalizedBy("jmh")
+}
+
+tasks.register<Task>("jmhCube") {
+  description = "Run the cube tests, per shape"
+  finalizedBy("jmh")
+}
+
+tasks.register<Task>("jmhEnumeration") {
+  description = "Run solution/path enumeration benchmarks"
+  finalizedBy("jmh")
+}
+
+tasks.register<Task>("jmhNary") {
+  description = "Run the n-ary conjunction benchmarks"
+  finalizedBy("jmh")
+}
+
+tasks.register<Task>("jmhMtBdd") {
+  description = "Run the MTBDD map workload"
+  finalizedBy("jmh")
+}
+
+tasks.register<Task>("jmhReorder") {
+  description = "Run the reordering workload"
+  finalizedBy("jmh")
+}
+
+tasks.register<Task>("jmhRelational") {
+  description = "Run the relational product workload"
+  finalizedBy("jmh")
+}
+
+tasks.withType<JMHTask> { includeTests.set(true) }
 
 dependencies {
-  compileOnly("com.google.code.findbugs:jsr305:3.0.2")
+  compileOnlyApi("org.jspecify:jspecify:1.0.0") // Apache 2.0
+  // https://mvnrepository.com/artifact/com.google.errorprone/error_prone_core
+  errorprone("com.google.errorprone:error_prone_core:2.50.0")
+  compileOnlyApi("com.google.errorprone:error_prone_annotations:2.50.0")
+  // https://mvnrepository.com/artifact/com.uber.nullaway/nullaway
+  errorprone("com.uber.nullaway:nullaway:0.13.8")
 
   // https://mvnrepository.com/artifact/com.google.guava/guava
-  testImplementation("com.google.guava:guava:31.1-jre")
+  testImplementation("com.google.guava:guava:33.6.0-jre")
   // https://mvnrepository.com/artifact/org.hamcrest/hamcrest
-  testImplementation("org.hamcrest:hamcrest:2.2")
+  testImplementation("org.hamcrest:hamcrest:3.0")
   // https://mvnrepository.com/artifact/org.junit.jupiter/junit-jupiter-api
-  testImplementation("org.junit.jupiter:junit-jupiter-api:5.9.3")
-  testImplementation("org.junit.jupiter:junit-jupiter-params:5.9.3")
-  testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.9.3")
+  testImplementation("org.junit.jupiter:junit-jupiter:5.14.4")
+  testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
   // https://mvnrepository.com/artifact/org.immutables/value
-  compileOnly("org.immutables:value:2.9.3:annotations")
-  annotationProcessor("org.immutables:value:2.9.3")
+  compileOnly("org.immutables:value:2.12.2:annotations")
+  annotationProcessor("org.immutables:value:2.12.2")
 
-  jmhAnnotationProcessor("org.openjdk.jmh:jmh-generator-annprocess:1.36")
+  // https://mvnrepository.com/artifact/org.openjdk.jmh/jmh-generator-annprocess
+  jmhImplementation("org.openjdk.jmh:jmh-core:1.37")
+  jmhAnnotationProcessor("org.openjdk.jmh:jmh-generator-annprocess:1.37")
 }
 
-tasks.test {
+fun Test.jbddTest(defaultScale: String) {
   useJUnitPlatform()
+  // The theories run hundreds of thousands of cases; the HTML report of them all fills the daemon's
+  // heap. The XML reports stay.
+  reports.html.required = false
   minHeapSize = "2g"
-  maxHeapSize = "16g"
+  maxHeapSize = "8g"
+  systemProperty("jbdd.test.scale", project.findProperty("jbdd.test.scale") ?: defaultScale)
+  // JBDD's own tests audit whole tables and caches, not just the entry at hand (Assertions).
+  systemProperty("JBDD_COSTLY_ASSERTIONS", "true")
+  // Run the tests on another installed JDK than the build's, e.g. the Java 11 baseline.
+  project.findProperty("jbdd.test.java")?.let { version ->
+    javaLauncher = javaToolchains.launcherFor {
+      languageVersion = JavaLanguageVersion.of(version.toString())
+    }
+  }
+}
+
+tasks.test { jbddTest("1.0") }
+
+val testSourceSet = the<SourceSetContainer>()["test"]
+
+tasks.register<Test>("testSmall") {
+  description = "Run the test suite with the generated theory suites scaled down"
+  group = "verification"
+
+  testClassesDirs = testSourceSet.output.classesDirs
+  classpath = testSourceSet.runtimeClasspath
+  jbddTest("0.05")
+}
+
+nullaway {
+  annotatedPackages.add("de.tum.in.jbdd")
+  jspecifyMode = true
+}
+
+tasks.withType<JavaCompile> {
+  options.errorprone {
+    disable(
+        "ArrayRecordComponent",
+        "EffectivelyPrivate",
+        "StringSplitter",
+        "ReferenceEquality",
+    )
+    excludedPaths.set(".*/build/generated/.*")
+    disableWarningsInGeneratedCode.set(true)
+
+    nullaway {
+      assertsEnabled = true
+    }
+  }
 }
 
 // PMD
 // https://docs.gradle.org/current/dsl/org.gradle.api.plugins.quality.Pmd.html
 
 pmd {
-  toolVersion = "6.55.0" // https://pmd.github.io/
-  reportsDir = file("${project.buildDir}/reports/pmd")
-  ruleSetFiles = files("${project.rootDir}/config/pmd-rules.xml")
+  toolVersion = "7.26.0" // https://pmd.github.io/
+  reportsDir = project.layout.buildDirectory.dir("reports/pmd").get().asFile
+  ruleSetFiles = project.layout.projectDirectory.files("config/pmd-rules.xml")
   ruleSets = listOf() // We specify all rules in rules.xml
   isConsoleOutput = false
   isIgnoreFailures = false

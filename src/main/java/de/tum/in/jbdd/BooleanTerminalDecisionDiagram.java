@@ -1,0 +1,331 @@
+/*
+ * This file is part of JBDD (https://github.com/incaseoftrouble/jbdd).
+ * Copyright (c) 2024 Tobias Meggendorfer.
+ *
+ * JBDD is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 3.
+ *
+ * JBDD is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with JBDD. If not, see <http://www.gnu.org/licenses/>.
+ */
+package de.tum.in.jbdd;
+
+import de.tum.in.jbdd.collections.Cursor;
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
+import java.math.BigInteger;
+import java.util.Optional;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
+
+public interface BooleanTerminalDecisionDiagram<S, P> extends DecisionDiagram {
+    /**
+     * Returns the boolean function representing {@code true}.
+     */
+    int trueFunction();
+
+    /**
+     * Returns the boolean function representing {@code false}.
+     */
+    int falseFunction();
+
+    /**
+     * Checks whether the given boolean {@code function} evaluates to {@code true} under the given {@code assignment}.
+     *
+     * @param function
+     *     The function to evaluate.
+     * @param assignment
+     *     The variable assignment.
+     *
+     * @return The truth value of the node under the given assignment.
+     */
+    boolean evaluate(int function, S assignment);
+
+    /**
+     * Returns any satisfying assignment of the given boolean {@code function}.
+     *
+     * @throws java.util.NoSuchElementException
+     *     if there is no satisfying assignment, i.e. the given {@code function} is {@literal false}.
+     */
+    S satisfyingAssignment(int function);
+
+    /** Any assignment satisfying both {@code function} and {@code domain}, if there is one. */
+    Optional<S> satisfyingAssignmentIn(int function, int domain);
+
+    /**
+     * Counts the number of satisfying assignments for the given boolean {@code function}.
+     */
+    BigInteger countSatisfyingAssignments(int function);
+
+    /**
+     * Counts the number of satisfying assignments for the given boolean {@code function}, only considering variables in the
+     * {@code support}.
+     */
+    BigInteger countSatisfyingAssignments(int function, NatSet support);
+
+    /**
+     * The number of assignments satisfying both {@code function} and {@code domain}.
+     */
+    BigInteger countSatisfyingAssignmentsIn(int function, int domain);
+
+    /**
+     * Executes the given action for each satisfying assignment of the given boolean {@code function}.
+     *
+     * <p>The solutions are generated in lexicographic ascending order.</p>
+     *
+     * @param function
+     *     The function whose solutions should be computed.
+     * @param action
+     *     The action to be performed on these solutions.
+     */
+    default void forEachSolution(int function, Consumer<? super S> action) {
+        forEachSolutionIn(function, trueFunction(), action);
+    }
+
+    /** As {@link #forEachSolution(int, Consumer)}, distinguishing only the variables of {@code support}. */
+    default void forEachSolution(int function, NatSet support, Consumer<? super S> action) {
+        forEachSolutionIn(function, trueFunction(), support, action);
+    }
+
+    /** As {@link #forEachSolution(int, Consumer)}, over the solutions that also satisfy {@code domain}. */
+    default void forEachSolutionIn(int function, int domain, Consumer<? super S> action) {
+        MutableNatSet support = MutableNatSet.dense(numberOfVariables());
+        support.set(0, numberOfVariables());
+        forEachSolutionIn(function, domain, support, action);
+    }
+
+    /** As {@link #forEachSolutionIn(int, int, Consumer)}, distinguishing only the variables of {@code support}. */
+    default void forEachSolutionIn(int function, int domain, NatSet support, Consumer<? super S> action) {
+        solutionCursorIn(function, domain, support).forEachRemaining(action);
+    }
+
+    /**
+     * A {@link Cursor} over the solutions of {@code function}.
+     *
+     * <p>Enumeration is by cursor rather than by {@code Iterator} throughout. An iterator has to answer
+     * {@code hasNext()} without disturbing what it last returned, which forces the walk to run a step
+     * ahead and every element to be copied out of its way - for solutions that copy is most of the cost.
+     * A cursor hands out the walk's own state instead; see {@link Cursor} for what that asks of the caller.
+     *
+     * <p>Solutions come out in lexicographic ascending order by level: the variables the walk decides on
+     * vary slowest, and those a path leaves free are counted off underneath them.
+     */
+    Cursor<S> solutionCursor(int function);
+
+    /** As {@link #solutionCursor(int)}, over the given support rather than every variable. */
+    Cursor<S> solutionCursor(int function, NatSet support);
+
+    /** As {@link #solutionCursor(int)}, restricted to the solutions that also satisfy {@code domain}. */
+    Cursor<S> solutionCursorIn(int function, int domain);
+
+    /** As {@link #solutionCursorIn(int, int)}, over the given support rather than every variable. */
+    Cursor<S> solutionCursorIn(int function, int domain, NatSet support);
+
+    /** A {@link Cursor} over the paths of {@code function}; see {@link #solutionCursor(int)}. */
+    Cursor<P> pathCursor(int function);
+
+    /**
+     * Calls {@code action} once per path of {@code function} to a true leaf, in lexicographic ascending order: a
+     * partial assignment fixing only the variables decided along it, which every completion satisfies.
+     *
+     * <p>The path handed out is the walk's working state, as a {@link Cursor}'s {@code current()}: copy it to keep it.
+     */
+    void forEachPath(int function, Consumer<? super P> action);
+
+    /**
+     * Whether some path of {@code function} satisfies {@code predicate}, which sees the paths as
+     * {@link #forEachPath} does.
+     */
+    boolean anyPathMatches(int function, Predicate<? super P> predicate);
+
+    /**
+     * Checks whether the boolean {@code function1} implies {@code function2}, i.e. if every valuation under
+     * which {@code function1} evaluates to true also evaluates to true on {@code function2}. This is
+     * equivalent to checking if {@link #implication(int, int)} with {@code function1} and {@code function2}
+     * as parameters is equal to {@link #trueFunction()} and equal to checking whether {@code function1} equals
+     * {@code function1 OR function2}, but faster.
+     */
+    boolean implies(int function1, int function2);
+
+    /**
+     * Checks whether there exists an assignment for which both {@code function1} and {@code function2}
+     * evaluate to true. This is equivalent to checking if {@link #and(int, int)} with {@code function1}
+     * and {@code function2} as parameters is not equal to {@link #falseFunction()}, but faster.
+     */
+    boolean intersects(int function1, int function2);
+
+    /**
+     * Constructs the boolean function {@code function1 AND function2}.
+     */
+    int and(int function1, int function2);
+
+    /**
+     * Constructs the conjunction of all {@code functions}, {@link #trueFunction()} for none.
+     */
+    default int and(int[] functions) {
+        // Held referenced throughout, the constant included: a diagram may count references on its leaves.
+        int result = reference(trueFunction());
+        for (int function : functions) {
+            result = updateWith(and(result, function), result);
+            if (result == falseFunction()) {
+                break;
+            }
+        }
+        return dereference(result);
+    }
+
+    /** {@code simplify(and(function1, function2), domain)}, possibly in one traversal. */
+    default int andSimplify(int function1, int function2, int domain) {
+        return simplify(and(function1, function2), domain);
+    }
+
+    /**
+     * Constructs the boolean function {@code function1 AND NOT function2}.
+     */
+    int andNot(int function1, int function2);
+
+    /** {@code simplify(andNot(function1, function2), domain)}, possibly in one traversal. */
+    default int andNotSimplify(int function1, int function2, int domain) {
+        return simplify(andNot(function1, function2), domain);
+    }
+
+    /**
+     * Constructs the boolean function {@code function1 EQUIVALENT function2}.
+     */
+    int equivalence(int function1, int function2);
+
+    /**
+     * {@code simplify(equivalence(function1, function2), domain)}, possibly in one traversal.
+     */
+    default int equivalenceSimplify(int function1, int function2, int domain) {
+        return simplify(equivalence(function1, function2), domain);
+    }
+
+    /**
+     * Constructs the function obtained by existential quantification of the boolean {@code function} with all variables
+     * specified by {@code quantifiedVariables}. Formally, let {@code function} be {@code f(x_1, ..., x_m)} and
+     * {@code x_1, ..., x_m} all variables for which {@code quantifiedVariables} is set. This method then constructs
+     * {@code E x_1 E x_2 ... E x_n f(x_1, ..., x_m)}.
+     *
+     * @param function
+     *     The function representing the basis of the quantification.
+     * @param quantifiedVariables
+     *     The variables which should be quantified over; each must exist ({@link IllegalArgumentException}
+     *     otherwise).
+     *
+     * @return The quantified function.
+     */
+    int exists(int function, NatSet quantifiedVariables);
+
+    /**
+     * Constructs the function obtained by forall quantification of the boolean {@code function} with all variables
+     * specified by {@code quantifiedVariables}. Formally, let {@code function} be {@code f(x_1, ..., x_m)} and
+     * {@code x_1, ..., x_m} all variables for which {@code quantifiedVariables} is set. This method then constructs
+     * {@code A x_1 A x_2 ... A x_n f(x_1, ..., x_m)}.
+     *
+     * @param function
+     *     The function representing the basis of the quantification.
+     * @param quantifiedVariables
+     *     The variables which should be quantified over; each must exist ({@link IllegalArgumentException}
+     *     otherwise).
+     *
+     * @return The quantified function.
+     */
+    int forall(int function, NatSet quantifiedVariables);
+
+    /**
+     * Constructs the boolean function {@code function1 IMPLIES function2}.
+     */
+    int implication(int function1, int function2);
+
+    /**
+     * {@code simplify(implication(function1, function2), domain)}, possibly in one traversal.
+     */
+    default int implicationSimplify(int function1, int function2, int domain) {
+        return simplify(implication(function1, function2), domain);
+    }
+
+    /**
+     * Constructs the boolean function {@code NOT {@code function}}.
+     */
+    int not(int function);
+
+    /** {@code simplify(not(function), domain)}, possibly in one traversal. */
+    default int notSimplify(int function, int domain) {
+        return simplify(not(function), domain);
+    }
+
+    /**
+     * Constructs the boolean function {@code function1 NAND function2}.
+     */
+    int notAnd(int function1, int function2);
+
+    /** {@code simplify(notAnd(function1, function2), domain)}, possibly in one traversal. */
+    default int notAndSimplify(int function1, int function2, int domain) {
+        return simplify(notAnd(function1, function2), domain);
+    }
+
+    /**
+     * Constructs the boolean function {@code function1 OR function2}.
+     */
+    int or(int function1, int function2);
+
+    /**
+     * Constructs the disjunction of all {@code functions}, {@link #falseFunction()} for none.
+     */
+    default int or(int[] functions) {
+        int result = reference(falseFunction());
+        for (int function : functions) {
+            result = updateWith(or(result, function), result);
+            if (result == trueFunction()) {
+                break;
+            }
+        }
+        return dereference(result);
+    }
+
+    /** {@code simplify(or(function1, function2), domain)}, possibly in one traversal. */
+    default int orSimplify(int function1, int function2, int domain) {
+        return simplify(or(function1, function2), domain);
+    }
+
+    /**
+     * Constructs the boolean function {@code function1 XOR function2}.
+     */
+    int xor(int function1, int function2);
+
+    /** {@code simplify(xor(function1, function2), domain)}, possibly in one traversal. */
+    default int xorSimplify(int function1, int function2, int domain) {
+        return simplify(xor(function1, function2), domain);
+    }
+
+    /**
+     * Constructs the boolean function {@code IF ifFunction THEN thenFunction ELSE elseFunction}.
+     */
+    int ifThenElse(int ifFunction, int thenFunction, int elseFunction);
+
+    /**
+     * {@code simplify(ifThenElse(ifFunction, thenFunction, elseFunction), domain)}, possibly in one traversal.
+     */
+    default int ifThenElseSimplify(int ifFunction, int thenFunction, int elseFunction, int domain) {
+        return simplify(ifThenElse(ifFunction, thenFunction, elseFunction), domain);
+    }
+
+    /**
+     * Constructs a simplified version of the given {@code function} which is equivalent to it for all assignments
+     * where {@code domain} is true. This is equivalent to {@code IF domain THEN function ELSE x} where {@code x}
+     * is any function.
+     *
+     * <p>A heuristic, not a minimization: the result is usually much smaller, but it is <em>not</em>
+     * guaranteed to be. Each node is simplified against the domain cofactor it is reached under, so a
+     * subgraph shared by two paths with different domain contexts can simplify two different ways and be
+     * duplicated - every path gets no longer, but the diagram loses a merge.</p>
+     */
+    int simplify(int function, int domain);
+}

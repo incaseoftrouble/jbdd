@@ -27,27 +27,22 @@ public class BddState {
     @Param({"1"})
     private float cacheSizeFactor;
 
-    @Param({"true", "false"})
-    private boolean iterative;
+    @Param({"false"})
+    private boolean emulateMdd;
 
-    private Bdd bdd;
+    @SuppressWarnings("NullAway.Init")
+    private BinaryDecisionDiagram bdd;
 
     @SuppressWarnings("NumericCastThatLosesPrecision")
     @Setup(Level.Iteration)
     public void setUpBdd() {
-        bdd = BddFactory.buildBdd(
-                iterative,
-                ImmutableBddConfiguration.builder()
-                        .cacheNegationDivider((int) (BddConfiguration.DEFAULT_CACHE_NEGATION_DIVIDER / cacheSizeFactor))
-                        .cacheBinaryDivider((int) (BddConfiguration.DEFAULT_CACHE_BINARY_DIVIDER / cacheSizeFactor))
-                        .cacheTernaryDivider((int) (BddConfiguration.DEFAULT_CACHE_TERNARY_DIVIDER / cacheSizeFactor))
-                        .cacheSatisfactionDivider(
-                                (int) (BddConfiguration.DEFAULT_CACHE_SATISFACTION_DIVIDER / cacheSizeFactor))
-                        .cacheComposeDivider((int) (BddConfiguration.DEFAULT_CACHE_COMPOSE_DIVIDER / cacheSizeFactor))
-                        .build());
+        BddConfiguration configuration = ImmutableBddConfiguration.builder()
+                .cacheSizeDivider((int) (BddConfiguration.DEFAULT_CACHE_SIZE_DIVIDER / cacheSizeFactor))
+                .build();
+        bdd = emulateMdd ? new MddAsBinaryDd(new MddImpl(configuration)) : BddFactory.buildBdd(configuration);
     }
 
-    public Bdd bdd() {
+    public BinaryDecisionDiagram bdd() {
         return bdd;
     }
 }

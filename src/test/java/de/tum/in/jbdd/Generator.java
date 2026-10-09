@@ -38,7 +38,7 @@ import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-@SuppressWarnings("PMD.AvoidInstantiatingObjectsInLoops")
+@SuppressWarnings({"PMD.DataClass"})
 public final class Generator {
     private static final int MAX_FAILED_UPDATE = 10;
     private static final Logger logger = Logger.getLogger(Generator.class.getName());
@@ -47,7 +47,8 @@ public final class Generator {
         // empty
     }
 
-    public static <T extends Bdd> Info<T> fill(
+    @SuppressWarnings("NullAway")
+    public static <T extends BinaryDd> Info<T> fill(
             T bdd,
             int seed,
             int variableCount,
@@ -69,8 +70,8 @@ public final class Generator {
         }
 
         Map<Integer, SyntaxTree> syntaxTreeMap = new LinkedHashMap<>();
-        syntaxTreeMap.put(bdd.falseNode(), SyntaxTree.constant(false));
-        syntaxTreeMap.put(bdd.trueNode(), SyntaxTree.constant(true));
+        syntaxTreeMap.put(bdd.falseFunction(), SyntaxTree.constant(false));
+        syntaxTreeMap.put(bdd.trueFunction(), SyntaxTree.constant(true));
         for (int i = 0; i < variableList.size(); i++) {
             SyntaxTree literal = SyntaxTree.literal(i);
             syntaxTreeMap.put(variableList.get(i), literal);
@@ -220,11 +221,11 @@ public final class Generator {
         return new Info<>(bdd, unaryDataPointSet, binaryDataPointSet, ternaryDataPointSet, syntaxTreeMap, variableList);
     }
 
-    public static final class Info<T extends Bdd> {
+    public static final class Info<T extends BinaryDd> {
         public final T bdd;
-        public final ImmutableSet<UnaryDataPoint<T>> unaryDataPoints;
-        public final ImmutableSet<BinaryDataPoint<T>> binaryDataPoints;
-        public final ImmutableSet<TernaryDataPoint<T>> ternaryDataPoints;
+        public final Set<UnaryDataPoint<T>> unaryDataPoints;
+        public final Set<BinaryDataPoint<T>> binaryDataPoints;
+        public final Set<TernaryDataPoint<T>> ternaryDataPoints;
         public final Map<Integer, SyntaxTree> syntaxTreeMap;
         public final List<Integer> variableList;
 
@@ -244,14 +245,14 @@ public final class Generator {
         }
     }
 
-    public static final class UnaryDataPoint<T extends Bdd> {
+    public static final class UnaryDataPoint<T extends BinaryDd> {
         public final T bdd;
-        public final int node;
+        public final int function;
         public final SyntaxTree tree;
 
-        UnaryDataPoint(T bdd, int node, SyntaxTree tree) {
+        UnaryDataPoint(T bdd, int function, SyntaxTree tree) {
             this.bdd = bdd;
-            this.node = node;
+            this.function = function;
             this.tree = tree;
         }
 
@@ -264,21 +265,21 @@ public final class Generator {
                 return false;
             }
             UnaryDataPoint<?> other = (UnaryDataPoint<?>) object;
-            return Objects.equals(bdd, other.bdd) && node == other.node;
+            return Objects.equals(bdd, other.bdd) && function == other.function;
         }
 
         @Override
         public int hashCode() {
-            return 31 * node + bdd.hashCode();
+            return 31 * function + bdd.hashCode();
         }
 
         @Override
         public String toString() {
-            return String.format("%s: %s", bdd.getClass().getSimpleName(), tree);
+            return String.format("%s: %s", bdd, tree);
         }
     }
 
-    public static final class BinaryDataPoint<T extends Bdd> {
+    public static final class BinaryDataPoint<T extends BinaryDecisionDiagram> {
         public final T bdd;
         public final int left;
         public final SyntaxTree leftTree;
@@ -312,11 +313,11 @@ public final class Generator {
 
         @Override
         public String toString() {
-            return String.format("%s: %s ### %s", bdd.getClass().getSimpleName(), leftTree, rightTree);
+            return String.format("%s: %s ### %s", bdd, leftTree, rightTree);
         }
     }
 
-    public static final class TernaryDataPoint<T extends Bdd> {
+    public static final class TernaryDataPoint<T extends BinaryDecisionDiagram> {
         public final T bdd;
         public final int first;
         public final SyntaxTree firstTree;
@@ -364,8 +365,7 @@ public final class Generator {
 
         @Override
         public String toString() {
-            return String.format(
-                    "%s: %s ### %s ### %s", bdd.getClass().getSimpleName(), firstTree, secondTree, thirdTree);
+            return String.format("%s: %s ### %s ### %s", bdd, firstTree, secondTree, thirdTree);
         }
     }
 }
