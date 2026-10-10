@@ -40,6 +40,24 @@ import org.junit.jupiter.api.Test;
 @SuppressWarnings("PMD.CouplingBetweenObjects") // One class per subject
 class BddSetTest {
     @Test
+    void nodeCountCountsSharedNodesOnce() {
+        BddSetFactory sets = BinaryFactoryContext.create().bddSets();
+        BddSet x0 = sets.var(0);
+        BddSet x1 = sets.var(1);
+        assertEquals(0, sets.universe().nodeCount());
+        assertEquals(0, sets.empty().nodeCount());
+        assertEquals(1, x0.nodeCount());
+        assertEquals(1, x0.complement().nodeCount());
+        // x0 <-> x1: one node of x0 above x1 and its complement, which a complement edge shares.
+        assertEquals(
+                2,
+                x0.intersection(x1)
+                        .union(x0.complement().intersection(x1.complement()))
+                        .nodeCount());
+        assertEquals(2, x0.intersection(x1).nodeCount());
+    }
+
+    @Test
     void testBddSetConstrainAndSimplify() {
         BinaryFactoryContext ctx = BinaryFactoryContext.create();
         BddSetFactory sets = ctx.bddSets();

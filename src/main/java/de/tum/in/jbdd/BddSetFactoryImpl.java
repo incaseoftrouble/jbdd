@@ -618,6 +618,11 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         }
 
         @Override
+        public int nodeCount() {
+            return factory.dd.size(function);
+        }
+
+        @Override
         public double satisfyingFractionIn(BddSet domain) {
             return factory.dd.satisfyingFractionIn(function, factory.functionOf(domain));
         }

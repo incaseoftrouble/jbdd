@@ -194,6 +194,12 @@ public interface BddSet {
     BigInteger size(NatSet support);
 
     /**
+     * The decision nodes of this set's diagram, each shared node once - its size, not its number of elements (which is
+     * {@link #size(NatSet)}). See {@link NodeBasedDd#size(int)}.
+     */
+    int nodeCount();
+
+    /**
      * The fraction of all valuations in this set, independent of how many variables exist. Best-effort, see {@link
      * BinaryDecisionDiagram#satisfyingFraction(int)}.
      */

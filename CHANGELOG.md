@@ -50,6 +50,10 @@ New operations
 * `residualProduct` (`MultiTerminalDecisionDiagram`, `Values`): a boolean function partially evaluated at the values of maps replacing its variables (a mapping as `compose`'s; a `PartialValuation` reads each value as true, false or undecided), paired with the values of exactly the maps replacing a variable the residual still depends on - one descent that drops a map once the residual no longer depends on it; it generalizes the cartesian product, the monoid n-ary apply and vector composition, and the function - the operator, an `Operator` on the int layer, a `BddSet` on `Values` - may belong to another diagram
 * `MultiTerminalDecisionDiagram.cubes`, `shortestCube`, `shortestCubes` (one path to each value, over a set or a predicate, as a `ValueCubes`) and `BinaryDecisionDiagram.cube`, `shortestCube`; `BddMap.cubes()`
 * `allMatch` (`MtBdd` and `BddMap`) and `BddMap.agreesWith`: whether a predicate holds between two functions everywhere, stopping at the first counterexample - semantic equality across value numberings
+* `influences` (`BinaryDecisionDiagram`, `BddSet`): every support variable's influence on a function in one pass
+* `impliedLiterals` / `implyingLiterals` (`BinaryDecisionDiagram`, `BddSet`): the literals a function implies and those implying it, as a `Cube`, in one pass
+* `unateness` (`BinaryDecisionDiagram`, `BddSet`): the support variables a function is positive and negative unate in, in one pass with an implication check per node; `unateness(variables)` asks only about the given variables and descends no deeper than the deepest of them
+* `BddSet.nodeCount()`: the decision nodes of a set's diagram, each shared node once
 
 Changed
 
