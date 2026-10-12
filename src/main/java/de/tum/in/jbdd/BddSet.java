@@ -171,6 +171,14 @@ public interface BddSet {
     List<Cube> primeImplicants();
 
     /**
+     * An irredundant sum of products for the interval from this set to {@code upper} (which this set must be a subset
+     * of): cubes whose union contains this set and lies within {@code upper}. Empty beyond {@code maximumCubes} cubes.
+     *
+     * @see BddUtil#irredundantCover(BinaryDecisionDiagram, int, int, int)
+     */
+    Optional<List<Cube>> irredundantCover(BddSet upper, int maximumCubes);
+
+    /**
      * Splits this set into a map over just {@code splitVariables}, whose value at each of their valuations is
      * what this set restricts to there - a set over the remaining variables. Its {@link BddMap#inverse()}
      * partitions the valuations of {@code splitVariables} by residual. {@code destination} must belong to

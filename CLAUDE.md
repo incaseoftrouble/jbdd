@@ -287,7 +287,7 @@ Entry points — never `new BddImpl(...)` outside tests:
   rebuilt node on the work stack until the end, and a node made directly where the mapped variable lies above
   both rebuilt children. A source of another implementation goes through `BddUtil.adopt`.
 - `BddUtil` holds what is computed from a `BinaryDecisionDiagram`'s public operations alone and has no native
-  counterpart: `implicants`, `primeImplicants`, `shortestPath`, and the generic `adopt`.
+  counterpart: `implicants`, `primeImplicants`, `irredundantCover`, `shortestPath`, and the generic `adopt`.
 - `BddSet` deliberately exposes nothing assuming a fixed variable universe — callers always name the
   support they mean.
 - `impliedLiterals` / `implyingLiterals` are native in `BddImpl`: one pass with a per-call memo per regular node
@@ -303,7 +303,7 @@ Entry points — never `new BddImpl(...)` outside tests:
   them, which spares the rest of the diagram but for the implication checks (SemML asks it for the propositions of
   an LTL class, which lie above its temporal operators); the interface's default filters the full one.
 - `Cube` is the one type for a conjunction of literals - equivalently a partial assignment:
-  path walks, the implied and implying literals and `BddUtil`'s `implicants` / `primeImplicants` / `shortestPath`
+  path walks, the implied and implying literals and `BddUtil`'s `implicants` / `primeImplicants` / `irredundantCover` / `shortestPath`
   hand them out, `restrict` and
   `BddSetFactory.of` take them, `of(Cube)` builds one's function. Its operations return new cubes; a walk's cube
   is working state (§8). `of` copies what it is given and `ofUnsafe` takes the sets as they are (checking the

@@ -565,6 +565,16 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         }
 
         @Override
+        public Optional<List<Cube>> irredundantCover(BddSet upper, int maximumCubes) {
+            assert upper instanceof BddSetImpl;
+            BddSetImpl other = (BddSetImpl) upper;
+            //noinspection ObjectEquality
+            assert factory == other.factory; // NOPMD
+            assert factory.dd.implies(function, other.function) : "the lower bound must imply the upper";
+            return BddUtil.irredundantCover(factory.dd, function, other.function, maximumCubes);
+        }
+
+        @Override
         public BddMap<BddSet> split(NatSet splitVariables, Values<BddSet> destination) {
             return ((BddMapFactoryImpl) destination.factory()).split(this, splitVariables, destination);
         }

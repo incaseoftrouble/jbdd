@@ -202,6 +202,137 @@ public final class BddUtil {
     }
 
     /**
+     * An irredundant sum of products for the interval from {@code lower} to {@code upper} (Minato and Morreale): cubes
+     * whose union contains {@code lower} and lies within {@code upper}, none of which can be dropped without uncovering
+     * part of {@code lower}. The valuations in {@code upper} but not in {@code lower} are don't-cares, which is what
+     * makes the cover small; {@code lower == upper} covers a function exactly. {@code lower} must imply {@code upper}.
+     *
+     * <p>Split on the top variable {@code x} of the two: the valuations of {@code lower} that only cubes with
+     * {@code !x} (with {@code x}) can cover, those of the one cofactor outside the other cofactor of {@code upper},
+     * are covered within that cofactor of {@code upper} first; what is left of {@code lower} then by cubes without
+     * {@code x}, within both cofactors of {@code upper}. Which cover comes out depends on the variable order.
+     *
+     * <p>Empty if the cover needs more than {@code maximumCubes} cubes - parity needs exponentially many. An empty
+     * {@code lower} yields no cube, an {@code upper} of {@code true} the empty cube.
+     */
+    public static Optional<List<Cube>> irredundantCover(
+            BinaryDecisionDiagram bdd, int lower, int upper, int maximumCubes) {
+        var cover = new IrredundantCover(bdd, maximumCubes);
+        try {
+            return Optional.of(cover.cover(lower, upper).cubes);
+        } catch (IrredundantCover.TooManyCubes exception) {
+            return Optional.empty();
+        } finally {
+            cover.release();
+        }
+    }
+
+    /* One irredundantCover computation: its memo, and the functions it built, referenced until it is done. */
+    private static final class IrredundantCover {
+        private final BinaryDecisionDiagram bdd;
+        private final int maximumCubes;
+        // per pair of lower and upper; a plain map, as in implicants
+        private final Map<Long, Cover> memo = new HashMap<>();
+        // every function built, referenced, so that no collection reuses a memoized id in between
+        private final List<Integer> held = new ArrayList<>();
+
+        IrredundantCover(BinaryDecisionDiagram bdd, int maximumCubes) {
+            this.bdd = bdd;
+            this.maximumCubes = maximumCubes;
+        }
+
+        private int hold(int function) {
+            held.add(bdd.reference(function));
+            return function;
+        }
+
+        void release() {
+            for (int function : held) {
+                bdd.dereference(function);
+            }
+        }
+
+        private int topVariable(int lower, int upper) {
+            int lowerVariable = bdd.decisionVariable(lower);
+            int upperVariable = bdd.decisionVariable(upper);
+            if (bdd instanceof ReorderableDd) {
+                ReorderableDd reorderable = (ReorderableDd) bdd;
+                return reorderable.levelOfVariable(lowerVariable) <= reorderable.levelOfVariable(upperVariable)
+                        ? lowerVariable
+                        : upperVariable;
+            }
+            return Math.min(lowerVariable, upperVariable);
+        }
+
+        Cover cover(int lower, int upper) {
+            if (lower == bdd.falseFunction()) {
+                return new Cover(bdd.falseFunction(), List.of());
+            }
+            if (upper == bdd.trueFunction()) {
+                return new Cover(bdd.trueFunction(), List.of(Cube.empty()));
+            }
+            long key = ((long) lower << Integer.SIZE) | Integer.toUnsignedLong(upper);
+            Cover known = memo.get(key);
+            if (known != null) {
+                return known;
+            }
+            // Neither is constant here: lower is not false, so upper is not false, and upper is not true, so neither
+            // is lower.
+            int variable = topVariable(lower, upper);
+            Cube negative = Cube.literal(variable, false);
+            Cube positive = Cube.literal(variable, true);
+            int lower0 = hold(bdd.restrict(lower, negative));
+            int lower1 = hold(bdd.restrict(lower, positive));
+            int upper0 = hold(bdd.restrict(upper, negative));
+            int upper1 = hold(bdd.restrict(upper, positive));
+
+            Cover low = cover(hold(bdd.and(lower0, hold(bdd.not(upper1)))), upper0);
+            Cover high = cover(hold(bdd.and(lower1, hold(bdd.not(upper0)))), upper1);
+            int uncovered = hold(bdd.or(
+                    hold(bdd.and(lower0, hold(bdd.not(low.function)))),
+                    hold(bdd.and(lower1, hold(bdd.not(high.function))))));
+            Cover shared = cover(uncovered, hold(bdd.and(upper0, upper1)));
+
+            int function = hold(bdd.or(
+                    hold(bdd.ifThenElse(hold(bdd.variableFunction(variable)), high.function, low.function)),
+                    shared.function));
+            int count = low.cubes.size() + high.cubes.size() + shared.cubes.size();
+            if (count > maximumCubes) {
+                throw new TooManyCubes();
+            }
+            List<Cube> cubes = new ArrayList<>(count);
+            for (Cube cube : low.cubes) {
+                cubes.add(cube.with(variable, false));
+            }
+            for (Cube cube : high.cubes) {
+                cubes.add(cube.with(variable, true));
+            }
+            cubes.addAll(shared.cubes);
+            Cover result = new Cover(function, List.copyOf(cubes));
+            memo.put(key, result);
+            return result;
+        }
+
+        private static final class Cover {
+            final int function;
+            final List<Cube> cubes;
+
+            Cover(int function, List<Cube> cubes) {
+                this.function = function;
+                this.cubes = cubes;
+            }
+        }
+
+        private static final class TooManyCubes extends RuntimeException {
+            private static final long serialVersionUID = 1L;
+
+            TooManyCubes() {
+                super(null, null, false, false);
+            }
+        }
+    }
+
+    /**
      * A path of {@code function} to true with the fewest decisions, as the cube fixing the variables it decides:
      * the first such path in {@code forEachPath} order (low before high), so of equally short paths, the one a
      * walk keeping the first shortest path it meets would keep. Empty for {@code false}; {@code true} yields the

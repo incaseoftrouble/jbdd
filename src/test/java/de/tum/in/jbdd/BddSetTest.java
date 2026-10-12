@@ -302,6 +302,80 @@ class BddSetTest {
     }
 
     @Test
+    void testIrredundantCoverOfEveryIntervalOfThreeVariables() {
+        int variables = 3;
+        int valuations = 1 << variables;
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BddSetFactory sets = ctx.bddSets();
+        List<BddSet> functions = new ArrayList<>();
+        for (int truthTable = 0; truthTable < (1 << valuations); truthTable++) {
+            BddSet set = sets.empty();
+            for (int valuation = 0; valuation < valuations; valuation++) {
+                if ((truthTable & (1 << valuation)) != 0) {
+                    set = set.union(sets.of(Cube.of(
+                            NatSetFixtures.of(bits(valuation, variables)), NatSetFixtures.range(0, variables))));
+                }
+            }
+            functions.add(set);
+        }
+        for (int lowerTable = 0; lowerTable < (1 << valuations); lowerTable++) {
+            for (int upperTable = 0; upperTable < (1 << valuations); upperTable++) {
+                if ((lowerTable & ~upperTable) != 0) {
+                    continue;
+                }
+                BddSet lower = functions.get(lowerTable);
+                BddSet upper = functions.get(upperTable);
+                List<Cube> cover =
+                        lower.irredundantCover(upper, Integer.MAX_VALUE).orElseThrow();
+                for (int valuation = 0; valuation < valuations; valuation++) {
+                    NatSet bitSet = NatSetFixtures.of(bits(valuation, variables));
+                    boolean covered = cover.stream().anyMatch(cube -> cube.contains(bitSet));
+                    if (lower.contains(bitSet)) {
+                        assertTrue(covered, () -> bitSet + " of " + lower + " uncovered by " + cover);
+                    }
+                    if (!upper.contains(bitSet)) {
+                        assertFalse(covered, () -> bitSet + " outside " + upper + " covered by " + cover);
+                    }
+                }
+                // Irredundant: without any one cube, some valuation of lower is uncovered.
+                for (Cube dropped : cover) {
+                    boolean needed = false;
+                    for (int valuation = 0; valuation < valuations && !needed; valuation++) {
+                        NatSet bitSet = NatSetFixtures.of(bits(valuation, variables));
+                        needed = lower.contains(bitSet)
+                                && cover.stream()
+                                        .filter(cube -> cube != dropped) // NOPMD - identity is the point
+                                        .noneMatch(cube -> cube.contains(bitSet));
+                    }
+                    assertTrue(needed, () -> dropped + " is redundant in " + cover);
+                }
+            }
+        }
+    }
+
+    @Test
+    void testIrredundantCoverUsesDontCaresAndStopsAtItsLimit() {
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        BddSetFactory sets = ctx.bddSets();
+        BddSet x0 = sets.var(0);
+        BddSet x1 = sets.var(1);
+        BddSet x2 = sets.var(2);
+        BddSet x3 = sets.var(3);
+        // x0 & x1 and x0 & !x1 & x2 within x0: the don't-cares make it the single cube x0
+        BddSet lower =
+                x0.intersection(x1).union(x0.intersection(x1.complement()).intersection(x2));
+        assertEquals(
+                List.of(Cube.literal(0, true)), lower.irredundantCover(x0, 10).orElseThrow());
+        assertEquals(List.of(), sets.empty().irredundantCover(x0, 10).orElseThrow());
+        assertEquals(
+                List.of(Cube.empty()), x0.irredundantCover(sets.universe(), 10).orElseThrow());
+        // parity of four variables needs eight cubes
+        BddSet parity = x0.symmetricDifference(x1).symmetricDifference(x2).symmetricDifference(x3);
+        assertEquals(8, parity.irredundantCover(parity, 8).orElseThrow().size());
+        assertTrue(parity.irredundantCover(parity, 7).isEmpty());
+    }
+
+    @Test
     void testImplicantsCoverEveryFunctionOfThreeVariables() {
         int variables = 3;
         int valuations = 1 << variables;
