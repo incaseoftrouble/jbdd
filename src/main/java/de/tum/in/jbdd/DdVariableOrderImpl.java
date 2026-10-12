@@ -1,0 +1,753 @@
+/*
+ * This file is part of JBDD (https://github.com/incaseoftrouble/jbdd).
+ * Copyright (c) 2026 Tobias Meggendorfer.
+ *
+ * JBDD is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 3.
+ *
+ * JBDD is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with JBDD. If not, see <http://www.gnu.org/licenses/>.
+ */
+package de.tum.in.jbdd;
+
+import static de.tum.in.jbdd.BooleanBase.EMPTY_INT_ARRAY;
+import static de.tum.in.jbdd.Preconditions.checkState;
+
+import de.tum.in.jbdd.collections.MutableNatSet;
+import de.tum.in.jbdd.collections.NatSet;
+import de.tum.in.jbdd.collections.NatSets;
+import java.util.Arrays;
+import java.util.List;
+import java.util.PrimitiveIterator;
+import org.jspecify.annotations.Nullable;
+
+/**
+ * The variable order both diagrams of a {@link DdContextImpl} are laid out in, and the sifting engine
+ * that moves it. A swap has to rewrite both tables between the two halves of the order change, which is
+ * why this owns the bijection rather than either diagram.
+ */
+@SuppressWarnings("AssertWithSideEffects")
+public final class DdVariableOrderImpl implements DdVariableOrder, StatisticsReporter {
+    /* How much sifting is allowed to grow the node count at most */
+    private static final double MAXIMUM_SIFT_GROWTH = 1.2;
+    /* Unreachable fraction of a table a swap tolerates before collecting - see swapWithNextLevel. */
+    private static final double MAXIMUM_SIFT_GARBAGE = 0.40;
+
+    private static final Statistic REORDER_COUNT = Statistic.counter("reorder_count", "reorderings");
+    private static final Statistic REORDER_SAVED_NODES =
+            Statistic.counter("reorder_saved_nodes", "nodes the reorderings saved");
+    private static final Statistic REORDER_TIME =
+            Statistic.counter("reorder_time_milliseconds", "time spent reordering");
+    private static final Statistic REORDER_SWAPS = Statistic.counter("reorder_swaps", "swaps of adjacent levels");
+    private static final Statistic REORDER_NOTIFICATIONS =
+            Statistic.counter("reorder_notifications", "notifications of observers about a reordering");
+    private static final Statistic REORDER_REWRITTEN_NODES =
+            Statistic.counter("reorder_rewritten_nodes", "nodes rewritten by the swaps");
+    private static final Statistic REORDER_COLLECTIONS =
+            Statistic.counter("reorder_collections", "collections during reordering");
+    private static final Statistic REORDER_ABANDONED_DIRECTIONS = Statistic.counter(
+            "reorder_abandoned_directions", "sifting directions abandoned because the diagrams grew too much");
+    private static final Statistic REORDER_MEMORY_STOPS = Statistic.counter(
+            "reorder_memory_stops",
+            "sifting directions stopped because a memory-limited table could not hold the next swap");
+    private static final Statistic REORDER_IDENTITY_REVERTS =
+            Statistic.counter("reorder_identity_reverts", "reorderings undone because they saved nothing");
+    /* The one ratio that says whether sifting is earning its keep, the way node_table_work_per_created_node does
+     * for memory management. */
+    private static final Statistic.Ratio REORDER_WORK_PER_SAVED_NODE = Statistic.ratio(
+            "reorder_work_per_saved_node",
+            "nodes rewritten per node saved",
+            List.of(REORDER_REWRITTEN_NODES),
+            List.of(REORDER_SAVED_NODES));
+
+    /* The diagrams are reached through the context rather than held here: this is built before they are,
+     * and nothing on the hot path (levelOfVariable, variableAtLevel) touches them at all. */
+    private final DdContextImpl context;
+    /* The listeners are the order's, not the diagrams': a change moves every diagram at once, so each
+     * one is told exactly once and none of them has to work out which diagram it is hearing about. */
+    private final ObserverGroup<VariableOrderObserver> observers = new ObserverGroup<>();
+
+    private int numberOfVariables = 0;
+    /* The variable order, as a bijection between a variable and its position; empty for identity order */
+    private int[] variableToLevel = EMPTY_INT_ARRAY;
+    private int[] levelToVariable = EMPTY_INT_ARRAY;
+    /* Whether the order is not identity. */
+    private boolean explicitOrder = false;
+    /* The order as it was when the reordering currently running started, and null while none is - the
+     * swaps in between tell nobody, and this is what the single notification at the end reports against.
+     * Deferring is sound because nothing reads an operation cache or a stored level while the order is
+     * moving: a swap only rewrites nodes, and reordering may not run while an operation is in flight. */
+    private int @Nullable [] reorderingFrom = null;
+
+    // Statistics
+
+    /* Reorderings run and nodes they removed in total - the number that says whether reordering is worth
+     * what it costs, which the per-call return value alone does not show. */
+    private int reorderCount = 0;
+    private long reorderSavedNodes = 0;
+    /* The cost side, against reorderSavedNodes as the benefit side. Swaps and the nodes they rewrote say
+     * what the sifting itself cost; the collections say whether MAXIMUM_SIFT_GARBAGE is set sensibly, and
+     * the abandoned directions whether MAXIMUM_SIFT_GROWTH is.
+     *
+     * The swap-level counters cover every swap, reorderTo's and a caller's own siftDown included - they
+     * count swaps, not sifting runs. Only reorderCount, reorderSavedNodes and reorderAbandonedDirections
+     * are the sifting policy's alone, so reorder_work_per_saved_node is a fair ratio only for a workload
+     * that reorders and nothing else. */
+    private long reorderSwaps = 0;
+    private long reorderRewrittenNodes = 0;
+    private int reorderCollections = 0;
+    private int reorderAbandonedDirections = 0;
+    /* Sifting directions stopped because a memory-limited table could not have held the next swap - see swapFits.
+     * Nonzero means the heap, not MAXIMUM_SIFT_GROWTH, decided how far sifting went. */
+    private int reorderMemoryStops = 0;
+    private long reorderTimeMilliseconds = 0;
+    /* How often a reordering landed back on the identity and the order went implicit again. Sifting has
+     * no reason to prefer the identity, so this is expected to stay at zero on anything but a caller's
+     * own reorderToIdentity - if it does not, the fast path is worth more than it looks. */
+    private int reorderIdentityReverts = 0;
+    /* Order changes the listeners were told about. Against reorder_swaps this is what batching the
+     * notification is worth: one per reordering, however many swaps it took. */
+    private int reorderNotifications = 0;
+
+    DdVariableOrderImpl(DdContextImpl context) {
+        this.context = context;
+    }
+
+    private BddImpl bdd() {
+        return context.bdd();
+    }
+
+    private MtBddImpl mtbdd() {
+        return context.mtBdd();
+    }
+
+    void registerObserver(VariableOrderObserver observer) {
+        observers.register(observer);
+    }
+
+    /** Registers an observer owned by a diagram over this order, see {@link ObserverGroup}. */
+    void registerOwnedObserver(VariableOrderObserver observer) {
+        observers.registerStrongly(observer);
+    }
+
+    void notifyVariablesInserted(int level, int count) {
+        observers.dispatch(observer -> observer.variablesInserted(level, count));
+    }
+
+    // The order itself
+
+    @Override
+    public int numberOfVariables() {
+        return numberOfVariables;
+    }
+
+    boolean isExplicitOrder() {
+        return explicitOrder;
+    }
+
+    /**
+     * Whether a reordering is running.
+     */
+    boolean isReordering() {
+        return reorderingFrom != null;
+    }
+
+    @Override
+    public int levelOfVariable(int variable) {
+        assert 0 <= variable;
+        return explicitOrder ? variableToLevel[variable] : variable;
+    }
+
+    @Override
+    public int variableAtLevel(int level) {
+        assert 0 <= level;
+        return explicitOrder ? levelToVariable[level] : level;
+    }
+
+    /**
+     * The literals of {@code cube} on the levels below {@code level}, as a cube of its own: never {@code cube}
+     * itself, which may be a walk's working state while the result becomes a cache key.
+     */
+    Cube literalsBelow(Cube cube, int level) {
+        NatSet support = cube.support();
+        if (support.allMatch(variable -> levelOfVariable(variable) > level)) {
+            return cube.copy();
+        }
+        MutableNatSet remainingSupport = MutableNatSet.create();
+        MutableNatSet remainingAssignment = MutableNatSet.create();
+        support.forEach(variable -> {
+            if (levelOfVariable(variable) > level) {
+                remainingSupport.set(variable);
+                remainingAssignment.set(variable, cube.assignment().contains(variable));
+            }
+        });
+        return Cube.ofUnsafe(remainingAssignment, remainingSupport);
+    }
+
+    private void ensureOrderCapacity(int variables) {
+        assert explicitOrder;
+        if (variables > variableToLevel.length) {
+            int length = Math.max(Math.max(variableToLevel.length * 2, variables), 32);
+            variableToLevel = Arrays.copyOf(variableToLevel, length);
+            levelToVariable = Arrays.copyOf(levelToVariable, length);
+        }
+    }
+
+    private void makeOrderExplicit() {
+        if (explicitOrder) {
+            return;
+        }
+        // Set before growing the arrays: they are only live while the flag is, which ensureOrderCapacity
+        // asserts. Both callers move a variable within this critical section, so nothing observes the
+        // flag while the order it promises is still the identity.
+        explicitOrder = true;
+        ensureOrderCapacity(numberOfVariables);
+        for (int variable = 0; variable < numberOfVariables; variable++) {
+            variableToLevel[variable] = variable;
+            levelToVariable[variable] = variable;
+        }
+    }
+
+    /**
+     * Reverts to implicit identity if the current order is the identity.
+     *
+     * @return whether the current order is the identity (no matter if explicit or implicit).
+     */
+    private boolean makeImplicitIfIdentity() {
+        if (!explicitOrder) {
+            return true;
+        }
+        for (int level = 0; level < numberOfVariables; level++) {
+            if (levelToVariable[level] != level) {
+                return false;
+            }
+        }
+        variableToLevel = EMPTY_INT_ARRAY;
+        levelToVariable = EMPTY_INT_ARRAY;
+        explicitOrder = false;
+        reorderIdentityReverts += 1;
+        return true;
+    }
+
+    /**
+     * Records {@code count} new variables at the bottom, each at the level of its own number, and returns
+     * the first of them. An implicit order stays implicit: a variable appended at the bottom is its own
+     * level either way.
+     */
+    int appendVariables(int count) {
+        int firstVariable = numberOfVariables;
+        if (explicitOrder) {
+            ensureOrderCapacity(firstVariable + count);
+            for (int index = 0; index < count; index++) {
+                variableToLevel[firstVariable + index] = firstVariable + index;
+                levelToVariable[firstVariable + index] = firstVariable + index;
+            }
+        }
+        numberOfVariables = firstVariable + count;
+        return firstVariable;
+    }
+
+    /**
+     * Records {@code count} new variables occupying levels {@code level} to {@code level + count - 1},
+     * pushing whatever sat there and below down by {@code count}, and returns the first of them.
+     *
+     * <p>Everything below the insertion point moves once rather than once per variable, which is the
+     * whole point of the block form. Walked from the bottom up so a slot is read before anything is
+     * written over it.
+     */
+    int insertVariables(int level, int count) {
+        int firstVariable = numberOfVariables;
+        // Appending at the bottom leaves an implicit order implicit.
+        if (level != firstVariable) {
+            makeOrderExplicit();
+        }
+        if (explicitOrder) {
+            ensureOrderCapacity(firstVariable + count);
+
+            for (int current = firstVariable - 1; current >= level; current--) {
+                int moved = levelToVariable[current];
+                levelToVariable[current + count] = moved;
+                variableToLevel[moved] = current + count;
+            }
+            for (int index = 0; index < count; index++) {
+                levelToVariable[level + index] = firstVariable + index;
+                variableToLevel[firstVariable + index] = level + index;
+            }
+        }
+        numberOfVariables = firstVariable + count;
+        return firstVariable;
+    }
+
+    // Telling the listeners
+
+    /**
+     * Opens a reordering: from here until {@link #endReordering()} the swaps are silent. Every public
+     * entry point that moves a variable brackets itself with the pair, {@link #siftDown} included - a
+     * caller driving swaps itself gets one notification per call, which is what it would have had.
+     */
+    private void beginReordering() {
+        assert reorderingFrom == null : "A reordering is already in progress";
+        reorderingFrom = currentVariableToLevel();
+        bdd().table().beginReorderingStatistics();
+        mtbdd().table().beginReorderingStatistics();
+    }
+
+    private void endReordering() {
+        int[] previous = reorderingFrom;
+        assert previous != null : "No reordering in progress";
+        reorderingFrom = null;
+        bdd().table().endReorderingStatistics();
+        mtbdd().table().endReorderingStatistics();
+
+        int[] current = currentVariableToLevel();
+        MutableNatSet movedVariables = MutableNatSet.dense(numberOfVariables);
+        for (int variable = 0; variable < numberOfVariables; variable++) {
+            if (previous[variable] != current[variable]) {
+                movedVariables.set(variable);
+            }
+        }
+        if (movedVariables.isEmpty()) {
+            return;
+        }
+        reorderNotifications += 1;
+
+        assert bdd().table().workStacksEmpty() && mtbdd().table().workStacksEmpty();
+        int[] previousCopy = previous.clone();
+        int[] currentCopy = current.clone();
+        observers.dispatch(observer -> observer.orderChanged(previous, current, movedVariables));
+        assert Arrays.equals(previous, previousCopy)
+                        && Arrays.equals(current, currentCopy)
+                        && movedVariables.intStream().allMatch(variable -> previous[variable] != current[variable])
+                : "A listener modified what it was told about the order";
+    }
+
+    /** The order as a plain array, materialised even while it is the implicit identity. */
+    private int[] currentVariableToLevel() {
+        int[] order = new int[numberOfVariables];
+        if (explicitOrder) {
+            System.arraycopy(variableToLevel, 0, order, 0, numberOfVariables);
+        } else {
+            Arrays.setAll(order, variable -> variable);
+        }
+        return order;
+    }
+
+    // Reordering
+
+    @Override
+    public void dropReorderStructures() {
+        bdd().table().dropReorderingBookkeeping();
+        mtbdd().table().dropReorderingBookkeeping();
+    }
+
+    @Override
+    public void siftDown(int level) {
+        beginReordering();
+        swapWithNextLevel(level);
+        endReordering();
+    }
+
+    /* The primitive: one adjacent swap, rewriting exactly the nodes that must change. Silent by design -
+     * see beginReordering; a sifting pass makes thousands of these and one notification covers them. */
+    private void swapWithNextLevel(int level) {
+        assert 0 <= level && level + 1 < numberOfVariables;
+        BddImpl bdd = bdd();
+        MtBddImpl mtbdd = mtbdd();
+        assert bdd.accessGuard.acquire();
+        assert bdd.table().workStacksEmpty() && mtbdd.table().workStacksEmpty();
+
+        reorderSwaps += 1;
+        makeOrderExplicit();
+
+        bdd.table().enableReorderingBookkeeping();
+        mtbdd.table().enableReorderingBookkeeping();
+        if (bdd.table().deadNodeFraction() > MAXIMUM_SIFT_GARBAGE
+                || mtbdd.table().deadNodeFraction() > MAXIMUM_SIFT_GARBAGE) {
+            bdd.gc();
+            mtbdd.gc();
+            reorderCollections += 1;
+        }
+
+        int upper = variableAtLevel(level + 1);
+        int lower = variableAtLevel(level);
+
+        bdd.table().beginRewrite();
+        mtbdd.table().beginRewrite();
+
+        // MTBDD and BDD ordering must stay the same for the shared operations to make sense
+        // The buffers handed back may be longer than their contents, so take the counts with them.
+        int bddCount = bdd.table().nodesWithVariable(lower);
+        int mtbddCount = mtbdd.table().nodesWithVariable(lower);
+        int[] bddNodes = bdd.table().detachNodesWithVariable(lower);
+        int[] mtbddNodes = mtbdd.table().detachNodesWithVariable(lower);
+
+        levelToVariable[level] = upper;
+        levelToVariable[level + 1] = lower;
+        variableToLevel[upper] = level;
+        variableToLevel[lower] = level + 1;
+
+        bdd.rewriteLevelAfterSwap(bddNodes, bddCount, level, upper);
+        mtbdd.rewriteLevelAfterSwap(mtbddNodes, mtbddCount, level, upper);
+        reorderRewrittenNodes += (long) bddCount + mtbddCount;
+
+        bdd.table().endRewrite();
+        mtbdd.table().endRewrite();
+
+        assert bdd.table().workStacksEmpty() && mtbdd.table().workStacksEmpty();
+        assert bdd.accessGuard.release();
+    }
+
+    /* Not Arrays.equals against levelToVariable: that array is capacity-sized while the order is
+     * explicit and empty while it is implicit, so it never compares equal to a target of exactly
+     * numberOfVariables entries - the short-circuit this guards would never fire. */
+    private boolean isCurrentOrder(int[] target) {
+        for (int level = 0; level < target.length; level++) {
+            if (target[level] != variableAtLevel(level)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void permuteTo(int[] target) {
+        for (int level = 0; level < target.length; level++) {
+            int current = levelOfVariable(target[level]);
+            assert current >= level : "Level " + level + " was already settled";
+            while (current > level) {
+                swapWithNextLevel(current - 1);
+                current -= 1;
+            }
+        }
+    }
+
+    /**
+     * The variables in the order {@code blocks} asks for. Each block is anchored where its members
+     * already are and the don't-cares are left in the order they are in, so this edits the current order
+     * rather than replacing it: an order that already satisfies the request comes back unchanged.
+     *
+     * <p>Blocks must not overlap, but the given list can be a subset of all variables.</p>
+     */
+    @Override
+    public void reorderTo(List<NatSet> blocks) {
+        if (numberOfVariables < 2) {
+            return;
+        }
+        assert bdd().accessGuard.acquire();
+        assert bdd().table().workStacksEmpty() && mtbdd().table().workStacksEmpty();
+        beginReordering();
+
+        MutableNatSet listed = MutableNatSet.dense(numberOfVariables);
+        long[] keyed = new long[numberOfVariables];
+        int index = 0;
+        int nextFreeStart = 0;
+
+        // Create a heuristic order of the blocks
+        for (NatSet block : blocks) {
+            checkState(!block.intersects(listed), "Reordering blocks overlap");
+            int size = block.size();
+            if (size == 0) {
+                continue;
+            }
+            int[] levels = new int[size];
+            int at = 0;
+            PrimitiveIterator.OfInt iterator = block.iterator();
+            while (iterator.hasNext()) {
+                int variable = iterator.nextInt();
+                checkState(variable < numberOfVariables, "Unknown variable %s in a reordering block", variable);
+                levels[at] = levelOfVariable(variable);
+                at += 1;
+            }
+            listed.or(block);
+            Arrays.sort(levels);
+
+            // Where should the first element of this block go?
+            // Look at the median of the current positions (adjusted by size), this would be the least sifts
+            // However, if that position is already allocated "away", move it to the closest position
+            int start = Math.max(nextFreeStart, levels[size / 2] - size / 2);
+            nextFreeStart = start + size;
+
+            // Sort blocks by their start position first and then by their current level
+            for (int memberLevel : levels) {
+                keyed[index] = ((start * 2L) << Integer.SIZE) | memberLevel;
+                index += 1;
+            }
+        }
+        // All the other levels are sorted in between
+        for (int level = 0; level < numberOfVariables; level++) {
+            if (!listed.contains(variableAtLevel(level))) {
+                keyed[index] = ((2L * level + 1) << Integer.SIZE) | level;
+                index += 1;
+            }
+        }
+        assert index == numberOfVariables;
+
+        Arrays.sort(keyed);
+        int[] target = new int[numberOfVariables];
+        for (int level = 0; level < numberOfVariables; level++) {
+            // The low half is the level the variable sits at now, which names it - nothing has moved yet.
+            target[level] = variableAtLevel((int) keyed[level]);
+        }
+
+        if (!isCurrentOrder(target)) {
+            long startTimestamp = System.currentTimeMillis();
+            permuteTo(target);
+            reorderTimeMilliseconds += System.currentTimeMillis() - startTimestamp;
+            makeImplicitIfIdentity();
+        }
+
+        endReordering();
+        assert checkDisjointContiguousBlocks(blocks);
+        assert !Assertions.COSTLY_ASSERTIONS || bdd().check();
+        assert bdd().accessGuard.release();
+    }
+
+    @Override
+    public void reorderToIdentity() {
+        if (!explicitOrder) {
+            return;
+        }
+        assert bdd().accessGuard.acquire();
+        assert bdd().table().workStacksEmpty() && mtbdd().table().workStacksEmpty();
+        beginReordering();
+
+        int[] target = new int[numberOfVariables];
+        Arrays.setAll(target, i -> i);
+        long startTimestamp = System.currentTimeMillis();
+        permuteTo(target);
+        reorderTimeMilliseconds += System.currentTimeMillis() - startTimestamp;
+
+        boolean implicit = makeImplicitIfIdentity();
+        assert implicit : "Permuting to the identity did not produce the identity";
+
+        endReordering();
+        assert !Assertions.COSTLY_ASSERTIONS || bdd().check();
+        assert bdd().accessGuard.release();
+    }
+
+    @Override
+    public int reorder() {
+        if (numberOfVariables < 2) {
+            return 0;
+        }
+        return reorder(List.of(NatSet.range(0, numberOfVariables)));
+    }
+
+    @Override
+    public int reorder(List<NatSet> groups) {
+        if (numberOfVariables < 2) {
+            return 0;
+        }
+        BddImpl bdd = bdd();
+        MtBddImpl mtbdd = mtbdd();
+        assert bdd.accessGuard.acquire();
+        assert bdd.table().workStacksEmpty() && mtbdd.table().workStacksEmpty();
+        assert checkDisjointContiguousBlocks(groups);
+        beginReordering();
+
+        bdd.gc();
+        mtbdd.gc();
+        bdd.table().enableReorderingBookkeeping();
+        mtbdd.table().enableReorderingBookkeeping();
+        int nodesBefore = liveNodeCount();
+        long startTimestamp = System.currentTimeMillis();
+
+        int[] weight = new int[numberOfVariables];
+        for (int variable = 0; variable < numberOfVariables; variable++) {
+            weight[variable] =
+                    bdd.table().nodesWithVariable(variable) + mtbdd.table().nodesWithVariable(variable);
+        }
+
+        for (NatSet group : groups) {
+            if (group.size() < 2) {
+                continue;
+            }
+            int minLevel = Integer.MAX_VALUE;
+            int maxLevel = -1;
+            PrimitiveIterator.OfInt iterator = group.iterator();
+            while (iterator.hasNext()) {
+                int variable = iterator.nextInt();
+                minLevel = Math.min(minLevel, levelOfVariable(variable));
+                maxLevel = Math.max(maxLevel, levelOfVariable(variable));
+            }
+
+            // Sort variables by their weight -- start with those that have the most nodes, as
+            // these have most to gain
+            long[] order = new long[group.size()];
+            NatSets.forEachWithIndex(
+                    group, (variable, index) -> order[index] = ((long) weight[variable] << Integer.SIZE) | variable);
+            Arrays.sort(order);
+
+            for (int position = order.length - 1; position >= 0; position--) {
+                sift((int) order[position], minLevel, maxLevel);
+            }
+        }
+
+        int saved = nodesBefore - liveNodeCount();
+        reorderTimeMilliseconds += System.currentTimeMillis() - startTimestamp;
+        assert saved >= 0 : "Sifting left the diagram bigger than it found it";
+        reorderCount += 1;
+        reorderSavedNodes += saved;
+        makeImplicitIfIdentity();
+
+        endReordering();
+        if (!context.configuration().keepReorderingStructures()) {
+            dropReorderStructures();
+        }
+        assert !Assertions.COSTLY_ASSERTIONS || bdd.check();
+        assert bdd.accessGuard.release();
+        return saved;
+    }
+
+    private boolean checkDisjointContiguousBlocks(List<NatSet> groups) {
+        MutableNatSet seen = MutableNatSet.dense(numberOfVariables);
+        for (NatSet group : groups) {
+            checkState(!group.intersects(seen), "Reordering groups overlap");
+            seen.or(group);
+
+            int minLevel = Integer.MAX_VALUE;
+            int maxLevel = -1;
+            PrimitiveIterator.OfInt iterator = group.iterator();
+            while (iterator.hasNext()) {
+                int variable = iterator.nextInt();
+                checkState(variable < numberOfVariables, "Unknown variable %s in a reordering group", variable);
+                minLevel = Math.min(minLevel, levelOfVariable(variable));
+                maxLevel = Math.max(maxLevel, levelOfVariable(variable));
+            }
+            checkState(
+                    group.isEmpty() || maxLevel - minLevel + 1 == group.size(),
+                    "Reordering group %s does not occupy a contiguous run of levels",
+                    group);
+        }
+        return true;
+    }
+
+    private int liveNodeCount() {
+        return bdd().table().liveNodeCountFromBookkeeping() + mtbdd().table().liveNodeCountFromBookkeeping();
+    }
+
+    @SuppressWarnings("NumericCastThatLosesPrecision")
+    private void sift(int variable, int minLevel, int maxLevel) {
+        int start = levelOfVariable(variable);
+        assert minLevel <= start && start <= maxLevel;
+        int best = start;
+        int bestSize = liveNodeCount();
+        // Stop exploring a direction once it has cost more than this - the usual bound, without which
+        // every variable pays for a full sweep of a range that was never going to win.
+        // TODO [SIFT-BOUND] It may pay off to instead use "current best * factor" as high mark, but needs benchmarking
+        int limit = (int) Math.min(Integer.MAX_VALUE, (long) (bestSize * MAXIMUM_SIFT_GROWTH));
+
+        int current = start;
+        while (current < maxLevel && swapFits(current)) {
+            swapWithNextLevel(current);
+            current += 1;
+            int size = liveNodeCount();
+            if (size < bestSize) {
+                bestSize = size;
+                best = current;
+            } else if (size > limit) {
+                reorderAbandonedDirections += 1;
+                break;
+            }
+        }
+        while (current > start) {
+            swapWithRoom(current - 1);
+            current -= 1;
+        }
+        while (current > minLevel && swapFits(current - 1)) {
+            swapWithNextLevel(current - 1);
+            current -= 1;
+            int size = liveNodeCount();
+            if (size < bestSize) {
+                bestSize = size;
+                best = current;
+            } else if (size > limit) {
+                reorderAbandonedDirections += 1;
+                break;
+            }
+        }
+        while (current < best) {
+            swapWithRoom(current);
+            current += 1;
+        }
+        while (current > best) {
+            swapWithRoom(current - 1);
+            current -= 1;
+        }
+        assert levelOfVariable(variable) == best;
+    }
+
+    /*
+     * Whether the swap of level and level + 1 is sure to fit while a table is memory limited: inside a swap the tables
+     * grow rather than collect, and one that cannot grow runs full. A swap creates at most two nodes per node of the
+     * lower variable, so twice that count free suffices; where it is not free, the garbage of the swaps so far is
+     * collected first - the orphans of exploring, which no ensureCapacity inside the bracket reclaims - and the
+     * direction is given up if that does not make room. While both tables can grow nothing is asked: they grow inside
+     * the swap as needed, and the collections sifting makes stay at MAXIMUM_SIFT_GARBAGE.
+     */
+    private boolean swapFits(int level) {
+        if (roomFor(level)) {
+            return true;
+        }
+        collectForSwap();
+        if (roomFor(level)) {
+            return true;
+        }
+        reorderMemoryStops += 1;
+        return false;
+    }
+
+    /* A swap that has to happen (back to the best position): room is made as in swapFits, but it is not given up. */
+    private void swapWithRoom(int level) {
+        if (!roomFor(level)) {
+            collectForSwap();
+        }
+        swapWithNextLevel(level);
+    }
+
+    private boolean roomFor(int level) {
+        NodeTable bddTable = bdd().table();
+        NodeTable mtbddTable = mtbdd().table();
+        if (!bddTable.isMemoryLimited() && !mtbddTable.isMemoryLimited()) {
+            return true;
+        }
+        int lower = variableAtLevel(level);
+        return fits(bddTable, lower) && fits(mtbddTable, lower);
+    }
+
+    private static boolean fits(NodeTable table, int variable) {
+        return table.freeNodeCount() >= 2L * table.nodesWithVariable(variable);
+    }
+
+    private void collectForSwap() {
+        bdd().gc();
+        mtbdd().gc();
+        reorderCollections += 1;
+    }
+
+    /** Reported by the BDD, which is where a caller looks for them - there is only one order. */
+    @Override
+    public void report(StatisticsReport report, StatisticsDetail detail) {
+        report.put(REORDER_COUNT, reorderCount);
+        report.put(REORDER_SAVED_NODES, reorderSavedNodes);
+        report.put(REORDER_TIME, reorderTimeMilliseconds);
+        report.put(REORDER_SWAPS, reorderSwaps);
+        report.put(REORDER_NOTIFICATIONS, reorderNotifications);
+        report.put(REORDER_REWRITTEN_NODES, reorderRewrittenNodes);
+        report.put(REORDER_COLLECTIONS, reorderCollections);
+        report.put(REORDER_ABANDONED_DIRECTIONS, reorderAbandonedDirections);
+        report.put(REORDER_MEMORY_STOPS, reorderMemoryStops);
+        report.put(REORDER_IDENTITY_REVERTS, reorderIdentityReverts);
+        report.ratio(REORDER_WORK_PER_SAVED_NODE);
+    }
+
+    @Override
+    public String toString() {
+        return String.format("Order{%d variables%s}", numberOfVariables, explicitOrder ? "" : ", identity");
+    }
+}

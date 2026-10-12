@@ -24,9 +24,9 @@ import org.openjdk.jmh.annotations.Mode;
 import org.openjdk.jmh.annotations.OutputTimeUnit;
 import org.openjdk.jmh.annotations.Warmup;
 
-@Warmup(iterations = 1)
-@Measurement(iterations = 1)
-@Fork(3)
+@Warmup(iterations = 3, time = 4)
+@Measurement(iterations = 3)
+@Fork(2)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @BenchmarkMode(Mode.SingleShotTime)
 public class BaseBddBenchmark {}

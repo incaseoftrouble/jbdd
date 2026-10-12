@@ -24,19 +24,26 @@ public final class BddFactory {
     }
 
     public static Bdd buildBdd(BddConfiguration configuration) {
-        return buildBddRecursive(configuration);
+        return DdContext.create(configuration).bdd();
     }
 
-    public static Bdd buildBddRecursive(BddConfiguration configuration) {
-        return buildBdd(false, configuration);
+    public static MtBdd buildMtBdd() {
+        return buildMtBdd(ImmutableBddConfiguration.builder().build());
     }
 
-    public static Bdd buildBddIterative(BddConfiguration configuration) {
-        return buildBdd(true, configuration);
+    public static MtBdd buildMtBdd(BddConfiguration configuration) {
+        return DdContext.create(configuration).mtBdd();
     }
 
-    public static Bdd buildBdd(boolean iterative, BddConfiguration configuration) {
-        BddImpl bdd = new BddImpl(iterative, configuration);
-        return configuration.threadSafetyCheck() ? new CheckedBdd(bdd) : bdd;
+    public static Mdd buildMdd() {
+        return buildMdd(ImmutableBddConfiguration.builder().build());
+    }
+
+    /**
+     * An MDD stands alone - unlike the MTBDD it shares no variable order with anything - so it needs no
+     * {@link DdContext}, and there is nothing to hand out but the diagram itself.
+     */
+    public static Mdd buildMdd(BddConfiguration configuration) {
+        return new MddImpl(configuration);
     }
 }

@@ -20,67 +20,49 @@ import org.immutables.value.Value;
 
 @SuppressWarnings("MethodReturnAlwaysConstant")
 @Value.Immutable
-public class BddConfiguration {
-    public static final int DEFAULT_CACHE_BINARY_DIVIDER = 32;
-    public static final int DEFAULT_CACHE_SATISFACTION_DIVIDER = 32;
-    public static final int DEFAULT_CACHE_TERNARY_DIVIDER = 64;
-    public static final int DEFAULT_CACHE_NEGATION_DIVIDER = 32;
-    public static final int DEFAULT_CACHE_COMPOSE_DIVIDER = 64;
-    public static final double DEFAULT_NODE_TABLE_FREE_NODE_PERCENTAGE = 0.10d;
-    public static final double DEFAULT_NODE_TABLE_GROWTH_FACTOR = 1.5d;
+public class BddConfiguration extends NodeTableConfiguration {
+    public static final int DEFAULT_CACHE_SIZE_DIVIDER = 32;
 
+    /** An optional, human-readable name for this configuration's instance: it prefixes the keys of its
+     * statistics, so several can be read side by side; empty by default. */
+    @Value.Default
+    public String name() {
+        return "";
+    }
+
+    /** The initial size of the BDD's node table, which grows as needed. */
     @Value.Default
     public int initialSize() {
         return 1024;
     }
 
+    /**
+     * Whether the Bdd maintains structures required for reordering.
+     *
+     * <p>Building it is one linear pass, so a workload that reorders occasionally is better off not
+     * keeping it. Set this when reordering is frequent enough that rebuilding dominates.
+     */
     @Value.Default
-    public int cacheBinaryDivider() {
-        return DEFAULT_CACHE_BINARY_DIVIDER;
-    }
-
-    @Value.Default
-    public int cacheSatisfactionDivider() {
-        return DEFAULT_CACHE_SATISFACTION_DIVIDER;
-    }
-
-    @Value.Default
-    public int cacheTernaryDivider() {
-        return DEFAULT_CACHE_TERNARY_DIVIDER;
-    }
-
-    @Value.Default
-    public int cacheNegationDivider() {
-        return DEFAULT_CACHE_NEGATION_DIVIDER;
-    }
-
-    @Value.Default
-    public int cacheComposeDivider() {
-        return DEFAULT_CACHE_COMPOSE_DIVIDER;
-    }
-
-    @Value.Default
-    public boolean logStatisticsOnShutdown() {
+    public boolean keepReorderingStructures() {
         return false;
     }
 
+    /**
+     * Initial node-table size of the companion MTBDD (see {@code MtBddImpl}); defaults to
+     * {@link #initialSize()}.
+     */
     @Value.Default
-    public double minimumFreeNodePercentageAfterGc() {
-        return DEFAULT_NODE_TABLE_FREE_NODE_PERCENTAGE;
+    public int mtbddInitialSize() {
+        return initialSize();
     }
 
+    /**
+     * The operation caches, as a fraction of the node table they serve: a binary, ternary or ephemeral cache has
+     * {@code table size / cacheSizeDivider()} bins, a unary one half that, a registered operation's an eighth, and
+     * they grow with the table. The one knob of the caches - a larger divider trades hits for memory.
+     */
     @Value.Default
-    public double growthFactor() {
-        return DEFAULT_NODE_TABLE_GROWTH_FACTOR;
-    }
-
-    @Value.Default
-    public boolean useGarbageCollection() {
-        return true;
-    }
-
-    @Value.Default
-    public boolean threadSafetyCheck() {
-        return false;
+    public int cacheSizeDivider() {
+        return DEFAULT_CACHE_SIZE_DIVIDER;
     }
 }

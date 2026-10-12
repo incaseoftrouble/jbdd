@@ -18,26 +18,53 @@ package de.tum.in.jbdd;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.util.BitSet;
+import de.tum.in.jbdd.collections.MutableNatSet;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 
-public class UtilityTest {
+class UtilityTest {
+    /**
+     * JBDD's own tests run the assertions auditing whole structures (Assertions); without -ea or without
+     * JBDD_COSTLY_ASSERTIONS they would silently skip them, and the suite would still pass.
+     */
     @Test
-    public void testPowerIterator() {
+    void testWholeStructureAssertionsAreEnabled() {
+        assertThrows(AssertionError.class, () -> {
+            assert !Assertions.COSTLY_ASSERTIONS;
+        });
+    }
+
+    @Test
+    void testPowerIterator() {
         Random random = new Random(0);
         int size = 12;
-        BitSet set = new BitSet(size);
+        MutableNatSet set = MutableNatSet.dense(size);
         for (int i = 0; i < size; i++) {
             if (random.nextBoolean()) {
                 set.set(i);
             }
         }
-        PowerIterator iterator = new PowerIterator(set);
+        var iterator = NatSetFixtures.powerSetIterator(set);
         AtomicLong counter = new AtomicLong();
         iterator.forEachRemaining(i -> counter.incrementAndGet());
-        assertThat(counter.get(), is(1L << set.cardinality()));
+        assertThat(counter.get(), is(1L << set.size()));
+    }
+
+    @Test
+    void testNextPrimeAgreesAcrossTheTableBoundary() {
+        // The tabulated range and the Miller-Rabin search must not disagree at the seam.
+        for (int n = 0; n < 9000; n++) {
+            int next = Primes.nextPrime(n);
+            assertTrue(next >= Math.max(n, 2), "nextPrime(" + n + ") = " + next);
+            assertTrue(Primes.isPrime(next), next + " is not prime");
+            for (int between = Math.max(n, 2); between < next; between++) {
+                assertFalse(Primes.isPrime(between), between + " is a smaller prime than " + next);
+            }
+        }
     }
 }

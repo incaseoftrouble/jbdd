@@ -1,3 +1,7 @@
+.mcp.json
+.claude
+.junie
+
 # ==== Java files ===
 
 *.hprof
