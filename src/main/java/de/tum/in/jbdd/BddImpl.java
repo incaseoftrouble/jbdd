@@ -2714,6 +2714,190 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
     }
 
     @Override
+    public int andExistsSimplify(int function1, int function2, NatSet quantifiedVariables, int domain) {
+        assert isValidFunction(function1) && isValidFunction(function2) && isValidFunction(domain);
+        checkVariablesExist(quantifiedVariables, numberOfVariables());
+
+        if (domain == FALSE) {
+            return FALSE;
+        }
+        if (quantifiedVariables.isEmpty()) {
+            return andSimplify(function1, function2, domain);
+        }
+        if (quantifiedVariables.size() == numberOfVariables()) {
+            return intersects(function1, function2) ? TRUE : FALSE;
+        }
+
+        assert accessGuard.acquire();
+        // A constant operand leaves exists, and the domain is projected through it, so both share the exists cache.
+        cache.initExists(quantifiedVariables);
+        cache.initAndExists(quantifiedVariables);
+        int result = andExistsSimplifyGeneral(
+                function1,
+                function2,
+                domain,
+                variablesToLevels(quantifiedVariables),
+                cache.andExistsCache(),
+                cache.existsCache(),
+                cache.andExistsSimplifyCache());
+        assert accessGuard.release();
+        return result;
+    }
+
+    @Override
+    public RegisteredOperation.Ternary registerAndExistsSimplify(NatSet quantifiedVariables) {
+        checkVariablesExist(quantifiedVariables, numberOfVariables());
+        if (quantifiedVariables.isEmpty()) {
+            return this::andSimplify;
+        }
+        return new BddOperations.Exists(this, NatSet.copyOf(quantifiedVariables));
+    }
+
+    int andExistsSimplifyGeneral(
+            int function1,
+            int function2,
+            int domain,
+            NatSet quantifiedLevels,
+            BooleanCache.BinaryToIntCache andExistsCache,
+            BooleanCache.UnaryToIntCache existsCache,
+            BooleanCache.TernaryToIntCache andExistsSimplifyCache) {
+        assert domain != FALSE;
+        assert accessGuard.acquire();
+        assert table.workStacksEmpty();
+        table.pushToWorkStack(function1, function2, domain);
+        // A domain reading quantified variables is read as its projection: the larger domain constrains more.
+        int widened = table.pushToWorkStack(existsRecursive(domain, quantifiedLevels, existsCache));
+        int result = andExistsSimplifyRecursive(
+                function1, function2, widened, quantifiedLevels, andExistsCache, existsCache, andExistsSimplifyCache);
+        table.popFromWorkStack(4);
+        assert table.workStacksEmpty();
+        assert accessGuard.release();
+        return result;
+    }
+
+    /*
+     * The relational product cofactoring the domain on the way down, as computeAndSimplify: a branch the domain
+     * excludes is not visited, and where one of the domain's cofactors is false the other branch's result is the
+     * result (no node). The domain reads no quantified variable, so at a quantified level the two results are
+     * simplified against the same domain and so is their disjunction. Unlike andExistsRecursive, a low result equal to
+     * a high cofactor does not bound the high result: both are only right on the domain.
+     */
+    private int andExistsSimplifyRecursive(
+            int function1,
+            int function2,
+            int domain,
+            NatSet quantifiedLevels,
+            BooleanCache.BinaryToIntCache andExistsCache,
+            BooleanCache.UnaryToIntCache existsCache,
+            BooleanCache.TernaryToIntCache simplifyCache) {
+        assert domain != FALSE;
+        if (domain == TRUE) {
+            return andExistsRecursive(function1, function2, quantifiedLevels, andExistsCache, existsCache);
+        }
+        if (function1 == FALSE || function2 == FALSE || function1 == complement(function2)) {
+            return FALSE;
+        }
+        if (function1 == TRUE || function1 == function2 || function2 == TRUE) {
+            int single = function1 == TRUE ? function2 : function1;
+            // TODO existsSimplify?
+            int projected = table.pushToWorkStack(existsRecursive(single, quantifiedLevels, existsCache));
+            int result = computeSimplify(projected, domain);
+            table.popFromWorkStack();
+            return result;
+        }
+
+        assert !isConstant(function1) && !isConstant(function2) && !isConstant(domain);
+
+        int fun1Level = decisionLevel(function1);
+        int fun2Level = decisionLevel(function2);
+        int level = Math.min(fun1Level, fun2Level);
+        if (quantifiedLevels.nextSetBit(level) == -1) {
+            return computeAndSimplify(function1, function2, domain);
+        }
+
+        if (function1 > function2) {
+            int swap = function1;
+            function1 = function2;
+            function2 = swap;
+            int levelSwap = fun1Level;
+            fun1Level = fun2Level;
+            fun2Level = levelSwap;
+        }
+
+        int lookup = simplifyCache.lookup(function1, function2, domain);
+        if (lookup != placeholder()) {
+            return lookup;
+        }
+        int hash = simplifyCache.lookupHash();
+
+        int domainLevel = decisionLevel(domain);
+        assert !quantifiedLevels.contains(domainLevel);
+        int result;
+        if (domainLevel < level) {
+            int domainLow = low(domain);
+            int domainHigh = high(domain);
+            if (domainLow == FALSE) {
+                result = andExistsSimplifyRecursive(
+                        function1, function2, domainHigh, quantifiedLevels, andExistsCache, existsCache, simplifyCache);
+            } else if (domainHigh == FALSE) {
+                result = andExistsSimplifyRecursive(
+                        function1, function2, domainLow, quantifiedLevels, andExistsCache, existsCache, simplifyCache);
+            } else {
+                int widened = table.pushToWorkStack(computeOr(domainLow, domainHigh));
+                result = andExistsSimplifyRecursive(
+                        function1, function2, widened, quantifiedLevels, andExistsCache, existsCache, simplifyCache);
+                table.popFromWorkStack();
+            }
+        } else {
+            int low1 = lowIf(function1, fun1Level == level);
+            int low2 = lowIf(function2, fun2Level == level);
+            int high1 = highIf(function1, fun1Level == level);
+            int high2 = highIf(function2, fun2Level == level);
+
+            if (quantifiedLevels.contains(level)) {
+                int lowResult = andExistsSimplifyRecursive(
+                        low1, low2, domain, quantifiedLevels, andExistsCache, existsCache, simplifyCache);
+                if (lowResult == TRUE) {
+                    result = TRUE;
+                } else {
+                    table.pushToWorkStack(lowResult);
+                    int highResult = table.pushToWorkStack(andExistsSimplifyRecursive(
+                            high1, high2, domain, quantifiedLevels, andExistsCache, existsCache, simplifyCache));
+                    result = computeOrSimplify(lowResult, highResult, domain);
+                    table.popFromWorkStack(2);
+                }
+            } else if (domainLevel == level) {
+                int domainLow = low(domain);
+                int domainHigh = high(domain);
+                if (domainLow == FALSE) {
+                    result = andExistsSimplifyRecursive(
+                            high1, high2, domainHigh, quantifiedLevels, andExistsCache, existsCache, simplifyCache);
+                } else if (domainHigh == FALSE) {
+                    result = andExistsSimplifyRecursive(
+                            low1, low2, domainLow, quantifiedLevels, andExistsCache, existsCache, simplifyCache);
+                } else {
+                    int lowResult = table.pushToWorkStack(andExistsSimplifyRecursive(
+                            low1, low2, domainLow, quantifiedLevels, andExistsCache, existsCache, simplifyCache));
+                    int highResult = table.pushToWorkStack(andExistsSimplifyRecursive(
+                            high1, high2, domainHigh, quantifiedLevels, andExistsCache, existsCache, simplifyCache));
+                    result = makeFunction(level, lowResult, highResult);
+                    table.popFromWorkStack(2);
+                }
+            } else {
+                int lowResult = table.pushToWorkStack(andExistsSimplifyRecursive(
+                        low1, low2, domain, quantifiedLevels, andExistsCache, existsCache, simplifyCache));
+                int highResult = table.pushToWorkStack(andExistsSimplifyRecursive(
+                        high1, high2, domain, quantifiedLevels, andExistsCache, existsCache, simplifyCache));
+                result = makeFunction(level, lowResult, highResult);
+                table.popFromWorkStack(2);
+            }
+        }
+
+        simplifyCache.put(hash, function1, function2, domain, result);
+        return result;
+    }
+
+    @Override
     public RegisteredOperation.Binary registerAndExists(NatSet quantifiedVariables) {
         checkVariablesExist(quantifiedVariables, numberOfVariables());
         if (quantifiedVariables.isEmpty()) {

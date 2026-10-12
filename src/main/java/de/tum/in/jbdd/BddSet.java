@@ -113,6 +113,21 @@ public interface BddSet {
     /** {@code union(other).forall(quantifiedVariables)}, the dual of {@link #andExists}. */
     BddSet orForall(BddSet other, NatSet quantifiedVariables);
 
+    /**
+     * {@code intersection(other).simplify(domain)}: agrees with the intersection on {@code domain}, without building it.
+     *
+     * @see BooleanTerminalDecisionDiagram#andSimplify(int, int, int)
+     */
+    BddSet andSimplify(BddSet other, BddSet domain);
+
+    /**
+     * {@code andExists(other, quantifiedVariables).simplify(domain)}: agrees with the relational product on {@code
+     * domain}, building neither it nor the intersection; it does not depend on any quantified variable.
+     *
+     * @see BinaryDecisionDiagram#andExistsSimplify(int, int, NatSet, int)
+     */
+    BddSet andExistsSimplify(BddSet other, NatSet quantifiedVariables, BddSet domain);
+
     /** Elements in exactly one of this set and {@code other}. */
     BddSet symmetricDifference(BddSet other);
 
@@ -303,6 +318,14 @@ public interface BddSet {
     interface RelationalProduct extends BinaryOperator<BddSet>, RegisteredOperation {
         @Override
         BddSet apply(BddSet set, BddSet other);
+
+        /**
+         * A set agreeing with {@link #apply} on {@code domain} and unspecified elsewhere - the
+         * {@link BddSet#andExistsSimplify} form of this operation.
+         */
+        default BddSet applyIn(BddSet set, BddSet other, BddSet domain) {
+            return apply(set, other).simplify(domain);
+        }
     }
 
     /**

@@ -36,6 +36,7 @@ New operations
 
 * `andNot`, `forall` (also on `BddSet`), `intersects` (`and(f, g) != FALSE`), `anyPathMatches`
 * `andExists` (`BinaryDecisionDiagram`, `BddSet`, registered as `registerAndExists`): the relational product `exists(and(f, g), vars)` in one recursion that never builds the conjunction; `orForall` its dual
+* `andExistsSimplify` (`BinaryDecisionDiagram`, `BddSet`, registered as `registerAndExistsSimplify` and `RelationalProduct.applyIn`): the relational product simplified to a domain, one recursion that visits no branch the domain excludes; `BddSet.andSimplify` the same for the conjunction
 * `and(int[])` / `or(int[])`: n-ary conjunction and disjunction; `BddSetFactory.union` / `intersection` over many sets delegate to them
 * `simplify` and `constrain`: reduce a function `f` to a given domain `d`, i.e. preserve the values of `f` where `d` is true but otherwise do whatever - `constrain` as the generalized cofactor (on binary diagrams only), `simplify` heuristically; on `BddSet` and `BddMap` as well as on the int layer
 * `xyIn`: perform operation `xy` relative to a given domain `d` (e.g.\ count satisfying assignments of `x` in `d`); `xySimplify`: perform `simplify(xy(...), d)`, but potentially much faster

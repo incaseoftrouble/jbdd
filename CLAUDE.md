@@ -705,7 +705,7 @@ the size of their largest call, and most later calls write a handful of entries 
 `map` cache 1.3M times, ~16,000 bins for ~38 entries each; full fills were 3% of its run time). A write
 bypassing `putBin` would survive a clear; `ensureValid` asserts the cache empty after every clear.
 
-**Simplify-fused operations.** `andSimplify` (BDD) and `applySimplify`/`mapSimplify`/
+**Simplify-fused operations.** `andSimplify` and `andExistsSimplify` (BDD) and `applySimplify`/`mapSimplify`/
 `composeSimplify` (MTBDD) are *one* recursion with the plain operation as the `domain == TRUE` special
 case, not a wrapper around `simplify(op(...))` — the domain is cofactored on the way down, so a branch the
 domain excludes is never visited. Each carries a second cache keyed on the same arguments plus the domain,
@@ -731,6 +731,14 @@ fused form creates 2.3 to 4.7 times fewer nodes and takes 0.4 to 0.85 of the tim
 random transitions gaining least).
 `orForall` is its complement. `BddTheories.testAndExists` pins it, both operand orders, registered and dual, to
 the composition and the syntax trees.
+`andExistsSimplify` is the same recursion cofactoring a domain on the way down, `computeAndSimplify`'s way: a domain
+reading a quantified variable is projected first (`exists`, which only widens it), so the domain never has a quantified
+level; at a quantified level the two results are `orSimplify`'d against the same domain, at a free one the domain is
+split with the operands and a branch it excludes is not visited. The low-equals-a-high-cofactor shortcut is left out:
+simplified results are only right on the domain, so one bounds nothing. Its ternary cache sits next to the and-exists
+one and is invalidated with it (`initAndExists`); the registered handle (`BddOperations.Exists`, also its `Ternary`)
+carries a third private cache. `testAndExistsSimplify` pins it, both orders and registered, to `simplify(andExists)` on
+the projected domain and checks the result reads no quantified variable.
 
 **The BDD compose is a joint descent** (`computeCompose`, also `composeSimplify` and both registered forms). Its
 state is the function and the domain restricted to the path, with each replaced variable the function still
@@ -754,9 +762,9 @@ survives alternation between operations. A plain call hands the diagram a freshl
 every invocation; the diagram reads that as a different operator and drops the shared ephemeral cache, so
 repeating one operation never reuses an entry.
 
-Int layer: `registerCompose`/`registerComposeSimplify` on both `Bdd` and `MtBdd`, `Bdd#registerExists` and
-`registerAndExists` (one `BddOperations.Exists`, unary the exists, binary the and-exists, each with its private
-cache; an unused cache is never allocated, `CacheBase` sizing lazily), and `MtBdd#registerApply`/`registerApplySimplify`/`registerMap`/`registerMapSimplify`/`registerMapBoolean`/
+Int layer: `registerCompose`/`registerComposeSimplify` on both `Bdd` and `MtBdd`, `Bdd#registerExists`,
+`registerAndExists` and `registerAndExistsSimplify` (one `BddOperations.Exists`, unary the exists, binary the
+and-exists, ternary its simplifying form, each with its private cache; an unused cache is never allocated, `CacheBase` sizing lazily), and `MtBdd#registerApply`/`registerApplySimplify`/`registerMap`/`registerMapSimplify`/`registerMapBoolean`/
 `registerApplyBoolean`, returning `RegisteredOperation.Unary`/`Binary`/`Ternary`. The BDD compose forms hold
 no cache: the composition's is keyed on its whole context (§6), so they only resolve and protect the mapping
 once. Only the compose forms bind *nodes*, and those own them: `ProtectedOperation` + `ProtectionTracker` reference the operands on
@@ -767,7 +775,8 @@ MTBDD operations always straddle both, since their results are BDD functions.
 
 Object layer: handle types bound once and applied repeatedly — `BddMap.Operator<V>` (plus `applyIn`),
 `BddMap.VariableReplacer` (plus `replaceIn`), `BddMap.Mapper<V, O>`, `BddMap.Combiner<V, W, O>`,
-`BddMap.Selector<V>`, `BddMap.Relation<V>`, `BddSet.Quantifier`, `BddSet.RelationalProduct`, `BddSet.VariableReplacer`.
+`BddMap.Selector<V>`, `BddMap.Relation<V>`, `BddSet.Quantifier`, `BddSet.RelationalProduct` (plus `applyIn`, backed by
+a second registration, `registerAndExistsSimplify`, which its `release()` releases too), `BddSet.VariableReplacer`.
 
 - **Each extends `RegisteredOperation`**, which is where `release()` and the one statement of what
   binding means both live. The root declares no abstract method, so a handle that also extends a

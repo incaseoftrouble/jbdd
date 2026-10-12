@@ -49,12 +49,11 @@ can settle; `CLAUDE.md` §11 is explicit that reasoning about these paths has re
 
 ## Worth doing
 
-- **[AND-EXISTS] `BinaryDecisionDiagram` - `AndExistsSimplify` and the other fused forms.** The and-exists itself is
-  native (`BddImpl#andExists`, §6). Open: `andExistsSimplify` (the and-exists cofactoring a domain on the way
-  down, `andSimplify`'s way: a ternary cache next to the and-exists one, invalidated with it), quantification
-  fused with other operators (`xorExists`, a quantifying MTBDD `apply`), and a native `MddImpl` and-exists - an
-  MDD takes the interface's default, which builds the conjunction. Each wants a workload that quantifies a
-  combination other than the conjunction first; none of JBDD's clients has one yet.
+- **[AND-EXISTS] `BinaryDecisionDiagram` - the other fused forms.** The and-exists and its simplifying form are native
+  (`BddImpl#andExists`, `#andExistsSimplify`, §6). Open: quantification fused with other operators (`xorExists`, a
+  quantifying MTBDD `apply`), and a native `MddImpl` and-exists - an MDD takes the interface's default, which builds
+  the conjunction. Each wants a workload that quantifies a combination other than the conjunction first; none of
+  JBDD's clients has one yet.
 
 ## Needs design
 

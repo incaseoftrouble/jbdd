@@ -122,6 +122,13 @@ class RegisteredOperationsTest {
         assertEquals(x0.intersection(x1).exists(quantified), andExists.apply(x0, x1));
         assertEquals(x0.intersection(x1).exists(quantified), andExists.apply(x1, x0));
         assertEquals(x0.andExists(x1, quantified), andExists.apply(x0, x1));
+        // the simplifying form agrees on the domain, and so does the set's own
+        BddSet domain = x1;
+        assertEquals(x1, andExists.applyIn(x0, x1, domain).intersection(domain));
+        assertEquals(x1, x0.andExistsSimplify(x1, quantified, domain).intersection(domain));
+        BddSet care = sets.var(2);
+        assertEquals(
+                x0.intersection(x1).intersection(care), x0.andSimplify(x1, care).intersection(care));
         andExists.release();
 
         /* A handle is built before it sees a set, so it declares the variables it replaces instead of

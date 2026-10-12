@@ -26,13 +26,18 @@ final class BddOperations {
 
     /** A quantification bound to its variables: unary, the exists; binary, the and-exists. */
     static final class Exists
-            implements RegisteredOperation.Unary, RegisteredOperation.Binary, NodeTableObserver, VariableOrderObserver {
+            implements RegisteredOperation.Unary,
+                    RegisteredOperation.Binary,
+                    RegisteredOperation.Ternary,
+                    NodeTableObserver,
+                    VariableOrderObserver {
         private final BddImpl bdd;
         private final NatSet quantifiedVariables;
         private NatSet quantifiedLevels;
         private final BooleanCache.UnaryToIntCache existsCache;
         // Allocated on first use (CacheBase resizes lazily), so a handle used only one way pays for one cache.
         private final BooleanCache.BinaryToIntCache andExistsCache;
+        private final BooleanCache.TernaryToIntCache andExistsSimplifyCache;
 
         Exists(BddImpl bdd, NatSet quantifiedVariables) {
             this.bdd = bdd;
@@ -40,6 +45,7 @@ final class BddOperations {
             this.quantifiedLevels = bdd.variablesToLevels(quantifiedVariables);
             this.existsCache = new BooleanCache.UnaryToIntCache(bdd);
             this.andExistsCache = new BooleanCache.BinaryToIntCache(bdd);
+            this.andExistsSimplifyCache = new BooleanCache.TernaryToIntCache(bdd);
             bdd.registerObserver(this);
             bdd.variableOrder().registerObserver(this);
             growToTableFloor();
@@ -50,6 +56,7 @@ final class BddOperations {
                     bdd.tableSize() / (bdd.configuration().cacheSizeDivider() * CacheBase.REGISTERED_OPERATION_DIVIDER);
             existsCache.grow(size);
             andExistsCache.grow(size);
+            andExistsSimplifyCache.grow(size);
         }
 
         @Override
@@ -64,6 +71,7 @@ final class BddOperations {
             // see BooleanCache#orderChanged
             existsCache.invalidate();
             andExistsCache.invalidate();
+            andExistsSimplifyCache.invalidate();
         }
 
         @Override
@@ -101,6 +109,30 @@ final class BddOperations {
         }
 
         @Override
+        public int applyAsInt(int function1, int function2, int domain) {
+            assert bdd.isValidFunction(function1) && bdd.isValidFunction(function2) && bdd.isValidFunction(domain);
+
+            if (domain == bdd.falseFunction()) {
+                return domain;
+            }
+            if (quantifiedVariables.size() == bdd.numberOfVariables()) {
+                return bdd.intersects(function1, function2) ? bdd.trueFunction() : bdd.falseFunction();
+            }
+            int result = bdd.andExistsSimplifyGeneral(
+                    function1,
+                    function2,
+                    domain,
+                    quantifiedLevels,
+                    andExistsCache,
+                    existsCache,
+                    andExistsSimplifyCache);
+            existsCache.growOnUsage();
+            andExistsCache.growOnUsage();
+            andExistsSimplifyCache.growOnUsage();
+            return result;
+        }
+
+        @Override
         public void afterGc(DecisionDiagram origin, int reclaimedNodes, NatSet reclaimedValues) {
             pruneInvalidNodes(reclaimedNodes);
         }
@@ -116,6 +148,7 @@ final class BddOperations {
                 // See BooleanCache#onBddNodesInvalidated.
                 existsCache.invalidate();
                 andExistsCache.invalidate();
+                andExistsSimplifyCache.invalidate();
                 return;
             }
             if (invalidatedNodes == 0) {
@@ -124,6 +157,7 @@ final class BddOperations {
             boolean preserve = invalidatedNodes < bdd.tableSize() / 2;
             existsCache.clearInvalidNodes(preserve);
             andExistsCache.clearInvalidNodes(preserve);
+            andExistsSimplifyCache.clearInvalidNodes(preserve);
         }
     }
 

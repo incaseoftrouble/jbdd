@@ -32,7 +32,7 @@ import org.jspecify.annotations.Nullable;
  * occur with invalid arguments. Especially, the BDD may appear to be in a working state for a long
  * time after an invalid call.</p>
  */
-// TODO [AND-EXISTS] AndExistsSimplify and the other fused forms (quantify + apply + simplify at the same time)
+// TODO [AND-EXISTS] the other fused forms (quantification fused with an operator other than the conjunction)
 public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTerminalDecisionDiagram<NatSet, Cube> {
     /** A satisfying assignment, fresh and the caller's own. */
     @Override
@@ -385,6 +385,21 @@ public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTe
         return result;
     }
 
+    /**
+     * {@code simplify(andExists(function1, function2, quantifiedVariables), domain)}, in one traversal where the
+     * implementation has one - which never visits a branch the domain excludes. The result agrees with the relational
+     * product wherever {@code domain} holds; a domain reading quantified variables is read as its projection, and the
+     * result does not depend on any quantified variable.
+     */
+    default int andExistsSimplify(int function1, int function2, NatSet quantifiedVariables, int domain) {
+        int product = reference(andExists(function1, function2, quantifiedVariables));
+        int widened = reference(exists(domain, quantifiedVariables));
+        int result = simplify(product, widened);
+        dereference(product);
+        dereference(widened);
+        return result;
+    }
+
     /** {@code forall(or(function1, function2), quantifiedVariables)}, the dual of {@link #andExists}. */
     default int orForall(int function1, int function2, NatSet quantifiedVariables) {
         int disjunction = reference(or(function1, function2));
@@ -400,6 +415,16 @@ public interface BinaryDecisionDiagram extends BooleanDecisionDiagram, BooleanTe
     default RegisteredOperation.Binary registerAndExists(NatSet quantifiedVariables) {
         NatSet bound = NatSet.copyOf(quantifiedVariables);
         return (function1, function2) -> andExists(function1, function2, bound);
+    }
+
+    /**
+     * Registers an {@link #andExistsSimplify} operation bound to a fixed set of {@code quantifiedVariables} (operands
+     * {@code function1, function2, domain}) - see {@link RegisteredOperation}. The set is read here and may be changed
+     * afterwards.
+     */
+    default RegisteredOperation.Ternary registerAndExistsSimplify(NatSet quantifiedVariables) {
+        NatSet bound = NatSet.copyOf(quantifiedVariables);
+        return (function1, function2, domain) -> andExistsSimplify(function1, function2, bound, domain);
     }
 
     /**

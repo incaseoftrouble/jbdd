@@ -218,7 +218,8 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
 
     @Override
     public BddSet.RelationalProduct registerAndExists(NatSet quantifiedVariables) {
-        return new RegisteredRelationalProduct(this, dd.registerAndExists(quantifiedVariables));
+        return new RegisteredRelationalProduct(
+                this, dd.registerAndExists(quantifiedVariables), dd.registerAndExistsSimplify(quantifiedVariables));
     }
 
     @Override
@@ -348,15 +349,33 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
     private static final class RegisteredRelationalProduct
             extends RegisteredOperations.Forwarding<RegisteredOperation.Binary> implements BddSet.RelationalProduct {
         private final BddSetFactoryImpl factory;
+        // the simplifying form, a registration of its own (its caches are allocated on first use)
+        private final RegisteredOperation.Ternary simplifying;
 
-        RegisteredRelationalProduct(BddSetFactoryImpl factory, RegisteredOperation.Binary operation) {
+        RegisteredRelationalProduct(
+                BddSetFactoryImpl factory,
+                RegisteredOperation.Binary operation,
+                RegisteredOperation.Ternary simplifying) {
             super(operation);
             this.factory = factory;
+            this.simplifying = simplifying;
         }
 
         @Override
         public BddSet apply(BddSet set, BddSet other) {
             return factory.make(operation.applyAsInt(factory.functionOf(set), factory.functionOf(other)));
+        }
+
+        @Override
+        public BddSet applyIn(BddSet set, BddSet other, BddSet domain) {
+            return factory.make(simplifying.applyAsInt(
+                    factory.functionOf(set), factory.functionOf(other), factory.functionOf(domain)));
+        }
+
+        @Override
+        public void release() {
+            super.release();
+            simplifying.release();
         }
     }
 
@@ -490,6 +509,17 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         @Override
         public BddSet orForall(BddSet other, NatSet quantifiedVariables) {
             return make(factory.dd.orForall(function, factory.functionOf(other), quantifiedVariables));
+        }
+
+        @Override
+        public BddSet andSimplify(BddSet other, BddSet domain) {
+            return make(factory.dd.andSimplify(function, factory.functionOf(other), factory.functionOf(domain)));
+        }
+
+        @Override
+        public BddSet andExistsSimplify(BddSet other, NatSet quantifiedVariables, BddSet domain) {
+            return make(factory.dd.andExistsSimplify(
+                    function, factory.functionOf(other), quantifiedVariables, factory.functionOf(domain)));
         }
 
         @Override

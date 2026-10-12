@@ -58,6 +58,7 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
     private final UnaryToIntCache existsCache;
     private NatSet existsVariables = NatSet.of();
     private final BinaryToIntCache andExistsCache;
+    private final TernaryToIntCache andExistsSimplifyCache;
     private NatSet andExistsVariables = NatSet.of();
     private final UnaryToObjectCache<BigInteger> satisfactionCache;
     private final BinaryToObjectCache<BigInteger> satisfactionInCache;
@@ -88,6 +89,7 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
         iteSimplifyCache = new QuaternaryToIntCache(bdd);
         existsCache = new UnaryToIntCache(bdd);
         andExistsCache = new BinaryToIntCache(bdd);
+        andExistsSimplifyCache = new TernaryToIntCache(bdd);
         satisfactionCache = new UnaryToObjectCache<>(bdd);
         satisfactionInCache = new BinaryToObjectCache<>(bdd);
 
@@ -118,7 +120,8 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
                 entry("simplify", simplifyCache),
                 entry("constrain", constrainCache),
                 entry("exists", existsCache),
-                entry("and_exists", andExistsCache));
+                entry("and_exists", andExistsCache),
+                entry("and_exists_simplify", andExistsSimplifyCache));
 
         tableSizeChanged(0);
     }
@@ -163,6 +166,10 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
         return andExistsCache;
     }
 
+    TernaryToIntCache andExistsSimplifyCache() {
+        return andExistsSimplifyCache;
+    }
+
     // Size and invalidation
 
     void tableSizeChanged(int invalidatedNodes) {
@@ -192,6 +199,7 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
         iteSimplifyCache.grow(size);
         existsCache.grow(size);
         andExistsCache.grow(size);
+        andExistsSimplifyCache.grow(size);
     }
 
     void variablesChanged() {
@@ -272,6 +280,7 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
         }
         this.andExistsVariables = NatSet.copyOf(quantifiedVariables);
         andExistsCache.invalidate();
+        andExistsSimplifyCache.invalidate();
     }
 
     int lookupAnd(int function1, int function2) {

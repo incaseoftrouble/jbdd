@@ -521,6 +521,44 @@ class BddTheories {
     }
 
     @ParameterizedTest(name = "{index}")
+    @MethodSource("ternary")
+    void testAndExistsSimplify(TernaryDataPoint<BinaryDd> dataPoint) {
+        BinaryDd bdd = dataPoint.bdd;
+        int function1 = dataPoint.first;
+        int function2 = dataPoint.second;
+        int domain = dataPoint.third;
+        assumeTrue(bdd.isValidFunction(function1));
+        assumeTrue(bdd.isValidFunction(function2));
+        assumeTrue(bdd.isValidFunction(domain));
+
+        Random quantificationRandom = new Random(31L * (31L * function1 + function2) + domain);
+        int density = quantificationRandom.nextInt(bdd.numberOfVariables() + 1);
+        MutableNatSet quantified = MutableNatSet.dense(bdd.numberOfVariables());
+        for (int i = 0; i < bdd.numberOfVariables(); i++) {
+            if (quantificationRandom.nextInt(bdd.numberOfVariables()) < density) {
+                quantified.set(i);
+            }
+        }
+
+        // agrees with the relational product on the domain read as its projection, and reads no quantified variable
+        int product = bdd.reference(bdd.andExists(function1, function2, quantified));
+        int widened = bdd.reference(bdd.exists(domain, quantified));
+        RegisteredOperation.Ternary registered = bdd.registerAndExistsSimplify(quantified);
+        for (int[] operands : new int[][] {{function1, function2}, {function2, function1}}) {
+            int fused = bdd.reference(bdd.andExistsSimplify(operands[0], operands[1], quantified, domain));
+            testSimplify(bdd, fused, product, widened);
+            assertThat(bdd.support(fused).intersects(quantified), is(false));
+            bdd.dereference(fused);
+            int bound = bdd.reference(registered.applyAsInt(operands[0], operands[1], domain));
+            testSimplify(bdd, bound, product, widened);
+            assertThat(bdd.support(bound).intersects(quantified), is(false));
+            bdd.dereference(bound);
+        }
+        assertThat(bdd.andExistsSimplify(function1, function2, quantified, bdd.trueFunction()), is(product));
+        bdd.dereference(product, widened);
+    }
+
+    @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
     void testAndNot(BinaryDataPoint<BinaryDd> dataPoint) {
         BinaryDd bdd = dataPoint.bdd;
