@@ -19,6 +19,8 @@ package de.tum.in.jbdd;
 import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.jspecify.annotations.Nullable;
@@ -55,13 +57,16 @@ public class GcReferenceManager<V extends GcReferenceManager.DdContainer, DD ext
     private long drainedCount = 0;
     private long drainedBeforeGcCount = 0;
 
-    /* Drains the queue before the owning diagram collects its table: a wrapper the JVM collected and queued would
-     * otherwise keep its function referenced until the next miss, and the collection would count its nodes live.
-     * The owner registers it with its diagram; held here, since the diagram holds observers weakly. */
+    /* Before the owning diagram collects its table: drains the queue, and releases every wrapper the JVM cleared but
+     * has not queued yet (its reference handler queues them on a thread of its own, some time after the collection).
+     * Either would otherwise keep its function referenced, and the collection would count its nodes live. So a table
+     * collection right after a JVM collection sees exactly the wrappers still reachable, whatever the JVM's timing -
+     * what a client needs whose reordering should not depend on it (it collects first, System.gc()). The owner
+     * registers it with its diagram; held here, since the diagram holds observers weakly. */
     final NodeTableObserver drainBeforeGc = new NodeTableObserver() {
         @Override
         public void beforeGc(DecisionDiagram origin) {
-            drainedBeforeGcCount += drain();
+            drainedBeforeGcCount += drain() + releaseCleared();
         }
     };
 
@@ -101,7 +106,7 @@ public class GcReferenceManager<V extends GcReferenceManager.DdContainer, DD ext
         DdReference<V> reference = new DdReference<>(container, key, queue);
         if (slot >= 0) {
             // Collected but not queued yet: the new wrapper inherits the reference its predecessor holds.
-            referenceAt(slot).inherited = true;
+            referenceAt(slot).released = true;
             references[slot] = reference;
         } else {
             dd.reference(container.function());
@@ -114,12 +119,34 @@ public class GcReferenceManager<V extends GcReferenceManager.DdContainer, DD ext
         int count = 0;
         for (Reference<? extends V> polled = queue.poll(); polled != null; polled = queue.poll()) {
             DdReference<?> dead = (DdReference<?>) polled;
-            if (!dead.inherited) {
+            if (!dead.released) {
                 remove(dead);
                 dd.dereference(dead.function);
                 count += 1;
             }
         }
+        released(count);
+        return count;
+    }
+
+    /* The wrappers the JVM cleared that are still in the table: released here, their queued references later skipped. */
+    private int releaseCleared() {
+        List<DdReference<V>> cleared = new ArrayList<>();
+        for (DdReference<V> reference : references) {
+            if (reference != null && reference.get() == null) {
+                cleared.add(reference);
+            }
+        }
+        for (DdReference<V> dead : cleared) {
+            dead.released = true;
+            remove(dead);
+            dd.dereference(dead.function);
+        }
+        released(cleared.size());
+        return cleared.size();
+    }
+
+    private void released(int count) {
         drainedCount += count;
         if (count > 0) {
             logger.log(Level.FINEST, "Cleared {0} references", count);
@@ -131,7 +158,6 @@ public class GcReferenceManager<V extends GcReferenceManager.DdContainer, DD ext
                 resize(capacity);
             }
         }
-        return count;
     }
 
     // Table
@@ -221,8 +247,9 @@ public class GcReferenceManager<V extends GcReferenceManager.DdContainer, DD ext
     private static final class DdReference<V extends DdContainer> extends WeakReference<V> {
         private final long key;
         private final int function;
-        // Set once a successor took over this reference's count; draining it then does nothing.
-        private boolean inherited = false;
+        // Set once this reference no longer holds its count - a successor took it over, or releaseCleared released
+        // it -; draining it then does nothing.
+        private boolean released = false;
 
         private DdReference(V container, long key, ReferenceQueue<? super V> queue) {
             super(container, queue);

@@ -261,7 +261,10 @@ Entry points — never `new BddImpl(...)` outside tests:
   `Reference` that is itself unreachable is never enqueued - its function would stay referenced for good.
   A wrapper collected but not yet queued is replaced in place, the new one inheriting its reference. The queue is
   drained on every miss and before every collection of the owner's table (`drainBeforeGc`, registered by both
-  factories), so a queued wrapper's nodes are not counted live; `BinaryFactoryContext.statistics()` reports
+  factories), so a queued wrapper's nodes are not counted live; before a collection the table is also swept for
+  wrappers the JVM cleared but its reference handler has not queued yet (`releaseCleared`), so a table collection
+  right after `System.gc()` counts exactly the reachable wrappers live - a reordering after one does not depend on
+  the JVM's timing (SemML's GR(1) solver sifts that way; without, its circuits differed run to run); `BinaryFactoryContext.statistics()` reports
   `set_`/`map_` `wrapper_count`, `wrapper_drained_count` and `wrapper_drained_before_gc_count`. The table
   grows at 2/3 load and shrinks when a drain leaves it below 1/8.
 - A caller wrapping sets in its own type binds it with `BinaryFactoryContext.attachToSets` (an
