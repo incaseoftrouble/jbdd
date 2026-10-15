@@ -110,6 +110,9 @@ jmh {
   if (isRequested("jmhRelational")) {
     includes.add("RelationalProductBenchmark*")
   }
+  if (isRequested("jmhChain")) {
+    includes.add("ChainBenchmark*")
+  }
 }
 
 tasks.register<Task>("jmhRandom") {
@@ -159,6 +162,11 @@ tasks.register<Task>("jmhReorder") {
 
 tasks.register<Task>("jmhRelational") {
   description = "Run the relational product workload"
+  finalizedBy("jmh")
+}
+
+tasks.register<Task>("jmhChain") {
+  description = "Run the chain benchmarks (long conjunctions and disjunctions, per variable order)"
   finalizedBy("jmh")
 }
 

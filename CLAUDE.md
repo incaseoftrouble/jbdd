@@ -43,7 +43,7 @@ asking for clarification over guessing.**
 ./gradlew test --tests 'de.tum.in.jbdd.RegressionTests'    # quick loop
 ./gradlew compileJava compileTestJava -q                   # quickest check
 ./gradlew spotlessApply    # palantir-java-format, 120 cols; pre-commit hook runs spotlessCheck
-./gradlew jmhRandom | jmhSynthetic | jmhDimacs | jmhEnumeration | jmhNary | jmhMtBdd | jmhReorder | jmhRelational | jmhNatSet | jmhCube | jmh
+./gradlew jmhRandom | jmhSynthetic | jmhDimacs | jmhEnumeration | jmhNary | jmhMtBdd | jmhReorder | jmhRelational | jmhNatSet | jmhCube | jmhChain | jmh
 ```
 
 Gotchas that have cost real time:
@@ -189,7 +189,10 @@ on `GcReferenceManager` or `NodeTable`; still, construct the diagrams only throu
 - `NodeTable` — the manual-memory heart: flat primitive arrays, hash-consed unique table, packed metadata
   `<VAR:17><REF:14><MARK:1>` (asserted to fill an `int`), free list, mark-and-sweep GC, growth, optional
   reordering bookkeeping. `NodeTable.Binary` (parallel `low[]`/`high[]`) and `NodeTable.Multi` (jagged
-  `int[][]`); each diagram supplies a nested `Table` filling in the abstract hooks.
+  `int[][]`); each diagram supplies a nested `Table` filling in the abstract hooks. The unique tables' hash is
+  a sum on purpose (children's indices plus 31 times the variable; why, in `Binary.hash`): a mixing hash loses the
+  locality of a node's bucket near its children, and the variable's factor 1 put chains built bottom-up into one
+  bucket. A factor that a regular structure allocates per variable collides the same way (3, `binaryAdder`).
 - `DdContextImpl` — the BDD and its MTBDD, and the creation of the variables they share. Deliberately
   shallow: it constructs the order first, then both diagrams eagerly (BDD first — the MTBDD hangs its
   caches and observers off it). Each diagram keeps only its own table, cache and `rewriteLevelAfterSwap`

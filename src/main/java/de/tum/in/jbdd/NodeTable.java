@@ -42,6 +42,8 @@ public abstract class NodeTable implements StatisticsReporter {
     // Use 0 as "not a node" to make re-allocations slightly more efficient (arrays are always filled with zeroes)
     public static final int PLACEHOLDER = 0;
     static final int FIRST_NODE = 1;
+    // the variable's factor in the unique tables' hash (Binary.hash)
+    private static final int VARIABLE_HASH_FACTOR = 31;
 
     // Node metadata helpers
 
@@ -2294,12 +2296,19 @@ public abstract class NodeTable implements StatisticsReporter {
         }
 
         private static int hash(int variable, int low, int high) {
-            /* Deliberately trivial: Benchmarking shows this outperforms other "proper" hash functions.
-             * The conjecture is locality - children are allocated near their parent, so a sum keeps a node
-             * near its children in the table and a chain walk stays within the same cache lines, which
-             * outweighs the better spread of a mixed hash. */
-            int hashCode = (low < 0 ? -low : low) + (high < 0 ? -high : high) + variable;
-            return hashCode & Integer.MAX_VALUE;
+            /* The children's indices plus a multiple of the variable, deliberately not a mixing hash. Locality: children
+             * are allocated shortly before their parents, so a sum puts a node's bucket near its children's indices and
+             * the lookups of a bottom-up build stay within a few cache lines; a well-spread hash loses more to cache
+             * misses than it gains in chain length. Chaining: a linear hash maps every arithmetic progression in its
+             * kernel to one bucket. With the variable's factor 1 (low + high + variable), that kernel is the common
+             * one: in a chain of nodes built bottom-up - a long conjunction, a clause, a counter - each node is
+             * allocated one index after its child and its variable's index is one less, so the whole chain shares a
+             * bucket and every lookup walks it (ChainBenchmark is that workload). With VARIABLE_HASH_FACTOR, the
+             * kernel is nodes VARIABLE_HASH_FACTOR indices apart per variable, which regular structures do not
+             * produce (3 does: a ripple-carry adder allocates three nodes per bit), and a chain's buckets stay a few
+             * cache lines apart. */
+            return ((low < 0 ? -low : low) + (high < 0 ? -high : high) + VARIABLE_HASH_FACTOR * variable)
+                    & Integer.MAX_VALUE;
         }
 
         /**
@@ -2448,7 +2457,8 @@ public abstract class NodeTable implements StatisticsReporter {
         }
 
         private static int hash(int variable, int[] children) {
-            int hashCode = variable;
+            // as the binary table's: the children's indices plus a multiple of the variable (see Binary.hash)
+            int hashCode = VARIABLE_HASH_FACTOR * variable;
             for (int child : children) {
                 hashCode += child < 0 ? -child : child;
             }
