@@ -58,8 +58,8 @@ public class BddConfiguration extends NodeTableConfiguration {
 
     /**
      * The operation caches, as a fraction of the node table they serve: a binary, ternary or ephemeral cache has
-     * {@code table size / cacheSizeDivider()} bins, a unary one half that, a registered operation's an eighth, and
-     * they grow with the table. The one knob of the caches - a larger divider trades hits for memory.
+     * {@code table size / cacheSizeDivider()} bins, a unary one half that, and they grow with the table; a registered
+     * operation's starts at an eighth of that and grows with its use up to it. The one knob of the caches - a larger divider trades hits for memory.
      */
     @Value.Default
     public int cacheSizeDivider() {

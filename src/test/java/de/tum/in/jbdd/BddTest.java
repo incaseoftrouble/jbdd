@@ -452,6 +452,69 @@ class BddTest {
     }
 
     @Test
+    void testObjectCacheKeepsAnEntryStoredByAGrowingPut() {
+        // A put may grow the cache, replacing its arrays: the value has to land in the new one.
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int[] variables = bdd.createVariables(16);
+        BooleanCache.UnaryToObjectCache<String> cache = new BooleanCache.UnaryToObjectCache<>(bdd);
+        cache.grow(0);
+        for (int variable : variables) {
+            assertThat(cache.lookup(variable), is((String) null));
+            int hash = cache.lookupHash();
+            cache.grow(2 * cache.size() + 1);
+            cache.put(hash, variable, "v" + variable);
+            assertThat(cache.lookup(variable), is("v" + variable));
+        }
+    }
+
+    @Test
+    void testCacheGrowsWithItsPutsUpToItsLimit() {
+        // No operation boundary in between: the puts alone grow the cache, and only up to the limit.
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int[] variables = bdd.createVariables(2000);
+        BooleanCache.UnaryToIntCache cache = new BooleanCache.UnaryToIntCache(bdd);
+        cache.grow(0);
+        cache.growWithUsageUpTo(500);
+        for (int variable : variables) {
+            cache.lookup(variable);
+            cache.put(cache.lookupHash(), variable, variable);
+        }
+        assertThat(cache.size() >= 250 && cache.size() <= 2 * 500, is(true));
+    }
+
+    @Test
+    void testComposeSupportsAreMemoizedWithinOneCall() {
+        // The replacement reads the top variable, so every level is a path literal and asks for its children's
+        // supports. "At least n/2 of n" has two distinct children per node over shared subdiagrams: a support cache
+        // that does not grow within the call misses on most of them again, hundreds of steps per node.
+        int n = 40;
+        DdContextImpl context = new DdContextImpl(config);
+        BddImpl bdd = context.bdd();
+        int[] a = bdd.createVariables(n);
+        int o = bdd.createVariable();
+        // atLeast[j]: at least j of the variables from the current one down are true
+        int[] atLeast = new int[n / 2 + 1];
+        Arrays.fill(atLeast, bdd.falseFunction());
+        atLeast[0] = bdd.trueFunction();
+        for (int i = n - 1; i >= 0; i--) {
+            for (int j = n / 2; j >= 1; j--) {
+                atLeast[j] = bdd.updateWith(bdd.ifThenElse(a[i], atLeast[j - 1], atLeast[j]), atLeast[j]);
+            }
+        }
+        int threshold = atLeast[n / 2];
+        int function = bdd.reference(bdd.and(threshold, o));
+        int[] mapping = new int[n + 1];
+        Arrays.fill(mapping, bdd.placeholder());
+        int replacement = bdd.reference(bdd.or(a[0], a[n - 1]));
+        mapping[bdd.decisionVariable(o)] = replacement;
+
+        long before = context.work();
+        int composed = bdd.compose(function, mapping);
+        assertThat(context.work() - before < 20L * bdd.size(function), is(true));
+        assertThat(composed, is(bdd.and(threshold, replacement)));
+    }
+
+    @Test
     void testComposeAlongThePathDropsAMappingWhoseReplacementWasRecycled() {
         // As RegressionTests#testComposeCacheDropsAMappingWhoseReplacementWasRecycled, with a replacement reading
         // v2, which the function decides above v7: the composition restricts the replacement along the path, and

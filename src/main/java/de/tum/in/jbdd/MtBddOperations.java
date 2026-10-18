@@ -76,12 +76,19 @@ final class MtBddOperations {
             growToTableFloor();
         }
 
+        /** An ephemeral cache's size: the private caches grow on usage up to it. */
+        private int usageLimit() {
+            return mtbdd.tableSize() / mtbdd.bddImpl().configuration().cacheSizeDivider();
+        }
+
         private void growToTableFloor() {
             int floor = mtbdd.tableSize()
                     / (mtbdd.bddImpl().configuration().cacheSizeDivider() * CacheBase.REGISTERED_OPERATION_DIVIDER);
             composeCache.grow(floor);
+            composeCache.growWithUsageUpTo(usageLimit());
             if (composeSimplifyCache != null) {
                 composeSimplifyCache.grow(floor);
+                composeSimplifyCache.growWithUsageUpTo(usageLimit());
             }
         }
 
@@ -120,13 +127,8 @@ final class MtBddOperations {
             }
             assert bddDomain == mtbdd.bdd().trueFunction() || composeSimplifyCache != null
                     : "A domain-carrying compose must be registered through registerComposeSimplify";
-            int result = mtbdd.composeGeneral(
+            return mtbdd.composeGeneral(
                     mtbddFunction, bddDomain, bddVariableMapping, maxReplacedLevel, composeCache, composeSimplifyCache);
-            composeCache.growOnUsage();
-            if (composeSimplifyCache != null) {
-                composeSimplifyCache.growOnUsage();
-            }
-            return result;
         }
 
         @Override
@@ -201,12 +203,19 @@ final class MtBddOperations {
             growToTableFloor();
         }
 
+        /** An ephemeral cache's size: the private caches grow on usage up to it. */
+        private int usageLimit() {
+            return mtbdd.tableSize() / mtbdd.bddImpl().configuration().cacheSizeDivider();
+        }
+
         private void growToTableFloor() {
             int floor = mtbdd.tableSize()
                     / (mtbdd.bddImpl().configuration().cacheSizeDivider() * CacheBase.REGISTERED_OPERATION_DIVIDER);
             mapCache.grow(floor);
+            mapCache.growWithUsageUpTo(usageLimit());
             if (mapSimplifyCache != null) {
                 mapSimplifyCache.grow(floor);
+                mapSimplifyCache.growWithUsageUpTo(usageLimit());
             }
         }
 
@@ -221,12 +230,7 @@ final class MtBddOperations {
                             || bddDomain == mtbdd.bdd().falseFunction()
                             || mapSimplifyCache != null
                     : "A domain-carrying map must be registered through registerMapSimplify";
-            int result = mtbdd.map(function, bddDomain, operator, mapCache, mapSimplifyCache);
-            mapCache.growOnUsage();
-            if (mapSimplifyCache != null) {
-                mapSimplifyCache.growOnUsage();
-            }
-            return result;
+            return mtbdd.map(function, bddDomain, operator, mapCache, mapSimplifyCache);
         }
 
         @Override
@@ -288,16 +292,20 @@ final class MtBddOperations {
             growToTableFloor();
         }
 
+        /** An ephemeral cache's size: the private caches grow on usage up to it. */
+        private int usageLimit() {
+            return mtbdd.tableSize() / mtbdd.bddImpl().configuration().cacheSizeDivider();
+        }
+
         private void growToTableFloor() {
             mapBooleanCache.grow(mtbdd.tableSize()
                     / (mtbdd.bddImpl().configuration().cacheSizeDivider() * CacheBase.REGISTERED_OPERATION_DIVIDER));
+            mapBooleanCache.growWithUsageUpTo(usageLimit());
         }
 
         @Override
         public int applyAsInt(int function) {
-            int result = mtbdd.mapBoolean(function, values, mapBooleanCache);
-            mapBooleanCache.growOnUsage();
-            return result;
+            return mtbdd.mapBoolean(function, values, mapBooleanCache);
         }
 
         @Override
@@ -347,16 +355,20 @@ final class MtBddOperations {
             growToTableFloor();
         }
 
+        /** An ephemeral cache's size: the private caches grow on usage up to it. */
+        private int usageLimit() {
+            return mtbdd.tableSize() / mtbdd.bddImpl().configuration().cacheSizeDivider();
+        }
+
         private void growToTableFloor() {
             applyBooleanCache.grow(mtbdd.tableSize()
                     / (mtbdd.bddImpl().configuration().cacheSizeDivider() * CacheBase.REGISTERED_OPERATION_DIVIDER));
+            applyBooleanCache.growWithUsageUpTo(usageLimit());
         }
 
         @Override
         public int applyAsInt(int function1, int function2) {
-            int result = mtbdd.applyBoolean(function1, function2, predicate, applyBooleanCache);
-            applyBooleanCache.growOnUsage();
-            return result;
+            return mtbdd.applyBoolean(function1, function2, predicate, applyBooleanCache);
         }
 
         @Override
@@ -411,12 +423,19 @@ final class MtBddOperations {
             growToTableFloor();
         }
 
+        /** An ephemeral cache's size: the private caches grow on usage up to it. */
+        private int usageLimit() {
+            return mtbdd.tableSize() / mtbdd.bddImpl().configuration().cacheSizeDivider();
+        }
+
         private void growToTableFloor() {
             int floor = mtbdd.tableSize()
                     / (mtbdd.bddImpl().configuration().cacheSizeDivider() * CacheBase.REGISTERED_OPERATION_DIVIDER);
             applyCache.grow(floor);
+            applyCache.growWithUsageUpTo(usageLimit());
             if (applySimplifyCache != null) {
                 applySimplifyCache.grow(floor);
+                applySimplifyCache.growWithUsageUpTo(usageLimit());
             }
         }
 
@@ -431,12 +450,7 @@ final class MtBddOperations {
                             || bddDomain == mtbdd.bdd().falseFunction()
                             || applySimplifyCache != null
                     : "A domain-carrying apply must be registered through registerApplySimplify";
-            int result = mtbdd.apply(function1, function2, bddDomain, operator, applyCache, applySimplifyCache);
-            applyCache.growOnUsage();
-            if (applySimplifyCache != null) {
-                applySimplifyCache.growOnUsage();
-            }
-            return result;
+            return mtbdd.apply(function1, function2, bddDomain, operator, applyCache, applySimplifyCache);
         }
 
         @Override

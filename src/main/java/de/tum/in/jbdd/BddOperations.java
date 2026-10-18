@@ -51,12 +51,20 @@ final class BddOperations {
             growToTableFloor();
         }
 
+        /** An ephemeral cache's size: the private caches grow on usage up to it. */
+        private int usageLimit() {
+            return bdd.tableSize() / bdd.configuration().cacheSizeDivider();
+        }
+
         private void growToTableFloor() {
             int size =
                     bdd.tableSize() / (bdd.configuration().cacheSizeDivider() * CacheBase.REGISTERED_OPERATION_DIVIDER);
             existsCache.grow(size);
+            existsCache.growWithUsageUpTo(usageLimit());
             andExistsCache.grow(size);
+            andExistsCache.growWithUsageUpTo(usageLimit());
             andExistsSimplifyCache.grow(size);
+            andExistsSimplifyCache.growWithUsageUpTo(usageLimit());
         }
 
         @Override
@@ -90,9 +98,7 @@ final class BddOperations {
             if (quantifiedVariables.size() == bdd.numberOfVariables()) {
                 return bdd.trueFunction();
             }
-            int result = bdd.existsGeneral(function, quantifiedLevels, existsCache);
-            existsCache.growOnUsage();
-            return result;
+            return bdd.existsGeneral(function, quantifiedLevels, existsCache);
         }
 
         @Override
@@ -102,10 +108,7 @@ final class BddOperations {
             if (quantifiedVariables.size() == bdd.numberOfVariables()) {
                 return bdd.intersects(function1, function2) ? bdd.trueFunction() : bdd.falseFunction();
             }
-            int result = bdd.andExistsGeneral(function1, function2, quantifiedLevels, andExistsCache, existsCache);
-            existsCache.growOnUsage();
-            andExistsCache.growOnUsage();
-            return result;
+            return bdd.andExistsGeneral(function1, function2, quantifiedLevels, andExistsCache, existsCache);
         }
 
         @Override
@@ -118,7 +121,7 @@ final class BddOperations {
             if (quantifiedVariables.size() == bdd.numberOfVariables()) {
                 return bdd.intersects(function1, function2) ? bdd.trueFunction() : bdd.falseFunction();
             }
-            int result = bdd.andExistsSimplifyGeneral(
+            return bdd.andExistsSimplifyGeneral(
                     function1,
                     function2,
                     domain,
@@ -126,10 +129,6 @@ final class BddOperations {
                     andExistsCache,
                     existsCache,
                     andExistsSimplifyCache);
-            existsCache.growOnUsage();
-            andExistsCache.growOnUsage();
-            andExistsSimplifyCache.growOnUsage();
-            return result;
         }
 
         @Override

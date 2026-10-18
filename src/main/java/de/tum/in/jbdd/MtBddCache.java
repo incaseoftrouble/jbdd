@@ -885,7 +885,9 @@ final class MtBddCache implements VariableOrderObserver, StatisticsReporter {
         }
 
         void put(int hash, int function, V result) {
-            values[storeKeys(hash, function)] = result;
+            // The bin first: storing may grow the cache, which replaces the array.
+            int bin = storeKeys(hash, function);
+            values[bin] = result;
         }
     }
 

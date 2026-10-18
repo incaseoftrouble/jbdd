@@ -675,9 +675,10 @@ consequences that are easy to get wrong:
   - **Stable** — keys are plain ids (`agreement`, `ite`, `update`, `simplify`, `constrain`), or carry the
     whole context: the BDD `compose` (`ComposeTupleCache`, see below), `restrict` (`RestrictCubeCache`, the
     node and the cube of the literals below the prefix it walks without the cache, so restrictions differing
-    in that prefix share it), the support (`supportCache`, ascending variables per node; filled by composition only, which grows it on
-    usage - support queries walk the diagram and take an entry where they meet one) and the satisfying
-    fraction (`FractionCache`: per regular node its own fraction and its complement's, interleaved, so that
+    in that prefix share it), the support (`supportCache`, ascending variables per node; filled by composition only, which grows it with
+    its puts, within one composition too and up to a bin per node: it is `supportArray`'s only memo, which at a fixed
+    small size recomputes shared subdiagrams' supports hundreds of times per node - support queries walk the diagram and take an entry
+    where they meet one) and the satisfying fraction (`FractionCache`: per regular node its own fraction and its complement's, interleaved, so that
     neither is ever derived as `1 - x`, which would round a small complement to 0; a fraction depends on
     neither the variable count nor the order; `FractionInCache` is the same pair per node and domain, both
     scaled by one binary exponent that keeps the larger in `[1, 2)`, so a domain far below `2^-1074` of all
@@ -780,8 +781,11 @@ and-exists, ternary its simplifying form, each with its private cache; an unused
 no cache: the composition's is keyed on its whole context (§6), so they only resolve and protect the mapping
 once. Only the compose forms bind *nodes*, and those own them: `ProtectedOperation` + `ProtectionTracker` reference the operands on
 construction and drop them via a `PhantomReference` when released or unreachable. The rest bind a lambda or
-a `NatSet` and hold nothing. Their private caches grow on usage (`growOnUsage`) rather than tracking table
-size, and each registers its prune hook with *every* table its entries can name — the two boolean-valued
+a `NatSet` and hold nothing. Their private caches start at an eighth of an ephemeral cache's size and grow
+with their use up to it (`CacheBase.growWithUsageUpTo`, set with the floor on every table growth: `putBin` asks
+to double once the puts since the last clear pass three quarters of the size, and the next store does - so a cache
+grows within one long operation too; a store therefore may replace a cache's arrays, so a parallel array is indexed
+by the bin `storeKeys` returned, never written as `values[storeKeys(...)]`, which takes the old array), and each registers its prune hook with *every* table its entries can name — the two boolean-valued
 MTBDD operations always straddle both, since their results are BDD functions.
 
 Object layer: handle types bound once and applied repeatedly — `BddMap.Operator<V>` (plus `applyIn`),

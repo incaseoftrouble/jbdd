@@ -49,16 +49,16 @@ final class CacheStatistics {
             "reuse_count",
             "operations that kept the entries of cache {name}, their parameter being the previous one's");
 
-    private int hitCount = 0;
-    private int hitCountSinceClear = 0;
-    private int putCount = 0;
-    private int putCountSinceClear = 0;
-    private int missCount = 0;
-    private int missCountSinceClear = 0;
+    private long hitCount = 0;
+    private long hitCountSinceClear = 0;
+    private long putCount = 0;
+    private long putCountSinceClear = 0;
+    private long missCount = 0;
+    private long missCountSinceClear = 0;
     private int clearCount = 0;
     private int sparseClearCount = 0;
     private int pruningCount = 0;
-    private int totalPrunedEntries = 0;
+    private long totalPrunedEntries = 0;
 
     void hit() {
         hitCount++;
@@ -91,7 +91,7 @@ final class CacheStatistics {
         totalPrunedEntries += prunedEntries;
     }
 
-    int putCountSinceClear() {
+    long putCountSinceClear() {
         return putCountSinceClear;
     }
 

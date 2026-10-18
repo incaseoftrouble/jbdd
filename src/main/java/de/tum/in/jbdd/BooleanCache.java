@@ -94,7 +94,7 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
         satisfactionInCache = new BinaryToObjectCache<>(bdd);
 
         supportCache = new UnaryToObjectCache<>(bdd);
-        // the smallest size; composition grows it on usage (tableSizeChanged leaves it alone)
+        // the smallest size; it grows with composition's use (tableSizeChanged sets only the limit)
         supportCache.grow(0);
         fractionCache = new FractionCache(bdd);
         fractionInCache = new FractionInCache(bdd);
@@ -177,6 +177,11 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
 
         logger.log(Level.FINER, "Growing caches if necessary");
         int size = bdd.tableSize() / bdd.configuration().cacheSizeDivider();
+
+        /* The support cache is supportArray's only memo: too small, it recomputes the supports of shared subdiagrams
+         * over and over (hundreds of misses per node). Only composition fills it, so it grows with its puts, within
+         * one composition too, up to a bin per node. */
+        supportCache.growWithUsageUpTo(bdd.tableSize());
 
         int unarySize = size / 2;
         satisfactionCache.grow(unarySize);
@@ -674,7 +679,9 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
         }
 
         void put(int hash, int function, V result) {
-            values[storeKeys(hash, function)] = result;
+            // The bin first: storing may grow the cache, which replaces the array.
+            int bin = storeKeys(hash, function);
+            values[bin] = result;
         }
     }
 
@@ -1135,7 +1142,9 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
         }
 
         void put(int hash, int function1, int function2, V result) {
-            values[storeKeys(hash, function1, function2)] = result;
+            // The bin first: storing may grow the cache, which replaces the array.
+            int bin = storeKeys(hash, function1, function2);
+            values[bin] = result;
         }
     }
 }

@@ -1623,8 +1623,6 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         }
         int result = computeComposeRecursive(function, domain, variables, replacements, replaced);
         table.popFromWorkStack(2);
-        // Only composition fills the support cache, so it grows with composition's use, not with the table.
-        cache.supportCache().growOnUsage();
         return result;
     }
 

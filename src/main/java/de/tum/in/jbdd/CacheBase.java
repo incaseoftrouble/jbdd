@@ -36,6 +36,8 @@ public abstract class CacheBase implements StatisticsReporter {
     CacheStatistics statistics = new CacheStatistics();
     private final BooleanSupplier cacheDependenciesValid;
     private int desiredSize = 0;
+    // The size up to which the cache grows with its puts (0: it does not); see #putBin.
+    private int usageLimit = 0;
     private boolean cacheInvalid = true;
 
     /*
@@ -65,9 +67,17 @@ public abstract class CacheBase implements StatisticsReporter {
         return Util.mod(hash, size());
     }
 
-    /** The bin a put of {@code hash} writes: counts the put and records the bin for the next clear. */
+    /**
+     * The bin a put of {@code hash} writes: counts the put and records the bin for the next clear. A cache growing
+     * with its use asks to double once the puts since the last clear pass three quarters of its size, which the next
+     * store carries out - within the operation running, so one long operation grows its cache too.
+     */
     final int putBin(int hash) {
         statistics.put();
+        if (size < usageLimit && statistics.putCountSinceClear() > size * USAGE_GROWTH_LOAD_FACTOR) {
+            // Just past twice the size, since ensureValid grows only beyond that.
+            desiredSize = Math.max(desiredSize, Math.min(usageLimit, USAGE_GROWTH_FACTOR * size + 1));
+        }
         int bin = binIndex(hash);
         int count = writtenCount;
         if (count >= 0) {
@@ -117,10 +127,9 @@ public abstract class CacheBase implements StatisticsReporter {
         this.desiredSize = Math.max(Math.max(size, MINIMUM_SIZE), this.size);
     }
 
-    void growOnUsage() {
-        if (statistics.putCountSinceClear() > size() * USAGE_GROWTH_LOAD_FACTOR) {
-            grow(size() * USAGE_GROWTH_FACTOR);
-        }
+    /** Lets the cache grow with its puts up to {@code limit} bins (see {@link #putBin}); 0 stops it. */
+    void growWithUsageUpTo(int limit) {
+        this.usageLimit = limit;
     }
 
     void ensureValid() {
