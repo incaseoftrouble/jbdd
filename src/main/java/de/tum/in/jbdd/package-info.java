@@ -17,5 +17,7 @@
  * along with JBDD.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-@EverythingIsNonnullByDefault
+@NullMarked
 package de.tum.in.jbdd;
+
+import org.jspecify.annotations.NullMarked;
