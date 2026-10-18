@@ -22,6 +22,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
+import java.util.function.Predicate;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -43,6 +45,10 @@ import org.openjdk.jmh.infra.Blackhole;
  * type whose hash code spreads, as a synthesis tool's state sets do - {@code Set<Integer>}, hashing to the sum of
  * its elements, put the 39,000 distinct unions of this pool into a few hundred buckets of the numbering and cost
  * ten times as much.
+ *
+ * <p>Each invocation passes functions of its own, as a caller's new lambda does: the MTBDD keeps an operation's cache
+ * while its function stays equal, so a function shared across invocations would be answered from what the previous
+ * invocation computed. {@link #mapValuesRepeated} measures that repeat on purpose.</p>
  */
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
@@ -68,16 +74,27 @@ public class MtBddBenchmark {
     private Values<BddMap<NatSet>> residuals;
 
     @SuppressWarnings("NullAway.Init")
-    private BddMapBinaryOperator<NatSet> unionOperator;
-
-    @SuppressWarnings("NullAway.Init")
-    private BddMap.Operator<NatSet> union;
-
-    @SuppressWarnings("NullAway.Init")
     private List<BddMap<NatSet>> pool;
 
     @SuppressWarnings("NullAway.Init")
     private NatSet inputs;
+
+    /** The union as an operator of its own. */
+    private static BddMapBinaryOperator<NatSet> unionOperator() {
+        return BddMapBinaryOperator.monoid(NatSet::union, NatSet.of());
+    }
+
+    /** The function as an object of its own, unequal to any other: a bound reference is made anew each time. */
+    @SuppressWarnings("UnnecessaryMethodReference") // the new object is the point
+    private static <T, R> Function<T, R> fresh(Function<T, R> function) {
+        return function::apply;
+    }
+
+    /** The predicate as an object of its own, unequal to any other: a bound reference is made anew each time. */
+    @SuppressWarnings("UnnecessaryMethodReference") // the new object is the point
+    private static <T> Predicate<T> freshPredicate(Predicate<T> predicate) {
+        return predicate::test;
+    }
 
     private static NatSet shift(NatSet set) {
         MutableNatSet shifted = MutableNatSet.dense(SUCCESSORS);
@@ -93,8 +110,6 @@ public class MtBddBenchmark {
         values = context.bddMaps().create();
         pairs = context.bddMaps().create();
         residuals = context.bddMaps().create();
-        unionOperator = BddMapBinaryOperator.monoid(NatSet::union, NatSet.of());
-        union = values.registerApply(unionOperator);
 
         MutableNatSet inputVariables = MutableNatSet.dense(STATE_VARIABLES + INPUT_VARIABLES);
         inputVariables.set(STATE_VARIABLES, STATE_VARIABLES + INPUT_VARIABLES);
@@ -131,22 +146,36 @@ public class MtBddBenchmark {
     /** All maps united under the registered operator, pair by pair, as the edge trees of a state's edges are. */
     @Benchmark
     public void unionFold(Blackhole bh) {
+        BddMap.Operator<NatSet> union = values.registerApply(unionOperator());
         BddMap<NatSet> result = pool.get(0);
         for (int i = 1; i < pool.size(); i++) {
             result = union.apply(result, pool.get(i));
         }
+        union.release();
         bh.consume(result);
     }
 
     /** All maps united in one n-ary application. */
     @Benchmark
     public void unionAll(Blackhole bh) {
-        bh.consume(values.apply(pool, unionOperator));
+        bh.consume(values.apply(pool, unionOperator()));
     }
 
     /** Every map's values rewritten within the numbering. */
     @Benchmark
     public void mapValues(Blackhole bh) {
+        Function<NatSet, NatSet> shift = fresh(MtBddBenchmark::shift);
+        for (BddMap<NatSet> map : pool) {
+            bh.consume(map.map(shift));
+        }
+    }
+
+    /**
+     * As {@link #mapValues}, with the same function every invocation: the cache is kept across invocations, but one
+     * pass over the pool needs about 25,600 entries of a cache of about 2,000 bins, so a repeat recomputes nearly all.
+     */
+    @Benchmark
+    public void mapValuesRepeated(Blackhole bh) {
         for (BddMap<NatSet> map : pool) {
             bh.consume(map.map(MtBddBenchmark::shift));
         }
@@ -163,8 +192,10 @@ public class MtBddBenchmark {
     /** Consecutive maps paired up, as a product construction does. */
     @Benchmark
     public void pairUp(Blackhole bh) {
+        // The mapped product with a copying function of its own: the plain one's functions are the same every call.
+        Function<List<NatSet>, List<NatSet>> copy = fresh(List::copyOf);
         for (int i = 0; i + 1 < pool.size(); i += 2) {
-            bh.consume(values.cartesianProduct(List.of(pool.get(i), pool.get(i + 1)), pairs));
+            bh.consume(values.cartesianProductMap(List.of(pool.get(i), pool.get(i + 1)), pairs, copy));
         }
     }
 
@@ -179,8 +210,9 @@ public class MtBddBenchmark {
     /** The domain on which a map has any successor at all. */
     @Benchmark
     public void whereNonEmpty(Blackhole bh) {
+        Predicate<NatSet> nonEmpty = freshPredicate(set -> !set.isEmpty());
         for (BddMap<NatSet> map : pool) {
-            bh.consume(map.where(set -> !set.isEmpty()));
+            bh.consume(map.where(nonEmpty));
         }
     }
 }

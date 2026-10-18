@@ -690,7 +690,10 @@ consequences that are easy to get wrong:
     swapping the two, so every term stays a sum of non-negatives). Nothing extra.
   - **Ephemeral "current parameter"** — the MTBDD `compose` (`int[]` mapping) and `restrict` (a `Cube`),
     `exists` and `andExists` (a `NatSet` each), `apply`/`map`/`mapBoolean`/`applyBoolean` and the n-ary `apply` (an opaque
-    operator compared by identity; the paired `*Simplify` cache is invalidated by the same `initX`; the
+    operator compared by `equals`, which is identity for a caller's lambda; the object layer hands over value classes
+    - `ValueMap`, `ValueCombination`, `ValueRelation`, ... in `BddMapFactoryImpl`, equal where the caller's function
+    and the numberings are - so a caller repeating a function keeps the cache rather than a lambda built per call
+    clearing it; the paired `*Simplify` cache is invalidated by the same `initX`; the
     n-ary one keys on the cloned operand tuple, as `cartesianProduct` does), `count` (a predicate),
     `canReachMatch` (a predicate), `allMatch` (a predicate, like `applyBoolean`). `initX(...)`
     compares against the previous call's parameter and invalidates wholesale on change. **This works only

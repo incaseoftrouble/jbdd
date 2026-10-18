@@ -42,6 +42,7 @@ import java.util.function.BiFunction;
 import java.util.function.BiPredicate;
 import java.util.function.Function;
 import java.util.function.IntBinaryOperator;
+import java.util.function.IntPredicate;
 import java.util.function.IntUnaryOperator;
 import java.util.function.Predicate;
 import java.util.function.ToIntFunction;
@@ -274,13 +275,7 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
             // As the binary apply: a declared value becomes a raw shortcut only once it has been indexed.
             Integer neutralRaw = operator.neutral == null ? null : peek(operator.neutral);
             Integer absorbingRaw = operator.absorbing == null ? null : peek(operator.absorbing);
-            ToIntFunction<int[]> rawOp = rawValues -> {
-                V folded = valueOf(rawValues[0]);
-                for (int i = 1; i < rawValues.length; i++) {
-                    folded = operator.apply(folded, valueOf(rawValues[i]));
-                }
-                return getOrAssignIndex(folded);
-            };
+            ToIntFunction<int[]> rawOp = new ValueFold<>(this, operator);
             MtBddNaryOperator rawOperator;
             if (!operator.commutative) {
                 rawOperator = MtBddNaryOperator.of(functions.length, rawOp);
@@ -298,21 +293,13 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
 
         @Override
         public BddMap<List<V>> cartesianProduct(List<? extends BddMap<V>> maps, Values<List<V>> destination) {
-            return cartesianProduct(maps, destination, Function.identity(), List::copyOf);
+            return cartesianProduct(maps, destination, Function.identity(), List::copyOf, false);
         }
 
         @Override
         public <W> BddMap<W> cartesianProductMap(
                 List<? extends BddMap<V>> maps, Values<W> destination, Function<? super List<V>, ? extends W> map) {
-            return cartesianProduct(
-                    maps,
-                    destination,
-                    tuple -> {
-                        W value = map.apply(tuple);
-                        assert value != tuple; // NOPMD - map must not hand back the tuple buffer
-                        return value;
-                    },
-                    UnaryOperator.identity());
+            return cartesianProduct(maps, destination, map, UnaryOperator.identity(), true);
         }
 
         @Override
@@ -349,26 +336,17 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
                 List<? extends BddMap<V>> maps,
                 Values<W> destination,
                 Function<? super List<V>, ? extends W> map,
-                UnaryOperator<W> copyOnInsert) {
+                UnaryOperator<W> copyOnInsert,
+                boolean mapped) {
             ValuesImpl<W> resultValues = factory.valuesOf(destination);
 
             int[] functions = new int[maps.size()];
             for (int i = 0; i < maps.size(); i++) {
                 functions[i] = factory.functionOf(maps.get(i), this);
             }
-            //noinspection unchecked
-            V[] scratch = (V[]) new Object[functions.length];
-
-            //noinspection Java9CollectionFactory
-            List<V> unmodifiableView = Collections.unmodifiableList(Arrays.asList(scratch));
-
             // TODO [PRODUCT-NATIVE] Use the native cartesian product?
-            int result = factory.dd.apply(functions, rawValues -> {
-                for (int i = 0; i < rawValues.length; i++) {
-                    scratch[i] = valueOf(rawValues[i]);
-                }
-                return resultValues.getOrAssignIndex(map.apply(unmodifiableView), copyOnInsert);
-            });
+            int result = factory.dd.apply(
+                    functions, new ValueTuple<>(this, resultValues, map, copyOnInsert, mapped, functions.length));
             return factory.make(result, resultValues);
         }
 
@@ -832,7 +810,7 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
 
         @Override
         public BddSet where(Predicate<? super V> predicate) {
-            return factory.bddSets.make(factory.dd.mapBoolean(function, raw -> predicate.test(values.valueOf(raw))));
+            return factory.bddSets.make(factory.dd.mapBoolean(function, new ValuePredicate<>(values, predicate)));
         }
 
         @Override
@@ -845,11 +823,8 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
         @Override
         public BddMap<V> apply(BddMap<V> other, BiFunction<? super V, ? super V, ? extends V> combiner) {
             int otherFunction = factory.functionOf(other, values);
-            int result = factory.dd.apply(
-                    function,
-                    otherFunction,
-                    (rawV, rawW) ->
-                            values.getOrAssignIndex(combiner.apply(values.valueOf(rawV), values.valueOf(rawW))));
+            int result =
+                    factory.dd.apply(function, otherFunction, new ValueCombination<>(values, values, values, combiner));
             return make(result);
         }
 
@@ -864,8 +839,7 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
             int rawNeutral = neutralRaw == null ? -1 : neutralRaw;
             int rawAbsorbing = absorbingRaw == null ? -1 : absorbingRaw;
 
-            IntBinaryOperator rawOp =
-                    (rawV, rawW) -> values.getOrAssignIndex(operator.apply(values.valueOf(rawV), values.valueOf(rawW)));
+            IntBinaryOperator rawOp = new ValueCombination<>(values, values, values, operator);
             MtBddBinaryOperator rawOperator = operator.commutative
                     ? MtBddBinaryOperator.monoid(rawOp, rawNeutral, rawAbsorbing)
                     : MtBddBinaryOperator.of(rawOp, rawNeutral, rawAbsorbing);
@@ -883,28 +857,26 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
             int result = factory.dd.apply(
                     function,
                     factory.functionOf(other),
-                    (rawV, rawW) -> resultValues.getOrAssignIndex(
-                            combiner.apply(values.valueOf(rawV), otherValues.valueOf(rawW))));
+                    new ValueCombination<>(values, otherValues, resultValues, combiner));
             return factory.make(result, resultValues);
         }
 
         @Override
         public BddMap<V> map(Function<? super V, ? extends V> mapper) {
-            return make(factory.dd.map(function, raw -> values.getOrAssignIndex(mapper.apply(values.valueOf(raw)))));
+            return make(factory.dd.map(function, new ValueMap<>(values, values, mapper)));
         }
 
         @Override
         public <O> BddMap<O> map(Function<? super V, ? extends O> mapper, Values<O> destination) {
             ValuesImpl<O> resultValues = factory.valuesOf(destination);
-            int result =
-                    factory.dd.map(function, raw -> resultValues.getOrAssignIndex(mapper.apply(values.valueOf(raw))));
+            int result = factory.dd.map(function, new ValueMap<>(values, resultValues, mapper));
             return factory.make(result, resultValues);
         }
 
         @Override
         public <W> BddSet where(BddMap<W> other, BiPredicate<? super V, ? super W> predicate) {
             ValuesImpl<W> otherValues = factory.valuesOf(other);
-            IntBinaryPredicate raw = (rawV, rawW) -> predicate.test(values.valueOf(rawV), otherValues.valueOf(rawW));
+            IntBinaryPredicate raw = new ValueRelation<>(values, otherValues, predicate);
             return where(other, MtBddBinaryPredicate.of(raw));
         }
 
@@ -918,14 +890,14 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
             if (predicate == BddMapBinaryPredicate.equality()) { // NOPMD
                 return factory.bddSets.make(factory.dd.agreement(function, factory.functionOf(other)));
             }
-            IntBinaryPredicate raw = (rawV, rawW) -> predicate.test(values.valueOf(rawV), values.valueOf(rawW));
+            IntBinaryPredicate raw = new ValueRelation<>(values, values, predicate);
             return where(other, MtBddBinaryPredicate.of(raw, predicate.symmetric, predicate.reflexive));
         }
 
         @Override
         public <W> boolean allMatch(BddMap<W> other, BiPredicate<? super V, ? super W> predicate) {
             ValuesImpl<W> otherValues = factory.valuesOf(other);
-            IntBinaryPredicate raw = (rawV, rawW) -> predicate.test(values.valueOf(rawV), otherValues.valueOf(rawW));
+            IntBinaryPredicate raw = new ValueRelation<>(values, otherValues, predicate);
             return factory.dd.allMatch(function, factory.functionOf(other), MtBddBinaryPredicate.of(raw));
         }
 
@@ -940,7 +912,7 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
                 // Canonical over one numbering: equal functions are the same id.
                 return function == factory.functionOf(other);
             }
-            IntBinaryPredicate raw = (rawV, rawW) -> predicate.test(values.valueOf(rawV), values.valueOf(rawW));
+            IntBinaryPredicate raw = new ValueRelation<>(values, values, predicate);
             return factory.dd.allMatch(
                     function,
                     factory.functionOf(other),
@@ -1058,6 +1030,243 @@ final class BddMapFactoryImpl extends GcReferenceManager<BddMapFactoryImpl.BddMa
         @Override
         public String toString() {
             return String.format("%d@%s", function, values);
+        }
+    }
+
+    /*
+     * The raw operators the maps hand the MTBDD: a caller's function over the values of numberings. They are values -
+     * equal where their numberings and the caller's function are - since the MTBDD keeps an operation's cache across
+     * calls exactly while the operator stays equal (MtBddCache#initMap and its siblings): a caller passing the same
+     * function again reuses what the last call computed, which a lambda built per call would discard.
+     */
+
+    /** {@code raw -> destination(mapper(source(raw)))}. */
+    private static final class ValueMap<V, O> implements IntUnaryOperator {
+        private final ValuesImpl<V> source;
+        private final ValuesImpl<O> destination;
+        private final Function<? super V, ? extends O> mapper;
+
+        ValueMap(ValuesImpl<V> source, ValuesImpl<O> destination, Function<? super V, ? extends O> mapper) {
+            this.source = source;
+            this.destination = destination;
+            this.mapper = mapper;
+        }
+
+        @Override
+        public int applyAsInt(int raw) {
+            return destination.getOrAssignIndex(mapper.apply(source.valueOf(raw)));
+        }
+
+        @Override
+        public boolean equals(@Nullable Object o) {
+            if (!(o instanceof ValueMap)) {
+                return false;
+            }
+            ValueMap<?, ?> other = (ValueMap<?, ?>) o;
+            return source.equals(other.source) && destination.equals(other.destination) && mapper.equals(other.mapper);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(source, destination, mapper);
+        }
+    }
+
+    /** {@code raw -> predicate(source(raw))}. */
+    private static final class ValuePredicate<V> implements IntPredicate {
+        private final ValuesImpl<V> source;
+        private final Predicate<? super V> predicate;
+
+        ValuePredicate(ValuesImpl<V> source, Predicate<? super V> predicate) {
+            this.source = source;
+            this.predicate = predicate;
+        }
+
+        @Override
+        public boolean test(int raw) {
+            return predicate.test(source.valueOf(raw));
+        }
+
+        @Override
+        public boolean equals(@Nullable Object o) {
+            if (!(o instanceof ValuePredicate)) {
+                return false;
+            }
+            ValuePredicate<?> other = (ValuePredicate<?>) o;
+            return source.equals(other.source) && predicate.equals(other.predicate);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(source, predicate);
+        }
+    }
+
+    /** {@code (rawV, rawW) -> destination(combiner(left(rawV), right(rawW)))}. */
+    private static final class ValueCombination<V, W, O> implements IntBinaryOperator {
+        private final ValuesImpl<V> left;
+        private final ValuesImpl<W> right;
+        private final ValuesImpl<O> destination;
+        private final BiFunction<? super V, ? super W, ? extends O> combiner;
+
+        ValueCombination(
+                ValuesImpl<V> left,
+                ValuesImpl<W> right,
+                ValuesImpl<O> destination,
+                BiFunction<? super V, ? super W, ? extends O> combiner) {
+            this.left = left;
+            this.right = right;
+            this.destination = destination;
+            this.combiner = combiner;
+        }
+
+        @Override
+        public int applyAsInt(int rawV, int rawW) {
+            return destination.getOrAssignIndex(combiner.apply(left.valueOf(rawV), right.valueOf(rawW)));
+        }
+
+        @Override
+        public boolean equals(@Nullable Object o) {
+            if (!(o instanceof ValueCombination)) {
+                return false;
+            }
+            ValueCombination<?, ?, ?> other = (ValueCombination<?, ?, ?>) o;
+            return left.equals(other.left)
+                    && right.equals(other.right)
+                    && destination.equals(other.destination)
+                    && combiner.equals(other.combiner);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(left, right, destination, combiner);
+        }
+    }
+
+    /** {@code (rawV, rawW) -> predicate(left(rawV), right(rawW))}. */
+    private static final class ValueRelation<V, W> implements IntBinaryPredicate {
+        private final ValuesImpl<V> left;
+        private final ValuesImpl<W> right;
+        private final BiPredicate<? super V, ? super W> predicate;
+
+        ValueRelation(ValuesImpl<V> left, ValuesImpl<W> right, BiPredicate<? super V, ? super W> predicate) {
+            this.left = left;
+            this.right = right;
+            this.predicate = predicate;
+        }
+
+        @Override
+        public boolean test(int rawV, int rawW) {
+            return predicate.test(left.valueOf(rawV), right.valueOf(rawW));
+        }
+
+        @Override
+        public boolean equals(@Nullable Object o) {
+            if (!(o instanceof ValueRelation)) {
+                return false;
+            }
+            ValueRelation<?, ?> other = (ValueRelation<?, ?>) o;
+            return left.equals(other.left) && right.equals(other.right) && predicate.equals(other.predicate);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(left, right, predicate);
+        }
+    }
+
+    /** {@code raws -> values(fold(operator, values(raws)))}, the n-ary apply's fold. */
+    private static final class ValueFold<V> implements ToIntFunction<int[]> {
+        private final ValuesImpl<V> values;
+        private final BddMapBinaryOperator<V> operator;
+
+        ValueFold(ValuesImpl<V> values, BddMapBinaryOperator<V> operator) {
+            this.values = values;
+            this.operator = operator;
+        }
+
+        @Override
+        public int applyAsInt(int[] rawValues) {
+            V folded = values.valueOf(rawValues[0]);
+            for (int i = 1; i < rawValues.length; i++) {
+                folded = operator.apply(folded, values.valueOf(rawValues[i]));
+            }
+            return values.getOrAssignIndex(folded);
+        }
+
+        @Override
+        public boolean equals(@Nullable Object o) {
+            if (!(o instanceof ValueFold)) {
+                return false;
+            }
+            ValueFold<?> other = (ValueFold<?>) o;
+            return values.equals(other.values) && operator.equals(other.operator);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(values, operator);
+        }
+    }
+
+    /**
+     * {@code raws -> destination(map(the tuple of source(raws)))}, the cartesian product's: the tuple is a view of a
+     * buffer of its own, which a mapped product's function must not hand back; equal where all but the buffer is.
+     */
+    private static final class ValueTuple<V, W> implements ToIntFunction<int[]> {
+        private final ValuesImpl<V> source;
+        private final ValuesImpl<W> destination;
+        private final Function<? super List<V>, ? extends W> map;
+        private final UnaryOperator<W> copyOnInsert;
+        private final boolean mapped;
+        private final V[] scratch;
+        private final List<V> view;
+
+        @SuppressWarnings("unchecked")
+        ValueTuple(
+                ValuesImpl<V> source,
+                ValuesImpl<W> destination,
+                Function<? super List<V>, ? extends W> map,
+                UnaryOperator<W> copyOnInsert,
+                boolean mapped,
+                int arity) {
+            this.source = source;
+            this.destination = destination;
+            this.map = map;
+            this.copyOnInsert = copyOnInsert;
+            this.mapped = mapped;
+            this.scratch = (V[]) new Object[arity];
+            //noinspection Java9CollectionFactory
+            this.view = Collections.unmodifiableList(Arrays.asList(scratch));
+        }
+
+        @Override
+        public int applyAsInt(int[] rawValues) {
+            for (int i = 0; i < rawValues.length; i++) {
+                scratch[i] = source.valueOf(rawValues[i]);
+            }
+            W value = map.apply(view);
+            assert !mapped || value != view; // NOPMD - a mapped product must not hand back the tuple buffer
+            return destination.getOrAssignIndex(value, copyOnInsert);
+        }
+
+        @Override
+        public boolean equals(@Nullable Object o) {
+            if (!(o instanceof ValueTuple)) {
+                return false;
+            }
+            ValueTuple<?, ?> other = (ValueTuple<?, ?>) o;
+            return mapped == other.mapped
+                    && scratch.length == other.scratch.length
+                    && source.equals(other.source)
+                    && destination.equals(other.destination)
+                    && map.equals(other.map)
+                    && copyOnInsert.equals(other.copyOnInsert);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(source, destination, map, copyOnInsert, mapped, scratch.length);
         }
     }
 }

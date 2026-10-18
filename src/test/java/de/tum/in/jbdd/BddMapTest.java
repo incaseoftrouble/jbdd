@@ -33,6 +33,9 @@ import java.util.Map;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.function.BiPredicate;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 
 @SuppressWarnings("PMD.CouplingBetweenObjects")
@@ -65,6 +68,49 @@ class BddMapTest {
         assertEquals(either, x0.complement().intersection(x1.complement()).complement());
         assertTrue(x0.intersects(x1));
         assertFalse(x0.intersection(x1.complement()).intersects(x1));
+    }
+
+    @Test
+    void anOperationRepeatedWithTheSameFunctionReusesItsCache() {
+        // The object layer hands the MTBDD an operator equal for the same function and numbering, and the MTBDD keeps
+        // an operation's cache while its operator stays equal: a repeat costs nothing, a lambda built anew recomputes.
+        BinaryFactoryContext ctx = BinaryFactoryContext.create();
+        ctx.bddSets().var(11);
+        Values<Integer> values = ctx.bddMaps().create();
+        BddMap<Integer> chain = values.of(0);
+        for (int variable = 11; variable >= 0; variable--) {
+            chain = values.ifThenElse(variable, values.of(variable + 1), chain);
+        }
+        BddMap<Integer> map = chain;
+        BddMap<Integer> other = chain.map(value -> value * 3);
+        BddMap<Integer> third = chain.map(value -> value * 5);
+
+        BinaryFactoryContextImpl impl = (BinaryFactoryContextImpl) ctx;
+        Function<Integer, Integer> increment = value -> value + 1;
+        assertRepeatIsFree(impl, () -> map.map(increment), () -> map.map(value -> value + 1));
+
+        BddMapBinaryOperator<Integer> sum = BddMapBinaryOperator.monoid(Integer::sum, 0);
+        assertRepeatIsFree(
+                impl,
+                () -> map.apply(other, sum),
+                () -> map.apply(other, BddMapBinaryOperator.monoid((a, b) -> a + b, 0)));
+        assertRepeatIsFree(
+                impl,
+                () -> values.apply(List.of(map, other, third), sum),
+                () -> values.apply(List.of(map, other, third), BddMapBinaryOperator.monoid((a, b) -> a + b, 0)));
+
+        Predicate<Integer> even = value -> value % 2 == 0;
+        assertRepeatIsFree(impl, () -> map.where(even), () -> map.where(value -> value % 2 == 0));
+    }
+
+    private static void assertRepeatIsFree(BinaryFactoryContextImpl ctx, Supplier<?> operation, Supplier<?> anew) {
+        Object first = operation.get();
+        long before = ctx.work();
+        assertEquals(first, operation.get());
+        assertEquals(0L, ctx.work() - before, "the repeat recomputed");
+        before = ctx.work();
+        assertEquals(first, anew.get());
+        assertTrue(ctx.work() > before, "a new function reused another's results");
     }
 
     /** Every valuation of the first {@code variables} variables. */

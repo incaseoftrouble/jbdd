@@ -19,6 +19,7 @@ package de.tum.in.jbdd;
 import java.util.function.IntBinaryOperator;
 import java.util.function.IntUnaryOperator;
 import java.util.function.ToIntFunction;
+import org.jspecify.annotations.Nullable;
 
 /**
  * The n-ary counterpart of {@link MtBddBinaryOperator}. {@code commutative} means invariant under any
@@ -46,6 +47,25 @@ public class MtBddNaryOperator implements ToIntFunction<int[]> {
         this.commutative = commutative;
         this.neutral = neutral;
         this.absorbing = absorbing;
+    }
+
+    /** Equal where the arity, the properties and the operation are: the n-ary apply keeps its cache while it stays so. */
+    @Override
+    public boolean equals(@Nullable Object o) {
+        if (!(o instanceof MtBddNaryOperator)) {
+            return false;
+        }
+        MtBddNaryOperator other = (MtBddNaryOperator) o;
+        return arity == other.arity
+                && commutative == other.commutative
+                && neutral == other.neutral
+                && absorbing == other.absorbing
+                && op.equals(other.op);
+    }
+
+    @Override
+    public int hashCode() {
+        return HashUtil.hash(op.hashCode(), arity, neutral, absorbing);
     }
 
     private static MtBddNaryOperator create(
