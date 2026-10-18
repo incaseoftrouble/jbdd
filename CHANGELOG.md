@@ -60,6 +60,7 @@ Changed
 
 * `compose` reads its mapping without writing to it; 0.6 resolved placeholders in the caller's array (if the same operation is used multiple times, consider `registerCompose`)
 * The BDD `compose` / `composeSimplify` (and with them `replaceVariables` and the registered replacers) builds exponentially fewer nodes where the replaced variables sit below those their replacements read
+* A BDD `compose` whose replacements no path literal restricts - constants and literals (a renaming, `relabelVariables`; negations, merges and swaps included) and replacements lying below their variables - takes one memoized pass over the nodes, without supports, and with a domain simplifies its result; a node is made directly where a renaming keeps the order, in an MTBDD's composition too
 * `DimacsReader` moved to `de.tum.in.jbdd.io`
 * A table collection releases, besides the queued references, every wrapper the JVM already cleared: right after a JVM collection (`System.gc()`) it sees exactly the wrappers still reachable, so a reordering after one does not depend on the JVM's timing
 * The unique tables' hash weighs the variable by 31 (children's indices plus 31 times the variable): under the plain sum, a chain of nodes built bottom-up (a long conjunction or clause) fell into one bucket

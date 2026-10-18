@@ -220,6 +220,45 @@ class BddTest {
     }
 
     @Test
+    void testOrderPreservingRenameCopiesTheDiagram() {
+        int n = 12;
+        BddImpl bdd = new DdContextImpl(config).bdd();
+        int[] x = bdd.createVariables(n);
+        int[] y = bdd.createVariables(n);
+        int function = bdd.falseFunction();
+        for (int i = 0; i + 1 < n; i++) {
+            function = bdd.updateWith(bdd.or(function, bdd.and(x[i], bdd.not(x[i + 1]))), function);
+        }
+        int[] mapping = new int[2 * n];
+        Arrays.fill(mapping, bdd.placeholder());
+        for (int i = 0; i < n; i++) {
+            mapping[i] = y[i];
+        }
+        // Each node of the result is made once, directly, from the renamed children.
+        long before = bdd.table().createdNodeCount();
+        int renamed = bdd.reference(bdd.compose(function, mapping));
+        assertThat(bdd.table().createdNodeCount() - before <= bdd.size(function), is(true));
+        int expected = bdd.falseFunction();
+        for (int i = 0; i + 1 < n; i++) {
+            expected = bdd.updateWith(bdd.or(expected, bdd.and(y[i], bdd.not(y[i + 1]))), expected);
+        }
+        assertThat(renamed, is(expected));
+
+        // The swap of the two blocks, through if-then-else, and a merge of both onto x.
+        for (int i = 0; i < n; i++) {
+            mapping[n + i] = x[i];
+        }
+        int both = bdd.reference(bdd.and(function, bdd.not(expected)));
+        assertThat(bdd.compose(both, mapping), is(bdd.and(expected, bdd.not(function))));
+        int[] merge = new int[2 * n];
+        Arrays.fill(merge, bdd.placeholder());
+        for (int i = 0; i < n; i++) {
+            merge[n + i] = x[i];
+        }
+        assertThat(bdd.compose(both, merge), is(bdd.falseFunction()));
+    }
+
+    @Test
     void testImpliedAndImplyingLiterals() {
         BddImpl bdd = new DdContextImpl(config).bdd();
         int a = bdd.createVariable();

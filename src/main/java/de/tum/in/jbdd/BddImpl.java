@@ -49,6 +49,8 @@ import org.jspecify.annotations.Nullable;
     "AssertWithSideEffects"
 })
 public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
+    private static final Cube[] CUBES = new Cube[0];
+
     /* The variable order and everything else the BDD shares with its MTBDD, reordering included. */
     private final DdContextImpl context;
     private final BooleanCache cache;
@@ -68,7 +70,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
     private static final int NARY_MINIMUM_OPERANDS_PER_TOP_LEVEL = 4;
     private static final long[] NO_KEYS = new long[0];
     // One cube per literal, for the joint composition's restrictions.
-    private Cube[] literalCubes = new Cube[0];
+    private @Nullable Cube[] literalCubes = CUBES;
     private int[] literalCubeHashes = EMPTY_INT_ARRAY;
 
     private int[] variableNodes;
@@ -1304,6 +1306,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             computeSatisfyingFractionIn(lowIf(node, nodeLevel == level), lowIf(domain, domainLevel == level), result);
             double lowFraction = result[FRACTION];
             double lowComplementFraction = result[COMPLEMENT_FRACTION];
+            //noinspection NumericCastThatLosesPrecision Intentional
             int lowExponent = (int) result[EXPONENT];
             computeSatisfyingFractionIn(highIf(node, nodeLevel == level), highIf(domain, domainLevel == level), result);
             // The mean of both children: their sum, aligned to the larger exponent, with the halving in the exponent.
@@ -1315,6 +1318,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
                 result[COMPLEMENT_FRACTION] = lowComplementFraction;
                 result[EXPONENT] = lowExponent - 1;
             } else {
+                //noinspection NumericCastThatLosesPrecision Intentional
                 int highExponent = (int) result[EXPONENT];
                 int maxExponent = Math.max(lowExponent, highExponent);
                 result[FRACTION] = Math.scalb(lowFraction, lowExponent - maxExponent)
@@ -1325,6 +1329,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             }
             fraction = result[FRACTION];
             complementFraction = result[COMPLEMENT_FRACTION];
+            //noinspection NumericCastThatLosesPrecision Intentional
             exponent = (int) result[EXPONENT];
             fractions.put(hash, node, domain, fraction, complementFraction, exponent);
         }
@@ -1366,31 +1371,29 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         assert accessGuard.acquire();
         int[] resolved = variableMapping.clone();
         ComposeAnalysis analysis = analyzeCompose(resolved);
-        if (analysis.maxReplacedLevel == -1) {
-            int result = simplify(function, domain);
-            assert accessGuard.release();
-            return result;
+        int result;
+        switch (analysis.kind) {
+            case IDENTITY:
+                result = simplify(function, domain);
+                break;
+            case RESTRICT:
+                result = restrictSimplify(function, analysis.restriction, domain);
+                break;
+            default:
+                if (isNodewise(analysis, resolved)) {
+                    cache.initNodewise(resolved);
+                    table.pushToWorkStack(resolved);
+                    result = composeNodewise(function, resolved, analysis.maxReplacedLevel, cache.nodewiseCache());
+                    table.popFromWorkStack(resolved.length);
+                    // A domain only simplifies the composition: a pass over each, never their product.
+                    result = simplify(result, domain);
+                } else {
+                    table.pushToWorkStack(resolved);
+                    result = computeCompose(function, domain, resolved);
+                    table.popFromWorkStack(resolved.length);
+                }
+                break;
         }
-        if (analysis.isRestrict) {
-            int result = restrictSimplify(function, analysis.restriction, domain);
-            assert accessGuard.release();
-            return result;
-        }
-
-        assert table.workStacksEmpty();
-
-        int arrayWorkStackCount = 0;
-        for (int j : resolved) {
-            assert isValidFunction(j);
-            int node = positive(j);
-            if (node != TRUE && !table.isSaturatedNode(node)) {
-                table.pushToWorkStack(j);
-                arrayWorkStackCount++;
-            }
-        }
-
-        int result = computeCompose(function, domain, resolved);
-        table.popFromWorkStack(arrayWorkStackCount);
         assert table.workStacksEmpty();
         assert accessGuard.release();
         return result;
@@ -1400,28 +1403,36 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
     public RegisteredOperation.Unary registerCompose(int[] variableMapping) {
         int[] resolved = variableMapping.clone();
         ComposeAnalysis analysis = analyzeCompose(resolved);
-        if (analysis.maxReplacedLevel == -1) {
-            return RegisteredOperation.identity();
+        switch (analysis.kind) {
+            case IDENTITY:
+                return RegisteredOperation.identity();
+            case RESTRICT:
+                Cube restriction = analysis.restriction;
+                return function -> restrict(function, restriction);
+            default:
+                int[] protectedNodes = Util.protectNodes(this, resolved);
+                return isNodewise(analysis, resolved)
+                        ? new BddOperations.NodewiseCompose(this, resolved, protectedNodes)
+                        : new BddOperations.Compose(this, resolved, protectedNodes);
         }
-        if (analysis.isRestrict) {
-            Cube restriction = analysis.restriction;
-            return function -> restrict(function, restriction);
-        }
-        return new BddOperations.Compose(this, resolved, Util.protectNodes(this, resolved));
     }
 
     @Override
     public RegisteredOperation.Binary registerComposeSimplify(int[] variableMapping) {
         int[] resolved = variableMapping.clone();
         ComposeAnalysis analysis = analyzeCompose(resolved);
-        if (analysis.maxReplacedLevel == -1) {
-            return this::simplify;
+        switch (analysis.kind) {
+            case IDENTITY:
+                return this::simplify;
+            case RESTRICT:
+                Cube restriction = analysis.restriction;
+                return (function, domain) -> restrictSimplify(function, restriction, domain);
+            default:
+                int[] protectedNodes = Util.protectNodes(this, resolved);
+                return isNodewise(analysis, resolved)
+                        ? new BddOperations.NodewiseCompose(this, resolved, protectedNodes)
+                        : new BddOperations.Compose(this, resolved, protectedNodes);
         }
-        if (analysis.isRestrict) {
-            Cube restriction = analysis.restriction;
-            return (function, domain) -> restrictSimplify(function, restriction, domain);
-        }
-        return new BddOperations.Compose(this, resolved, Util.protectNodes(this, resolved));
     }
 
     /** The greatest level a resolved mapping touches, or -1 if it replaces nothing. */
@@ -1435,52 +1446,83 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         return max;
     }
 
+    /**
+     * Resolves {@code variableMapping}'s placeholders in place and says what it amounts to, in one pass: the greatest
+     * replaced level, and whether every replacement is a constant (a restriction) or a constant or a literal (a
+     * renaming). How a {@code COMPOSE} mapping is best composed depends on the diagram (#isNodewise for this one).
+     *
+     * <p>There is deliberately no "everything is constant, so just evaluate" case: a mapping shorter than
+     * numberOfVariables() leaves the remaining variables unchanged, so the result is generally not a constant;
+     * restrict touches only the variables it is given.</p>
+     */
     ComposeAnalysis analyzeCompose(int[] variableMapping) {
         int maxReplacedLevel = -1;
-        for (int i = 0; i < variableMapping.length; i++) {
-            if (variableMapping[i] == placeholder()) {
-                variableMapping[i] = this.variableNodes[i];
-            } else if (variableMapping[i] != this.variableNodes[i]) {
-                maxReplacedLevel = Math.max(maxReplacedLevel, levelOfVariable(i));
+        boolean onlyConstants = true;
+        boolean onlyLiterals = true;
+        for (int variable = 0; variable < variableMapping.length; variable++) {
+            int replacement = variableMapping[variable];
+            if (replacement == placeholder()) {
+                variableMapping[variable] = this.variableNodes[variable];
+            } else if (replacement != this.variableNodes[variable]) {
+                maxReplacedLevel = Math.max(maxReplacedLevel, levelOfVariable(variable));
+                if (!isConstant(replacement)) {
+                    onlyConstants = false;
+                    onlyLiterals = onlyLiterals && isVariableOrNegated(replacement);
+                }
             }
         }
         if (maxReplacedLevel == -1) {
-            return new ComposeAnalysis(-1, false, Cube.empty());
+            return new ComposeAnalysis(ComposeAnalysis.Kind.IDENTITY, -1, Cube.empty());
         }
-
-        // Detect the simple case where every replacement is either the variable itself or a constant.
-        // Primary advantage: Delegate to simpler caches, the effective code paths are pretty similar.
-        //
-        // Note there is deliberately no separate "everything is constant, so just evaluate" case: a
-        // mapping shorter than numberOfVariables() leaves the remaining variables *unchanged*, so the
-        // result is generally not a constant at all. restrict covers that case correctly - it only
-        // touches the variables it is given - so an all-constant mapping simply lands here.
-        boolean isRestrict = true;
-        for (int i = 0; i < variableMapping.length; i++) {
-            if (!isConstant(variableMapping[i]) && variableMapping[i] != this.variableNodes[i]) {
-                isRestrict = false;
-                break;
-            }
-        }
-        if (isRestrict) {
+        if (onlyConstants) {
             MutableNatSet restrictValues = MutableNatSet.dense(variableMapping.length + 1);
             MutableNatSet restrictSupport = MutableNatSet.dense(variableMapping.length + 1);
-            for (int i = 0; i < variableMapping.length; i++) {
-                if (isConstant(variableMapping[i])) {
-                    restrictSupport.set(i);
-                    restrictValues.set(i, variableMapping[i] == TRUE);
+            for (int variable = 0; variable < variableMapping.length; variable++) {
+                if (isConstant(variableMapping[variable])) {
+                    restrictSupport.set(variable);
+                    restrictValues.set(variable, variableMapping[variable] == TRUE);
                 }
             }
-            return new ComposeAnalysis(maxReplacedLevel, true, Cube.ofUnsafe(restrictValues, restrictSupport));
+            return new ComposeAnalysis(
+                    ComposeAnalysis.Kind.RESTRICT, maxReplacedLevel, Cube.ofUnsafe(restrictValues, restrictSupport));
         }
-        return new ComposeAnalysis(maxReplacedLevel, false, Cube.empty());
+        return new ComposeAnalysis(
+                onlyLiterals ? ComposeAnalysis.Kind.RENAME : ComposeAnalysis.Kind.COMPOSE,
+                maxReplacedLevel,
+                Cube.empty());
+    }
+
+    /*
+     * Whether a mapping that is not a restriction composes node by node (#composeNodewise) rather than by the joint
+     * descent. The joint descent restricts a replacement by the literals of the path to its variable, all of which lie
+     * above that variable: a replacement whose top lies below its variable reads none of them, and a literal the path
+     * decides is answered by the if-then-else. So a renaming always composes node by node, and otherwise each
+     * replacement that is neither a constant nor a literal has to lie below its variable - one level comparison. A
+     * replacement reaching above reads path literals unless the mapping replaces what it reads there; that rare case
+     * takes the joint descent too, with no support read to tell it apart.
+     */
+    boolean isNodewise(ComposeAnalysis analysis, int[] resolvedMapping) {
+        assert analysis.kind == ComposeAnalysis.Kind.RENAME || analysis.kind == ComposeAnalysis.Kind.COMPOSE;
+        if (analysis.kind == ComposeAnalysis.Kind.RENAME) {
+            return true;
+        }
+        for (int variable = 0; variable < resolvedMapping.length; variable++) {
+            int replacement = resolvedMapping[variable];
+            if (replacement != this.variableNodes[variable]
+                    && !isConstant(replacement)
+                    && !isVariableOrNegated(replacement)
+                    && decisionLevel(replacement) <= levelOfVariable(variable)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // Joint composition
 
     private Cube literalCube(int variable, boolean value) {
         int index = 2 * variable + (value ? 1 : 0);
-        Cube[] cubes = literalCubes;
+        @Nullable Cube[] cubes = literalCubes;
         if (index >= cubes.length) {
             int size = 2 * Math.max(numberOfVariables(), variable + 1);
             cubes = Arrays.copyOf(cubes, size);
@@ -1596,6 +1638,64 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             projected[index] = replacements[source];
         }
         return projected;
+    }
+
+    /*
+     * A composition node by node, for a mapping no path literal restricts (#isNodewise): a node of variable v becomes
+     * ite(R_v, c(high), c(low)), memoized on the node, so no supports and no path. For a literal R_v whose
+     * variable lies above both results, that is a node made directly (an order-preserving renaming copies the
+     * diagram); otherwise an if-then-else sorts it in. Correct for any mapping, swaps and merges included: every
+     * result is built from the original children. Below maxReplacedLevel nothing changes. The replacements stay valid
+     * through the call: the caller's work stack or a registration's references hold them.
+     */
+    int composeNodewise(int function, int[] resolvedMapping, int maxReplacedLevel, BooleanCache.UnaryToIntCache cache) {
+        assert accessGuard.acquire();
+        table.pushToWorkStack(function);
+        int result = composeNodewiseRecursive(function, resolvedMapping, maxReplacedLevel, cache);
+        table.popFromWorkStack();
+        assert accessGuard.release();
+        return result;
+    }
+
+    private int composeNodewiseRecursive(
+            int function, int[] resolvedMapping, int maxReplacedLevel, BooleanCache.UnaryToIntCache cache) {
+        if (isConstant(function) || decisionLevel(function) > maxReplacedLevel) {
+            return function;
+        }
+        int node = positive(function);
+        boolean complement = function != node;
+        int lookup = cache.lookup(node);
+        if (lookup != placeholder()) {
+            return complementIf(lookup, complement);
+        }
+        int hash = cache.lookupHash();
+        table.step();
+
+        int variable = table.variable(node);
+        int replacement = variable < resolvedMapping.length ? resolvedMapping[variable] : this.variableNodes[variable];
+        int result;
+        if (replacement == TRUE || replacement == FALSE) {
+            result = composeNodewiseRecursive(
+                    replacement == TRUE ? table.high(node) : table.low(node), resolvedMapping, maxReplacedLevel, cache);
+        } else {
+            int low = table.pushToWorkStack(
+                    composeNodewiseRecursive(table.low(node), resolvedMapping, maxReplacedLevel, cache));
+            int high = table.pushToWorkStack(
+                    composeNodewiseRecursive(table.high(node), resolvedMapping, maxReplacedLevel, cache));
+            int level = decisionLevel(replacement);
+            if (isVariableOrNegated(replacement)
+                    && decisionLevelOrMax(low) > level
+                    && decisionLevelOrMax(high) > level) {
+                result = isComplementFunction(replacement)
+                        ? makeFunction(level, high, low)
+                        : makeFunction(level, low, high);
+            } else {
+                result = computeIfThenElse(replacement, high, low);
+            }
+            table.popFromWorkStack(2);
+        }
+        cache.put(hash, node, result);
+        return complementIf(result, complement);
     }
 
     /*
@@ -1763,15 +1863,29 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         return result;
     }
 
+    /** What a resolved mapping amounts to, which decides how it is composed. */
     static final class ComposeAnalysis {
+        enum Kind {
+            /** Replaces nothing. */
+            IDENTITY,
+            /** Replaces variables by constants only: a restriction by {@link #restriction}. */
+            RESTRICT,
+            /** Replaces variables by constants and literals: a renaming, which a BDD composes node by node. */
+            RENAME,
+            /** Anything else: a BDD composes it node by node or by the joint descent (#isNodewise). */
+            COMPOSE
+        }
+
+        final Kind kind;
+        // The greatest level the mapping replaces, -1 if it replaces nothing.
         final int maxReplacedLevel;
-        final boolean isRestrict;
-        // The restriction this compose amounts to, if it is one.
+        // The restriction a RESTRICT mapping amounts to, empty otherwise.
         final Cube restriction;
 
-        ComposeAnalysis(int maxReplacedLevel, boolean isRestrict, Cube restriction) {
+        ComposeAnalysis(Kind kind, int maxReplacedLevel, Cube restriction) {
+            assert (kind == Kind.IDENTITY) == (maxReplacedLevel == -1);
+            this.kind = kind;
             this.maxReplacedLevel = maxReplacedLevel;
-            this.isRestrict = isRestrict;
             this.restriction = restriction;
         }
     }
@@ -1790,6 +1904,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         assert accessGuard.acquire();
         assert table.workStacksEmpty();
         // Adopting from this diagram itself, the source must survive the collections the rebuilding may cause.
+        //noinspection ObjectEquality
         boolean fromItself = bddSource == this; // NOPMD - identity is the point of the check
         if (fromItself) {
             table.pushToWorkStack(function);
@@ -3568,6 +3683,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             /* Take the deepest branch still open - a level the path took low whose high side is not
              * immediately false - and descend from it. A descent that dead ends pops itself back off, so
              * this simply carries on from whatever is left on the stack. */
+            //noinspection WhileLoopSpinsOnField -- Updated in descend
             while (stackDepth > 0) {
                 int level = levelStack[stackDepth - 1];
                 if (!levelAssignment.contains(level)) {

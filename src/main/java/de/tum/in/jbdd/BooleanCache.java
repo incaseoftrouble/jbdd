@@ -60,6 +60,8 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
     private final BinaryToIntCache andExistsCache;
     private final TernaryToIntCache andExistsSimplifyCache;
     private NatSet andExistsVariables = NatSet.of();
+    private final UnaryToIntCache nodewiseCache;
+    private int[] nodewiseMapping = EMPTY_INT_ARRAY;
     private final UnaryToObjectCache<BigInteger> satisfactionCache;
     private final BinaryToObjectCache<BigInteger> satisfactionInCache;
     private final Map<String, IntCache> caches;
@@ -90,6 +92,10 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
         existsCache = new UnaryToIntCache(bdd);
         andExistsCache = new BinaryToIntCache(bdd);
         andExistsSimplifyCache = new TernaryToIntCache(bdd);
+        /* Its mapping's replacements are the caller's, held only during a call: the collection freeing one invalidates
+         * the whole cache when it prunes, before the index can name another function. */
+        nodewiseCache =
+                new UnaryToIntCache(bdd, () -> Arrays.stream(nodewiseMapping).allMatch(bdd::isValidFunction));
         satisfactionCache = new UnaryToObjectCache<>(bdd);
         satisfactionInCache = new BinaryToObjectCache<>(bdd);
 
@@ -121,7 +127,8 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
                 entry("constrain", constrainCache),
                 entry("exists", existsCache),
                 entry("and_exists", andExistsCache),
-                entry("and_exists_simplify", andExistsSimplifyCache));
+                entry("and_exists_simplify", andExistsSimplifyCache),
+                entry("compose_nodewise", nodewiseCache));
 
         tableSizeChanged(0);
     }
@@ -170,6 +177,10 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
         return andExistsSimplifyCache;
     }
 
+    UnaryToIntCache nodewiseCache() {
+        return nodewiseCache;
+    }
+
     // Size and invalidation
 
     void tableSizeChanged(int invalidatedNodes) {
@@ -205,6 +216,7 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
         existsCache.grow(size);
         andExistsCache.grow(size);
         andExistsSimplifyCache.grow(size);
+        nodewiseCache.grow(size);
     }
 
     void variablesChanged() {
@@ -286,6 +298,15 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
         this.andExistsVariables = NatSet.copyOf(quantifiedVariables);
         andExistsCache.invalidate();
         andExistsSimplifyCache.invalidate();
+    }
+
+    /** The node-by-node composition's cache holds results of one resolved mapping, keyed by the node alone. */
+    void initNodewise(int[] resolvedMapping) {
+        if (Arrays.equals(resolvedMapping, this.nodewiseMapping)) {
+            return;
+        }
+        this.nodewiseMapping = resolvedMapping.clone();
+        nodewiseCache.invalidate();
     }
 
     int lookupAnd(int function1, int function2) {

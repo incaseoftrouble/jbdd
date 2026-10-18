@@ -1513,7 +1513,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
         assert accessGuard.acquire();
         int[] resolved = bddVariableMapping.clone();
         BddImpl.ComposeAnalysis analysis = bdd.analyzeCompose(resolved);
-        if (analysis.maxReplacedLevel == -1) {
+        if (analysis.kind == BddImpl.ComposeAnalysis.Kind.IDENTITY) {
             int result = simplify(mtbddFunction, bddDomain);
             assert accessGuard.release();
             return result;
@@ -1551,10 +1551,10 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
     public RegisteredOperation.Unary registerCompose(int[] bddVariableMapping) {
         int[] resolved = bddVariableMapping.clone();
         BddImpl.ComposeAnalysis analysis = bdd.analyzeCompose(resolved);
-        if (analysis.maxReplacedLevel == -1) {
+        if (analysis.kind == BddImpl.ComposeAnalysis.Kind.IDENTITY) {
             return RegisteredOperation.identity();
         }
-        if (analysis.isRestrict) {
+        if (analysis.kind == BddImpl.ComposeAnalysis.Kind.RESTRICT) {
             Cube restriction = analysis.restriction;
             return function -> restrict(function, restriction);
         }
@@ -1566,10 +1566,10 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
     public RegisteredOperation.Binary registerComposeSimplify(int[] bddVariableMapping) {
         int[] resolved = bddVariableMapping.clone();
         BddImpl.ComposeAnalysis analysis = bdd.analyzeCompose(resolved);
-        if (analysis.maxReplacedLevel == -1) {
+        if (analysis.kind == BddImpl.ComposeAnalysis.Kind.IDENTITY) {
             return this::simplify;
         }
-        if (analysis.isRestrict) {
+        if (analysis.kind == BddImpl.ComposeAnalysis.Kind.RESTRICT) {
             Cube restriction = analysis.restriction;
             return (function, domain) -> simplify(restrict(function, restriction), domain);
         }
@@ -1714,7 +1714,7 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
                             highDomain,
                             composeCache,
                             composeSimplifyCache));
-                    result = ifThenElseRecursive(bddReplacement, high, low);
+                    result = composedNode(bddReplacement, low, high);
                     table.popFromWorkStack(2);
                 }
             }
@@ -1726,6 +1726,21 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
             composeSimplifyCache.put(hash, mtbddNode, bddDomain, result);
         }
         return result;
+    }
+
+    /*
+     * The node replacing one of variable v, by its replacement R_v: for a literal above both children, made directly
+     * (a negated one swapping them - an MTBDD has no complement edges), so an order-preserving renaming copies the
+     * diagram; otherwise the if-then-else.
+     */
+    private int composedNode(int bddReplacement, int low, int high) {
+        if (bdd.isVariableOrNegated(bddReplacement)) {
+            int level = bdd.decisionLevel(bddReplacement);
+            if (decisionLevelOrMax(low) > level && decisionLevelOrMax(high) > level) {
+                return bdd.isVariable(bddReplacement) ? makeFunction(level, low, high) : makeFunction(level, high, low);
+            }
+        }
+        return ifThenElseRecursive(bddReplacement, high, low);
     }
 
     @Override

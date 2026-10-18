@@ -766,6 +766,19 @@ branch directly where the domain decides it. Carrying the path is what keeps com
 discarding one half - exponential where the replaced variables sit below those
 (`testComposeCarriesThePathToTheReplacements`); keying on content shares a state reached along paths that
 restrict alike. Results agree with the composition wherever the domain holds.
+`analyzeCompose` reads a mapping in one pass: nothing replaced, only constants (`restrict` takes it), only constants
+and literals (a renaming), or anything else. The path pays only for a replacement that reads a variable the mapping
+leaves alone above the one it replaces - only those become path literals that restrict it. A replacement whose top
+lies below its variable reads none, and a literal the path decides is answered by the if-then-else; so a renaming,
+and a mapping whose other replacements all lie below their variables (one level comparison each, no support read),
+is composed **node by node** (`isNodewise`, `composeNodewise`) - a replacement reaching above takes the joint descent,
+even where it reads only replaced variables there: per node `ite(R_v, c(high), c(low))`, memoized on the node - no supports, no path, the same work.
+For a literal above both results the node is made directly, so an order-preserving renaming copies the diagram node
+for node (the MTBDD's composition, always node by node, does the same); otherwise the if-then-else sorts it in, which
+keeps swaps and merges correct. With a domain it is `simplify` of the composition: a pass over each, where the joint
+descent's states can be their product. The plain call's cache is ephemeral on the resolved mapping (`initNodewise`),
+invalidated when a collection frees one of its replacements; the registered `BddOperations.NodewiseCompose` references them
+and has a private cache.
 
 ## 7. Registered operations
 
@@ -779,7 +792,7 @@ Int layer: `registerCompose`/`registerComposeSimplify` on both `Bdd` and `MtBdd`
 and-exists, ternary its simplifying form, each with its private cache; an unused cache is never allocated, `CacheBase` sizing lazily), and `MtBdd#registerApply`/`registerApplySimplify`/`registerMap`/`registerMapSimplify`/`registerMapBoolean`/
 `registerApplyBoolean`, returning `RegisteredOperation.Unary`/`Binary`/`Ternary`. The BDD compose forms hold
 no cache: the composition's is keyed on its whole context (§6), so they only resolve and protect the mapping
-once. Only the compose forms bind *nodes*, and those own them: `ProtectedOperation` + `ProtectionTracker` reference the operands on
+once - except a node-by-node one's (`BddOperations.NodewiseCompose`, §6), keyed on the node alone. Only the compose forms bind *nodes*, and those own them: `ProtectedOperation` + `ProtectionTracker` reference the operands on
 construction and drop them via a `PhantomReference` when released or unreachable. The rest bind a lambda or
 a `NatSet` and hold nothing. Their private caches start at an eighth of an ephemeral cache's size and grow
 with their use up to it (`CacheBase.growWithUsageUpTo`, set with the floor on every table growth: `putBin` asks

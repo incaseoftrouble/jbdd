@@ -829,6 +829,119 @@ class BddTheories {
         bdd.dereference(composeNode);
     }
 
+    @SuppressWarnings("NullAway")
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("unary")
+    void testComposeRename(UnaryDataPoint<BinaryDd> dataPoint) {
+        // Literals and constants only: a renaming that may merge variables, swap them, negate and restrict.
+        BinaryDd bdd = dataPoint.bdd;
+        int function = dataPoint.function;
+        assumeTrue(bdd.isValidFunction(function));
+        assumeTrue(dataPoint.tree.depth() <= 25);
+
+        Random random = new Random(function);
+        int[] composeArray = new int[variableCount];
+        Map<Integer, SyntaxTree> replacementMap = new HashMap<>();
+        for (int i = 0; i < variableCount; i++) {
+            int choice = random.nextInt(8);
+            if (choice == 0) {
+                boolean value = random.nextBoolean();
+                composeArray[i] = value ? bdd.trueFunction() : bdd.falseFunction();
+                replacementMap.put(i, SyntaxTree.constant(value));
+            } else if (choice <= 2) {
+                composeArray[i] = bdd.placeholder();
+            } else {
+                int target = random.nextInt(variableCount);
+                boolean negated = random.nextInt(3) == 0;
+                int literal = bdd.variableFunction(target);
+                composeArray[i] = negated ? bdd.not(literal) : literal;
+                replacementMap.put(
+                        i, negated ? SyntaxTree.not(SyntaxTree.literal(target)) : SyntaxTree.literal(target));
+            }
+        }
+
+        checkNodewiseComposition(
+                bdd, function, composeArray, SyntaxTree.buildReplacementTree(dataPoint.tree, replacementMap), random);
+    }
+
+    @SuppressWarnings("NullAway")
+    @ParameterizedTest(name = "{index}")
+    @MethodSource("unary")
+    void testComposeNodewise(UnaryDataPoint<BinaryDd> dataPoint) {
+        // Replacements lying wholly below their variable: no path literal restricts them, so they compose node by node.
+        BinaryDd bdd = dataPoint.bdd;
+        int function = dataPoint.function;
+        assumeTrue(bdd.isValidFunction(function));
+        Info<BinaryDd> bddInfo = infoMap.get(bdd).bddInfo;
+
+        Random random = new Random(function);
+        List<Integer> pool = new ArrayList<>(bddInfo.syntaxTreeMap.keySet());
+        int[] composeArray = new int[variableCount];
+        Map<Integer, SyntaxTree> replacementMap = new HashMap<>();
+        for (int i = 0; i < variableCount; i++) {
+            composeArray[i] = bdd.placeholder();
+            if (random.nextInt(3) == 0) {
+                continue;
+            }
+            int level = levelOf(bdd, i);
+            List<Integer> below = new ArrayList<>();
+            for (int candidate : pool) {
+                if (!bdd.isConstant(candidate)
+                        && bdd.support(candidate).intStream().allMatch(read -> levelOf(bdd, read) > level)) {
+                    below.add(candidate);
+                }
+            }
+            if (!below.isEmpty()) {
+                int replacement = below.get(random.nextInt(below.size()));
+                composeArray[i] = replacement;
+                replacementMap.put(i, bddInfo.syntaxTreeMap.get(replacement));
+            }
+        }
+        SyntaxTree composeTree = SyntaxTree.buildReplacementTree(dataPoint.tree, replacementMap);
+        assumeTrue(composeTree.depth() <= 25);
+        if (bdd instanceof BddImpl) {
+            BddImpl impl = (BddImpl) bdd;
+            int[] resolved = composeArray.clone();
+            BddImpl.ComposeAnalysis analysis = impl.analyzeCompose(resolved);
+            boolean composes = analysis.kind == BddImpl.ComposeAnalysis.Kind.RENAME
+                    || analysis.kind == BddImpl.ComposeAnalysis.Kind.COMPOSE;
+            assertThat(!composes || impl.isNodewise(analysis, resolved), is(true));
+        }
+        checkNodewiseComposition(bdd, function, composeArray, composeTree, random);
+    }
+
+    private static int levelOf(BinaryDd bdd, int variable) {
+        return bdd instanceof ReorderableDd ? ((ReorderableDd) bdd).levelOfVariable(variable) : variable;
+    }
+
+    /**
+     * The composition against the syntax tree, its complement, a domain - simplified to it, which agrees with the
+     * composition there - and, on a Bdd, the registered forms.
+     */
+    @SuppressWarnings("NullAway")
+    private void checkNodewiseComposition(
+            BinaryDd bdd, int function, int[] composeArray, SyntaxTree expected, Random random) {
+        int composed = bdd.reference(bdd.compose(function, composeArray));
+        checkTree(bdd, composed, expected, "node by node");
+        List<Integer> pool =
+                new ArrayList<>(infoMap.get(bdd).bddInfo.syntaxTreeMap.keySet());
+        int domain = pool.get(random.nextInt(pool.size()));
+        int simplified = bdd.reference(bdd.composeSimplify(function, composeArray, domain));
+        testSimplify(bdd, simplified, composed, domain);
+        if (bdd instanceof Bdd) {
+            RegisteredOperation.Unary registered = bdd.registerCompose(composeArray);
+            assertThat(registered.applyAsInt(function), is(composed));
+            assertThat(registered.applyAsInt(bdd.not(function)), is(bdd.not(composed)));
+            registered.release();
+            RegisteredOperation.Binary registeredSimplify = bdd.registerComposeSimplify(composeArray);
+            int registeredSimplified = bdd.reference(registeredSimplify.applyAsInt(function, domain));
+            testSimplify(bdd, registeredSimplified, composed, domain);
+            registeredSimplify.release();
+            bdd.dereference(registeredSimplified);
+        }
+        bdd.dereference(composed, simplified);
+    }
+
     @ParameterizedTest(name = "{index}")
     @MethodSource("binary")
     void testComposeTreeSimplify(BinaryDataPoint<BinaryDd> dataPoint) {

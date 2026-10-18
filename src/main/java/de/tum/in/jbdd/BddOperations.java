@@ -161,6 +161,92 @@ final class BddOperations {
     }
 
     /**
+     * A composition no path literal restricts, composed node by node (BddImpl#composeNodewise), bound to its mapping:
+     * it references the replacements and keeps a private cache keyed by the node. With a domain, the composition is
+     * simplified to it.
+     */
+    static final class NodewiseCompose extends ProtectedOperation
+            implements RegisteredOperation.Unary, RegisteredOperation.Binary, NodeTableObserver, VariableOrderObserver {
+        private final BddImpl bdd;
+        private final int[] variableMapping;
+        private int maxReplacedLevel;
+        private final BooleanCache.UnaryToIntCache nodewiseCache;
+
+        @SuppressWarnings("AssignmentOrReturnOfFieldWithMutableType")
+        NodewiseCompose(BddImpl bdd, int[] resolvedMapping, int[] protectedNodes) {
+            super(bdd.protectionTracker(), () -> bdd.dereference(protectedNodes));
+            assert Arrays.stream(protectedNodes).allMatch(bdd::nodeIsReferenced);
+            this.bdd = bdd;
+            this.variableMapping = resolvedMapping;
+            this.maxReplacedLevel = bdd.maxReplacedLevel(resolvedMapping);
+            this.nodewiseCache = new BooleanCache.UnaryToIntCache(bdd);
+            bdd.registerObserver(this);
+            bdd.variableOrder().registerObserver(this);
+            growToTableFloor();
+        }
+
+        /** An ephemeral cache's size: the private caches grow on usage up to it. */
+        private int usageLimit() {
+            return bdd.tableSize() / bdd.configuration().cacheSizeDivider();
+        }
+
+        private void growToTableFloor() {
+            nodewiseCache.grow(bdd.tableSize()
+                    / (bdd.configuration().cacheSizeDivider() * CacheBase.REGISTERED_OPERATION_DIVIDER));
+            nodewiseCache.growWithUsageUpTo(usageLimit());
+        }
+
+        @Override
+        public int applyAsInt(int function) {
+            checkNotReleased();
+            assert bdd.isValidFunction(function);
+            return bdd.composeNodewise(function, variableMapping, maxReplacedLevel, nodewiseCache);
+        }
+
+        @Override
+        public int applyAsInt(int function, int domain) {
+            checkNotReleased();
+            assert bdd.isValidFunction(function) && bdd.isValidFunction(domain);
+            if (domain == bdd.falseFunction()) {
+                return domain;
+            }
+            return bdd.simplify(applyAsInt(function), domain);
+        }
+
+        @Override
+        public void orderChanged(int[] previousVariableToLevel, int[] currentVariableToLevel, NatSet movedVariables) {
+            maxReplacedLevel = bdd.maxReplacedLevel(variableMapping);
+            // see BooleanCache#orderChanged
+            nodewiseCache.invalidate();
+        }
+
+        @Override
+        public void variablesInserted(int level, int count) {
+            // The functions did not change, so every entry holds; only the levels moved.
+            maxReplacedLevel = bdd.maxReplacedLevel(variableMapping);
+        }
+
+        @Override
+        public void afterGc(DecisionDiagram origin, int reclaimedNodes, NatSet reclaimedValues) {
+            pruneInvalidNodes(reclaimedNodes);
+        }
+
+        @Override
+        public void afterTableGrowth(DecisionDiagram origin, int invalidatedNodes, NatSet reclaimedValues) {
+            pruneInvalidNodes(invalidatedNodes);
+            growToTableFloor();
+        }
+
+        private void pruneInvalidNodes(int invalidatedNodes) {
+            if (bdd.isReordering()) {
+                nodewiseCache.invalidate();
+            } else if (invalidatedNodes > 0) {
+                nodewiseCache.clearInvalidNodes(invalidatedNodes < bdd.tableSize() / 2);
+            }
+        }
+    }
+
+    /**
      * A composition bound to its mapping. It holds no cache of its own: the composition's cache is keyed on its
      * whole context (BddImpl#composeJoint), so the handle only resolves and protects the mapping once.
      */
