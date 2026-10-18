@@ -757,7 +757,8 @@ state is the function and the domain restricted to the path, with each replaced 
 reads and that replacement restricted to the path. That tuple is the whole context, so results go to the
 stable `ComposeTupleCache`, keyed `[F, D, v_1, ..., v_k, R_1, ..., R_k]` (the variables are part of the key: the
 same replacement for another variable means something else). A replacement the path made constant is
-substituted into `F` right away, so a decided disjunct or conjunct ends the descent. Otherwise the step splits
+substituted into `F` right away, so a decided disjunct or conjunct ends the descent. Where `F` reads no replaced variable any more, the descent
+ends too: `F` itself, simplified to the domain. Otherwise the step splits
 on `F`'s top variable. Left alone, it is a path literal: the domain is restricted by it, and so is each
 replacement the child still reads (`restrictLiteral`, one prebuilt cube per literal, through `RestrictCubeCache`);
 a branch outside the domain is skipped, its replacements never restricted, and the children are reassembled over

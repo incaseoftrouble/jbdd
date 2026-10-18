@@ -1758,6 +1758,12 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             variables = nextVariables;
             function = next;
         }
+        if (variables.length == 0) {
+            // Nothing below is replaced: the function itself, simplified to the domain.
+            int result = domain == TRUE ? function : computeConstrainSimplify(function, domain, false);
+            table.popFromWorkStack(pushed);
+            return result;
+        }
 
         boolean complement = isComplementFunction(function);
         int node = positive(function);

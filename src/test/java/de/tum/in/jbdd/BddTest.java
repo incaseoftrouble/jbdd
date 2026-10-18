@@ -522,6 +522,36 @@ class BddTest {
     }
 
     @Test
+    void testComposeStopsWhereNothingBelowIsReplaced() {
+        // The replacement reads variables above the one it replaces, so the joint descent takes it; below that
+        // variable nothing is replaced, so the descent returns the rest as it is instead of walking it.
+        int n = 200;
+        DdContextImpl context = new DdContextImpl(config);
+        BddImpl bdd = context.bdd();
+        int a = bdd.createVariable();
+        int c = bdd.createVariable();
+        int o = bdd.createVariable();
+        int[] b = bdd.createVariables(n);
+        int chain = bdd.falseFunction();
+        for (int i = n - 1; i >= 0; i--) {
+            chain = bdd.updateWith(bdd.xor(b[i], chain), chain);
+        }
+        int function = bdd.reference(bdd.and(o, chain));
+        // Not a literal, and above o: the if-then-else building the result is a node or two.
+        int replacement = bdd.reference(bdd.or(a, c));
+        int[] mapping = new int[n + 3];
+        Arrays.fill(mapping, bdd.placeholder());
+        mapping[bdd.decisionVariable(o)] = replacement;
+
+        long before = context.work();
+        int composed = bdd.compose(function, mapping);
+        // The function's support is read once (a step per node); walking the chain would be a second step per node.
+        long work = context.work() - before;
+        assertThat("work " + work, work < 3L * n / 2, is(true));
+        assertThat(composed, is(bdd.and(replacement, chain)));
+    }
+
+    @Test
     void testComposeSupportsAreMemoizedWithinOneCall() {
         // The replacement reads the top variable, so every level is a path literal and asks for its children's
         // supports. "At least n/2 of n" has two distinct children per node over shared subdiagrams: a support cache
