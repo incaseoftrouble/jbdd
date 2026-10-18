@@ -75,9 +75,19 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
     private final RestrictCubeCache restrictCubeCache;
 
     private int lookupHash;
+    // Per kind of registered operation, the total of its private caches (BddOperations); a fixed set, so every report
+    // has the same keys.
+    private final Map<String, CacheStatistics> registeredTotals;
 
     BooleanCache(BooleanBase<?, ?> bdd) {
         this.bdd = bdd;
+        this.registeredTotals = bdd instanceof BddImpl
+                ? Map.of(
+                        "exists", new CacheStatistics(),
+                        "and_exists", new CacheStatistics(),
+                        "and_exists_simplify", new CacheStatistics(),
+                        "compose_nodewise", new CacheStatistics())
+                : Map.of();
         this.lookupHash = -1;
 
         andCache = new BinaryToIntCache(bdd);
@@ -143,6 +153,13 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
 
     FractionCache fractionCache() {
         return fractionCache;
+    }
+
+    /** The total that every private cache of a registered operation of {@code kind} counts into. */
+    CacheStatistics registeredTotal(String kind) {
+        CacheStatistics total = registeredTotals.get(kind);
+        assert total != null : kind;
+        return total;
     }
 
     FractionInCache fractionInCache() {
@@ -520,6 +537,7 @@ final class BooleanCache implements VariableOrderObserver, StatisticsReporter {
         composeTupleCache.report(report.about("cache_", "compose_tuple"), detail);
         andAllCache.report(report.about("cache_", "and_all"), detail);
         restrictCubeCache.report(report.about("cache_", "restrict_cube"), detail);
+        registeredTotals.forEach((kind, total) -> total.reportTotal(report.about("cache_registered_", kind)));
         report.put(EXISTS_REUSE_COUNT, existsReuseCount);
         report.put(AND_EXISTS_REUSE_COUNT, andExistsReuseCount);
     }

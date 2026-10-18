@@ -798,7 +798,11 @@ a `NatSet` and hold nothing. Their private caches start at an eighth of an ephem
 with their use up to it (`CacheBase.growWithUsageUpTo`, set with the floor on every table growth: `putBin` asks
 to double once the puts since the last clear pass three quarters of the size, and the next store does - so a cache
 grows within one long operation too; a store therefore may replace a cache's arrays, so a parallel array is indexed
-by the bin `storeKeys` returned, never written as `values[storeKeys(...)]`, which takes the old array), and each registers its prune hook with *every* table its entries can name — the two boolean-valued
+by the bin `storeKeys` returned, never written as `values[storeKeys(...)]`, which takes the old array),
+counting into their kind's total instead of their own statistics, of which they keep only the counts since
+the last clear that their growth and pruning read (`CacheBase.countInto`; per diagram a fixed set of kinds, reported as
+`cache_registered_<kind>_*`: the counts of every handle's cache, past ones included, the caches created, their
+growths, the largest size and how many caches asked for more than their limit - whether the limit is the right one), and each registers its prune hook with *every* table its entries can name — the two boolean-valued
 MTBDD operations always straddle both, since their results are BDD functions.
 
 Object layer: handle types bound once and applied repeatedly — `BddMap.Operator<V>` (plus `applyIn`),

@@ -36,8 +36,10 @@ public abstract class CacheBase implements StatisticsReporter {
     CacheStatistics statistics = new CacheStatistics();
     private final BooleanSupplier cacheDependenciesValid;
     private int desiredSize = 0;
-    // The size up to which the cache grows with its puts (0: it does not); see #putBin.
+    // The size up to which the cache grows with its puts (0: it does not), and whether its use asked for more; see
+    // #putBin.
     private int usageLimit = 0;
+    private boolean usageLimitReached = false;
     private boolean cacheInvalid = true;
 
     /*
@@ -74,9 +76,18 @@ public abstract class CacheBase implements StatisticsReporter {
      */
     final int putBin(int hash) {
         statistics.put();
-        if (size < usageLimit && statistics.putCountSinceClear() > size * USAGE_GROWTH_LOAD_FACTOR) {
+        if (!usageLimitReached
+                && size < usageLimit
+                && statistics.putCountSinceClear() > size * USAGE_GROWTH_LOAD_FACTOR) {
             // Just past twice the size, since ensureValid grows only beyond that.
-            desiredSize = Math.max(desiredSize, Math.min(usageLimit, USAGE_GROWTH_FACTOR * size + 1));
+            int requested = USAGE_GROWTH_FACTOR * size + 1;
+            if (requested >= usageLimit) {
+                // The last growth this limit allows (if any); later puts need not ask again.
+                requested = usageLimit;
+                usageLimitReached = true;
+                statistics.usageLimitReached();
+            }
+            desiredSize = Math.max(desiredSize, requested);
         }
         int bin = binIndex(hash);
         int count = writtenCount;
@@ -129,7 +140,15 @@ public abstract class CacheBase implements StatisticsReporter {
 
     /** Lets the cache grow with its puts up to {@code limit} bins (see {@link #putBin}); 0 stops it. */
     void growWithUsageUpTo(int limit) {
-        this.usageLimit = limit;
+        if (limit != usageLimit) {
+            usageLimit = limit;
+            usageLimitReached = false;
+        }
+    }
+
+    /** Adds this cache's counts to {@code total} too, the statistics of all caches of a registered operation's kind. */
+    void countInto(CacheStatistics total) {
+        statistics.countInto(total);
     }
 
     void ensureValid() {
@@ -160,6 +179,8 @@ public abstract class CacheBase implements StatisticsReporter {
         int newSize = Primes.nextPrime(desiredSize);
         boolean preserve = !cacheInvalid && statistics.putCountSinceClear() > size / 8;
         doGrowToSize(newSize, preserve);
+        // The first allocation sizes the cache, it does not grow it.
+        statistics.sized(newSize, size > 0);
         size = newSize;
         written = newSize / WRITTEN_FRACTION == 0 ? NO_BINS : new int[newSize / WRITTEN_FRACTION];
         // A preserving growth rehashed the entries to bins nobody recorded.

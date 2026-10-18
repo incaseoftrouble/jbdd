@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import de.tum.in.jbdd.StatisticDescription.Kind;
+import de.tum.in.jbdd.collections.NatSet;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -51,6 +52,29 @@ class StatisticsTest {
             assertDescribed(context);
             assertDescribed(BddFactory.buildMdd(configuration));
         }
+    }
+
+    @Test
+    void registeredOperationsCountIntoTheirKindsTotal() {
+        // Every handle's private cache counts into its kind's total, which outlives the handle.
+        DdContextImpl context =
+                new DdContextImpl(ImmutableBddConfiguration.builder().build());
+        BddImpl bdd = context.bdd();
+        int[] v = bdd.createVariables(12);
+        int function = bdd.reference(bdd.and(bdd.or(v[0], v[5]), bdd.xor(v[3], v[11])));
+        for (int round = 0; round < 2; round++) {
+            RegisteredOperation.Unary exists = bdd.registerExists(NatSet.of(0, 3));
+            assertEquals(bdd.exists(function, NatSet.of(0, 3)), exists.applyAsInt(function));
+            assertEquals(bdd.exists(bdd.not(function), NatSet.of(0, 3)), exists.applyAsInt(bdd.not(function)));
+            exists.release();
+        }
+        Map<String, Object> statistics = context.statistics();
+        assertEquals(2L, statistics.get("bdd_cache_registered_exists_created"));
+        assertTrue(((Number) statistics.get("bdd_cache_registered_exists_put")).longValue() > 0);
+        assertTrue(((Number) statistics.get("bdd_cache_registered_exists_max_size")).intValue() > 0);
+        assertEquals(0L, statistics.get("bdd_cache_registered_compose_nodewise_created"));
+        assertEquals(0L, statistics.get("mtbdd_cache_registered_map_created"));
+        assertDescribed(context);
     }
 
     @Test

@@ -46,6 +46,9 @@ final class BddOperations {
             this.existsCache = new BooleanCache.UnaryToIntCache(bdd);
             this.andExistsCache = new BooleanCache.BinaryToIntCache(bdd);
             this.andExistsSimplifyCache = new BooleanCache.TernaryToIntCache(bdd);
+            existsCache.countInto(bdd.cache().registeredTotal("exists"));
+            andExistsCache.countInto(bdd.cache().registeredTotal("and_exists"));
+            andExistsSimplifyCache.countInto(bdd.cache().registeredTotal("and_exists_simplify"));
             bdd.registerObserver(this);
             bdd.variableOrder().registerObserver(this);
             growToTableFloor();
@@ -180,6 +183,7 @@ final class BddOperations {
             this.variableMapping = resolvedMapping;
             this.maxReplacedLevel = bdd.maxReplacedLevel(resolvedMapping);
             this.nodewiseCache = new BooleanCache.UnaryToIntCache(bdd);
+            nodewiseCache.countInto(bdd.cache().registeredTotal("compose_nodewise"));
             bdd.registerObserver(this);
             bdd.variableOrder().registerObserver(this);
             growToTableFloor();

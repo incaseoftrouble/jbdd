@@ -102,6 +102,18 @@ final class MtBddCache implements VariableOrderObserver, StatisticsReporter {
 
     private int lookupHash;
 
+    // Per kind of registered operation, the total of its private caches (MtBddOperations); a fixed set, so every report
+    // has the same keys.
+    private final Map<String, CacheStatistics> registeredTotals = Map.of(
+            "compose", new CacheStatistics(),
+            "compose_simplify", new CacheStatistics(),
+            "map", new CacheStatistics(),
+            "map_simplify", new CacheStatistics(),
+            "map_boolean", new CacheStatistics(),
+            "apply_boolean", new CacheStatistics(),
+            "apply", new CacheStatistics(),
+            "apply_simplify", new CacheStatistics());
+
     MtBddCache(MtBddImpl mtbdd, BddImpl bdd) {
         this.mtbdd = mtbdd;
         this.bdd = bdd;
@@ -204,6 +216,13 @@ final class MtBddCache implements VariableOrderObserver, StatisticsReporter {
 
     int lookupHash() {
         return lookupHash;
+    }
+
+    /** The total that every private cache of a registered operation of {@code kind} counts into. */
+    CacheStatistics registeredTotal(String kind) {
+        CacheStatistics total = registeredTotals.get(kind);
+        assert total != null : kind;
+        return total;
     }
 
     // Size and invalidation
@@ -676,6 +695,7 @@ final class MtBddCache implements VariableOrderObserver, StatisticsReporter {
     @Override
     public void report(StatisticsReport report, StatisticsDetail detail) {
         caches.forEach((name, cache) -> cache.report(report.about("cache_", name), detail));
+        registeredTotals.forEach((kind, total) -> total.reportTotal(report.about("cache_registered_", kind)));
         reportReuse(report, "apply", applyReuseCount);
         reportReuse(report, "map", mapReuseCount);
         reportReuse(report, "map_boolean", mapBooleanReuseCount);

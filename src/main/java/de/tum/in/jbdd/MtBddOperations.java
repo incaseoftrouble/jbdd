@@ -65,8 +65,12 @@ final class MtBddOperations {
             this.bddVariableMapping = resolvedMapping;
             this.maxReplacedLevel = maxReplacedLevel;
             this.composeCache = new MtBddCache.UnaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, MTBDD);
+            composeCache.countInto(mtbdd.cache().registeredTotal("compose"));
             this.composeSimplifyCache =
                     withSimplify ? new MtBddCache.BinaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, BDD, MTBDD) : null;
+            if (composeSimplifyCache != null) {
+                composeSimplifyCache.countInto(mtbdd.cache().registeredTotal("compose_simplify"));
+            }
             mtbdd.registerObserver(this);
             if (withSimplify) {
                 mtbdd.bddImpl().registerObserver(this);
@@ -194,8 +198,12 @@ final class MtBddOperations {
             this.mtbdd = mtbdd;
             this.operator = operator;
             this.mapCache = new MtBddCache.UnaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, MTBDD);
+            mapCache.countInto(mtbdd.cache().registeredTotal("map"));
             this.mapSimplifyCache =
                     withSimplify ? new MtBddCache.BinaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, BDD, MTBDD) : null;
+            if (mapSimplifyCache != null) {
+                mapSimplifyCache.countInto(mtbdd.cache().registeredTotal("map_simplify"));
+            }
             mtbdd.registerObserver(this);
             if (withSimplify) {
                 mtbdd.bddImpl().registerObserver(this);
@@ -287,6 +295,7 @@ final class MtBddOperations {
             this.mtbdd = mtbdd;
             this.values = values;
             this.mapBooleanCache = new MtBddCache.UnaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, BDD);
+            mapBooleanCache.countInto(mtbdd.cache().registeredTotal("map_boolean"));
             mtbdd.registerObserver(this);
             mtbdd.bddImpl().registerObserver(this);
             growToTableFloor();
@@ -350,6 +359,7 @@ final class MtBddOperations {
             this.mtbdd = mtbdd;
             this.predicate = predicate;
             this.applyBooleanCache = new MtBddCache.BinaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, MTBDD, BDD);
+            applyBooleanCache.countInto(mtbdd.cache().registeredTotal("apply_boolean"));
             mtbdd.registerObserver(this);
             mtbdd.bddImpl().registerObserver(this);
             growToTableFloor();
@@ -414,8 +424,12 @@ final class MtBddOperations {
             this.mtbdd = mtbdd;
             this.operator = operator;
             this.applyCache = new MtBddCache.BinaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, MTBDD, MTBDD);
+            applyCache.countInto(mtbdd.cache().registeredTotal("apply"));
             this.applySimplifyCache =
                     withSimplify ? new MtBddCache.TernaryCache(mtbdd, mtbdd.bddImpl(), MTBDD, MTBDD, BDD, MTBDD) : null;
+            if (applySimplifyCache != null) {
+                applySimplifyCache.countInto(mtbdd.cache().registeredTotal("apply_simplify"));
+            }
             mtbdd.registerObserver(this);
             if (withSimplify) {
                 mtbdd.bddImpl().registerObserver(this);
