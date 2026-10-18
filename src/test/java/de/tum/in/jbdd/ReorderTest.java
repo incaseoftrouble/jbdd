@@ -411,6 +411,7 @@ class ReorderTest {
     }
 
     @Test
+    @SuppressWarnings("NullAway") // a missing statistic fails the test as it should
     void testReorderReportsWhatItSaved() {
         int pairs = 6;
         int variables = 2 * pairs;
@@ -1137,6 +1138,7 @@ class ReorderTest {
     }
 
     @Test
+    @SuppressWarnings("NullAway") // a missing statistic fails the test as it should
     void testReorderingNotifiesOnceForHoweverManySwapsItTook() {
         DdContextImpl context = new DdContextImpl(CONFIG);
         BddImpl bdd = context.bdd();

@@ -927,6 +927,8 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
         return result;
     }
 
+    // The simplifying cache is null exactly where the domain is the universe, as asserted on entry.
+    @SuppressWarnings("NullAway")
     private int computeApply(
             int function1,
             int function2,
@@ -1088,6 +1090,8 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
     }
 
     /** The unary counterpart of {@link #computeApply}; see there for the domain handling. */
+    // The simplifying cache is null exactly where the domain is the universe, as asserted on entry.
+    @SuppressWarnings("NullAway")
     private int computeMap(
             int function,
             int bddDomain,
@@ -1599,6 +1603,8 @@ public class MtBddImpl implements MtBdd, StatisticsReporter.Source {
     }
 
     // simplify is integrated directly due to most code paths being shared
+    // The simplifying cache is null exactly where the domain is the universe, as asserted on entry.
+    @SuppressWarnings("NullAway")
     private int composeRecursive(
             int mtbddNode,
             int[] bddVariableMapping,

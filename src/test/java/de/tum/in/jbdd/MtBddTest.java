@@ -1474,6 +1474,7 @@ class MtBddTest {
      * and no nodes has to force its own collection - without it, nothing ever reclaims a dead value.
      */
     @Test
+    @SuppressWarnings("NullAway") // a missing statistic fails the test as it should
     void testValueAllocationForcesACollectionOfItsOwn() {
         DdContextImpl context = new DdContextImpl(config);
         MtBddImpl mt = context.mtBdd();
@@ -1527,6 +1528,7 @@ class MtBddTest {
         assertTrue(mt.check());
     }
 
+    @SuppressWarnings("NullAway") // a missing statistic fails the test as it should
     private static int valueTriggeredCollections(DdContextImpl context) {
         return (Integer) context.statistics().get("mtbdd_value_triggered_collections");
     }

@@ -73,17 +73,17 @@ public class ChainBenchmark {
         bdd = BddFactory.buildBdd();
         variables = bdd.createVariables(length);
         Random random = new Random(length * 31L + order.hashCode());
-        int formulas = 16384 / length;
+        int formulas = 16_384 / length;
         literalVariables = new int[formulas][length];
         polarities = new boolean[formulas][length];
         conjunction = new boolean[formulas];
         for (int f = 0; f < formulas; f++) {
             int[] indices = literalVariables[f];
             for (int i = 0; i < length; i++) {
-                indices[i] = order.equals("descending") ? length - 1 - i : i;
+                indices[i] = "descending".equals(order) ? length - 1 - i : i;
                 polarities[f][i] = random.nextBoolean();
             }
-            if (order.equals("random")) {
+            if ("random".equals(order)) {
                 for (int i = length - 1; i > 0; i--) {
                     int j = random.nextInt(i + 1);
                     int swap = indices[i];

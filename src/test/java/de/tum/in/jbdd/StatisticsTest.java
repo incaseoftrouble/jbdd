@@ -55,6 +55,7 @@ class StatisticsTest {
     }
 
     @Test
+    @SuppressWarnings("NullAway") // a missing statistic fails the test as it should
     void registeredOperationsCountIntoTheirKindsTotal() {
         // Every handle's private cache counts into its kind's total, which outlives the handle.
         DdContextImpl context =
@@ -78,6 +79,7 @@ class StatisticsTest {
     }
 
     @Test
+    @SuppressWarnings("NullAway") // a missing statistic fails the test as it should
     void descriptionsCarryTheScope() {
         BddConfiguration configuration =
                 ImmutableBddConfiguration.builder().name("named").build();

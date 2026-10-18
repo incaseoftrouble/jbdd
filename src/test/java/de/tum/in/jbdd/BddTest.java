@@ -231,9 +231,7 @@ class BddTest {
         }
         int[] mapping = new int[2 * n];
         Arrays.fill(mapping, bdd.placeholder());
-        for (int i = 0; i < n; i++) {
-            mapping[i] = y[i];
-        }
+        System.arraycopy(y, 0, mapping, 0, n);
         // Each node of the result is made once, directly, from the renamed children.
         long before = bdd.table().createdNodeCount();
         int renamed = bdd.reference(bdd.compose(function, mapping));
@@ -245,16 +243,12 @@ class BddTest {
         assertThat(renamed, is(expected));
 
         // The swap of the two blocks, through if-then-else, and a merge of both onto x.
-        for (int i = 0; i < n; i++) {
-            mapping[n + i] = x[i];
-        }
+        System.arraycopy(x, 0, mapping, n, n);
         int both = bdd.reference(bdd.and(function, bdd.not(expected)));
         assertThat(bdd.compose(both, mapping), is(bdd.and(expected, bdd.not(function))));
         int[] merge = new int[2 * n];
         Arrays.fill(merge, bdd.placeholder());
-        for (int i = 0; i < n; i++) {
-            merge[n + i] = x[i];
-        }
+        System.arraycopy(x, 0, merge, n, n);
         assertThat(bdd.compose(both, merge), is(bdd.falseFunction()));
     }
 

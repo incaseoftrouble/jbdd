@@ -89,6 +89,7 @@ class BddFuzzTest {
             }
         }
 
+        @SuppressWarnings("ListRemoveAmbiguous") // removes by index: a random pool entry
         void round() {
             while (pool.size() < POOL_SIZE) {
                 pool.add(bdd.reference(randomFunction(3)));

@@ -1766,11 +1766,10 @@ class MtBddTheories {
     }
 
     /** A genuine commutative monoid (plus, for max/min, a genuine absorbing element) - unlike
-     * {@link NamedBinaryOp}, {@link #neutral}/{@link #absorbing} are real algebraic properties the op is
+     * {@link NamedBinaryOp}, {@code neutral}/{@code absorbing} are real algebraic properties the op is
      * required to satisfy over the shared int pool's actual value range (see {@link #MONOID_OPS}), not
      * asserted by the library itself (see {@code MtBddBinaryOperator}'s javadoc: unchecked preconditions -
-     * though {@code checkLaws} does empirically spot-check them at every leaf encountered). {@link
-     * #applyNary} lifts the binary op to n-ary via fold from {@link #neutral} - by construction, the same
+     * though {@code checkLaws} does empirically spot-check them at every leaf encountered). {@code applyNary} lifts the binary op to n-ary via fold from {@code neutral} - by construction, the same
      * neutral/absorbing laws carry over to it automatically. */
     private static final class NamedValuation {
         final String label;

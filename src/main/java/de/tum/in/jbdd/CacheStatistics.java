@@ -77,6 +77,7 @@ final class CacheStatistics {
     private CacheStatistics cumulative = this;
 
     /** Counts every later cumulative count into {@code total} instead, the statistics of all caches of one kind. */
+    @SuppressWarnings("PMD.CompareObjectsWithEquals") // identity is what the assertion is about
     void countInto(CacheStatistics total) {
         assert cumulative == this && total != this;
         cumulative = total;

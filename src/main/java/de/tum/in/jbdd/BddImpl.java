@@ -1131,7 +1131,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
         }
 
         LiteralSet negated() {
-            return new LiteralSet(negative, positive);
+            return new LiteralSet(/* positive= */ negative, /* negative= */ positive);
         }
 
         Cube cube() {
@@ -1779,7 +1779,7 @@ public class BddImpl extends BooleanBase<NatSet, Cube> implements Bdd {
             table.popFromWorkStack(pushed);
             return complementIf(lookup, complement);
         }
-        int hash = tupleCache.lookupHash;
+        int hash = tupleCache.lookupHash; // NOPMD - read now: the recursion's lookups overwrite it before the put
         table.step();
 
         int topVariable = table.variable(node);

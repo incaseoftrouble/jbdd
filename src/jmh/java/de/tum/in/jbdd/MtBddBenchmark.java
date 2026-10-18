@@ -22,7 +22,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -80,11 +79,11 @@ public class MtBddBenchmark {
     @SuppressWarnings("NullAway.Init")
     private NatSet inputs;
 
-    private final Function<NatSet, NatSet> shift = set -> {
+    private static NatSet shift(NatSet set) {
         MutableNatSet shifted = MutableNatSet.dense(SUCCESSORS);
         set.forEach((int element) -> shifted.set((element + 1) % SUCCESSORS));
         return NatSet.copyOf(shifted);
-    };
+    }
 
     @Setup(Level.Trial)
     public void setup() {
@@ -149,7 +148,7 @@ public class MtBddBenchmark {
     @Benchmark
     public void mapValues(Blackhole bh) {
         for (BddMap<NatSet> map : pool) {
-            bh.consume(map.map(shift));
+            bh.consume(map.map(MtBddBenchmark::shift));
         }
     }
 

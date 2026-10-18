@@ -386,6 +386,8 @@ class RegressionTests {
     }
 
     @Test
+    // held keeps the wrappers reachable until it is cleared; a missing statistic fails the test as it should
+    @SuppressWarnings({"ModifiedButNotUsed", "NullAway"})
     void testTableCollectionDrainsCollectedWrappersFirst() throws InterruptedException {
         // A wrapper the JVM collected keeps its function referenced until its reference is drained; a table
         // collection drains first, so the dropped cubes' nodes go without any new wrapper being made.
@@ -446,6 +448,7 @@ class RegressionTests {
     }
 
     @Test
+    @SuppressWarnings("NullAway") // a missing statistic fails the test as it should
     void testTableSizeIsTheTablesSlotsAndFollowsItsGrowth() {
         BinaryFactoryContext ctx = BinaryFactoryContext.create(
                 ImmutableBddConfiguration.builder().initialSize(64).build());

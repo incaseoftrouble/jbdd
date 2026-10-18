@@ -176,6 +176,7 @@ class IntHashMapTest {
     }
 
     @Test
+    @SuppressWarnings("NullAway") // the null is the point
     void rejectsWhatItCannotHold() {
         assertThrows(IllegalArgumentException.class, () -> new IntIntHashMap(-1));
         assertThrows(IllegalArgumentException.class, () -> new IntObjectHashMap<>(-1));
