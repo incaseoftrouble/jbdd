@@ -17,22 +17,36 @@
 package de.tum.in.jbdd;
 
 final class HashUtil {
-    // Note: These are tremendously stupid hash functions, however this is called so often
-    // that the reduction in computation time seems to be very much worth it
-
-    static final int PRIME = 0x1000193;
-
     private HashUtil() {}
 
     static int hash(int key) {
         return key;
     }
 
-    static int hash(int firstKey, int secondKey, int thirdKey) {
-        return firstKey + secondKey + thirdKey;
+    static int hash(int firstKey, boolean secondKey) {
+        int h = firstKey;
+        h = h * 0x9E3779B1 + Boolean.hashCode(secondKey);
+        return h & Integer.MAX_VALUE;
     }
 
-    static int hash(byte firstKey, int secondKey, int thirdKey) {
-        return (PRIME * firstKey) + secondKey + thirdKey;
+    static int hash(int firstKey, int secondKey) {
+        int h = firstKey;
+        h = h * 0x9E3779B1 + secondKey;
+        return h & Integer.MAX_VALUE;
+    }
+
+    static int hash(int firstKey, int secondKey, int thirdKey) {
+        int h = firstKey;
+        h = h * 0x9E3779B1 + secondKey;
+        h = h * 0x9E3779B1 + thirdKey;
+        return h & Integer.MAX_VALUE;
+    }
+
+    static int hash(int firstKey, int secondKey, int thirdKey, int fourthKey) {
+        int h = firstKey;
+        h = h * 0x9E3779B1 + secondKey;
+        h = h * 0x9E3779B1 + thirdKey;
+        h = h * 0x9E3779B1 + fourthKey;
+        return h & Integer.MAX_VALUE;
     }
 }
