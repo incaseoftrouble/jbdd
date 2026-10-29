@@ -270,7 +270,8 @@ tasks.withType<Pmd> {
 }
 
 // Deployment - run with -Prelease clean publishToSonatype closeAndReleaseSonatypeStagingRepository
-// Authentication: sonatypeUsername+sonatypePassword in ~/.gradle/gradle.properties
+// Authentication: a Central Portal user token as sonatypeUsername+sonatypePassword in
+// ~/.gradle/gradle.properties
 if (project.hasProperty("release")) {
   publishing {
     publications {
@@ -314,5 +315,13 @@ if (project.hasProperty("release")) {
     }
   }
 
-  nexusPublishing { repositories.sonatype() }
+  // https://central.sonatype.org/publish/publish-portal-ossrh-staging-api/
+  nexusPublishing {
+    repositories {
+      sonatype {
+        nexusUrl.set(uri("https://ossrh-staging-api.central.sonatype.com/service/local/"))
+        snapshotRepositoryUrl.set(uri("https://central.sonatype.com/repository/maven-snapshots/"))
+      }
+    }
+  }
 }

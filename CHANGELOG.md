@@ -2,7 +2,7 @@
 
 ## 0.7 
 
-### 0.7.0 (2026-XX-XX)
+### 0.7.0 (2026-10-29)
 
 0.7 is a major rewrite of the library (helped by AI agents).
 

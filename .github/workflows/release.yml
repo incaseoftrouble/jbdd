@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write
+
+env:
+  JAVA_VERSION: '21'
+
+jobs:
+  release:
+    name: GitHub release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check the tag against the build version and extract the changelog
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          declared=$(sed -n 's/^version = "\(.*\)"$/\1/p' build.gradle.kts)
+          if [ "$version" != "$declared" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match version $declared in build.gradle.kts"
+            exit 1
+          fi
+          awk -v v="$version" '
+            /^##/ { if (found) exit }
+            $0 ~ "^### " v "( |$)" { found = 1; next }
+            found
+          ' CHANGELOG.md > release-notes.md
+          if ! grep -q '[^[:space:]]' release-notes.md; then
+            echo "::error::no section for $version in CHANGELOG.md"
+            exit 1
+          fi
+      - uses: actions/setup-java@v6
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+      - uses: gradle/actions/setup-gradle@v6
+      - run: ./gradlew assemble
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          --title "$GITHUB_REF_NAME"
+          --notes-file release-notes.md
+          --verify-tag
+          build/libs/jbdd-${GITHUB_REF_NAME#v}.jar
+          build/libs/jbdd-${GITHUB_REF_NAME#v}-sources.jar
+          build/libs/jbdd-${GITHUB_REF_NAME#v}-javadoc.jar

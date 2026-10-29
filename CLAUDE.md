@@ -62,7 +62,9 @@ and **prefer asking over guessing**.
 - `-Pjbdd.test.java=11` runs the tests on an installed JDK 11 (CI tests on 11 and 21); the build needs JDK 21.
 - The reorder stress in `BddTheories`/`MtBddTheories` has no switch, only the scale; it is most of their runtime and
   all of their coverage of a non-identity order.
-- Publishing (`-Prelease clean publishToSonatype closeAndReleaseSonatypeStagingRepository`) needs credentials and GPG.
+- Publishing (`-Prelease clean publishToSonatype closeAndReleaseSonatypeStagingRepository`) needs credentials and GPG;
+  it is manual. Pushing a tag `vX.Y.Z` creates the GitHub release (`release.yml`): the tag must equal `version`,
+  and the notes are `CHANGELOG.md`'s `### X.Y.Z` section.
 
 ## 2. The machine in brief
 
