@@ -79,6 +79,30 @@ class BddSetTest {
     }
 
     @Test
+    void fusedSimplifyFormsAgreeWithTheirOperationOnTheDomain() {
+        BddSetFactory sets = BinaryFactoryContext.create().bddSets();
+        BddSet x0 = sets.var(0);
+        BddSet x1 = sets.var(1);
+        BddSet x2 = sets.var(2);
+        BddSet x3 = sets.var(3);
+        BddSet set = x0.intersection(x1).union(x0.complement().intersection(x2));
+        BddSet other = x1.union(x3);
+        BddSet domain = x0.complement().union(x3);
+
+        assertEquals(
+                set.union(other).intersection(domain),
+                set.orSimplify(other, domain).intersection(domain));
+        assertEquals(
+                sets.ifThenElse(x3, set, other).intersection(domain),
+                sets.ifThenElseSimplify(x3, set, other, domain).intersection(domain));
+        java.util.function.IntFunction<BddSet> mapping = v -> v == 1 ? x3.complement() : sets.var(v);
+        assertEquals(
+                set.replaceVariables(mapping).intersection(domain),
+                set.replaceVariablesSimplify(mapping, domain).intersection(domain));
+        assertEquals(set.replaceVariables(mapping), set.replaceVariablesSimplify(mapping, sets.universe()));
+    }
+
+    @Test
     void testBddSetRestrictAndIfThenElse() {
         BinaryFactoryContext ctx = BinaryFactoryContext.create();
         BddSetFactory sets = ctx.bddSets();

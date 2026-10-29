@@ -121,6 +121,13 @@ public interface BddSet {
     BddSet andSimplify(BddSet other, BddSet domain);
 
     /**
+     * {@code union(other).simplify(domain)}: agrees with the union on {@code domain}, without building it.
+     *
+     * @see BooleanTerminalDecisionDiagram#orSimplify(int, int, int)
+     */
+    BddSet orSimplify(BddSet other, BddSet domain);
+
+    /**
      * {@code andExists(other, quantifiedVariables).simplify(domain)}: agrees with the relational product on {@code
      * domain}, building neither it nor the intersection; it does not depend on any quantified variable.
      *
@@ -157,6 +164,14 @@ public interface BddSet {
 
     /** Like {@link #relabelVariables}, but replaces each variable by an arbitrary set instead of another variable. */
     BddSet replaceVariables(IntFunction<BddSet> mapping);
+
+    /**
+     * {@code replaceVariables(mapping).simplify(domain)}: agrees with the replacement on {@code domain}, without
+     * building it.
+     *
+     * @see BinaryDecisionDiagram#composeSimplify(int, int[], int)
+     */
+    BddSet replaceVariablesSimplify(IntFunction<BddSet> mapping, BddSet domain);
 
     /**
      * The variable this set's outermost decision is taken on, or empty if it is constant. Together with

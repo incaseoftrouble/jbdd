@@ -129,6 +129,12 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
     }
 
     @Override
+    public BddSet ifThenElseSimplify(BddSet condition, BddSet then, BddSet otherwise, BddSet domain) {
+        return make(dd.ifThenElseSimplify(
+                functionOf(condition), functionOf(then), functionOf(otherwise), functionOf(domain)));
+    }
+
+    @Override
     public BddSet adopt(BddSet set, IntUnaryOperator variableMapping) {
         BddSetImpl foreign = (BddSetImpl) set;
         int[] variables = mapSupport(foreign.support(), variableMapping);
@@ -517,6 +523,11 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
         }
 
         @Override
+        public BddSet orSimplify(BddSet other, BddSet domain) {
+            return make(factory.dd.orSimplify(function, factory.functionOf(other), factory.functionOf(domain)));
+        }
+
+        @Override
         public BddSet andExistsSimplify(BddSet other, NatSet quantifiedVariables, BddSet domain) {
             return make(factory.dd.andExistsSimplify(
                     function, factory.functionOf(other), quantifiedVariables, factory.functionOf(domain)));
@@ -566,6 +577,16 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
 
         @Override
         public BddSet replaceVariables(IntFunction<BddSet> mapping) {
+            return replaceVariables(mapping, null);
+        }
+
+        @Override
+        public BddSet replaceVariablesSimplify(IntFunction<BddSet> mapping, BddSet domain) {
+            return replaceVariables(mapping, domain);
+        }
+
+        // One composition, simplified against domain in the same traversal unless it is null.
+        private BddSet replaceVariables(IntFunction<BddSet> mapping, @Nullable BddSet domain) {
             NatSet support = support();
             int[] substitutions = new int[support.length()];
             Arrays.fill(substitutions, factory.dd.placeholder());
@@ -577,7 +598,10 @@ final class BddSetFactoryImpl extends GcReferenceManager<BddSetFactoryImpl.BddSe
                     replacements[i] = mapping.apply(i);
                     substitutions[i] = factory.functionOf(replacements[i]);
                 }
-                return make(factory.dd.compose(function, substitutions));
+                return make(
+                        domain == null
+                                ? factory.dd.compose(function, substitutions)
+                                : factory.dd.composeSimplify(function, substitutions, factory.functionOf(domain)));
             } finally {
                 // A later mapping.apply can collect what an earlier one returned unless its wrapper stays alive.
                 Reference.reachabilityFence(replacements);

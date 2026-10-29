@@ -9,7 +9,7 @@ their own to sit on, and the options answered in the negative, close this file. 
 ## Blocked on a measurement
 
 Each of these trades an allocation or a copy against a cache hit rate, which only a representative workload
-can settle; `CLAUDE.md` §11 is explicit that reasoning about these paths has repeatedly measured backwards.
+can settle; `CLAUDE.md` §4 is explicit that reasoning about these paths has repeatedly measured backwards.
 
 - **[KEY-COPY] `MtBddImpl#cartesianProductRecursive` and `#computeNaryApply` - do the memos pay for the key copy?**
   Both recursions rewrite their operand array in place, so a cache key has to be a clone (§6). Whether the

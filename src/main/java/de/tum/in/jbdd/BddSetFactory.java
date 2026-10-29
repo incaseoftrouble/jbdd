@@ -92,6 +92,14 @@ public interface BddSetFactory {
     BddSet ifThenElse(BddSet condition, BddSet then, BddSet otherwise);
 
     /**
+     * {@code ifThenElse(condition, then, otherwise).simplify(domain)}: agrees with it on {@code domain}, without
+     * building it.
+     *
+     * @see BooleanTerminalDecisionDiagram#ifThenElseSimplify(int, int, int, int)
+     */
+    BddSet ifThenElseSimplify(BddSet condition, BddSet then, BddSet otherwise, BddSet domain);
+
+    /**
      * {@code set}, typically of another context, rebuilt here with each variable {@code v} of it read as {@code
      * variableMapping(v)}; variables that do not exist here yet are created.
      */
